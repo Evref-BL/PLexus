@@ -37,10 +37,10 @@ Write-Check "npm" ([bool] $npm) $npm
 Write-Check "npx" ([bool] $npx) $npx
 
 if ($node) {
-  $mcpPlEntry = & node -e "try { process.stdout.write(require.resolve('mcp-pl')) } catch { process.exit(1) }" 2>$null
-  Write-Check "mcp-pl package" ($LASTEXITCODE -eq 0) $mcpPlEntry
+  $mcpPlEntry = & node -e "try { process.stdout.write(require.resolve('@evref-bl/mcp-pl')) } catch { process.exit(1) }" 2>$null
+  Write-Check "@evref-bl/mcp-pl package" ($LASTEXITCODE -eq 0) $mcpPlEntry
 } else {
-  Write-Check "mcp-pl package" $false "node is required to resolve package dependency"
+  Write-Check "@evref-bl/mcp-pl package" $false "node is required to resolve package dependency"
 }
 
 if ($env:MCP_PL_ENTRY) {

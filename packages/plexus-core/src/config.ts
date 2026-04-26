@@ -18,7 +18,7 @@ function packageDirFromEntry(entry: string): string {
 
 function resolveInstalledMcpPlEntry(): string | undefined {
   try {
-    return require.resolve("mcp-pl");
+    return require.resolve("@evref-bl/mcp-pl");
   } catch {
     return undefined;
   }

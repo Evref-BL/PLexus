@@ -23,9 +23,6 @@
     "prototype:open-close": "node scripts/prototype-open-close.mjs",
     "verify:env": "powershell -ExecutionPolicy Bypass -File ./scripts/verify-environment.ps1"
   },
-  "dependencies": {
-    "mcp-pl": "file:../MCP-PL"
-  },
   "devDependencies": {
     "@types/node": "^24.0.0",
     "typescript": "^5.9.0",
