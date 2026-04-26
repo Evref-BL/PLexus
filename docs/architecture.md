@@ -1,0 +1,100 @@
+# Architecture
+
+## Short Version
+
+PLexus is the agentic orchestration layer above MCP-PL and image-scoped Pharo MCP workers.
+
+The project/worktree/target arity is defined in `docs/project-model.md`.
+
+```text
+Codex in Vibe Kanban
+  -> PLexus orchestration tools
+      -> target registry
+      -> MCP-PL
+          -> PharoLauncher CLI
+      -> Pharo image worker per worktree
+```
+
+The orchestration and PharoLauncher control layers must not run inside a project Pharo image. They exist specifically to recover from broken images, route between versions, and keep worktree state separate.
+
+## Components
+
+### Vibe Kanban
+
+Owns issues, workspaces, worktree creation, agent sessions, diffs, and review flow.
+
+### PLexus
+
+Owns workflow policy and routing:
+
+- maintain a target registry
+- route Pharo tool calls by `targetId`
+- map Vibe Kanban tasks to worktrees and images
+- isolate runtime state by `projectId` and `workspaceId`
+- choose when to create, copy, restart, or retire a target
+- call MCP-PL for PharoLauncher operations
+
+### MCP-PL
+
+Owns the PharoLauncher boundary:
+
+- discover PharoLauncher installation
+- list images, VMs, templates, and processes
+- create or copy images for a worktree
+- start and stop PharoLauncher-managed processes
+- normalize CLI errors, timeouts, stdout, and stderr
+
+### Pharo Image Worker
+
+Runs inside one Pharo image and exposes image-local operations:
+
+- inspect classes and methods
+- edit methods
+- run tests
+- evaluate code
+- load code from the associated worktree
+
+PLexus configures image-local Git behavior before starting the worker. The
+project image config supports `ssh`, `https`, and `http`, with `ssh` as the
+default. Because the PharoLauncher CLI launch command exposes `--script` but no
+Git protocol switch, PLexus writes Iceberg credential setup into the generated
+startup script and records the selected value in `Smalltalk globals` as
+`#PLexusGitTransport`.
+
+## Target Registry
+
+The registry and runtime state are external to Pharo. The current prototype stores one JSON state file per project workspace:
+
+```text
+<state-root>/projects/<project-id>/workspaces/<workspace-id>/state.json
+```
+
+Use one shared state root across parallel Vibe Kanban worktrees so PLexus can avoid port collisions. A later implementation can move this to SQLite when locking and richer queries are needed.
+
+Required fields:
+
+```text
+targetId
+projectId
+workspaceId
+imageName
+imagePath
+changesPath
+vmPath
+worktreePath
+branch
+commit
+pid
+port
+token
+status
+lastHealthCheck
+createdAt
+updatedAt
+```
+
+## Worker Model
+
+Use one worker per image. A single central in-image worker cannot safely represent multiple mutable Pharo images, and a single image cannot represent multiple Git versions at the same time.
+
+PLexus keeps target identity stable while MCP-PL and the image workers do the low-level process work. Image workers can crash and be restarted behind that target identity. If a project has multiple registered workspaces, callers must route by `targetId` or by `projectId` plus `workspaceId`.

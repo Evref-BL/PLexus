@@ -1,0 +1,28 @@
+# Dependencies
+node_modules/
+
+# Build outputs
+dist/
+coverage/
+*.tsbuildinfo
+
+# Local runtime state
+.env
+.env.*
+!.env.example
+.plexus/
+
+# Vibe Kanban workspaces should live outside the repository.
+.vibe-kanban-workspaces/
+
+# Pharo local artifacts
+*.changes
+*.image
+*.sources
+*.ombu
+pharo-local/
+
+# Logs
+*.log
+npm-debug.log*
+

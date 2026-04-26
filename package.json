@@ -1,0 +1,34 @@
+{
+  "name": "plexus",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Agentic orchestration tools for Pharo projects using Vibe Kanban, Git worktrees, MCP-PL, and image-scoped Pharo workers.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "bin": {
+    "plexus": "./packages/plexus-core/dist/cli.js",
+    "plexus-gateway": "./packages/plexus-gateway/dist/index.js"
+  },
+  "workspaces": [
+    "packages/*"
+  ],
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "build": "npm run build -w @plexus/core && npm run build -w @plexus/gateway",
+    "test": "npm run test --workspaces",
+    "typecheck": "npm run typecheck --workspaces",
+    "clean": "npm run clean --workspaces",
+    "prototype:open-close": "node scripts/prototype-open-close.mjs",
+    "verify:env": "powershell -ExecutionPolicy Bypass -File ./scripts/verify-environment.ps1"
+  },
+  "dependencies": {
+    "mcp-pl": "file:../MCP-PL"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "^5.9.0",
+    "vitest": "^4.0.0"
+  }
+}

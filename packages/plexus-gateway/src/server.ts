@@ -1,0 +1,323 @@
+import http from "node:http";
+import { Server } from "@modelcontextprotocol/sdk/server/index.js";
+import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
+import {
+  CallToolRequestSchema,
+  ListToolsRequestSchema,
+} from "@modelcontextprotocol/sdk/types.js";
+import { PlexusGateway } from "./gateway.js";
+
+const stringSchema = { type: "string", minLength: 1 } as const;
+const optionalStringSchema = { type: "string", minLength: 1 } as const;
+
+function objectSchema(
+  properties: Record<string, unknown>,
+  required: string[] = [],
+) {
+  return {
+    type: "object",
+    properties,
+    required,
+    additionalProperties: false,
+  } as const;
+}
+
+const projectReferenceProperties = {
+  projectPath: optionalStringSchema,
+  projectId: optionalStringSchema,
+  workspaceId: optionalStringSchema,
+  targetId: optionalStringSchema,
+  stateRoot: optionalStringSchema,
+} as const;
+
+export const gatewayTools = [
+  {
+    name: "plexus_project_open",
+    description:
+      "Open a PLexus project: launch active images, update runtime state, and register routes.",
+    inputSchema: objectSchema(
+      {
+        projectPath: stringSchema,
+        workspaceId: optionalStringSchema,
+        targetId: optionalStringSchema,
+        stateRoot: optionalStringSchema,
+      },
+      ["projectPath"],
+    ),
+  },
+  {
+    name: "plexus_project_close",
+    description:
+      "Close a PLexus project: stop running images and update runtime state.",
+    inputSchema: objectSchema(
+      {
+        projectPath: stringSchema,
+        workspaceId: optionalStringSchema,
+        stateRoot: optionalStringSchema,
+      },
+      ["projectPath"],
+    ),
+  },
+  {
+    name: "plexus_project_status",
+    description:
+      "Return gateway route status for a project path, project id, or all registered projects.",
+    inputSchema: objectSchema({
+      ...projectReferenceProperties,
+      refreshHealth: { type: "boolean" },
+    }),
+  },
+  {
+    name: "plexus_route_to_image",
+    description:
+      "Route a Pharo MCP tool call to the MCP server running inside a selected image.",
+    inputSchema: objectSchema(
+      {
+        ...projectReferenceProperties,
+        imageId: stringSchema,
+        toolName: stringSchema,
+        arguments: {
+          type: "object",
+          additionalProperties: true,
+        },
+      },
+      ["imageId", "toolName"],
+    ),
+  },
+] as const;
+
+export interface GatewayHttpServerOptions {
+  host?: string;
+  port: number;
+  healthPath?: string;
+  mcpPath?: string;
+}
+
+export interface GatewayCliOptions {
+  transport: "stdio" | "http";
+  host: string;
+  port: number;
+}
+
+type ToolResult = {
+  content: Array<{ type: "text"; text: string }>;
+  isError?: boolean;
+};
+
+function jsonResult(value: unknown, isError = false): ToolResult {
+  return {
+    content: [{ type: "text", text: JSON.stringify(value, null, 2) }],
+    ...(isError ? { isError } : {}),
+  };
+}
+
+export function createGatewayServer(gateway = new PlexusGateway()): Server {
+  const server = new Server(
+    {
+      name: "plexus-gateway",
+      version: "0.1.0",
+    },
+    {
+      capabilities: {
+        tools: {},
+      },
+    },
+  );
+
+  server.setRequestHandler(ListToolsRequestSchema, async () => ({
+    tools: [...gatewayTools],
+  }));
+
+  server.setRequestHandler(CallToolRequestSchema, async (request) => {
+    const result = await gateway.handleTool(
+      request.params.name,
+      request.params.arguments ?? {},
+    );
+
+    return jsonResult(result, !result.ok);
+  });
+
+  return server;
+}
+
+export async function startGatewayServer(): Promise<void> {
+  const server = createGatewayServer();
+  const transport = new StdioServerTransport();
+  await server.connect(transport);
+}
+
+function parsePort(value: string | undefined, name: string): number {
+  const port = Number(value);
+  if (!Number.isInteger(port) || port < 1 || port > 65_535) {
+    throw new Error(`${name} must be an integer between 1 and 65535`);
+  }
+
+  return port;
+}
+
+function writeJsonResponse(
+  response: http.ServerResponse,
+  statusCode: number,
+  value: unknown,
+): void {
+  response.writeHead(statusCode, {
+    "content-type": "application/json; charset=utf-8",
+  });
+  response.end(`${JSON.stringify(value)}\n`);
+}
+
+function listen(
+  server: http.Server,
+  port: number,
+  host: string,
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const onError = (error: Error): void => {
+      server.off("listening", onListening);
+      reject(error);
+    };
+    const onListening = (): void => {
+      server.off("error", onError);
+      resolve();
+    };
+
+    server.once("error", onError);
+    server.once("listening", onListening);
+    server.listen(port, host);
+  });
+}
+
+export async function startGatewayHttpServer(
+  options: GatewayHttpServerOptions,
+): Promise<http.Server> {
+  const host = options.host ?? "127.0.0.1";
+  const healthPath = options.healthPath ?? "/health";
+  const mcpPath = options.mcpPath ?? "/mcp";
+  const gatewayServer = createGatewayServer();
+  const transport = new StreamableHTTPServerTransport({
+    sessionIdGenerator: undefined,
+  });
+
+  await gatewayServer.connect(transport);
+
+  const server = http.createServer((request, response) => {
+    void (async () => {
+      const url = new URL(
+        request.url ?? "/",
+        `http://${request.headers.host ?? `${host}:${options.port}`}`,
+      );
+
+      if (url.pathname === "/" || url.pathname === healthPath) {
+        if (request.method !== "GET" && request.method !== "HEAD") {
+          writeJsonResponse(response, 405, {
+            ok: false,
+            error: "Method not allowed",
+          });
+          return;
+        }
+
+        writeJsonResponse(response, 200, {
+          ok: true,
+          service: "plexus-gateway",
+          mcpPath,
+        });
+        return;
+      }
+
+      if (url.pathname === mcpPath) {
+        await transport.handleRequest(request, response);
+        return;
+      }
+
+      writeJsonResponse(response, 404, {
+        ok: false,
+        error: "Not found",
+      });
+    })().catch((error: unknown) => {
+      if (!response.headersSent) {
+        writeJsonResponse(response, 500, {
+          ok: false,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        return;
+      }
+
+      response.destroy(error instanceof Error ? error : undefined);
+    });
+  });
+
+  server.on("close", () => {
+    void transport.close();
+  });
+
+  await listen(server, options.port, host);
+  return server;
+}
+
+export function parseGatewayServerCliOptions(
+  args: string[] = process.argv.slice(2),
+  env: NodeJS.ProcessEnv = process.env,
+): GatewayCliOptions {
+  let transport: GatewayCliOptions["transport"] = "stdio";
+  let host = env.PLEXUS_HOST ?? "127.0.0.1";
+  let portValue = env.PLEXUS_MCP_PORT ?? env.PORT ?? "7331";
+
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+
+    if (arg === "serve" || arg === "http" || arg === "--http") {
+      transport = "http";
+      continue;
+    }
+
+    if (arg === "--stdio") {
+      transport = "stdio";
+      continue;
+    }
+
+    if (arg === "--host") {
+      const next = args[index + 1];
+      if (!next) {
+        throw new Error("--host requires a value");
+      }
+
+      host = next;
+      index += 1;
+      continue;
+    }
+
+    if (arg === "--port") {
+      const next = args[index + 1];
+      if (!next) {
+        throw new Error("--port requires a value");
+      }
+
+      portValue = next;
+      index += 1;
+      continue;
+    }
+
+    throw new Error(`Unknown plexus-gateway argument: ${arg}`);
+  }
+
+  return {
+    transport,
+    host,
+    port: parsePort(portValue, "PLexus gateway port"),
+  };
+}
+
+export async function startGatewayServerFromCli(
+  options = parseGatewayServerCliOptions(),
+): Promise<void> {
+  if (options.transport === "stdio") {
+    await startGatewayServer();
+    return;
+  }
+
+  await startGatewayHttpServer({
+    host: options.host,
+    port: options.port,
+  });
+}
