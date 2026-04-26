@@ -6,8 +6,11 @@ The name keeps `PL` uppercase for PharoLauncher.
 
 ## Project Split
 
-- `PLexus`: agentic tools and conventions for coordinating Pharo project worktrees, Vibe Kanban tasks, target registries, and per-image workers.
-- `MCP-PL`: standalone MCP server for PharoLauncher. It wraps the PharoLauncher CLI and process lifecycle so it can be used with or without PLexus.
+- `PLexus` (`@plexus/core` + CLI): orchestration and lifecycle for projects/workspaces/images. Depends on the gateway and MCP-PL.
+- `PLexus Gateway` (`@plexus/gateway`): routing-only MCP server. Owns route registration/status and forwarding MCP calls to image-scoped MCP servers. Must not depend on PLexus or MCP-PL.
+- `MCP-PL` (`@evref-bl/mcp-pl`): standalone MCP server for PharoLauncher. Wraps the PharoLauncher CLI and process lifecycle. Must not depend on PLexus or the gateway.
+
+See `docs/package-boundaries.md` for the final package boundary, dependency direction, and tool ownership.
 
 ## Goals
 
@@ -23,11 +26,12 @@ The name keeps `PL` uppercase for PharoLauncher.
 ```text
 packages/
   plexus-core/            Shared config, target registry, and orchestration types
-  plexus-gateway/         MCP gateway for project lifecycle and image routing
+  plexus-gateway/         Routing-only MCP gateway (register/status/routes to images)
 pharo/
   worker/                 In-image worker bootstrap scripts
 docs/
   architecture.md
+  package-boundaries.md
   project-model.md
   vibe-kanban-setup.md
   roadmap.md
@@ -167,7 +171,12 @@ Start the PLexus MCP gateway:
 plexus-gateway
 ```
 
-The gateway exposes `plexus_project_open`, `plexus_project_close`, `plexus_project_status`, and `plexus_route_to_image`. It keeps an in-memory routing table keyed by `targetId`, with project/workspace lookup helpers backed by runtime state. If one `projectId` has several workspaces, route calls must provide `targetId` or `workspaceId`. `plexus_route_to_image` routes MCP tool calls to the selected image server at `http://127.0.0.1:<port>/mcp`.
+Target ownership:
+
+- Project/workspace lifecycle tools (`plexus_project_open`, `plexus_project_close`, `plexus_project_status`) live in PLexus (currently still exposed by the gateway during the split).
+- Routing tools live in the gateway (`plexus_route_to_image` plus gateway-only status/register/unregister tools).
+
+The gateway keeps an in-memory routing table keyed by `targetId` and forwards MCP tool calls to the selected image server at `http://127.0.0.1:<port>/mcp`.
 
 ## Prototype Open/Close Check
 

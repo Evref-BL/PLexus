@@ -2,7 +2,7 @@
 
 ## Short Version
 
-PLexus is the agentic orchestration layer above MCP-PL and image-scoped Pharo MCP workers.
+PLexus is the agentic orchestration layer that coordinates MCP-PL, the PLexus Gateway, and image-scoped Pharo MCP workers.
 
 The project/worktree/target arity is defined in `docs/project-model.md`.
 
@@ -12,7 +12,8 @@ Codex in Vibe Kanban
       -> target registry
       -> MCP-PL
           -> PharoLauncher CLI
-      -> Pharo image worker per worktree
+      -> PLexus Gateway (routing)
+          -> Pharo image worker per worktree
 ```
 
 The orchestration and PharoLauncher control layers must not run inside a project Pharo image. They exist specifically to recover from broken images, route between versions, and keep worktree state separate.
@@ -25,14 +26,24 @@ Owns issues, workspaces, worktree creation, agent sessions, diffs, and review fl
 
 ### PLexus
 
-Owns workflow policy and routing:
+Owns workflow policy and project/workspace/image orchestration:
 
 - maintain a target registry
-- route Pharo tool calls by `targetId`
 - map Vibe Kanban tasks to worktrees and images
 - isolate runtime state by `projectId` and `workspaceId`
 - choose when to create, copy, restart, or retire a target
 - call MCP-PL for PharoLauncher operations
+- register routes in the gateway and decide where tool calls should go
+
+### PLexus Gateway
+
+Owns routing only:
+
+- register/unregister targets and keep an in-memory route table keyed by `targetId`
+- report routing status for registered targets/images
+- forward MCP tool calls to the selected image MCP server
+
+The gateway must not depend on PLexus or MCP-PL, and it should not read project config or runtime state from disk. PLexus is responsible for orchestration/state and registers routes into the gateway.
 
 ### MCP-PL
 
@@ -97,4 +108,4 @@ updatedAt
 
 Use one worker per image. A single central in-image worker cannot safely represent multiple mutable Pharo images, and a single image cannot represent multiple Git versions at the same time.
 
-PLexus keeps target identity stable while MCP-PL and the image workers do the low-level process work. Image workers can crash and be restarted behind that target identity. If a project has multiple registered workspaces, callers must route by `targetId` or by `projectId` plus `workspaceId`.
+PLexus keeps target identity stable while MCP-PL and the image workers do the low-level process work. Image workers can crash and be restarted behind that target identity. If a project has multiple registered workspaces, callers must route by `targetId` (gateway key) or by `projectId` plus `workspaceId` (PLexus orchestration identity).

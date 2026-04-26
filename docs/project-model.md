@@ -68,7 +68,7 @@ targetId = <project-id>--<workspace-id>
 
 The current prototype keeps the relationship as one workspace to one target. Later, this could expand if one workspace needs multiple independent runtime targets, but that is not part of the current design.
 
-The gateway routing table is keyed by `targetId`. A route by `projectId` alone is only unambiguous when exactly one workspace for that project is registered.
+The PLexus Gateway routing table is keyed by `targetId`. A route by `projectId` alone is only unambiguous when exactly one workspace for that project is registered.
 
 ### Pharo Image
 
@@ -135,7 +135,11 @@ for image launch.
 
 ## Routing Rules
 
-Gateway tools accept project references in three forms:
+Split routing into two layers:
+
+### PLexus (Lifecycle)
+
+PLexus lifecycle tools (for example `plexus_project_open`, `plexus_project_close`, `plexus_project_status`) accept project references in three forms:
 
 ```text
 projectPath
@@ -143,13 +147,19 @@ targetId
 projectId + workspaceId
 ```
 
-`projectPath` resolves the matching workspace state from disk. If `workspaceId` is omitted, PLexus derives it from the path basename.
+`projectPath` is the most convenient form when starting from a local worktree path. If `workspaceId` is omitted, PLexus derives it from the path basename.
 
 `targetId` is the most precise route key and should be preferred when a caller already knows it.
 
-`projectId + workspaceId` is the stable pair to use when a caller starts from Kanban project identity and worktree identity.
+`projectId + workspaceId` is the stable pair to use when starting from Kanban project identity and worktree identity.
+
+### PLexus Gateway (Routing Only)
+
+Gateway routing tools (for example `plexus_route_to_image`) should route using the gateway's in-memory registrations keyed by `targetId`. The gateway should not resolve projects from disk or derive workspace identity from `projectPath`; that work belongs in PLexus, which then registers/updates routes in the gateway.
 
 `projectId` alone can list all registered targets for that project. It must not be used for `plexus_route_to_image` when more than one workspace is registered, because the image id may exist in several workspaces.
+
+Project/workspace lifecycle tools (`plexus_project_open`, `plexus_project_close`, `plexus_project_status`) belong to PLexus. Gateway-only tools belong to the PLexus Gateway (for example `plexus_route_to_image` plus gateway status/register/unregister tools). See `docs/package-boundaries.md`.
 
 ## Port And Image Isolation
 
