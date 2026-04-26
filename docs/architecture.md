@@ -55,6 +55,19 @@ Owns the PharoLauncher boundary:
 - start and stop PharoLauncher-managed processes
 - normalize CLI errors, timeouts, stdout, and stderr
 
+## Agent-Facing MCP Surfaces
+
+Kanban-spawned agents should not receive raw host-wide image access. PLexus
+exposes image access as two scoped MCP surfaces:
+
+- `pharo-launcher`: a PLexus-scoped facade over MCP-PL for image lifecycle
+  operations in the current project/workspace.
+- `pharo`: a stable project-wide Pharo MCP facade that adds an explicit
+  `imageId` routing argument to each image tool.
+
+The detailed contract for the scoped launcher facade is in
+`docs/kanban-agent-pharo-access.md`.
+
 ### Pharo Image Worker
 
 Runs inside one Pharo image and exposes image-local operations:

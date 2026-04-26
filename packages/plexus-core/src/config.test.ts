@@ -18,6 +18,28 @@ describe("loadMcpPlConfig", () => {
     });
   });
 
+  it.each([
+    [
+      "Windows",
+      "C:\\dev\\code\\git\\MCP-PL",
+      "C:\\dev\\code\\git\\MCP-PL\\dist\\index.js",
+    ],
+    ["POSIX", "/opt/mcp-pl", "/opt/mcp-pl/dist/index.js"],
+  ])("derives the MCP-PL entry from a %s repo path", (_, repoDir, entry) => {
+    const config = loadMcpPlConfig({
+      MCP_PL_REPO_DIR: repoDir,
+      MCP_PL_COMMAND: "node",
+    });
+
+    expect(config).toEqual({
+      source: "env",
+      repoDir,
+      entry,
+      command: "node",
+      args: [entry],
+    });
+  });
+
   it("resolves the installed MCP-PL package by default", () => {
     const config = loadMcpPlConfig({});
 

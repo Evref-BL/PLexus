@@ -1,8 +1,10 @@
 import http from "node:http";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  createGatewayFromEnvironment,
   gatewayTools,
   parseGatewayServerCliOptions,
+  parseGatewayEnvironmentOptions,
   startGatewayHttpServer,
 } from "./server.js";
 
@@ -43,6 +45,36 @@ function closeServer(server: http.Server): Promise<void> {
   });
 }
 
+async function postMcp(port: number, method: string): Promise<unknown> {
+  const response = await fetch(`http://127.0.0.1:${port}/mcp`, {
+    method: "POST",
+    headers: {
+      accept: "application/json, text/event-stream",
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      id: 1,
+      method,
+      ...(method === "initialize"
+        ? {
+            params: {
+              protocolVersion: "2024-11-05",
+              capabilities: {},
+              clientInfo: {
+                name: "plexus-gateway-test",
+                version: "0.0.0",
+              },
+            },
+          }
+        : {}),
+    }),
+  });
+
+  expect(response.status).toBe(200);
+  return response.json();
+}
+
 afterEach(async () => {
   for (const server of servers.splice(0)) {
     await closeServer(server);
@@ -79,6 +111,73 @@ describe("gateway server", () => {
     });
   });
 
+  it("parses pharo facade scope and tools from environment", () => {
+    const pharoTools = [
+      {
+        name: "pharo_eval",
+        inputSchema: {
+          type: "object",
+          properties: {
+            code: { type: "string" },
+          },
+          required: ["code"],
+        },
+      },
+    ];
+
+    expect(
+      parseGatewayEnvironmentOptions({
+        PLEXUS_GATEWAY_SURFACE: "pharo",
+        PLEXUS_PROJECT_ROOT: "C:\\dev\\code\\git\\Project-worktree",
+        PLEXUS_PROJECT_ID: "project-123",
+        PLEXUS_WORKSPACE_ID: "task-123",
+        PLEXUS_TARGET_ID: "project-123--task-123",
+        PLEXUS_STATE_ROOT: "C:\\dev\\code\\git\\.plexus-state",
+        PLEXUS_PHARO_TOOLS_JSON: JSON.stringify(pharoTools),
+      }),
+    ).toEqual({
+      surface: "pharo",
+      pharoTools,
+      pharoScope: {
+        projectPath: "C:\\dev\\code\\git\\Project-worktree",
+        projectId: "project-123",
+        workspaceId: "task-123",
+        targetId: "project-123--task-123",
+        stateRoot: "C:\\dev\\code\\git\\.plexus-state",
+      },
+    });
+  });
+
+  it("creates a pharo-only gateway from environment", () => {
+    const { gateway, serverOptions } = createGatewayFromEnvironment({
+      PLEXUS_GATEWAY_SURFACE: "pharo",
+      PLEXUS_PROJECT_ID: "project-123",
+      PLEXUS_WORKSPACE_ID: "task-123",
+      PLEXUS_PHARO_TOOLS_JSON: JSON.stringify([
+        {
+          name: "pharo_eval",
+          inputSchema: {
+            type: "object",
+            properties: {
+              code: { type: "string" },
+            },
+            required: ["code"],
+          },
+        },
+      ]),
+    });
+
+    expect(serverOptions).toEqual({ surface: "pharo" });
+    expect(gateway.listPharoTools()).toMatchObject([
+      {
+        name: "pharo_eval",
+        inputSchema: {
+          required: ["imageId", "code"],
+        },
+      },
+    ]);
+  });
+
   it("serves HTTP health in service mode", async () => {
     const port = await freePort();
     const server = await startGatewayHttpServer({
@@ -94,6 +193,37 @@ describe("gateway server", () => {
       ok: true,
       service: "plexus-gateway",
       mcpPath: "/mcp",
+    });
+  });
+
+  it("handles repeated stateless HTTP MCP requests", async () => {
+    const port = await freePort();
+    const server = await startGatewayHttpServer({
+      host: "127.0.0.1",
+      port,
+    });
+    servers.push(server);
+
+    await expect(postMcp(port, "initialize")).resolves.toMatchObject({
+      result: {
+        serverInfo: {
+          name: "plexus-gateway",
+        },
+      },
+    });
+    await expect(postMcp(port, "tools/list")).resolves.toMatchObject({
+      result: {
+        tools: expect.arrayContaining([
+          expect.objectContaining({ name: "plexus_project_status" }),
+        ]),
+      },
+    });
+    await expect(postMcp(port, "initialize")).resolves.toMatchObject({
+      result: {
+        serverInfo: {
+          name: "plexus-gateway",
+        },
+      },
     });
   });
 });

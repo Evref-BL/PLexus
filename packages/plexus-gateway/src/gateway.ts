@@ -1,4 +1,5 @@
 import path from "node:path";
+import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import {
   closeProject,
   HttpPharoMcpHealthClient,
@@ -18,6 +19,10 @@ import {
   type ImageMcpToolRouter,
 } from "./imageMcpRouter.js";
 import {
+  buildPharoFacadeTools,
+  parsePharoFacadeArguments,
+} from "./pharoFacade.js";
+import {
   PlexusRoutingTable,
   type GatewayImageRoute,
   type GatewayProjectRoute,
@@ -29,6 +34,8 @@ export interface PlexusGatewayOptions {
   healthClient?: PharoMcpHealthClient;
   projectOpen?: typeof openProject;
   projectClose?: typeof closeProject;
+  pharoTools?: readonly Tool[];
+  pharoScope?: ProjectReferenceInput;
 }
 
 export interface ProjectReferenceInput {
@@ -77,6 +84,11 @@ export interface RouteToImageResult {
     imageName: string;
     port: number;
   };
+  result: unknown;
+}
+
+export interface RoutedImageToolCall {
+  route: RouteToImageResult["route"];
   result: unknown;
 }
 
@@ -221,6 +233,9 @@ export class PlexusGateway {
   private readonly healthClient: PharoMcpHealthClient;
   private readonly projectOpen: typeof openProject;
   private readonly projectClose: typeof closeProject;
+  private readonly pharoTools: Tool[];
+  private readonly pharoToolNames: Set<string>;
+  private readonly pharoScope: ProjectReferenceInput;
 
   constructor(options: PlexusGatewayOptions = {}) {
     this.routingTable = options.routingTable ?? new PlexusRoutingTable();
@@ -230,6 +245,17 @@ export class PlexusGateway {
       options.healthClient ?? new HttpPharoMcpHealthClient();
     this.projectOpen = options.projectOpen ?? openProject;
     this.projectClose = options.projectClose ?? closeProject;
+    this.pharoTools = buildPharoFacadeTools(options.pharoTools ?? []);
+    this.pharoToolNames = new Set(this.pharoTools.map((tool) => tool.name));
+    this.pharoScope = options.pharoScope ?? {};
+  }
+
+  listPharoTools(): Tool[] {
+    return this.pharoTools.map((tool) => ({ ...tool }));
+  }
+
+  isPharoTool(name: string): boolean {
+    return this.pharoToolNames.has(name);
   }
 
   async open(input: ProjectOpenToolInput): Promise<GatewayToolResult<ProjectOpenResult>> {
@@ -299,39 +325,37 @@ export class PlexusGateway {
     input: RouteToImageToolInput,
   ): Promise<GatewayToolResult<RouteToImageResult>> {
     try {
-      const project = await this.resolveSingleProjectRoute(input);
+      return result(
+        await this.callRoutedImageTool(
+          input,
+          input.imageId,
+          input.toolName,
+          input.arguments ?? {},
+        ),
+      );
+    } catch (error) {
+      return failure(error);
+    }
+  }
 
-      const image = assertImageRoute(project, input.imageId);
-      if (image.status !== "running") {
-        throw new GatewayInputError(
-          `Image ${image.id} is not running; current status is ${image.status}`,
-        );
+  async callPharoTool(
+    toolName: string,
+    inputValue: unknown,
+  ): Promise<GatewayToolResult<unknown>> {
+    try {
+      if (!this.isPharoTool(toolName)) {
+        throw new GatewayInputError(`Unknown Pharo tool: ${toolName}`);
       }
 
-      const toolResult = await this.imageRouter.callTool(
-        {
-          projectId: project.projectId,
-          workspaceId: project.workspaceId,
-          targetId: project.targetId,
-          imageId: image.id,
-          imageName: image.imageName,
-          port: image.port,
-        },
-        input.toolName,
-        input.arguments ?? {},
+      const parsed = parsePharoFacadeArguments(inputValue);
+      const routed = await this.callRoutedImageTool(
+        this.pharoScope,
+        parsed.imageId,
+        toolName,
+        parsed.argumentsValue,
       );
 
-      return result({
-        route: {
-          projectId: project.projectId,
-          workspaceId: project.workspaceId,
-          targetId: project.targetId,
-          imageId: image.id,
-          imageName: image.imageName,
-          port: image.port,
-        },
-        result: toolResult,
-      });
+      return result(routed.result);
     } catch (error) {
       return failure(error);
     }
@@ -459,6 +483,63 @@ export class PlexusGateway {
     }
 
     return routes[0];
+  }
+
+  private async callRoutedImageTool(
+    projectReference: ProjectReferenceInput,
+    imageId: string,
+    toolName: string,
+    argumentsValue: Record<string, unknown>,
+  ): Promise<RoutedImageToolCall> {
+    const project = await this.resolveSingleProjectRoute(projectReference);
+
+    const image = this.resolveImageRoute(project, imageId);
+    if (!image.routable.ok) {
+      throw new GatewayInputError(image.routable.message);
+    }
+
+    const route = {
+      projectId: project.projectId,
+      workspaceId: project.workspaceId,
+      targetId: project.targetId,
+      imageId: image.id,
+      imageName: image.imageName,
+      port: image.port,
+    };
+
+    const toolResult = await this.imageRouter.callTool(
+      route,
+      toolName,
+      argumentsValue,
+    );
+
+    return {
+      route,
+      result: toolResult,
+    };
+  }
+
+  private resolveImageRoute(
+    project: GatewayProjectRoute,
+    imageId: string,
+  ): GatewayImageRoute {
+    const image = project.images.find((candidate) => candidate.id === imageId);
+    if (image) {
+      return image;
+    }
+
+    const otherWorkspace = this.routingTable.findImageOutsideTarget(
+      project.projectId,
+      project.targetId,
+      imageId,
+    );
+    if (otherWorkspace) {
+      throw new GatewayInputError(
+        `Image ${imageId} is registered outside workspace ${project.workspaceId}; requested target ${project.targetId}, found target ${otherWorkspace.targetId}`,
+      );
+    }
+
+    return assertImageRoute(project, imageId);
   }
 
   private async refreshProjectHealth(route: GatewayProjectRoute): Promise<void> {

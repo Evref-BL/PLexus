@@ -71,6 +71,70 @@ MCP_PL_COMMAND=node
 MCP_PL_ENTRY=C:\dev\code\git\MCP-PL\dist\index.js
 ```
 
+## Agent Pharo Access
+
+PLexus-managed Kanban agents should see two Pharo-facing MCP surfaces:
+
+- `pharo-launcher` for workspace-scoped image lifecycle.
+- `pharo` for routed image-local code tools.
+
+The agent workflow is:
+
+```text
+list/create/start an image with pharo-launcher
+load or pull the project in that image
+pass imageId to every pharo code tool call
+run tests and inspect/edit code through pharo
+```
+
+`pharo.tools/list` is stable for the project and is not rewritten when images
+start or stop. Image selection is data, carried by the `imageId` argument.
+
+See `docs/kanban-agent-pharo-access.md` for the full workflow and routing error
+model.
+
+Generated workspace MCP config should preserve unrelated user entries and add
+these managed server names:
+
+```json
+{
+  "servers": {
+    "pharo-launcher": {
+      "command": "plexus",
+      "args": ["mcp", "pharo-launcher"],
+      "env": {
+        "PLEXUS_AGENT_MCP_SURFACE": "pharo-launcher",
+        "PLEXUS_PROJECT_ROOT": "C:\\path\\to\\worktree",
+        "PLEXUS_PROJECT_ID": "project-123",
+        "PLEXUS_WORKSPACE_ID": "task-123",
+        "VIBE_KANBAN_WORKSPACE_ID": "task-123",
+        "PLEXUS_TARGET_ID": "project-123--task-123",
+        "PLEXUS_STATE_ROOT": "C:\\dev\\code\\git\\.plexus-state"
+      }
+    },
+    "pharo": {
+      "command": "plexus-gateway",
+      "args": ["--stdio"],
+      "env": {
+        "PLEXUS_GATEWAY_SURFACE": "pharo",
+        "PLEXUS_PROJECT_ROOT": "C:\\path\\to\\worktree",
+        "PLEXUS_PROJECT_ID": "project-123",
+        "PLEXUS_WORKSPACE_ID": "task-123",
+        "VIBE_KANBAN_WORKSPACE_ID": "task-123",
+        "PLEXUS_TARGET_ID": "project-123--task-123",
+        "PLEXUS_STATE_ROOT": "C:\\dev\\code\\git\\.plexus-state",
+        "PLEXUS_PHARO_TOOLS_JSON": "[...]"
+      }
+    }
+  }
+}
+```
+
+The `pharo-launcher` entry starts the PLexus-scoped launcher facade, not raw
+MCP-PL. The `pharo` entry starts the gateway in Pharo facade mode with the
+project tool contract serialized in `PLEXUS_PHARO_TOOLS_JSON`; the gateway adds
+the required `imageId` routing field to those tools.
+
 ## Repository Scripts
 
 Setup script:

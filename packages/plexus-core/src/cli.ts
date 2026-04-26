@@ -1,12 +1,14 @@
 #!/usr/bin/env node
 import { closeProject, ProjectCloseError } from "./projectClose.js";
 import { openProject, ProjectOpenError } from "./projectOpen.js";
+import { startScopedPharoLauncherServer } from "./scopedPharoLauncherServer.js";
 
 function usage(): string {
   return [
     "Usage:",
     "  plexus project open <path> [--workspace-id <id>] [--target-id <id>] [--state-root <path>]",
     "  plexus project close <path> [--workspace-id <id>] [--state-root <path>]",
+    "  plexus mcp pharo-launcher [--project-path <path>] [--workspace-id <id>] [--target-id <id>] [--state-root <path>]",
     "",
     "Environment:",
     "  PLEXUS_STATE_ROOT       Optional runtime state root.",
@@ -26,7 +28,10 @@ interface ParsedCommand {
 }
 
 function parseCommand(argv: string[]): ParsedCommand {
-  const [scope, command, projectPath, ...rest] = argv;
+  const [scope, command] = argv;
+  const projectCommandHasPath = scope === "project";
+  const projectPath = projectCommandHasPath ? argv[2] : undefined;
+  const rest = projectCommandHasPath ? argv.slice(3) : argv.slice(2);
   const parsed: ParsedCommand = { scope, command, projectPath };
 
   for (let index = 0; index < rest.length; index += 1) {
@@ -37,8 +42,13 @@ function parseCommand(argv: string[]): ParsedCommand {
     }
 
     switch (arg) {
+      case "--project-path":
       case "--state-root":
-        parsed.stateRoot = value;
+        if (arg === "--project-path") {
+          parsed.projectPath = value;
+        } else {
+          parsed.stateRoot = value;
+        }
         break;
       case "--workspace-id":
         parsed.workspaceId = value;
@@ -68,6 +78,22 @@ async function main(argv: string[]): Promise<number> {
     process.env.PLEXUS_WORKSPACE_ID ??
     process.env.VIBE_KANBAN_WORKSPACE_ID;
   const stateRoot = parsed.stateRoot ?? process.env.PLEXUS_STATE_ROOT;
+
+  if (parsed.scope === "mcp" && parsed.command === "pharo-launcher") {
+    const projectPath = parsed.projectPath ?? process.env.PLEXUS_PROJECT_ROOT;
+    if (!projectPath) {
+      console.error("plexus mcp pharo-launcher requires --project-path or PLEXUS_PROJECT_ROOT");
+      return 2;
+    }
+
+    await startScopedPharoLauncherServer({
+      projectRoot: projectPath,
+      stateRoot,
+      workspaceId,
+      targetId: parsed.targetId ?? process.env.PLEXUS_TARGET_ID,
+    });
+    return 0;
+  }
 
   if (
     parsed.scope !== "project" ||

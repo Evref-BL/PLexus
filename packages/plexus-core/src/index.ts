@@ -6,4 +6,6 @@ export * from "./projectConfig.js";
 export * from "./projectOpen.js";
 export * from "./projectStartupScript.js";
 export * from "./projectState.js";
+export * from "./scopedPharoLauncherServer.js";
 export * from "./target.js";
+export * from "./workspaceMcpConfig.js";

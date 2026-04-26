@@ -41,6 +41,20 @@ function parseMcpPlArgs(value: string | undefined): string[] | undefined {
   return value.split(" ").filter(Boolean);
 }
 
+function isWindowsPath(value: string): boolean {
+  return /^[a-zA-Z]:[\\/]/.test(value) || value.startsWith("\\\\");
+}
+
+function defaultMcpPlEntryForRepo(repoDir: string): string {
+  const pathApi = isWindowsPath(repoDir)
+    ? path.win32
+    : repoDir.startsWith("/")
+      ? path.posix
+      : path;
+
+  return pathApi.join(repoDir, "dist", "index.js");
+}
+
 export function loadMcpPlConfig(
   env: NodeJS.ProcessEnv = process.env,
 ): McpPlConfig {
@@ -67,7 +81,7 @@ export function loadMcpPlConfig(
   const repoDir = env.MCP_PL_REPO_DIR;
   const entry =
     env.MCP_PL_ENTRY ??
-    (repoDir ? `${repoDir}\\dist\\index.js` : undefined);
+    (repoDir ? defaultMcpPlEntryForRepo(repoDir) : undefined);
 
   return {
     source: "env",

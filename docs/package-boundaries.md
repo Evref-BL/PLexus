@@ -47,6 +47,8 @@ Project/workspace/image orchestration and lifecycle.
 - Policy around targets/workspaces (how to map Kanban/worktrees/images)
 - Calling MCP-PL for PharoLauncher operations
 - Registering routes in the gateway and choosing where tool calls should go
+- Exposing the scoped agent-facing `pharo-launcher` facade, because only PLexus
+  has workspace state and image naming policy
 
 **Depends on**
 
@@ -83,6 +85,15 @@ PLexus Gateway routing tools:
 
 Until the move is completed, you may still see lifecycle tools implemented in `@plexus/gateway`. Treat that as transitional code: new lifecycle features belong in PLexus, and new routing features belong in the gateway.
 
+Agent-facing Kanban MCP surfaces:
+
+- `pharo-launcher`: belongs to PLexus orchestration. It is a scoped facade over
+  MCP-PL and must not expose raw host-wide PharoLauncher mutation.
+- `pharo`: belongs to the routing layer. It is a stable facade over the
+  project-wide Pharo MCP contract and routes calls by explicit `imageId`.
+
+See `docs/kanban-agent-pharo-access.md` for the scoped launcher design.
+
 ## Transitional Notes (Repo Today)
 
 This repository currently contains transitional coupling that should be removed to reach the target boundary. For example:
@@ -95,5 +106,5 @@ This repository currently contains transitional coupling that should be removed 
 Use these rules of thumb:
 
 - **Touches PharoLauncher or its CLI contract** → MCP-PL
-- **Opens/closes a project/workspace, manages state, allocates ports, writes scripts, polls health** → PLexus
+- **Scopes PharoLauncher operations to a PLexus project/workspace, opens/closes a project/workspace, manages state, allocates ports, writes scripts, polls health** → PLexus
 - **Registers routes, reports registered targets, forwards tool calls to an image MCP server** → PLexus Gateway

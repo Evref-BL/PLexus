@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 
 export * from "./gateway.js";
 export * from "./imageMcpRouter.js";
+export * from "./pharoFacade.js";
 export * from "./routingTable.js";
 export * from "./server.js";
 

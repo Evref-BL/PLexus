@@ -5,8 +5,10 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
+  type CallToolResult,
+  type Tool,
 } from "@modelcontextprotocol/sdk/types.js";
-import { PlexusGateway } from "./gateway.js";
+import { PlexusGateway, type ProjectReferenceInput } from "./gateway.js";
 
 const stringSchema = { type: "string", minLength: 1 } as const;
 const optionalStringSchema = { type: "string", minLength: 1 } as const;
@@ -100,6 +102,18 @@ export interface GatewayCliOptions {
   port: number;
 }
 
+export type GatewaySurface = "combined" | "gateway" | "pharo";
+
+export interface GatewayServerOptions {
+  surface?: GatewaySurface;
+}
+
+export interface GatewayEnvironmentOptions {
+  surface: GatewaySurface;
+  pharoTools: Tool[];
+  pharoScope: ProjectReferenceInput;
+}
+
 type ToolResult = {
   content: Array<{ type: "text"; text: string }>;
   isError?: boolean;
@@ -112,7 +126,31 @@ function jsonResult(value: unknown, isError = false): ToolResult {
   };
 }
 
+function isCallToolResult(value: unknown): value is CallToolResult {
+  return (
+    Boolean(value) &&
+    typeof value === "object" &&
+    Array.isArray((value as { content?: unknown }).content)
+  );
+}
+
+function directToolResult(value: unknown): ToolResult {
+  if (isCallToolResult(value)) {
+    return value as ToolResult;
+  }
+
+  return jsonResult(value);
+}
+
 export function createGatewayServer(gateway = new PlexusGateway()): Server {
+  return createGatewayServerWithOptions(gateway);
+}
+
+export function createGatewayServerWithOptions(
+  gateway = new PlexusGateway(),
+  options: GatewayServerOptions = {},
+): Server {
+  const surface = options.surface ?? "combined";
   const server = new Server(
     {
       name: "plexus-gateway",
@@ -126,10 +164,36 @@ export function createGatewayServer(gateway = new PlexusGateway()): Server {
   );
 
   server.setRequestHandler(ListToolsRequestSchema, async () => ({
-    tools: [...gatewayTools],
+    tools: [
+      ...(surface === "pharo" ? [] : gatewayTools),
+      ...(surface === "gateway" ? [] : gateway.listPharoTools()),
+    ],
   }));
 
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
+    if (gateway.isPharoTool(request.params.name)) {
+      const result = await gateway.callPharoTool(
+        request.params.name,
+        request.params.arguments ?? {},
+      );
+
+      if (!result.ok) {
+        return jsonResult(result, true);
+      }
+
+      return directToolResult(result.data);
+    }
+
+    if (surface === "pharo") {
+      return jsonResult(
+        {
+          ok: false,
+          error: `Unknown Pharo tool: ${request.params.name}`,
+        },
+        true,
+      );
+    }
+
     const result = await gateway.handleTool(
       request.params.name,
       request.params.arguments ?? {},
@@ -141,8 +205,71 @@ export function createGatewayServer(gateway = new PlexusGateway()): Server {
   return server;
 }
 
+function parseJsonArrayEnv(value: string | undefined, name: string): unknown[] {
+  if (value === undefined || value.trim().length === 0) {
+    return [];
+  }
+
+  const parsed = JSON.parse(value) as unknown;
+  if (!Array.isArray(parsed)) {
+    throw new Error(`${name} must be a JSON array`);
+  }
+
+  return parsed;
+}
+
+function parseGatewaySurface(value: string | undefined): GatewaySurface {
+  if (value === undefined || value.trim().length === 0) {
+    return "combined";
+  }
+
+  if (value === "combined" || value === "gateway" || value === "pharo") {
+    return value;
+  }
+
+  throw new Error(`Unsupported PLexus gateway surface: ${value}`);
+}
+
+export function parseGatewayEnvironmentOptions(
+  env: NodeJS.ProcessEnv = process.env,
+): GatewayEnvironmentOptions {
+  return {
+    surface: parseGatewaySurface(env.PLEXUS_GATEWAY_SURFACE),
+    pharoTools: parseJsonArrayEnv(
+      env.PLEXUS_PHARO_TOOLS_JSON,
+      "PLEXUS_PHARO_TOOLS_JSON",
+    ) as Tool[],
+    pharoScope: {
+      projectPath: env.PLEXUS_PROJECT_ROOT,
+      projectId: env.PLEXUS_PROJECT_ID,
+      workspaceId: env.PLEXUS_WORKSPACE_ID ?? env.VIBE_KANBAN_WORKSPACE_ID,
+      targetId: env.PLEXUS_TARGET_ID,
+      stateRoot: env.PLEXUS_STATE_ROOT,
+    },
+  };
+}
+
+export function createGatewayFromEnvironment(
+  env: NodeJS.ProcessEnv = process.env,
+): { gateway: PlexusGateway; serverOptions: GatewayServerOptions } {
+  const options = parseGatewayEnvironmentOptions(env);
+  return {
+    gateway: new PlexusGateway({
+      pharoTools: options.pharoTools,
+      pharoScope: options.pharoScope,
+    }),
+    serverOptions: {
+      surface: options.surface,
+    },
+  };
+}
+
 export async function startGatewayServer(): Promise<void> {
-  const server = createGatewayServer();
+  const environment = createGatewayFromEnvironment();
+  const server = createGatewayServerWithOptions(
+    environment.gateway,
+    environment.serverOptions,
+  );
   const transport = new StdioServerTransport();
   await server.connect(transport);
 }
@@ -194,12 +321,31 @@ export async function startGatewayHttpServer(
   const host = options.host ?? "127.0.0.1";
   const healthPath = options.healthPath ?? "/health";
   const mcpPath = options.mcpPath ?? "/mcp";
-  const gatewayServer = createGatewayServer();
-  const transport = new StreamableHTTPServerTransport({
-    sessionIdGenerator: undefined,
-  });
+  const environment = createGatewayFromEnvironment();
+  const activeTransports = new Set<StreamableHTTPServerTransport>();
 
-  await gatewayServer.connect(transport);
+  async function handleMcpRequest(
+    request: http.IncomingMessage,
+    response: http.ServerResponse,
+  ): Promise<void> {
+    const gatewayServer = createGatewayServerWithOptions(
+      environment.gateway,
+      environment.serverOptions,
+    );
+    const transport = new StreamableHTTPServerTransport({
+      sessionIdGenerator: undefined,
+      enableJsonResponse: true,
+    });
+
+    activeTransports.add(transport);
+    response.once("close", () => {
+      activeTransports.delete(transport);
+      void transport.close();
+    });
+
+    await gatewayServer.connect(transport);
+    await transport.handleRequest(request, response);
+  }
 
   const server = http.createServer((request, response) => {
     void (async () => {
@@ -226,7 +372,7 @@ export async function startGatewayHttpServer(
       }
 
       if (url.pathname === mcpPath) {
-        await transport.handleRequest(request, response);
+        await handleMcpRequest(request, response);
         return;
       }
 
@@ -248,7 +394,10 @@ export async function startGatewayHttpServer(
   });
 
   server.on("close", () => {
-    void transport.close();
+    for (const transport of activeTransports) {
+      void transport.close();
+    }
+    activeTransports.clear();
   });
 
   await listen(server, options.port, host);

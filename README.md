@@ -31,6 +31,7 @@ pharo/
   worker/                 In-image worker bootstrap scripts
 docs/
   architecture.md
+  kanban-agent-pharo-access.md
   package-boundaries.md
   project-model.md
   vibe-kanban-setup.md
@@ -124,7 +125,12 @@ Callers can pass a separate state root when the state should live outside the ma
 
 The default `workspaceId` is the project root directory name. Callers can override it with `--workspace-id`, `PLEXUS_WORKSPACE_ID`, or `VIBE_KANBAN_WORKSPACE_ID`. The default `targetId` is `<project-id>--<workspace-id>`.
 
-The state tracks the project id, workspace id, target id, each image id, rendered image name, assigned port, optional process pid, and status: `starting`, `running`, `stopped`, or `failed`. Runtime state can be saved and loaded through `saveProjectState(filePath, state)` and `loadProjectState(filePath)`.
+The state tracks the project id, workspace id, target id, optional project Pharo
+MCP contract metadata, and each image id, rendered image name, assigned port,
+optional process pid, status, and optional image Pharo MCP contract metadata.
+Image status values are `starting`, `running`, `stopped`, or `failed`. Runtime
+state can be saved and loaded through `saveProjectState(filePath, state)` and
+`loadProjectState(filePath)`.
 
 ## Image Startup Scripts
 
@@ -175,8 +181,13 @@ Target ownership:
 
 - Project/workspace lifecycle tools (`plexus_project_open`, `plexus_project_close`, `plexus_project_status`) live in PLexus (currently still exposed by the gateway during the split).
 - Routing tools live in the gateway (`plexus_route_to_image` plus gateway-only status/register/unregister tools).
+- Kanban agents should use scoped MCP surfaces: `pharo-launcher` for image
+  lifecycle inside the current workspace and `pharo` for routed image-local code
+  tools. See `docs/kanban-agent-pharo-access.md`.
 
-The gateway keeps an in-memory routing table keyed by `targetId` and forwards MCP tool calls to the selected image server at `http://127.0.0.1:<port>/mcp`.
+The gateway keeps an in-memory routing table keyed by `targetId`, reports
+per-image routability status, and forwards MCP tool calls to the selected image
+server at `http://127.0.0.1:<port>/mcp`.
 
 ## Prototype Open/Close Check
 

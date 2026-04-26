@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   saveProjectState,
@@ -40,6 +41,21 @@ const runningState: ProjectState = {
       status: "stopped",
     },
   ],
+};
+
+const pharoEvalTool: Tool = {
+  name: "pharo_eval",
+  description: "Evaluate Smalltalk code in a Pharo image.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      code: {
+        type: "string",
+      },
+    },
+    required: ["code"],
+    additionalProperties: false,
+  },
 };
 
 class FakeImageRouter implements ImageMcpToolRouter {
@@ -284,6 +300,396 @@ describe("PlexusGateway", () => {
         content: [{ type: "text", text: "routed" }],
       },
     });
+  });
+
+  it("exposes stable Pharo facade tools with a required imageId route field", async () => {
+    const stoppedState: ProjectState = {
+      ...runningState,
+      images: runningState.images.map((image) => ({
+        ...image,
+        status: "stopped" as const,
+      })),
+    };
+    const gateway = new PlexusGateway({
+      pharoTools: [pharoEvalTool],
+      projectOpen: async (
+        options: ProjectOpenOptions,
+      ): Promise<ProjectOpenResult> => ({
+        ok: true,
+        projectRoot: path.resolve(options.projectRoot),
+        statePath: "state.json",
+        state: runningState,
+        failures: [],
+      }),
+      projectClose: async (
+        options: ProjectCloseOptions,
+      ): Promise<ProjectCloseResult> => ({
+        ok: true,
+        projectRoot: path.resolve(options.projectRoot),
+        statePath: "state.json",
+        state: stoppedState,
+        stoppedImages: stoppedState.images,
+        failures: [],
+      }),
+    });
+    const projectRoot = makeTempDir("plexus-project-");
+    const initialTools = gateway.listPharoTools();
+
+    expect(initialTools).toMatchObject([
+      {
+        name: "pharo_eval",
+        inputSchema: {
+          type: "object",
+          properties: {
+            imageId: {
+              type: "string",
+              minLength: 1,
+            },
+            code: {
+              type: "string",
+            },
+          },
+          required: ["imageId", "code"],
+          additionalProperties: false,
+        },
+      },
+    ]);
+
+    await gateway.handleTool("plexus_project_open", {
+      projectPath: projectRoot,
+      workspaceId: "worktree-a",
+    });
+    await gateway.handleTool("plexus_project_close", {
+      projectPath: projectRoot,
+      workspaceId: "worktree-a",
+    });
+
+    expect(gateway.listPharoTools()).toEqual(initialTools);
+  });
+
+  it("routes Pharo facade calls to the selected image and strips imageId", async () => {
+    const imageRouter = new FakeImageRouter();
+    const twoImageState: ProjectState = {
+      ...runningState,
+      images: runningState.images.map((image, index) => ({
+        ...image,
+        pid: 1234 + index,
+        status: "running" as const,
+      })),
+    };
+    const gateway = new PlexusGateway({
+      imageRouter,
+      pharoTools: [pharoEvalTool],
+      pharoScope: {
+        projectId: "project-123",
+        workspaceId: "worktree-a",
+      },
+      projectOpen: async (
+        options: ProjectOpenOptions,
+      ): Promise<ProjectOpenResult> => ({
+        ok: true,
+        projectRoot: path.resolve(options.projectRoot),
+        statePath: "state.json",
+        state: twoImageState,
+        failures: [],
+      }),
+    });
+
+    await gateway.handleTool("plexus_project_open", {
+      projectPath: makeTempDir("plexus-project-"),
+      workspaceId: "worktree-a",
+    });
+
+    expect(
+      data(
+        await gateway.callPharoTool("pharo_eval", {
+          imageId: "dev",
+          code: "1 + 1",
+        }),
+      ),
+    ).toEqual({
+      content: [{ type: "text", text: "routed" }],
+    });
+    expect(
+      data(
+        await gateway.callPharoTool("pharo_eval", {
+          imageId: "baseline",
+          code: "2 + 2",
+        }),
+      ),
+    ).toEqual({
+      content: [{ type: "text", text: "routed" }],
+    });
+
+    expect(imageRouter.calls).toEqual([
+      {
+        route: {
+          projectId: "project-123",
+          workspaceId: "worktree-a",
+          targetId: "project-123--worktree-a",
+          imageId: "dev",
+          imageName: "MyProject-dev",
+          port: 7123,
+        },
+        toolName: "pharo_eval",
+        argumentsValue: {
+          code: "1 + 1",
+        },
+      },
+      {
+        route: {
+          projectId: "project-123",
+          workspaceId: "worktree-a",
+          targetId: "project-123--worktree-a",
+          imageId: "baseline",
+          imageName: "MyProject-baseline",
+          port: 7124,
+        },
+        toolName: "pharo_eval",
+        argumentsValue: {
+          code: "2 + 2",
+        },
+      },
+    ]);
+  });
+
+  it("returns focused Pharo facade errors before forwarding", async () => {
+    const imageRouter = new FakeImageRouter();
+    const gateway = new PlexusGateway({
+      imageRouter,
+      pharoTools: [pharoEvalTool],
+      pharoScope: {
+        projectId: "project-123",
+        workspaceId: "worktree-a",
+      },
+      projectOpen: async (
+        options: ProjectOpenOptions,
+      ): Promise<ProjectOpenResult> => ({
+        ok: true,
+        projectRoot: path.resolve(options.projectRoot),
+        statePath: "state.json",
+        state: runningState,
+        failures: [],
+      }),
+    });
+
+    await gateway.handleTool("plexus_project_open", {
+      projectPath: makeTempDir("plexus-project-"),
+      workspaceId: "worktree-a",
+    });
+
+    await expect(
+      gateway.callPharoTool("pharo_eval", {
+        code: "1 + 1",
+      }),
+    ).resolves.toMatchObject({
+      ok: false,
+      error: "imageId is required",
+    });
+    await expect(
+      gateway.callPharoTool("pharo_eval", {
+        imageId: "missing",
+        code: "1 + 1",
+      }),
+    ).resolves.toMatchObject({
+      ok: false,
+      error: "No route is registered for image missing in project project-123",
+    });
+    await expect(
+      gateway.callPharoTool("pharo_eval", {
+        imageId: "baseline",
+        code: "1 + 1",
+      }),
+    ).resolves.toMatchObject({
+      ok: false,
+      error: "Image baseline is not running; current status is stopped",
+    });
+    expect(imageRouter.calls).toEqual([]);
+  });
+
+  it("rejects Pharo facade calls for image ids outside the scoped workspace", async () => {
+    const imageRouter = new FakeImageRouter();
+    const stateA: ProjectState = {
+      ...runningState,
+      workspaceId: "worktree-a",
+      targetId: "project-123--worktree-a",
+      images: [
+        {
+          id: "dev",
+          imageName: "MyProject-worktree-a-dev",
+          assignedPort: 7123,
+          pid: 1234,
+          status: "running",
+        },
+      ],
+    };
+    const stateB: ProjectState = {
+      ...runningState,
+      workspaceId: "worktree-b",
+      targetId: "project-123--worktree-b",
+      images: [
+        {
+          id: "review",
+          imageName: "MyProject-worktree-b-review",
+          assignedPort: 7125,
+          pid: 5678,
+          status: "running",
+        },
+      ],
+    };
+    const gateway = new PlexusGateway({
+      imageRouter,
+      pharoTools: [pharoEvalTool],
+      pharoScope: {
+        projectId: "project-123",
+        workspaceId: "worktree-a",
+      },
+      projectOpen: async (
+        options: ProjectOpenOptions,
+      ): Promise<ProjectOpenResult> => {
+        const workspaceId = options.workspaceId ?? "worktree-a";
+        const state = workspaceId === "worktree-b" ? stateB : stateA;
+        return {
+          ok: true,
+          projectRoot: path.resolve(options.projectRoot),
+          statePath: statePath("state-root", workspaceId),
+          state,
+          failures: [],
+        };
+      },
+    });
+
+    await gateway.handleTool("plexus_project_open", {
+      projectPath: makeTempDir("plexus-project-a-"),
+      workspaceId: "worktree-a",
+    });
+    await gateway.handleTool("plexus_project_open", {
+      projectPath: makeTempDir("plexus-project-b-"),
+      workspaceId: "worktree-b",
+    });
+
+    await expect(
+      gateway.callPharoTool("pharo_eval", {
+        imageId: "review",
+        code: "1 + 1",
+      }),
+    ).resolves.toMatchObject({
+      ok: false,
+      error:
+        "Image review is registered outside workspace worktree-a; requested target project-123--worktree-a, found target project-123--worktree-b",
+    });
+    expect(imageRouter.calls).toEqual([]);
+  });
+
+  it("reports and rejects Pharo MCP contract mismatches before forwarding", async () => {
+    const imageRouter = new FakeImageRouter();
+    const contractState: ProjectState = {
+      ...runningState,
+      pharoMcpContract: {
+        id: "project-contract",
+        hash: "sha256:expected",
+      },
+      images: [
+        {
+          id: "dev",
+          imageName: "MyProject-dev",
+          assignedPort: 7123,
+          pid: 1234,
+          status: "running",
+          pharoMcpContract: {
+            id: "project-contract",
+            hash: "sha256:expected",
+            status: "matching",
+          },
+        },
+        {
+          id: "baseline",
+          imageName: "MyProject-baseline",
+          assignedPort: 7124,
+          pid: 5678,
+          status: "running",
+          pharoMcpContract: {
+            id: "other-contract",
+            hash: "sha256:actual",
+            status: "mismatched",
+          },
+        },
+      ],
+    };
+    const gateway = new PlexusGateway({
+      imageRouter,
+      pharoTools: [pharoEvalTool],
+      pharoScope: {
+        projectId: "project-123",
+        workspaceId: "worktree-a",
+      },
+      projectOpen: async (
+        options: ProjectOpenOptions,
+      ): Promise<ProjectOpenResult> => ({
+        ok: true,
+        projectRoot: path.resolve(options.projectRoot),
+        statePath: "state.json",
+        state: contractState,
+        failures: [],
+      }),
+    });
+
+    await gateway.handleTool("plexus_project_open", {
+      projectPath: makeTempDir("plexus-project-"),
+      workspaceId: "worktree-a",
+    });
+
+    const status = data(
+      await gateway.handleTool("plexus_project_status", {
+        projectId: "project-123",
+        workspaceId: "worktree-a",
+      }),
+    );
+    expect(status).toMatchObject({
+      pharoMcpContract: {
+        id: "project-contract",
+        hash: "sha256:expected",
+      },
+      images: [
+        {
+          id: "dev",
+          routable: {
+            ok: true,
+            code: "ready",
+          },
+        },
+        {
+          id: "baseline",
+          routable: {
+            ok: false,
+            code: "contract_mismatch",
+          },
+        },
+      ],
+    });
+
+    await expect(
+      gateway.callPharoTool("pharo_eval", {
+        imageId: "baseline",
+        code: "1 + 1",
+      }),
+    ).resolves.toMatchObject({
+      ok: false,
+      error: "Image baseline Pharo MCP contract is marked as mismatched",
+    });
+    expect(imageRouter.calls).toEqual([]);
+
+    expect(
+      data(
+        await gateway.callPharoTool("pharo_eval", {
+          imageId: "dev",
+          code: "1 + 1",
+        }),
+      ),
+    ).toEqual({
+      content: [{ type: "text", text: "routed" }],
+    });
+    expect(imageRouter.calls).toHaveLength(1);
   });
 
   it("refuses to route to stopped images", async () => {

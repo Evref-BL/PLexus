@@ -13,6 +13,19 @@ export const defaultProjectPortRange = {
 } as const;
 
 export type ProjectImageStatus = "starting" | "running" | "stopped" | "failed";
+export type PharoMcpContractStatus = "unknown" | "matching" | "mismatched";
+
+export interface PharoMcpContractReference {
+  id?: string;
+  hash?: string;
+}
+
+export interface ProjectImagePharoMcpContractState
+  extends PharoMcpContractReference {
+  status?: PharoMcpContractStatus;
+  expectedId?: string;
+  expectedHash?: string;
+}
 
 export interface ProjectImageState {
   id: string;
@@ -20,6 +33,7 @@ export interface ProjectImageState {
   assignedPort: number;
   pid?: number;
   status: ProjectImageStatus;
+  pharoMcpContract?: ProjectImagePharoMcpContractState;
 }
 
 export interface ProjectState {
@@ -27,6 +41,7 @@ export interface ProjectState {
   projectName: string;
   workspaceId: string;
   targetId: string;
+  pharoMcpContract?: PharoMcpContractReference;
   images: ProjectImageState[];
   updatedAt: string;
 }
