@@ -1,71 +1,34 @@
 # PLexus
 
-PLexus is the orchestration layer for using Codex, Git worktrees, Vibe Kanban, pharo-launcher-mcp, and image-scoped Pharo MCP workers together.
+PLexus manages Pharo Launcher profiles and per-image MCP routing for agent-driven development.
 
-The name keeps `PL` uppercase for PharoLauncher.
+It sits between agents and Pharo Launcher: PLexus opens declared images, keeps
+runtime state outside those images, and gives agents a stable MCP route to the
+selected image.
 
-## Project Split
+## What PLexus Does
 
-- `PLexus` (`@plexus/core` + CLI): orchestration and lifecycle for projects/workspaces/images. Depends on the gateway and pharo-launcher-mcp.
-- `PLexus Gateway` (`@plexus/gateway`): routing-only MCP server. Owns route registration/status and forwarding MCP calls to image-scoped MCP servers. Must not depend on PLexus or pharo-launcher-mcp.
-- `pharo-launcher-mcp` (`@evref-bl/pharo-launcher-mcp`): standalone MCP server for PharoLauncher. Wraps the PharoLauncher CLI and process lifecycle. Must not depend on PLexus or the gateway.
+- Opens and closes Pharo images from configured Pharo Launcher profiles through
+  `pharo-launcher-mcp`.
+- Keeps image names, MCP ports, and runtime state isolated per agent run.
+- Exposes a scoped `pharo-launcher` MCP surface for image lifecycle.
+- Routes `pharo` MCP tool calls to a selected image by `imageId`.
+- Preserves Pharo Launcher as the low-level profile and image provider.
 
-See `docs/package-boundaries.md` for the final package boundary, dependency direction, and tool ownership.
+## Requirements
 
-## Goals
+- Node.js `>=24` with `npm` and `npx`.
+- Pharo Launcher.
+- A project with a `plexus.project.json`.
+- Vibe Kanban and Codex when using PLexus for agent-driven work.
 
-- Keep one Git worktree per coding task.
-- Keep one Pharo image per worktree when image state matters.
-- Keep the recovery and routing layer outside Pharo images.
-- Let Vibe Kanban manage issues, workspaces, branches, and agent sessions.
-- Let pharo-launcher-mcp manage PharoLauncher access.
-- Let PLexus manage target policy, Kanban workflows, worker health, and routing decisions.
-
-## Repository Layout
-
-```text
-packages/
-  plexus-core/            Shared config, target registry, and orchestration types
-  plexus-gateway/         Routing-only MCP gateway (register/status/routes to images)
-pharo/
-  worker/                 In-image worker bootstrap scripts
-docs/
-  architecture.md
-  kanban-agent-pharo-access.md
-  package-boundaries.md
-  project-model.md
-  vibe-kanban-setup.md
-  roadmap.md
-scripts/
-  verify-environment.ps1
-```
-
-## Prerequisites
-
-- Git
-- Node.js with `npm` and `npx`
-- Vibe Kanban: `npx vibe-kanban`
-- pharo-launcher-mcp available as the `pharo-launcher-mcp` npm package. During local development, this repository depends on the sibling repo at `C:\dev\code\git\pharo-launcher-mcp`.
-- Codex authenticated and configured in Vibe Kanban
-
-On Windows, installing Node.js LTS via Winget should make `node`, `npm`, and `npx` available from fresh PowerShell and CMD terminals.
-
-## pharo-launcher-mcp Loading
-
-`npm install` installs pharo-launcher-mcp as a dependency of PLexus. By default, PLexus resolves the installed `pharo-launcher-mcp` package and launches it with the current Node executable.
-
-Environment variables are only needed for overrides, for example when testing an unpackaged sibling checkout:
-
-```powershell
-$env:PHARO_LAUNCHER_MCP_COMMAND="node"
-$env:PHARO_LAUNCHER_MCP_ENTRY="C:\dev\code\git\pharo-launcher-mcp\dist\index.js"
-```
+`npm install` installs `pharo-launcher-mcp` as a package dependency. Local
+source-checkout overrides are only needed for PLexus development; see
+`docs/development.md`.
 
 ## Project Config
 
-The developer-facing project/worktree/target arity is documented in `docs/project-model.md`.
-
-Each managed project has a `plexus.project.json` at its root:
+Add `plexus.project.json` to the project root you want PLexus to manage:
 
 ```json
 {
@@ -90,136 +53,76 @@ Each managed project has a `plexus.project.json` at its root:
 }
 ```
 
-`@plexus/core` validates this file through `loadProjectConfig(projectRoot)`. Image ids, image names, and MCP ports must be unique inside a project.
-For parallel worktrees, prefer image-name templates and omit `mcp.port`. PLexus renders `{projectId}`, `{projectName}`, `{workspaceId}`, `{targetId}`, and `{imageId}` in `imageName`, then allocates a runtime port from the prototype range `7100-7199`.
-If a fixed `mcp.port` is configured and another workspace for the same project is already using it, `project open` fails instead of colliding.
+Use image-name templates such as `{workspaceId}` when several task worktrees may
+run in parallel. Omit `mcp.port` unless the project intentionally needs a fixed
+port for a single local workspace.
 
-Each image can configure its image-local Git transport:
-
-```json
-{
-  "git": {
-    "transport": "ssh",
-    "ssh": {
-      "publicKey": "C:\\Users\\you\\.ssh\\id_rsa.pub",
-      "privateKey": "C:\\Users\\you\\.ssh\\id_rsa"
-    }
-  }
-}
-```
-
-`git.transport` can be `ssh`, `https`, or `http`; omitted config defaults to
-`ssh`. SSH keys are optional, so an image can use the platform SSH agent or its
-existing Iceberg settings. For `https` or `http`, `git.plainCredentials` can
-provide a username and password/token when the repository is not public.
-
-## Runtime State
-
-`@plexus/core` also provides path helpers for project runtime state. The default path is:
+Supported image-name tokens are:
 
 ```text
-.plexus/projects/<project-id>/workspaces/<workspace-id>/state.json
+{projectId}
+{projectName}
+{workspaceId}
+{targetId}
+{imageId}
 ```
 
-Callers can pass a separate state root when the state should live outside the managed repository. For parallel Vibe Kanban worktrees, use the same `PLEXUS_STATE_ROOT` for every worktree so PLexus can reserve ports across sibling workspaces.
+`git.transport` can be `ssh`, `https`, or `http`; it defaults to `ssh`.
 
-The default `workspaceId` is the project root directory name. Callers can override it with `--workspace-id`, `PLEXUS_WORKSPACE_ID`, or `VIBE_KANBAN_WORKSPACE_ID`. The default `targetId` is `<project-id>--<workspace-id>`.
+## Basic Usage
 
-The state tracks the project id, workspace id, target id, optional project Pharo
-MCP contract metadata, and each image id, rendered image name, assigned port,
-optional process pid, status, and optional image Pharo MCP contract metadata.
-Image status values are `starting`, `running`, `stopped`, or `failed`. Runtime
-state can be saved and loaded through `saveProjectState(filePath, state)` and
-`loadProjectState(filePath)`.
+Install and build from a source checkout:
 
-## Image Startup Scripts
-
-Before launching an image, PLexus can generate a Smalltalk startup script into runtime state:
-
-```text
-.plexus/projects/<project-id>/workspaces/<workspace-id>/scripts/start-<image-id>.st
-```
-
-`writeProjectImageStartupScript(...)` writes a script that configures the image's
-Iceberg Git transport/credentials, loads the configured `mcp.loadScript` if
-present, falls back to the `Evref-BL/MCP` Metacello load, starts MCP on the
-assigned runtime port, and registers the server in `Smalltalk globals` as
-`#PLexusMCPServer`. The selected transport is also recorded as
-`#PLexusGitTransport` for image-local worker code.
-
-## First Commands
-
-```powershell
+```sh
 npm install
 npm run build
-npm test
 ```
 
-Open a configured project:
+Open a configured PLexus runtime target:
 
-```powershell
-plexus project open C:\path\to\project --workspace-id task-123 --state-root C:\dev\code\git\.plexus-state
+```sh
+plexus project open <project-root> --workspace-id task-123 --state-root <shared-state-root>
 ```
 
-`project open` loads `plexus.project.json`, resolves runtime ports, writes startup scripts, launches active PharoLauncher images through pharo-launcher-mcp, polls process state and Pharo MCP health, then persists `.plexus/projects/<project-id>/workspaces/<workspace-id>/state.json` or the equivalent path under `--state-root`.
+Close it:
 
-Close a configured project:
-
-```powershell
-plexus project close C:\path\to\project --workspace-id task-123 --state-root C:\dev\code\git\.plexus-state
+```sh
+plexus project close <project-root> --workspace-id task-123 --state-root <shared-state-root>
 ```
 
-`project close` loads runtime state, calls pharo-launcher-mcp `pharo_launcher_process_kill` for each image marked `running`, clears its process id, marks it `stopped`, and persists the updated state.
+Run the scoped launcher MCP surface for an agent run:
 
-Start the PLexus MCP gateway:
+```sh
+plexus mcp pharo-launcher --project-path <project-root> --workspace-id task-123 --state-root <shared-state-root>
+```
 
-```powershell
+Start the routing gateway:
+
+```sh
 plexus-gateway
 ```
 
-Target ownership:
+The shared state root should be the same for sibling worktrees so PLexus can
+avoid image-name and port collisions.
 
-- Project/workspace lifecycle tools (`plexus_project_open`, `plexus_project_close`, `plexus_project_status`) live in PLexus (currently still exposed by the gateway during the split).
-- Routing tools live in the gateway (`plexus_route_to_image` plus gateway-only status/register/unregister tools).
-- Kanban agents should use scoped MCP surfaces: `pharo-launcher` for image
-  lifecycle inside the current workspace and `pharo` for routed image-local code
-  tools. See `docs/kanban-agent-pharo-access.md`.
+## Agent Workflow
 
-The gateway keeps an in-memory routing table keyed by `targetId`, reports
-per-image routability status, and forwards MCP tool calls to the selected image
-server at `http://127.0.0.1:<port>/mcp`.
+Kanban-spawned agents should use two MCP surfaces:
 
-## Prototype Open/Close Check
+- `pharo-launcher`: list, create, start, inspect, and stop images scoped to the
+  current PLexus target.
+- `pharo`: run project Pharo tools against one image by passing `imageId`.
 
-Run one real-image lifecycle check after building:
+The agent chooses or starts an image through `pharo-launcher`, then passes the
+returned `imageId` to every `pharo` call. Tool names stay stable while image
+availability is represented as runtime data.
 
-```powershell
-npm run build
-npm run prototype:open-close -- --imageName MyExistingImage --workspaceId task-123
-```
+## More Documentation
 
-The prototype script creates a disposable `plexus.project.json`, verifies the image exists in PharoLauncher, refuses to continue if that image is already running, calls `project open`, confirms the process and health check, calls `project close`, and confirms the process is gone. It does not exercise gateway routing yet; that should come after image startup is reliable.
-
-Verify the local machine:
-
-```powershell
-.\scripts\verify-environment.ps1
-```
-
-Start Vibe Kanban:
-
-```powershell
-npx vibe-kanban
-```
-
-Build the standalone PharoLauncher MCP server before refreshing the local file dependency:
-
-```powershell
-cd C:\dev\code\git\pharo-launcher-mcp
-npm install
-npm run build
-cd C:\dev\code\git\PLexus
-npm install
-```
-
-PLexus should call the installed pharo-launcher-mcp package rather than assuming a standalone `pharo-launcher` executable exists.
+- `docs/kanban-agent-pharo-access.md`: agent-facing Pharo workflow and routing
+  errors.
+- `docs/vibe-kanban-setup.md`: Vibe Kanban workspace setup.
+- `docs/project-model.md`: project, workspace, target, and image vocabulary.
+- `docs/development.md`: repository layout, build/test workflow, dependency
+  overrides, and prototype checks.
+- `docs/package-boundaries.md`: package ownership and dependency direction.
