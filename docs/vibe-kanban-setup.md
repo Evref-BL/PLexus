@@ -24,13 +24,16 @@ C:\dev\code\git\PLexus
 
 Use `main` as the target branch.
 
-Keep pharo-launcher-mcp as a separate repository:
+Keep MCP-PL as a separate repository:
 
 ```text
-C:\dev\code\git\pharo-launcher-mcp
+C:\dev\code\git\MCP-PL
 ```
 
-It can be added as a second Vibe Kanban project when work is specifically about the PharoLauncher MCP server. PLexus installs pharo-launcher-mcp as an npm dependency, so normal PLexus usage should resolve the installed `pharo-launcher-mcp` package.
+It can be added as a second Vibe Kanban project when work is specifically about
+the PharoLauncher MCP server. PLexus installs `@evref-bl/mcp-pl` as an npm
+dependency, so normal PLexus usage should resolve the installed `mcp-pl`
+package.
 
 ## Workspace Directory
 
@@ -64,11 +67,12 @@ Approval: on-request
 Reasoning effort: high
 ```
 
-pharo-launcher-mcp is resolved from the installed package by default. Use environment variables only when overriding the package resolution:
+MCP-PL is resolved from the installed package by default. Use environment
+variables only when overriding the package resolution:
 
 ```text
 PHARO_LAUNCHER_MCP_COMMAND=node
-PHARO_LAUNCHER_MCP_ENTRY=C:\dev\code\git\pharo-launcher-mcp\dist\index.js
+PHARO_LAUNCHER_MCP_ENTRY=C:\dev\code\git\MCP-PL\dist\index.js
 ```
 
 ## Agent Pharo Access
@@ -131,7 +135,7 @@ these managed server names:
 ```
 
 The `pharo-launcher` entry starts the PLexus-scoped launcher facade, not raw
-pharo-launcher-mcp. The `pharo` entry starts the gateway in Pharo facade mode with the
+MCP-PL. The `pharo` entry starts the gateway in Pharo facade mode with the
 project tool contract serialized in `PLEXUS_PHARO_TOOLS_JSON`; the gateway adds
 the required `imageId` routing field to those tools.
 
