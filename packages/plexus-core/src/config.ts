@@ -6,29 +6,23 @@ export interface PharoLauncherMcpConfig {
   command: string;
   args: string[];
   entry?: string;
-  packageName?: string;
   packageDir?: string;
   repoDir?: string;
 }
 
 export interface LoadPharoLauncherMcpConfigOptions {
-  resolveInstalledEntry?: (packageName: string) => string | undefined;
+  resolveInstalledEntry?: () => string | undefined;
 }
 
 const require = createRequire(import.meta.url);
-const launcherMcpPackageNames = [
-  "@evref-bl/mcp-pl",
-  "@evref-bl/pharo-launcher-mcp",
-] as const;
-const defaultLauncherMcpCommand = "mcp-pl";
 
 function packageDirFromEntry(entry: string): string {
   return path.dirname(path.dirname(entry));
 }
 
-function resolveInstalledLauncherMcpEntry(packageName: string): string | undefined {
+function resolveInstalledPharoLauncherMcpEntry(): string | undefined {
   try {
-    return require.resolve(packageName);
+    return require.resolve("@evref-bl/pharo-launcher-mcp");
   } catch {
     return undefined;
   }
@@ -72,25 +66,22 @@ export function loadPharoLauncherMcpConfig(
   options: LoadPharoLauncherMcpConfigOptions = {},
 ): PharoLauncherMcpConfig {
   if (!hasExplicitPharoLauncherMcpEnv(env)) {
-    const resolveInstalledEntry =
-      options.resolveInstalledEntry ?? resolveInstalledLauncherMcpEntry;
-    for (const packageName of launcherMcpPackageNames) {
-      const installedEntry = resolveInstalledEntry(packageName);
-      if (installedEntry) {
-        return {
-          source: "package",
-          command: process.execPath,
-          args: [installedEntry],
-          entry: installedEntry,
-          packageName,
-          packageDir: packageDirFromEntry(installedEntry),
-        };
-      }
+    const installedEntry = (
+      options.resolveInstalledEntry ?? resolveInstalledPharoLauncherMcpEntry
+    )();
+    if (installedEntry) {
+      return {
+        source: "package",
+        command: process.execPath,
+        args: [installedEntry],
+        entry: installedEntry,
+        packageDir: packageDirFromEntry(installedEntry),
+      };
     }
 
     return {
       source: "command",
-      command: defaultLauncherMcpCommand,
+      command: "pharo-launcher-mcp",
       args: [],
     };
   }

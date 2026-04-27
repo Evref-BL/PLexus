@@ -30,7 +30,7 @@ The intended split is:
   route registration, and the scoped `pharo-launcher` facade.
 - `@plexus/gateway` owns route registration, route status, and forwarding
   project Pharo MCP calls to image-scoped MCP servers.
-- `@evref-bl/mcp-pl` owns raw PharoLauncher CLI integration.
+- `@evref-bl/pharo-launcher-mcp` owns raw PharoLauncher CLI integration.
 
 The repository is still transitional. Lifecycle tools may still be exposed by
 the gateway, and the gateway may still import `@plexus/core`. New lifecycle
@@ -56,24 +56,23 @@ The verification script is currently PowerShell-based. Keep executable PLexus
 logic OS-agnostic; put unavoidable platform behavior behind small, named helpers
 or clearly labeled scripts.
 
-## MCP-PL Resolution
+## pharo-launcher-mcp Resolution
 
-By default, PLexus resolves the installed `@evref-bl/mcp-pl` package and starts
-it with the current Node executable. It also accepts the legacy
-`@evref-bl/pharo-launcher-mcp` package name for older checkouts.
+By default, PLexus resolves the installed `@evref-bl/pharo-launcher-mcp`
+package and starts it with the current Node executable.
 
 Use environment variables only when testing an unpackaged checkout:
 
 ```sh
 PHARO_LAUNCHER_MCP_COMMAND=node
-PHARO_LAUNCHER_MCP_ENTRY=/path/to/MCP-PL/dist/index.js
+PHARO_LAUNCHER_MCP_ENTRY=/path/to/pharo-launcher-mcp/dist/index.js
 ```
 
 Windows PowerShell example:
 
 ```powershell
 $env:PHARO_LAUNCHER_MCP_COMMAND = "node"
-$env:PHARO_LAUNCHER_MCP_ENTRY = "C:\dev\code\git\MCP-PL\dist\index.js"
+$env:PHARO_LAUNCHER_MCP_ENTRY = "C:\dev\code\git\pharo-launcher-mcp\dist\index.js"
 ```
 
 ## Runtime State
@@ -135,46 +134,9 @@ npm run smoke:open-route-close -- --copyFromImageName MCP12-2
 
 The smoke creates a disposable PLexus project and isolated state root, copies
 the source image when `--copyFromImageName` is used, opens it through an
-in-process `PlexusGateway`, routes a default Pharo MCP probe into every active
-image, closes the images, checks that the processes are gone, checks that the
-closed routes are not routable, then deletes copied images and temp
-directories.
-
-Use `--imageSpecJson` more than once to exercise the real multi-image shape:
-
-```sh
-npm run smoke:open-route-close -- \
-  --imageSpecJson '{"id":"dev","copyFromImageName":"MCP12-2"}' \
-  --imageSpecJson '{"id":"peer","copyFromImageName":"MCP12-2"}'
-```
-
-Multi-image runs verify that PLexus starts distinct processes, assigns distinct
-ports, routes into each image, and keeps image-local state isolated through a
-second routed probe.
-
-Run the deeper Pharo user workflow with:
-
-```sh
-npm run smoke:open-route-close -- \
-  --imageSpecJson '{"id":"dev","copyFromImageName":"MCP12-2"}' \
-  --imageSpecJson '{"id":"peer","copyFromImageName":"MCP12-2"}' \
-  --scenario project-edit-export
-```
-
-`project-edit-export` creates an owned temporary Git repository per image,
-creates a Smalltalk class and test class in the image, compiles methods, runs
-the generated tests, registers the packages with `edit-repository`, checks the
-image-side diff, exports the packages to disk, verifies host-side Git status is
-dirty, and verifies no commit was created. The scenario intentionally never
-calls commit, push, pull, or fetch.
-
-Use `--stepJson` for extra routed calls, for example:
-
-```sh
-npm run smoke:open-route-close -- \
-  --copyFromImageName MCP12-2 \
-  --stepJson '{"forEachImage":true,"toolName":"find-packages","arguments":{"pattern":"MCP"},"expectedText":"MCP"}'
-```
+in-process `PlexusGateway`, routes one Pharo MCP tool call, closes the image,
+checks that the process is gone, checks that the closed route is not routable,
+then deletes the copied image and temp directories.
 
 Use `--imageName` only with an image that is already disposable. The script
 refuses to run if the target image is already running, because cleanup may need

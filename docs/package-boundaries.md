@@ -4,11 +4,9 @@ This document is the source of truth for where new features belong after the PLe
 
 ## Packages
 
-### MCP-PL (`@evref-bl/mcp-pl`)
+### pharo-launcher-mcp (`@evref-bl/pharo-launcher-mcp`)
 
-Standalone PharoLauncher MCP server (separate repository: MCP-PL,
-`@evref-bl/mcp-pl` on npm). PLexus still accepts the legacy
-`@evref-bl/pharo-launcher-mcp` package name when present.
+Standalone PharoLauncher MCP server (separate repository: `@evref-bl/pharo-launcher-mcp`, `@evref-bl/pharo-launcher-mcp` on npm).
 
 **Owns**
 
@@ -34,7 +32,7 @@ Routing-only MCP server.
 **Must not depend on**
 
 - PLexus orchestration (`@plexus/core` / CLI)
-- MCP-PL (`@evref-bl/mcp-pl`)
+- pharo-launcher-mcp (`@evref-bl/pharo-launcher-mcp`)
 
 The gateway should not read `plexus.project.json` or workspace state from disk. PLexus is responsible for orchestration/state, and registers/updates routes in the gateway.
 
@@ -47,27 +45,27 @@ Project/workspace/image orchestration and lifecycle.
 - Project/workspace/image open/close/status and runtime state on disk
 - Port allocation, startup script generation, image health polling
 - Policy around targets/workspaces (how to map Kanban/worktrees/images)
-- Calling MCP-PL for PharoLauncher operations
+- Calling pharo-launcher-mcp for PharoLauncher operations
 - Registering routes in the gateway and choosing where tool calls should go
 - Exposing the scoped agent-facing `pharo-launcher` facade, because only PLexus
   has workspace state and image naming policy
 
 **Depends on**
 
-- MCP-PL (`@evref-bl/mcp-pl`)
+- pharo-launcher-mcp (`@evref-bl/pharo-launcher-mcp`)
 - PLexus Gateway (`@plexus/gateway`)
 
 ## Dependency Direction
 
 ```text
-@evref-bl/mcp-pl        @plexus/gateway
+@evref-bl/pharo-launcher-mcp        @plexus/gateway
         ^                      ^
         |                      |
         +---------- @plexus/core / PLexus CLI
 ```
 
-- PLexus depends on both MCP-PL and the gateway.
-- MCP-PL and the gateway are standalone and do not depend on PLexus (and must not depend on each other).
+- PLexus depends on both pharo-launcher-mcp and the gateway.
+- pharo-launcher-mcp and the gateway are standalone and do not depend on PLexus (and must not depend on each other).
 
 ## MCP Tool Ownership (Current → Target)
 
@@ -90,7 +88,7 @@ Until the move is completed, you may still see lifecycle tools implemented in `@
 Agent-facing Kanban MCP surfaces:
 
 - `pharo-launcher`: belongs to PLexus orchestration. It is a scoped facade over
-  MCP-PL and must not expose raw host-wide PharoLauncher mutation.
+  pharo-launcher-mcp and must not expose raw host-wide PharoLauncher mutation.
 - `pharo`: belongs to the routing layer. It is a stable facade over the
   project-wide Pharo MCP contract and routes calls by explicit `imageId`.
 
@@ -107,6 +105,6 @@ This repository currently contains transitional coupling that should be removed 
 
 Use these rules of thumb:
 
-- **Touches PharoLauncher or its CLI contract** → MCP-PL
+- **Touches PharoLauncher or its CLI contract** → pharo-launcher-mcp
 - **Scopes PharoLauncher operations to a PLexus project/workspace, opens/closes a project/workspace, manages state, allocates ports, writes scripts, polls health** → PLexus
 - **Registers routes, reports registered targets, forwards tool calls to an image MCP server** → PLexus Gateway

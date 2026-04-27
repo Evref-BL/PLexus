@@ -9,7 +9,7 @@ selected image.
 ## What PLexus Does
 
 - Opens and closes Pharo images from configured Pharo Launcher profiles through
-  MCP-PL (`mcp-pl`).
+  `pharo-launcher-mcp`.
 - Keeps image names, MCP ports, and runtime state isolated per agent run.
 - Exposes a scoped `pharo-launcher` MCP surface for image lifecycle.
 - Routes `pharo` MCP tool calls to a selected image by `imageId`.
@@ -22,7 +22,7 @@ selected image.
 - A project with a `plexus.project.json`.
 - Vibe Kanban and Codex when using PLexus for agent-driven work.
 
-`npm install` installs `@evref-bl/mcp-pl` as a package dependency. Local
+`npm install` installs `pharo-launcher-mcp` as a package dependency. Local
 source-checkout overrides are only needed for PLexus development; see
 `docs/development.md`.
 
