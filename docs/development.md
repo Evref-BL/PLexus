@@ -121,6 +121,32 @@ image exists in PharoLauncher, refuses to continue if that image is already
 running, calls `project open`, confirms process and health state, calls
 `project close`, and confirms the process is gone.
 
+## Open/Route/Close Smoke Check
+
+Run the bounded integration smoke when the host has a PharoLauncher image that
+already contains the Pharo MCP worker, or when the host can load it during image
+startup:
+
+```sh
+npm run build
+npm run smoke:open-route-close -- --copyFromImageName MCP12-2
+```
+
+The smoke creates a disposable PLexus project and isolated state root, copies
+the source image when `--copyFromImageName` is used, opens it through an
+in-process `PlexusGateway`, routes one Pharo MCP tool call, closes the image,
+checks that the process is gone, checks that the closed route is not routable,
+then deletes the copied image and temp directories.
+
+Use `--imageName` only with an image that is already disposable. The script
+refuses to run if the target image is already running, because cleanup may need
+to kill a partially opened image owned by the smoke.
+
+If `pharo_launcher_image_copy` reports success but the copied image never
+appears in `pharo_launcher_image_list`, treat the host as unsafe for automation
+smoke runs until the launcher copy path is repaired. Do not fall back to a
+personal development image.
+
 ## Useful Docs
 
 - `docs/architecture.md`: runtime architecture and target registry model.

@@ -185,11 +185,16 @@ function processMatchesImage(process, imageName) {
 }
 
 async function imageExists(client, imageName) {
-  const result = await client.callTool("pharo_launcher_image_info", {
-    imageName,
+  const result = await client.callTool("pharo_launcher_image_list", {
+    nameFilter: imageName,
     format: "ston",
   });
-  return result?.ok === true;
+  const images = launcherData(result) ?? [];
+  return images.some(
+    (image) =>
+      image.name === imageName ||
+      path.basename(image.imagePath ?? "", ".image") === imageName,
+  );
 }
 
 async function processForImage(client, imageName) {

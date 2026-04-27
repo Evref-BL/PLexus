@@ -21,6 +21,7 @@
     "typecheck": "npm run typecheck --workspaces",
     "clean": "npm run clean --workspaces",
     "prototype:open-close": "node scripts/prototype-open-close.mjs",
+    "smoke:open-route-close": "node scripts/smoke-open-route-close.mjs",
     "verify:env": "powershell -ExecutionPolicy Bypass -File ./scripts/verify-environment.ps1"
   },
   "devDependencies": {
