@@ -114,10 +114,7 @@ export interface GatewayEnvironmentOptions {
   pharoScope: ProjectReferenceInput;
 }
 
-type ToolResult = {
-  content: Array<{ type: "text"; text: string }>;
-  isError?: boolean;
-};
+type ToolResult = CallToolResult;
 
 function jsonResult(value: unknown, isError = false): ToolResult {
   return {
@@ -134,12 +131,32 @@ function isCallToolResult(value: unknown): value is CallToolResult {
   );
 }
 
-function directToolResult(value: unknown): ToolResult {
-  if (isCallToolResult(value)) {
-    return value as ToolResult;
+function withToolMeta(
+  value: ToolResult,
+  meta: Record<string, unknown> | undefined,
+): ToolResult {
+  if (!meta) {
+    return value;
   }
 
-  return jsonResult(value);
+  return {
+    ...value,
+    _meta: {
+      ...(value._meta ?? {}),
+      ...meta,
+    },
+  };
+}
+
+function directToolResult(
+  value: unknown,
+  meta?: Record<string, unknown>,
+): ToolResult {
+  if (isCallToolResult(value)) {
+    return withToolMeta(value as ToolResult, meta);
+  }
+
+  return withToolMeta(jsonResult(value), meta);
 }
 
 export function createGatewayServer(gateway = new PlexusGateway()): Server {
@@ -199,7 +216,18 @@ export function createGatewayServerWithOptions(
       request.params.arguments ?? {},
     );
 
-    return jsonResult(result, !result.ok);
+    if (!result.ok) {
+      return jsonResult(result, true);
+    }
+
+    if (request.params.name === "plexus_route_to_image") {
+      return directToolResult(
+        result.data,
+        result.route ? { plexusRoute: result.route } : undefined,
+      );
+    }
+
+    return jsonResult(result);
   });
 
   return server;

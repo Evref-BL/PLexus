@@ -69,26 +69,29 @@ export interface RouteToImageToolInput extends ProjectReferenceInput {
   arguments?: Record<string, unknown>;
 }
 
+export interface RouteToImageRoute {
+  projectId: string;
+  workspaceId: string;
+  targetId: string;
+  imageId: string;
+  imageName: string;
+  port: number;
+}
+
 export interface GatewayToolResult<T = unknown> {
   ok: boolean;
   data?: T;
   error?: string;
+  route?: RouteToImageRoute;
 }
 
 export interface RouteToImageResult {
-  route: {
-    projectId: string;
-    workspaceId: string;
-    targetId: string;
-    imageId: string;
-    imageName: string;
-    port: number;
-  };
+  route: RouteToImageRoute;
   result: unknown;
 }
 
 export interface RoutedImageToolCall {
-  route: RouteToImageResult["route"];
+  route: RouteToImageRoute;
   result: unknown;
 }
 
@@ -323,16 +326,20 @@ export class PlexusGateway {
 
   async routeToImage(
     input: RouteToImageToolInput,
-  ): Promise<GatewayToolResult<RouteToImageResult>> {
+  ): Promise<GatewayToolResult<unknown>> {
     try {
-      return result(
-        await this.callRoutedImageTool(
-          input,
-          input.imageId,
-          input.toolName,
-          input.arguments ?? {},
-        ),
+      const routed = await this.callRoutedImageTool(
+        input,
+        input.imageId,
+        input.toolName,
+        input.arguments ?? {},
       );
+
+      return {
+        ok: true,
+        data: routed.result,
+        route: routed.route,
+      };
     } catch (error) {
       return failure(error);
     }

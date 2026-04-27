@@ -260,17 +260,16 @@ describe("PlexusGateway", () => {
       projectPath: makeTempDir("plexus-project-"),
       workspaceId: "worktree-a",
     });
-    const routed = data(
-      await gateway.handleTool("plexus_route_to_image", {
-        projectId: "project-123",
-        workspaceId: "worktree-a",
-        imageId: "dev",
-        toolName: "pharo_eval",
-        arguments: {
-          code: "Smalltalk version",
-        },
-      }),
-    );
+    const routeResult = await gateway.handleTool("plexus_route_to_image", {
+      projectId: "project-123",
+      workspaceId: "worktree-a",
+      imageId: "dev",
+      toolName: "pharo_eval",
+      arguments: {
+        code: "Smalltalk version",
+      },
+    });
+    const routed = data(routeResult);
 
     expect(imageRouter.calls).toEqual([
       {
@@ -288,7 +287,7 @@ describe("PlexusGateway", () => {
         },
       },
     ]);
-    expect(routed).toMatchObject({
+    expect(routeResult).toMatchObject({
       route: {
         projectId: "project-123",
         workspaceId: "worktree-a",
@@ -296,9 +295,9 @@ describe("PlexusGateway", () => {
         imageId: "dev",
         port: 7123,
       },
-      result: {
-        content: [{ type: "text", text: "routed" }],
-      },
+    });
+    expect(routed).toEqual({
+      content: [{ type: "text", text: "routed" }],
     });
   });
 
@@ -904,16 +903,13 @@ describe("PlexusGateway", () => {
       error: "Multiple routes match; provide targetId or workspaceId",
     });
 
-    expect(
-      data(
-        await gateway.handleTool("plexus_route_to_image", {
-          projectId: "project-123",
-          workspaceId: "worktree-b",
-          imageId: "dev",
-          toolName: "pharo_eval",
-        }),
-      ),
-    ).toMatchObject({
+    const routeResult = await gateway.handleTool("plexus_route_to_image", {
+      projectId: "project-123",
+      workspaceId: "worktree-b",
+      imageId: "dev",
+      toolName: "pharo_eval",
+    });
+    expect(routeResult).toMatchObject({
       route: {
         projectId: "project-123",
         workspaceId: "worktree-b",
@@ -921,6 +917,9 @@ describe("PlexusGateway", () => {
         imageName: "MyProject-worktree-b-dev",
         port: 7125,
       },
+    });
+    expect(data(routeResult)).toEqual({
+      content: [{ type: "text", text: "routed" }],
     });
   });
 });

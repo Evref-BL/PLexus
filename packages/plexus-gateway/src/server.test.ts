@@ -1,6 +1,10 @@
 import http from "node:http";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { afterEach, describe, expect, it } from "vitest";
+import { PlexusGateway, type GatewayToolResult } from "./gateway.js";
 import {
+  createGatewayServerWithOptions,
   createGatewayFromEnvironment,
   gatewayTools,
   parseGatewayServerCliOptions,
@@ -43,6 +47,35 @@ function closeServer(server: http.Server): Promise<void> {
       resolve();
     });
   });
+}
+
+class DirectRouteGateway extends PlexusGateway {
+  override async handleTool(
+    name: string,
+    _inputValue: unknown,
+  ): Promise<GatewayToolResult> {
+    if (name !== "plexus_route_to_image") {
+      return {
+        ok: false,
+        error: `Unexpected tool: ${name}`,
+      };
+    }
+
+    return {
+      ok: true,
+      data: {
+        content: [{ type: "text" as const, text: "routed output" }],
+      },
+      route: {
+        projectId: "project-123",
+        workspaceId: "worktree-a",
+        targetId: "project-123--worktree-a",
+        imageId: "dev",
+        imageName: "MyProject-dev",
+        port: 7123,
+      },
+    };
+  }
 }
 
 async function postMcp(port: number, method: string): Promise<unknown> {
@@ -89,6 +122,53 @@ describe("gateway server", () => {
       "plexus_project_status",
       "plexus_route_to_image",
     ]);
+  });
+
+  it("returns routed image MCP results directly over MCP", async () => {
+    const server = createGatewayServerWithOptions(new DirectRouteGateway(), {
+      surface: "gateway",
+    });
+    const client = new Client(
+      {
+        name: "plexus-gateway-test",
+        version: "0.0.0",
+      },
+      {
+        capabilities: {},
+      },
+    );
+    const [clientTransport, serverTransport] =
+      InMemoryTransport.createLinkedPair();
+
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+
+    try {
+      await expect(
+        client.callTool({
+          name: "plexus_route_to_image",
+          arguments: {
+            imageId: "dev",
+            toolName: "pharo_eval",
+          },
+        }),
+      ).resolves.toMatchObject({
+        content: [{ type: "text", text: "routed output" }],
+        _meta: {
+          plexusRoute: {
+            projectId: "project-123",
+            workspaceId: "worktree-a",
+            targetId: "project-123--worktree-a",
+            imageId: "dev",
+            imageName: "MyProject-dev",
+            port: 7123,
+          },
+        },
+      });
+    } finally {
+      await client.close();
+      await server.close();
+    }
   });
 
   it("defaults to stdio mode for MCP clients", () => {
