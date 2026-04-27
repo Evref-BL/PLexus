@@ -134,18 +134,46 @@ npm run smoke:open-route-close -- --copyFromImageName MCP12-2
 
 The smoke creates a disposable PLexus project and isolated state root, copies
 the source image when `--copyFromImageName` is used, opens it through an
-in-process `PlexusGateway`, routes one Pharo MCP tool call, closes the image,
-checks that the process is gone, checks that the closed route is not routable,
-then deletes the copied image and temp directories.
+in-process `PlexusGateway`, routes a default Pharo MCP probe into every active
+image, closes the images, checks that the processes are gone, checks that the
+closed routes are not routable, then deletes copied images and temp
+directories.
 
-Use `--imageName` only with an image that is already disposable. The script
-refuses to run if the target image is already running, because cleanup may need
-to kill a partially opened image owned by the smoke.
+Use `--imageSpecJson` more than once to exercise the real multi-image shape:
 
-If `pharo_launcher_image_copy` reports success but the copied image never
-appears in `pharo_launcher_image_list`, treat the host as unsafe for automation
-smoke runs until the launcher copy path is repaired. Do not fall back to a
-personal development image.
+```sh
+npm run smoke:open-route-close -- \
+  --imageSpecJson '{"id":"dev","copyFromImageName":"MCP12-2"}' \
+  --imageSpecJson '{"id":"peer","copyFromImageName":"MCP12-2"}'
+```
+
+Multi-image runs verify that PLexus starts distinct processes, assigns distinct
+ports, routes into each image, and keeps image-local state isolated through a
+second routed probe.
+
+Run the deeper Pharo user workflow with:
+
+```sh
+npm run smoke:open-route-close -- \
+  --imageSpecJson '{"id":"dev","copyFromImageName":"MCP12-2"}' \
+  --imageSpecJson '{"id":"peer","copyFromImageName":"MCP12-2"}' \
+  --scenario project-edit-export
+```
+
+`project-edit-export` creates an owned temporary Git repository per image,
+creates a Smalltalk class and test class in the image, compiles methods, runs
+the generated tests, registers the packages with `edit-repository`, checks the
+image-side diff, exports the packages to disk, verifies host-side Git status is
+dirty, and verifies no commit was created. The scenario intentionally never
+calls commit, push, pull, or fetch.
+
+Use `--stepJson` for extra routed calls, for example:
+
+```sh
+npm run smoke:open-route-close -- \
+  --copyFromImageName MCP12-2 \
+  --stepJson '{"forEachImage":true,"toolName":"find-packages","arguments":{"pattern":"MCP"},"expectedText":"MCP"}'
+```
 
 ## Useful Docs
 
