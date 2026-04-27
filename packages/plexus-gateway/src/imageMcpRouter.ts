@@ -29,7 +29,7 @@ export class StreamableHttpImageMcpToolRouter implements ImageMcpToolRouter {
 
   constructor(options: StreamableHttpImageMcpToolRouterOptions = {}) {
     this.host = options.host ?? "127.0.0.1";
-    this.path = options.path ?? "/mcp";
+    this.path = options.path ?? "/";
   }
 
   async callTool(

@@ -20,7 +20,7 @@ export class HttpPharoMcpHealthClient implements PharoMcpHealthClient {
   constructor(options: HttpPharoMcpHealthClientOptions = {}) {
     this.host = options.host ?? "127.0.0.1";
     this.paths = options.paths ?? ["/health"];
-    this.mcpPath = options.mcpPath ?? "/mcp";
+    this.mcpPath = options.mcpPath ?? "/";
     this.probeMethods = options.probeMethods ?? ["ping"];
     this.timeoutMs = options.timeoutMs ?? 1_000;
   }
@@ -70,22 +70,25 @@ export class HttpPharoMcpHealthClient implements PharoMcpHealthClient {
 
   private async fetchWithTimeout(
     input: string,
-    init: RequestInit = {},
-  ): Promise<Response> {
+    init: Record<string, unknown> = {},
+  ): Promise<{ ok: boolean; json(): Promise<unknown> }> {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
 
     try {
-      return await fetch(input, {
+      const response = await fetch(input, {
         ...init,
         signal: controller.signal,
       });
+      return response as { ok: boolean; json(): Promise<unknown> };
     } finally {
       clearTimeout(timeout);
     }
   }
 
-  private async isJsonRpcResponse(response: Response): Promise<boolean> {
+  private async isJsonRpcResponse(
+    response: { json(): Promise<unknown> },
+  ): Promise<boolean> {
     let payload: unknown;
     try {
       payload = await response.json();

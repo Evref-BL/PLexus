@@ -46,8 +46,10 @@ afterEach(async () => {
 });
 
 describe("pharo MCP health", () => {
-  it("treats a JSON-RPC capable MCP server as healthy when GET /health is unsupported", async () => {
+  it("treats a JSON-RPC capable MCP server at / as healthy when GET /health is unsupported", async () => {
     const port = await freePort();
+    let rootPostCalls = 0;
+    let mcpPostCalls = 0;
     const server = http.createServer((request, response) => {
       if (request.method === "GET" && request.url === "/health") {
         response.writeHead(405, { "content-type": "application/json" });
@@ -55,7 +57,8 @@ describe("pharo MCP health", () => {
         return;
       }
 
-      if (request.method === "POST" && request.url === "/mcp") {
+      if (request.method === "POST" && request.url === "/") {
+        rootPostCalls += 1;
         const chunks: Buffer[] = [];
         request.on("data", (chunk) => {
           chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
@@ -76,6 +79,10 @@ describe("pharo MCP health", () => {
         return;
       }
 
+      if (request.method === "POST" && request.url === "/mcp") {
+        mcpPostCalls += 1;
+      }
+
       response.writeHead(404);
       response.end();
     });
@@ -91,5 +98,7 @@ describe("pharo MCP health", () => {
     });
 
     await expect(client.check(port)).resolves.toBe(true);
+    expect(rootPostCalls).toBeGreaterThan(0);
+    expect(mcpPostCalls).toBe(0);
   });
 });
