@@ -2,7 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import type { McpPlToolClient } from "./mcpPlClient.js";
+import type { PharoLauncherMcpToolClient } from "./pharoLauncherMcpClient.js";
 import { closeProject, ProjectCloseError } from "./projectClose.js";
 import {
   loadProjectState,
@@ -23,7 +23,7 @@ interface ToolCall {
   argumentsValue: Record<string, unknown>;
 }
 
-class FakeMcpPlClient implements McpPlToolClient {
+class FakePharoLauncherMcpClient implements PharoLauncherMcpToolClient {
   readonly calls: ToolCall[] = [];
 
   constructor(private readonly killError?: Error) {}
@@ -139,18 +139,18 @@ describe("project close", () => {
         },
       ],
     });
-    const mcpPlClient = new FakeMcpPlClient();
+    const pharoLauncherMcpClient = new FakePharoLauncherMcpClient();
 
     const result = await closeProject({
       projectRoot,
       stateRoot,
       workspaceId: "worktree-a",
-      mcpPlClient,
+      pharoLauncherMcpClient,
       now: fixedNow,
     });
 
     expect(result.ok).toBe(true);
-    expect(mcpPlClient.calls).toEqual([
+    expect(pharoLauncherMcpClient.calls).toEqual([
       {
         name: "pharo_launcher_process_kill",
         argumentsValue: {
@@ -179,20 +179,20 @@ describe("project close", () => {
     const projectRoot = makeTempDir("plexus-project-");
     const stateRoot = makeTempDir("plexus-state-");
     writeProjectConfig(projectRoot);
-    const mcpPlClient = new FakeMcpPlClient();
+    const pharoLauncherMcpClient = new FakePharoLauncherMcpClient();
 
     const result = await closeProject({
       projectRoot,
       stateRoot,
       workspaceId: "worktree-a",
-      mcpPlClient,
+      pharoLauncherMcpClient,
       now: fixedNow,
     });
 
     expect(result.ok).toBe(true);
     expect(result.state).toBeUndefined();
     expect(result.stoppedImages).toEqual([]);
-    expect(mcpPlClient.calls).toEqual([]);
+    expect(pharoLauncherMcpClient.calls).toEqual([]);
     expect(fs.existsSync(result.statePath)).toBe(false);
   });
 
@@ -222,7 +222,7 @@ describe("project close", () => {
         projectRoot,
         stateRoot,
         workspaceId: "worktree-a",
-        mcpPlClient: new FakeMcpPlClient(new Error("kill failed")),
+        pharoLauncherMcpClient: new FakePharoLauncherMcpClient(new Error("kill failed")),
         now: fixedNow,
       }),
     ).rejects.toThrow(ProjectCloseError);

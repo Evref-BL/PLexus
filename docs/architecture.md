@@ -2,7 +2,7 @@
 
 ## Short Version
 
-PLexus is the agentic orchestration layer that coordinates MCP-PL, the PLexus Gateway, and image-scoped Pharo MCP workers.
+PLexus is the agentic orchestration layer that coordinates pharo-launcher-mcp, the PLexus Gateway, and image-scoped Pharo MCP workers.
 
 The project/worktree/target arity is defined in `docs/project-model.md`.
 
@@ -10,7 +10,7 @@ The project/worktree/target arity is defined in `docs/project-model.md`.
 Codex in Vibe Kanban
   -> PLexus orchestration tools
       -> target registry
-      -> MCP-PL
+      -> pharo-launcher-mcp
           -> PharoLauncher CLI
       -> PLexus Gateway (routing)
           -> Pharo image worker per worktree
@@ -32,7 +32,7 @@ Owns workflow policy and project/workspace/image orchestration:
 - map Vibe Kanban tasks to worktrees and images
 - isolate runtime state by `projectId` and `workspaceId`
 - choose when to create, copy, restart, or retire a target
-- call MCP-PL for PharoLauncher operations
+- call pharo-launcher-mcp for PharoLauncher operations
 - register routes in the gateway and decide where tool calls should go
 
 ### PLexus Gateway
@@ -43,9 +43,9 @@ Owns routing only:
 - report routing status for registered targets/images
 - forward MCP tool calls to the selected image MCP server
 
-The gateway must not depend on PLexus or MCP-PL, and it should not read project config or runtime state from disk. PLexus is responsible for orchestration/state and registers routes into the gateway.
+The gateway must not depend on PLexus or pharo-launcher-mcp, and it should not read project config or runtime state from disk. PLexus is responsible for orchestration/state and registers routes into the gateway.
 
-### MCP-PL
+### pharo-launcher-mcp
 
 Owns the PharoLauncher boundary:
 
@@ -60,7 +60,7 @@ Owns the PharoLauncher boundary:
 Kanban-spawned agents should not receive raw host-wide image access. PLexus
 exposes image access as two scoped MCP surfaces:
 
-- `pharo-launcher`: a PLexus-scoped facade over MCP-PL for image lifecycle
+- `pharo-launcher`: a PLexus-scoped facade over pharo-launcher-mcp for image lifecycle
   operations in the current project/workspace.
 - `pharo`: a stable project-wide Pharo MCP facade that adds an explicit
   `imageId` routing argument to each image tool.
@@ -121,4 +121,4 @@ updatedAt
 
 Use one worker per image. A single central in-image worker cannot safely represent multiple mutable Pharo images, and a single image cannot represent multiple Git versions at the same time.
 
-PLexus keeps target identity stable while MCP-PL and the image workers do the low-level process work. Image workers can crash and be restarted behind that target identity. If a project has multiple registered workspaces, callers must route by `targetId` (gateway key) or by `projectId` plus `workspaceId` (PLexus orchestration identity).
+PLexus keeps target identity stable while pharo-launcher-mcp and the image workers do the low-level process work. Image workers can crash and be restarted behind that target identity. If a project has multiple registered workspaces, callers must route by `targetId` (gateway key) or by `projectId` plus `workspaceId` (PLexus orchestration identity).

@@ -37,18 +37,18 @@ Write-Check "npm" ([bool] $npm) $npm
 Write-Check "npx" ([bool] $npx) $npx
 
 if ($node) {
-  $mcpPlEntry = & node -e "try { process.stdout.write(require.resolve('@evref-bl/mcp-pl')) } catch { process.exit(1) }" 2>$null
-  Write-Check "@evref-bl/mcp-pl package" ($LASTEXITCODE -eq 0) $mcpPlEntry
+  $pharoLauncherMcpEntry = & node -e "try { process.stdout.write(require.resolve('@evref-bl/pharo-launcher-mcp')) } catch { process.exit(1) }" 2>$null
+  Write-Check "@evref-bl/pharo-launcher-mcp package" ($LASTEXITCODE -eq 0) $pharoLauncherMcpEntry
 } else {
-  Write-Check "@evref-bl/mcp-pl package" $false "node is required to resolve package dependency"
+  Write-Check "@evref-bl/pharo-launcher-mcp package" $false "node is required to resolve package dependency"
 }
 
-if ($env:MCP_PL_ENTRY) {
-  Write-Check "MCP_PL_ENTRY override" (Test-Path -LiteralPath $env:MCP_PL_ENTRY) $env:MCP_PL_ENTRY
+if ($env:PHARO_LAUNCHER_MCP_ENTRY) {
+  Write-Check "PHARO_LAUNCHER_MCP_ENTRY override" (Test-Path -LiteralPath $env:PHARO_LAUNCHER_MCP_ENTRY) $env:PHARO_LAUNCHER_MCP_ENTRY
 }
 
-if ($env:MCP_PL_REPO_DIR) {
-  Write-Check "MCP_PL_REPO_DIR override" (Test-Path -LiteralPath $env:MCP_PL_REPO_DIR) $env:MCP_PL_REPO_DIR
+if ($env:PHARO_LAUNCHER_MCP_REPO_DIR) {
+  Write-Check "PHARO_LAUNCHER_MCP_REPO_DIR override" (Test-Path -LiteralPath $env:PHARO_LAUNCHER_MCP_REPO_DIR) $env:PHARO_LAUNCHER_MCP_REPO_DIR
 }
 
 $launcherDir = $env:PHARO_LAUNCHER_DIR

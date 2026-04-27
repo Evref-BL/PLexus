@@ -2,7 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import type { McpPlToolClient } from "./mcpPlClient.js";
+import type { PharoLauncherMcpToolClient } from "./pharoLauncherMcpClient.js";
 import type { PharoMcpHealthClient } from "./pharoMcpHealth.js";
 import {
   openProject,
@@ -24,7 +24,7 @@ interface ToolCall {
   argumentsValue: Record<string, unknown>;
 }
 
-class FakeMcpPlClient implements McpPlToolClient {
+class FakePharoLauncherMcpClient implements PharoLauncherMcpToolClient {
   readonly calls: ToolCall[] = [];
 
   constructor(
@@ -126,7 +126,7 @@ describe("project open", () => {
     const projectRoot = makeTempDir("plexus-project-");
     const stateRoot = makeTempDir("plexus-state-");
     writeProjectConfig(projectRoot);
-    const mcpPlClient = new FakeMcpPlClient([
+    const pharoLauncherMcpClient = new FakePharoLauncherMcpClient([
       {
         pid: 1234,
         imageName: "MyProject-dev",
@@ -139,7 +139,7 @@ describe("project open", () => {
       projectRoot,
       stateRoot,
       workspaceId: "worktree-a",
-      mcpPlClient,
+      pharoLauncherMcpClient,
       healthClient,
       now: fixedNow,
       sleep: async () => {},
@@ -159,7 +159,7 @@ describe("project open", () => {
     );
 
     expect(result.ok).toBe(true);
-    expect(mcpPlClient.calls).toEqual([
+    expect(pharoLauncherMcpClient.calls).toEqual([
       {
         name: "pharo_launcher_image_launch",
         argumentsValue: {
@@ -243,7 +243,7 @@ describe("project open", () => {
       projectRoot,
       stateRoot,
       workspaceId: "worktree-a",
-      mcpPlClient: new FakeMcpPlClient([
+      pharoLauncherMcpClient: new FakePharoLauncherMcpClient([
         {
           pid: 1234,
           imageName: "MyProject-dev",
@@ -277,7 +277,7 @@ describe("project open", () => {
         projectRoot,
         stateRoot,
         workspaceId: "worktree-a",
-        mcpPlClient: new FakeMcpPlClient([], new Error("launch failed")),
+        pharoLauncherMcpClient: new FakePharoLauncherMcpClient([], new Error("launch failed")),
         healthClient: new FakeHealthClient(true),
         now: fixedNow,
         sleep: async () => {},
@@ -319,7 +319,7 @@ describe("project open", () => {
         projectRoot,
         stateRoot,
         workspaceId: "worktree-a",
-        mcpPlClient: new FakeMcpPlClient([]),
+        pharoLauncherMcpClient: new FakePharoLauncherMcpClient([]),
         healthClient: new FakeHealthClient(true),
         now: fixedNow,
         sleep: async () => {},

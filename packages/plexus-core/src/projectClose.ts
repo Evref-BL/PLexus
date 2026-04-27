@@ -1,6 +1,9 @@
 import path from "node:path";
 import { loadProjectConfig } from "./projectConfig.js";
-import { createStdioMcpPlClient, type McpPlToolClient } from "./mcpPlClient.js";
+import {
+  createStdioPharoLauncherMcpClient,
+  type PharoLauncherMcpToolClient,
+} from "./pharoLauncherMcpClient.js";
 import {
   defaultWorkspaceId,
   loadProjectState,
@@ -20,7 +23,7 @@ export interface ProjectCloseOptions {
   projectRoot: string;
   stateRoot?: string;
   workspaceId?: string;
-  mcpPlClient?: McpPlToolClient;
+  pharoLauncherMcpClient?: PharoLauncherMcpToolClient;
   now?: () => Date;
 }
 
@@ -93,8 +96,10 @@ export async function closeProject(
     };
   }
 
-  const client = options.mcpPlClient ?? (await createStdioMcpPlClient());
-  const ownsClient = !options.mcpPlClient;
+  const client =
+    options.pharoLauncherMcpClient ??
+    (await createStdioPharoLauncherMcpClient());
+  const ownsClient = !options.pharoLauncherMcpClient;
   const stoppedImages: ProjectImageState[] = [];
   const failures: ProjectCloseFailure[] = [];
 

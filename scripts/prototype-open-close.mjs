@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import {
   closeProject,
-  createStdioMcpPlClient,
+  createStdioPharoLauncherMcpClient,
   loadProjectState,
   openProject,
 } from "@plexus/core";
@@ -207,7 +207,7 @@ async function main() {
 
   assertValidOptions(options);
   const { projectRoot, stateRoot } = writePrototypeProjectConfig(options);
-  const client = await createStdioMcpPlClient();
+  const client = await createStdioPharoLauncherMcpClient();
   let openedByThisScript = false;
   let attemptedOpen = false;
 

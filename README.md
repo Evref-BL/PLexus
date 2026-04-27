@@ -1,14 +1,14 @@
 # PLexus
 
-PLexus is the orchestration layer for using Codex, Git worktrees, Vibe Kanban, MCP-PL, and image-scoped Pharo MCP workers together.
+PLexus is the orchestration layer for using Codex, Git worktrees, Vibe Kanban, pharo-launcher-mcp, and image-scoped Pharo MCP workers together.
 
 The name keeps `PL` uppercase for PharoLauncher.
 
 ## Project Split
 
-- `PLexus` (`@plexus/core` + CLI): orchestration and lifecycle for projects/workspaces/images. Depends on the gateway and MCP-PL.
-- `PLexus Gateway` (`@plexus/gateway`): routing-only MCP server. Owns route registration/status and forwarding MCP calls to image-scoped MCP servers. Must not depend on PLexus or MCP-PL.
-- `MCP-PL` (`@evref-bl/mcp-pl`): standalone MCP server for PharoLauncher. Wraps the PharoLauncher CLI and process lifecycle. Must not depend on PLexus or the gateway.
+- `PLexus` (`@plexus/core` + CLI): orchestration and lifecycle for projects/workspaces/images. Depends on the gateway and pharo-launcher-mcp.
+- `PLexus Gateway` (`@plexus/gateway`): routing-only MCP server. Owns route registration/status and forwarding MCP calls to image-scoped MCP servers. Must not depend on PLexus or pharo-launcher-mcp.
+- `pharo-launcher-mcp` (`@evref-bl/pharo-launcher-mcp`): standalone MCP server for PharoLauncher. Wraps the PharoLauncher CLI and process lifecycle. Must not depend on PLexus or the gateway.
 
 See `docs/package-boundaries.md` for the final package boundary, dependency direction, and tool ownership.
 
@@ -18,7 +18,7 @@ See `docs/package-boundaries.md` for the final package boundary, dependency dire
 - Keep one Pharo image per worktree when image state matters.
 - Keep the recovery and routing layer outside Pharo images.
 - Let Vibe Kanban manage issues, workspaces, branches, and agent sessions.
-- Let MCP-PL manage PharoLauncher access.
+- Let pharo-launcher-mcp manage PharoLauncher access.
 - Let PLexus manage target policy, Kanban workflows, worker health, and routing decisions.
 
 ## Repository Layout
@@ -45,20 +45,20 @@ scripts/
 - Git
 - Node.js with `npm` and `npx`
 - Vibe Kanban: `npx vibe-kanban`
-- MCP-PL available as the `mcp-pl` npm package. During local development, this repository depends on the sibling repo at `C:\dev\code\git\MCP-PL`.
+- pharo-launcher-mcp available as the `pharo-launcher-mcp` npm package. During local development, this repository depends on the sibling repo at `C:\dev\code\git\pharo-launcher-mcp`.
 - Codex authenticated and configured in Vibe Kanban
 
 On Windows, installing Node.js LTS via Winget should make `node`, `npm`, and `npx` available from fresh PowerShell and CMD terminals.
 
-## MCP-PL Loading
+## pharo-launcher-mcp Loading
 
-`npm install` installs MCP-PL as a dependency of PLexus. By default, PLexus resolves the installed `mcp-pl` package and launches it with the current Node executable.
+`npm install` installs pharo-launcher-mcp as a dependency of PLexus. By default, PLexus resolves the installed `pharo-launcher-mcp` package and launches it with the current Node executable.
 
 Environment variables are only needed for overrides, for example when testing an unpackaged sibling checkout:
 
 ```powershell
-$env:MCP_PL_COMMAND="node"
-$env:MCP_PL_ENTRY="C:\dev\code\git\MCP-PL\dist\index.js"
+$env:PHARO_LAUNCHER_MCP_COMMAND="node"
+$env:PHARO_LAUNCHER_MCP_ENTRY="C:\dev\code\git\pharo-launcher-mcp\dist\index.js"
 ```
 
 ## Project Config
@@ -161,7 +161,7 @@ Open a configured project:
 plexus project open C:\path\to\project --workspace-id task-123 --state-root C:\dev\code\git\.plexus-state
 ```
 
-`project open` loads `plexus.project.json`, resolves runtime ports, writes startup scripts, launches active PharoLauncher images through MCP-PL, polls process state and Pharo MCP health, then persists `.plexus/projects/<project-id>/workspaces/<workspace-id>/state.json` or the equivalent path under `--state-root`.
+`project open` loads `plexus.project.json`, resolves runtime ports, writes startup scripts, launches active PharoLauncher images through pharo-launcher-mcp, polls process state and Pharo MCP health, then persists `.plexus/projects/<project-id>/workspaces/<workspace-id>/state.json` or the equivalent path under `--state-root`.
 
 Close a configured project:
 
@@ -169,7 +169,7 @@ Close a configured project:
 plexus project close C:\path\to\project --workspace-id task-123 --state-root C:\dev\code\git\.plexus-state
 ```
 
-`project close` loads runtime state, calls MCP-PL `pharo_launcher_process_kill` for each image marked `running`, clears its process id, marks it `stopped`, and persists the updated state.
+`project close` loads runtime state, calls pharo-launcher-mcp `pharo_launcher_process_kill` for each image marked `running`, clears its process id, marks it `stopped`, and persists the updated state.
 
 Start the PLexus MCP gateway:
 
@@ -215,11 +215,11 @@ npx vibe-kanban
 Build the standalone PharoLauncher MCP server before refreshing the local file dependency:
 
 ```powershell
-cd C:\dev\code\git\MCP-PL
+cd C:\dev\code\git\pharo-launcher-mcp
 npm install
 npm run build
 cd C:\dev\code\git\PLexus
 npm install
 ```
 
-PLexus should call the installed MCP-PL package rather than assuming a standalone `pharo-launcher` executable exists.
+PLexus should call the installed pharo-launcher-mcp package rather than assuming a standalone `pharo-launcher` executable exists.

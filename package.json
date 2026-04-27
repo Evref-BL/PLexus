@@ -2,7 +2,7 @@
   "name": "plexus",
   "version": "0.1.0",
   "private": true,
-  "description": "Agentic orchestration tools for Pharo projects using Vibe Kanban, Git worktrees, MCP-PL, and image-scoped Pharo workers.",
+  "description": "Agentic orchestration tools for Pharo projects using Vibe Kanban, Git worktrees, pharo-launcher-mcp, and image-scoped Pharo workers.",
   "license": "Apache-2.0",
   "type": "module",
   "bin": {

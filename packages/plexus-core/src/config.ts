@@ -1,7 +1,7 @@
 import path from "node:path";
 import { createRequire } from "node:module";
 
-export interface McpPlConfig {
+export interface PharoLauncherMcpConfig {
   source: "env" | "package" | "command";
   command: string;
   args: string[];
@@ -10,30 +10,36 @@ export interface McpPlConfig {
   repoDir?: string;
 }
 
+export interface LoadPharoLauncherMcpConfigOptions {
+  resolveInstalledEntry?: () => string | undefined;
+}
+
 const require = createRequire(import.meta.url);
 
 function packageDirFromEntry(entry: string): string {
   return path.dirname(path.dirname(entry));
 }
 
-function resolveInstalledMcpPlEntry(): string | undefined {
+function resolveInstalledPharoLauncherMcpEntry(): string | undefined {
   try {
-    return require.resolve("@evref-bl/mcp-pl");
+    return require.resolve("@evref-bl/pharo-launcher-mcp");
   } catch {
     return undefined;
   }
 }
 
-function hasExplicitMcpPlEnv(env: NodeJS.ProcessEnv): boolean {
+function hasExplicitPharoLauncherMcpEnv(env: NodeJS.ProcessEnv): boolean {
   return Boolean(
-    env.MCP_PL_COMMAND ??
-      env.MCP_PL_ARGS ??
-      env.MCP_PL_ENTRY ??
-      env.MCP_PL_REPO_DIR,
+    env.PHARO_LAUNCHER_MCP_COMMAND ??
+      env.PHARO_LAUNCHER_MCP_ARGS ??
+      env.PHARO_LAUNCHER_MCP_ENTRY ??
+      env.PHARO_LAUNCHER_MCP_REPO_DIR,
   );
 }
 
-function parseMcpPlArgs(value: string | undefined): string[] | undefined {
+function parsePharoLauncherMcpArgs(
+  value: string | undefined,
+): string[] | undefined {
   if (value === undefined) {
     return undefined;
   }
@@ -45,7 +51,7 @@ function isWindowsPath(value: string): boolean {
   return /^[a-zA-Z]:[\\/]/.test(value) || value.startsWith("\\\\");
 }
 
-function defaultMcpPlEntryForRepo(repoDir: string): string {
+function defaultPharoLauncherMcpEntryForRepo(repoDir: string): string {
   const pathApi = isWindowsPath(repoDir)
     ? path.win32
     : repoDir.startsWith("/")
@@ -55,11 +61,14 @@ function defaultMcpPlEntryForRepo(repoDir: string): string {
   return pathApi.join(repoDir, "dist", "index.js");
 }
 
-export function loadMcpPlConfig(
+export function loadPharoLauncherMcpConfig(
   env: NodeJS.ProcessEnv = process.env,
-): McpPlConfig {
-  if (!hasExplicitMcpPlEnv(env)) {
-    const installedEntry = resolveInstalledMcpPlEntry();
+  options: LoadPharoLauncherMcpConfigOptions = {},
+): PharoLauncherMcpConfig {
+  if (!hasExplicitPharoLauncherMcpEnv(env)) {
+    const installedEntry = (
+      options.resolveInstalledEntry ?? resolveInstalledPharoLauncherMcpEntry
+    )();
     if (installedEntry) {
       return {
         source: "package",
@@ -72,22 +81,22 @@ export function loadMcpPlConfig(
 
     return {
       source: "command",
-      command: "mcp-pl",
+      command: "pharo-launcher-mcp",
       args: [],
     };
   }
 
-  const explicitArgs = parseMcpPlArgs(env.MCP_PL_ARGS);
-  const repoDir = env.MCP_PL_REPO_DIR;
+  const explicitArgs = parsePharoLauncherMcpArgs(env.PHARO_LAUNCHER_MCP_ARGS);
+  const repoDir = env.PHARO_LAUNCHER_MCP_REPO_DIR;
   const entry =
-    env.MCP_PL_ENTRY ??
-    (repoDir ? defaultMcpPlEntryForRepo(repoDir) : undefined);
+    env.PHARO_LAUNCHER_MCP_ENTRY ??
+    (repoDir ? defaultPharoLauncherMcpEntryForRepo(repoDir) : undefined);
 
   return {
     source: "env",
     ...(repoDir ? { repoDir } : {}),
     ...(entry ? { entry } : {}),
-    command: env.MCP_PL_COMMAND ?? process.execPath,
+    command: env.PHARO_LAUNCHER_MCP_COMMAND ?? process.execPath,
     args: explicitArgs ?? (entry ? [entry] : []),
   };
 }

@@ -1,9 +1,9 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
-import type { McpPlConfig } from "./config.js";
-import { loadMcpPlConfig } from "./config.js";
+import type { PharoLauncherMcpConfig } from "./config.js";
+import { loadPharoLauncherMcpConfig } from "./config.js";
 
-export interface McpPlToolClient {
+export interface PharoLauncherMcpToolClient {
   callTool<T = unknown>(
     name: string,
     argumentsValue?: Record<string, unknown>,
@@ -11,14 +11,14 @@ export interface McpPlToolClient {
   close?(): Promise<void>;
 }
 
-export class McpPlToolError extends Error {
+export class PharoLauncherMcpToolError extends Error {
   constructor(
     message: string,
     public readonly toolName: string,
     public readonly result: unknown,
   ) {
     super(message);
-    this.name = "McpPlToolError";
+    this.name = "PharoLauncherMcpToolError";
   }
 }
 
@@ -32,7 +32,11 @@ function parseToolTextResult(toolName: string, result: unknown): unknown {
 
   if (!Array.isArray(content)) {
     if (isError) {
-      throw new McpPlToolError(`MCP-PL tool failed: ${toolName}`, toolName, result);
+      throw new PharoLauncherMcpToolError(
+        `pharo-launcher-mcp tool failed: ${toolName}`,
+        toolName,
+        result,
+      );
     }
 
     return result;
@@ -49,15 +53,19 @@ function parseToolTextResult(toolName: string, result: unknown): unknown {
   const parsed = textContent ? JSON.parse(textContent.text) : result;
 
   if (isError) {
-    throw new McpPlToolError(`MCP-PL tool failed: ${toolName}`, toolName, parsed);
+    throw new PharoLauncherMcpToolError(
+      `pharo-launcher-mcp tool failed: ${toolName}`,
+      toolName,
+      parsed,
+    );
   }
 
   return parsed;
 }
 
-export async function createStdioMcpPlClient(
-  config: McpPlConfig = loadMcpPlConfig(),
-): Promise<McpPlToolClient> {
+export async function createStdioPharoLauncherMcpClient(
+  config: PharoLauncherMcpConfig = loadPharoLauncherMcpConfig(),
+): Promise<PharoLauncherMcpToolClient> {
   const client = new Client(
     {
       name: "plexus",

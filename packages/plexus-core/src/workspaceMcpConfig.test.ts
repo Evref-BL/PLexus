@@ -58,7 +58,7 @@ describe("workspace MCP config", () => {
     });
   });
 
-  it("builds a scoped pharo-launcher server entry without raw host-wide MCP-PL access", () => {
+  it("builds a scoped pharo-launcher server entry without raw host-wide pharo-launcher-mcp access", () => {
     expect(
       buildPharoLauncherMcpServerConfig({
         projectRoot: "C:\\dev\\code\\git\\Project-worktree",

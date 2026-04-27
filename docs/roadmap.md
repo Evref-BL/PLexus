@@ -1,6 +1,6 @@
 # Roadmap
 
-## 1. MCP-PL: PharoLauncher CLI Contract On Windows
+## 1. pharo-launcher-mcp: PharoLauncher CLI Contract On Windows
 
 - Verify `clap launcher image list --ston`.
 - Verify `clap launcher image info --ston`.
@@ -8,7 +8,7 @@
 - Verify `clap launcher vm list --ston`.
 - Document which commands emit STON and which need text parsing.
 
-This work lives in the sibling `MCP-PL` repository.
+This work lives in the sibling `pharo-launcher-mcp` repository.
 
 ## 2. PLexus: Kanban And Worktree Model
 
@@ -25,11 +25,11 @@ This work lives in the sibling `MCP-PL` repository.
 - Persist registry and workspace state outside Pharo image state.
 - Add lock files or SQLite before multiple PLexus processes can open targets concurrently.
 
-## 4. MCP-PL Integration
+## 4. pharo-launcher-mcp Integration
 
-- Configure MCP-PL as the PharoLauncher lifecycle provider.
-- Call MCP-PL for image creation, process listing, and worker launch.
-- Keep PLexus policy separate from MCP-PL's CLI adapter.
+- Configure pharo-launcher-mcp as the PharoLauncher lifecycle provider.
+- Call pharo-launcher-mcp for image creation, process listing, and worker launch.
+- Keep PLexus policy separate from pharo-launcher-mcp's CLI adapter.
 
 ## 5. In-Image Worker Bootstrap
 

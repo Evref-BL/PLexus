@@ -1,6 +1,9 @@
 import path from "node:path";
 import { loadProjectConfig } from "./projectConfig.js";
-import { createStdioMcpPlClient, type McpPlToolClient } from "./mcpPlClient.js";
+import {
+  createStdioPharoLauncherMcpClient,
+  type PharoLauncherMcpToolClient,
+} from "./pharoLauncherMcpClient.js";
 import {
   HttpPharoMcpHealthClient,
   type PharoMcpHealthClient,
@@ -42,7 +45,7 @@ export interface ProjectOpenOptions {
   stateRoot?: string;
   workspaceId?: string;
   targetId?: string;
-  mcpPlClient?: McpPlToolClient;
+  pharoLauncherMcpClient?: PharoLauncherMcpToolClient;
   healthClient?: PharoMcpHealthClient;
   portRange?: ProjectPortRange;
   now?: () => Date;
@@ -128,7 +131,7 @@ async function pollUntil<T>(
 }
 
 async function pollProcessForImage(
-  client: McpPlToolClient,
+  client: PharoLauncherMcpToolClient,
   imageName: string,
   timeoutMs: number,
   intervalMs: number,
@@ -194,8 +197,10 @@ export async function openProject(
     reservedPorts,
     ...(options.portRange ? { portRange: options.portRange } : {}),
   });
-  const client = options.mcpPlClient ?? (await createStdioMcpPlClient());
-  const ownsClient = !options.mcpPlClient;
+  const client =
+    options.pharoLauncherMcpClient ??
+    (await createStdioPharoLauncherMcpClient());
+  const ownsClient = !options.pharoLauncherMcpClient;
   const healthClient =
     options.healthClient ?? new HttpPharoMcpHealthClient();
   const poll = {

@@ -2,7 +2,7 @@
 
 This document defines the agent-facing MCP surface for Pharo image access from
 Vibe Kanban workspaces. It is a design contract for PLexus; it is not the raw
-MCP-PL tool catalog.
+pharo-launcher-mcp tool catalog.
 
 ## Goal
 
@@ -61,7 +61,7 @@ before forwarding to the image MCP server.
 ## Scope Boundary
 
 The `pharo-launcher` MCP visible to a Kanban agent is a PLexus-scoped facade over
-MCP-PL. It can reuse MCP-PL operations and naming where useful, but it must not
+pharo-launcher-mcp. It can reuse pharo-launcher-mcp operations and naming where useful, but it must not
 be raw host-wide PharoLauncher access.
 
 Each agent session is scoped by PLexus before tools are exposed:
@@ -127,14 +127,14 @@ The initial `pharo-launcher` surface should be deliberately small.
 | Intent | Tool | Scope rule |
 | --- | --- | --- |
 | List workspace images | `pharo_launcher_image_list` | Return only images declared in, created by, or registered to the current PLexus workspace. Do not list all host images. |
-| Inspect one workspace image | `pharo_launcher_image_info({ imageId })` | Resolve `imageId` through PLexus state, then call MCP-PL only with the mapped launcher image name if needed. |
+| Inspect one workspace image | `pharo_launcher_image_info({ imageId })` | Resolve `imageId` through PLexus state, then call pharo-launcher-mcp only with the mapped launcher image name if needed. |
 | Create a workspace image | `pharo_launcher_image_create({ imageId, profileId? })` | Create only from a project-approved image spec/profile. PLexus renders the launcher image name and records the handle before exposing it. |
 | Start a workspace image | `pharo_launcher_image_start({ imageId })` | Start only a scoped image. PLexus supplies the generated startup script and assigned MCP port. |
 | Stop a workspace image | `pharo_launcher_image_stop({ imageId, confirm: true })` | Stop only a scoped image. PLexus resolves the process; callers cannot kill by arbitrary pid. |
 
 Do not expose these through the scoped surface by default:
 
-- `pharo_launcher_unsafe_raw`
+- `pharo_launcher_raw_command`
 - host-wide `pharo_launcher_image_delete`
 - host-wide `pharo_launcher_image_recreate`
 - host-wide `pharo_launcher_vm_delete`
@@ -165,7 +165,7 @@ The profile resolves to one approved source, for example:
 - a configured base image to copy
 - a prepared project image cache entry
 
-The facade may call different MCP-PL tools underneath, such as
+The facade may call different pharo-launcher-mcp tools underneath, such as
 `pharo_launcher_image_create` or `pharo_launcher_image_copy`, but those raw
 source names are chosen by PLexus policy, not by the agent.
 
@@ -198,18 +198,18 @@ Errors should be returned as MCP tool errors with stable codes and context:
 | `image_not_found` | The `imageId` is not known in the current workspace. |
 | `image_outside_workspace` | The requested image exists somewhere else but is not owned by this workspace. |
 | `policy_rejected` | The requested creation/start/stop action is outside the project policy. |
-| `launcher_unavailable` | MCP-PL or PharoLauncher cannot be reached. |
+| `launcher_unavailable` | pharo-launcher-mcp or PharoLauncher cannot be reached. |
 | `image_already_exists` | Create would overwrite an existing scoped image. |
-| `image_creation_failed` | MCP-PL returned a creation failure. |
+| `image_creation_failed` | pharo-launcher-mcp returned a creation failure. |
 | `image_unavailable` | The mapped image cannot currently be inspected, launched, or stopped. |
 | `contract_mismatch` | The image is not compatible with the project Pharo MCP contract. |
 
 The facade must not recover from a scoped lookup failure by falling back to a
-host-wide MCP-PL call.
+host-wide pharo-launcher-mcp call.
 
 ## Package Ownership
 
-MCP-PL remains the low-level PharoLauncher adapter. It accepts raw launcher names
+pharo-launcher-mcp remains the low-level PharoLauncher adapter. It accepts raw launcher names
 and does not know about Kanban, workspaces, or PLexus policy.
 
 PLexus owns the scoped `pharo-launcher` facade because it owns workspace state,
@@ -217,7 +217,7 @@ image naming policy, startup script generation, port allocation, and contract
 compatibility.
 
 PLexus Gateway remains routing-only. It can route `pharo` calls to image MCP
-servers, but it must not gain a dependency on MCP-PL to implement image
+servers, but it must not gain a dependency on pharo-launcher-mcp to implement image
 lifecycle operations.
 
 ## Relationship To `pharo`

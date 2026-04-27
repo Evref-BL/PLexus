@@ -9,4 +9,4 @@ The first version should be a Smalltalk script launched with the target image. I
 3. Require a per-worker token.
 4. Report health and loaded project status.
 
-Do not put PLexus or MCP-PL here. This code runs inside a mutable image and must be replaceable.
+Do not put PLexus or pharo-launcher-mcp here. This code runs inside a mutable image and must be replaceable.
