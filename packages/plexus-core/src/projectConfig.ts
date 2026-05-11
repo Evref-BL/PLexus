@@ -205,14 +205,14 @@ function parseImageGit(
   value: unknown,
   issues: string[],
   pathPrefix: string,
-): ProjectImageGitConfig {
+): ProjectImageGitConfig | undefined {
   if (value === undefined) {
-    return { transport: "ssh" };
+    return undefined;
   }
 
   if (!isObject(value)) {
     issues.push(`${pathPrefix}.git must be an object`);
-    return { transport: "ssh" };
+    return undefined;
   }
 
   const transportValue = value.transport ?? "ssh";
@@ -265,7 +265,6 @@ function parseImages(
         imageName: "",
         active: false,
         mcp: { loadScript: "" },
-        git: { transport: "ssh" },
       };
     }
 

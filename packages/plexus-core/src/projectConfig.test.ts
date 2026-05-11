@@ -81,13 +81,11 @@ describe("project config", () => {
     expect(parseProjectConfig(config)).toEqual(config);
   });
 
-  it("defaults image git transport to ssh", () => {
+  it("leaves image git configuration absent when not specified", () => {
     const config = validProjectConfig();
     delete config.images[0].git;
 
-    expect(parseProjectConfig(config).images[0].git).toEqual({
-      transport: "ssh",
-    });
+    expect(parseProjectConfig(config).images[0].git).toBeUndefined();
   });
 
   it("parses image git transport and credentials", () => {

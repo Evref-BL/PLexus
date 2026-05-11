@@ -99,15 +99,14 @@ describe("project startup scripts", () => {
     expect(source).toContain("githubUser: 'Evref-BL' project: 'MCP'");
     expect(source).toContain("commitish: 'develop' path: ''");
     expect(source).toContain("baseline: 'MCP'");
-    expect(source).toContain(
-      "Smalltalk globals at: #PLexusGitTransport put: 'ssh'.",
-    );
-    expect(source).toContain("credentialsProvider useCustomSsh: false.");
+    expect(source).not.toContain("PLexusGitTransport");
+    expect(source).not.toContain("IceCredentialsProvider");
     expect(source).toContain("mcp port: 7123.");
     expect(source).toContain("mcp start.");
     expect(source).toContain(
       "Smalltalk globals at: #PLexusMCPServer put: mcp.",
     );
+    expect(source).toContain("Semaphore new wait.");
   });
 
   it("generates image Git configuration for custom SSH keys", () => {

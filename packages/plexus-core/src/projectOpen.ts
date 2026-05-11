@@ -85,6 +85,10 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+function closeClientQuietly(client: PharoLauncherMcpToolClient): void {
+  void client.close?.().catch(() => undefined);
+}
+
 function processMatchesImage(
   process: LauncherProcess,
   imageName: string,
@@ -109,6 +113,15 @@ function assertLauncherOk(
     throw new Error(`${toolName} returned ok: false`);
   }
 }
+
+type LaunchOutcome =
+  | { kind: "launch"; result: LauncherCommandResult | undefined }
+  | { kind: "launchError"; error: unknown };
+
+type ProcessOutcome = {
+  kind: "process";
+  process: LauncherProcess | undefined;
+};
 
 async function pollUntil<T>(
   timeoutMs: number,
@@ -163,6 +176,87 @@ async function pollHealth(
   return result === true;
 }
 
+async function launchImageAndPollProcess(
+  launchClient: PharoLauncherMcpToolClient,
+  processClient: PharoLauncherMcpToolClient,
+  imageName: string,
+  startupScriptPath: string,
+  timeoutMs: number,
+  intervalMs: number,
+  sleep: (durationMs: number) => Promise<void>,
+): Promise<LauncherProcess> {
+  const launchOutcome = launchClient
+    .callTool<LauncherCommandResult>("pharo_launcher_image_launch", {
+      imageName,
+      detached: true,
+      script: startupScriptPath,
+    })
+    .then(
+      (result): LaunchOutcome => ({ kind: "launch", result }),
+      (error): LaunchOutcome => ({ kind: "launchError", error }),
+    );
+  const immediateLaunch = await Promise.race([
+    launchOutcome,
+    new Promise<undefined>((resolve) =>
+      setTimeout(() => resolve(undefined), 0),
+    ),
+  ]);
+
+  if (immediateLaunch?.kind === "launchError") {
+    throw immediateLaunch.error;
+  }
+
+  if (immediateLaunch?.kind === "launch") {
+    assertLauncherOk(
+      immediateLaunch.result,
+      "pharo_launcher_image_launch",
+    );
+
+    const process = await pollProcessForImage(
+      processClient,
+      imageName,
+      timeoutMs,
+      intervalMs,
+      sleep,
+    );
+    if (process) {
+      return process;
+    }
+
+    throw new Error(
+      `Timed out waiting for PharoLauncher process for image ${imageName}`,
+    );
+  }
+
+  const processOutcome = pollProcessForImage(
+    processClient,
+    imageName,
+    timeoutMs,
+    intervalMs,
+    sleep,
+  ).then<ProcessOutcome>((process) => ({ kind: "process", process }));
+  const first = await Promise.race([launchOutcome, processOutcome]);
+
+  if (first.kind === "launchError") {
+    throw first.error;
+  }
+
+  if (first.kind === "launch") {
+    assertLauncherOk(first.result, "pharo_launcher_image_launch");
+
+    const { process } = await processOutcome;
+    if (process) {
+      return process;
+    }
+  } else if (first.process) {
+    return first.process;
+  }
+
+  throw new Error(
+    `Timed out waiting for PharoLauncher process for image ${imageName}`,
+  );
+}
+
 function activeStateImages(state: ProjectState): ProjectImageState[] {
   return state.images.filter((image) => image.status === "starting");
 }
@@ -206,7 +300,7 @@ export async function openProject(
   const poll = {
     intervalMs: options.poll?.intervalMs ?? 500,
     processTimeoutMs: options.poll?.processTimeoutMs ?? 30_000,
-    healthTimeoutMs: options.poll?.healthTimeoutMs ?? 60_000,
+    healthTimeoutMs: options.poll?.healthTimeoutMs ?? 5 * 60_000,
   };
   const sleep = options.sleep ?? defaultSleep;
   const failures: ProjectOpenFailure[] = [];
@@ -228,42 +322,38 @@ export async function openProject(
           stateRoot: options.stateRoot,
         });
 
-        const launchResult = await client.callTool<LauncherCommandResult>(
-          "pharo_launcher_image_launch",
-          {
-            imageName: imageState.imageName,
-            detached: true,
-            script: startupScript.filePath,
-          },
-        );
-        assertLauncherOk(launchResult, "pharo_launcher_image_launch");
-
-        const process = await pollProcessForImage(
-          client,
-          imageState.imageName,
-          poll.processTimeoutMs,
-          poll.intervalMs,
-          sleep,
-        );
-        if (process) {
+        const launchClient = options.pharoLauncherMcpClient
+          ? client
+          : await createStdioPharoLauncherMcpClient();
+        const ownsLaunchClient = !options.pharoLauncherMcpClient;
+        try {
+          const process = await launchImageAndPollProcess(
+            launchClient,
+            client,
+            imageState.imageName,
+            startupScript.filePath,
+            poll.processTimeoutMs,
+            poll.intervalMs,
+            sleep,
+          );
           imageState.pid = process.pid;
-        } else {
-          throw new Error(
-            `Timed out waiting for PharoLauncher process for image ${imageState.imageName}`,
-          );
-        }
 
-        const healthy = await pollHealth(
-          healthClient,
-          imageState.assignedPort,
-          poll.healthTimeoutMs,
-          poll.intervalMs,
-          sleep,
-        );
-        if (!healthy) {
-          throw new Error(
-            `Timed out waiting for Pharo MCP health on port ${imageState.assignedPort}`,
+          const healthy = await pollHealth(
+            healthClient,
+            imageState.assignedPort,
+            poll.healthTimeoutMs,
+            poll.intervalMs,
+            sleep,
           );
+          if (!healthy) {
+            throw new Error(
+              `Timed out waiting for Pharo MCP health on port ${imageState.assignedPort}`,
+            );
+          }
+        } finally {
+          if (ownsLaunchClient) {
+            closeClientQuietly(launchClient);
+          }
         }
 
         imageState.status = "running";

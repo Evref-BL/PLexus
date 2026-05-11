@@ -3,6 +3,8 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 import type { PharoLauncherMcpConfig } from "./config.js";
 import { loadPharoLauncherMcpConfig } from "./config.js";
 
+const defaultLauncherToolTimeoutMs = 5 * 60_000;
+
 export interface PharoLauncherMcpToolClient {
   callTool<T = unknown>(
     name: string,
@@ -20,6 +22,18 @@ export class PharoLauncherMcpToolError extends Error {
     super(message);
     this.name = "PharoLauncherMcpToolError";
   }
+}
+
+function launcherEnvironment(): Record<string, string> {
+  const env: Record<string, string> = {};
+
+  for (const [key, value] of Object.entries(process.env)) {
+    if (key.startsWith("PHARO_LAUNCHER_") && value !== undefined) {
+      env[key] = value;
+    }
+  }
+
+  return env;
 }
 
 function parseToolTextResult(toolName: string, result: unknown): unknown {
@@ -79,6 +93,7 @@ export async function createStdioPharoLauncherMcpClient(
     command: config.command,
     args: config.args,
     ...(config.repoDir ? { cwd: config.repoDir } : {}),
+    env: launcherEnvironment(),
     stderr: "pipe",
   });
 
@@ -89,10 +104,14 @@ export async function createStdioPharoLauncherMcpClient(
       name: string,
       argumentsValue: Record<string, unknown> = {},
     ): Promise<T> {
-      const result = await client.callTool({
-        name,
-        arguments: argumentsValue,
-      });
+      const result = await client.callTool(
+        {
+          name,
+          arguments: argumentsValue,
+        },
+        undefined,
+        { timeout: defaultLauncherToolTimeoutMs },
+      );
 
       return parseToolTextResult(name, result) as T;
     },

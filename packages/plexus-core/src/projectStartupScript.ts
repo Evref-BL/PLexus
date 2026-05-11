@@ -102,16 +102,26 @@ function smalltalkPath(value: string): string {
   return smalltalkString(value.replace(/\\/g, "/"));
 }
 
+function isWindowsAbsolutePath(value: string): boolean {
+  return /^[A-Za-z]:[\\/]/.test(value) || value.startsWith("\\\\");
+}
+
+function isAbsolutePath(value: string): boolean {
+  return path.isAbsolute(value) || isWindowsAbsolutePath(value);
+}
+
 function generateGitConfigurationScript(imageConfig: ProjectImageConfig): string {
-  const git = imageConfig.git ?? { transport: "ssh" as const };
+  if (!imageConfig.git) {
+    return "";
+  }
+
+  const git = imageConfig.git;
   const requiresCredentialsProvider = Boolean(
-    imageConfig.git?.ssh || imageConfig.git?.plainCredentials,
+    git.ssh || git.plainCredentials,
   );
   const lines = [
     `"Configure image-local Git transport and credentials."`,
     `Smalltalk globals at: #PLexusGitTransport put: ${smalltalkString(git.transport)}.`,
-    `(Smalltalk globals includesKey: #Iceberg) ifTrue: [`,
-    `  (Smalltalk globals at: #Iceberg) enableMetacelloIntegration: true ].`,
     `(Smalltalk globals includesKey: #IceCredentialsProvider)`,
     `  ifTrue: [`,
     `  | credentialsProvider |`,
@@ -163,8 +173,10 @@ function resolveLoadScriptPath(
   projectRoot: string,
   imageConfig: ProjectImageConfig,
 ): string {
-  return path.isAbsolute(imageConfig.mcp.loadScript)
+  return isAbsolutePath(imageConfig.mcp.loadScript)
     ? imageConfig.mcp.loadScript
+    : isWindowsAbsolutePath(projectRoot)
+      ? path.win32.resolve(projectRoot, imageConfig.mcp.loadScript)
     : path.resolve(projectRoot, imageConfig.mcp.loadScript);
 }
 
@@ -223,6 +235,9 @@ mcp port: ${options.imageState.assignedPort}.
 mcp start.
 
 Smalltalk globals at: #PLexusMCPServer put: mcp.
+
+"Keep the headless eval process alive while the MCP server accepts requests."
+Semaphore new wait.
 `;
 }
 
