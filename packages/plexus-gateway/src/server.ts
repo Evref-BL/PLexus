@@ -33,6 +33,35 @@ const projectReferenceProperties = {
   stateRoot: optionalStringSchema,
 } as const;
 
+const historyEntrySelectionSchema = objectSchema({
+  indexes: {
+    type: "array",
+    items: { type: "integer" },
+  },
+  entryReferences: {
+    type: "array",
+    items: stringSchema,
+  },
+  startIndex: { type: "integer" },
+  endIndex: { type: "integer" },
+  latestCount: { type: "integer", minimum: 1 },
+});
+
+const repositoryActionSchema = objectSchema(
+  {
+    label: optionalStringSchema,
+    toolName: {
+      type: "string",
+      enum: ["load_repository", "edit_repository"],
+    },
+    arguments: {
+      type: "object",
+      additionalProperties: true,
+    },
+  },
+  ["arguments"],
+);
+
 export const gatewayTools = [
   {
     name: "plexus_project_open",
@@ -91,6 +120,39 @@ export const gatewayTools = [
         },
       },
       ["imageId", "toolName"],
+    ),
+  },
+  {
+    name: "plexus_rescue_image",
+    description:
+      "Plan or run rescue of a crashed Pharo image into a new image by recreating launcher state, restoring repositories when possible, and applying selected history entries from the source image ombu files.",
+    inputSchema: objectSchema(
+      {
+        ...projectReferenceProperties,
+        operation: {
+          type: "string",
+          enum: ["snapshotSource", "plan", "prepareTarget", "applyPlan"],
+        },
+        sourceImageId: stringSchema,
+        targetImageId: optionalStringSchema,
+        targetImageName: optionalStringSchema,
+        targetTemplateName: optionalStringSchema,
+        targetTemplateCategory: optionalStringSchema,
+        targetMcpPort: { type: "integer", minimum: 1, maximum: 65_535 },
+        sourceHistoryDirectoryPath: optionalStringSchema,
+        historyFilePath: optionalStringSchema,
+        selection: historyEntrySelectionSchema,
+        exclude: historyEntrySelectionSchema,
+        codeChangesOnly: { type: "boolean" },
+        includeEntryCounts: { type: "boolean" },
+        loadRepositories: { type: "boolean" },
+        repositoryActions: {
+          type: "array",
+          items: repositoryActionSchema,
+        },
+        confirm: { type: "boolean" },
+      },
+      ["projectPath", "operation", "sourceImageId"],
     ),
   },
 ] as const;

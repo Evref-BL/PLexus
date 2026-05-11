@@ -34,6 +34,43 @@ export interface ProjectImageState {
   pid?: number;
   status: ProjectImageStatus;
   pharoMcpContract?: ProjectImagePharoMcpContractState;
+  imagePath?: string;
+  imageDirectoryPath?: string;
+  changesPath?: string;
+  localDirectoryPath?: string;
+  ombuDirectoryPath?: string;
+  vmId?: string;
+  pharoVersion?: string;
+  originTemplate?: {
+    name?: string;
+    url?: string;
+  };
+  rescueSnapshot?: {
+    capturedAt: string;
+    launcherImage?: {
+      name?: string;
+      pharoVersion?: string;
+      imagePath?: string;
+      originTemplate?: {
+        name?: string;
+        url?: string;
+      };
+      vmId?: string;
+    };
+    paths: {
+      imagePath?: string;
+      imageDirectoryPath?: string;
+      changesPath?: string;
+      localDirectoryPath?: string;
+      ombuDirectoryPath?: string;
+    };
+    repositories?: {
+      capturedAt: string;
+      status: "captured" | "unavailable";
+      repositories: Record<string, unknown>[];
+      error?: string;
+    };
+  };
 }
 
 export interface ProjectState {

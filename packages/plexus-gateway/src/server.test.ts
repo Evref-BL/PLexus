@@ -122,6 +122,7 @@ describe("gateway server", () => {
       "plexus_project_status",
       "plexus_gateway_unregister_target",
       "plexus_route_to_image",
+      "plexus_rescue_image",
     ]);
   });
 

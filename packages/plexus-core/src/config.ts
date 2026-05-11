@@ -21,7 +21,8 @@ export const pharoLauncherMcpPackageName =
 export const pharoLauncherMcpCommandName = "pharo-launcher-mcp" as const;
 
 function packageDirFromEntry(entry: string): string {
-  return path.dirname(path.dirname(entry));
+  const pathApi = isWindowsPath(entry) ? path.win32 : path;
+  return pathApi.dirname(pathApi.dirname(entry));
 }
 
 function resolveInstalledPharoLauncherMcpEntry(): string | undefined {

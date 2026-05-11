@@ -3,11 +3,16 @@ import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import {
   closeProject,
   HttpPharoMcpHealthClient,
+  rescueImage,
   loadProjectConfig,
   loadProjectState,
   openProject,
   projectStatePathForConfig,
   sanitizeRuntimeId,
+  type ImageRescueEntrySelection,
+  type ImageRescueOperation,
+  type ImageRescueRepositoryAction,
+  type ImageRescueResult,
   type PharoMcpHealthClient,
   type ProjectCloseResult,
   type ProjectConfig,
@@ -34,6 +39,7 @@ export interface PlexusGatewayOptions {
   healthClient?: PharoMcpHealthClient;
   projectOpen?: typeof openProject;
   projectClose?: typeof closeProject;
+  imageRescue?: typeof rescueImage;
   pharoTools?: readonly Tool[];
   pharoScope?: ProjectReferenceInput;
 }
@@ -72,6 +78,25 @@ export interface RouteToImageToolInput extends ProjectReferenceInput {
   imageId: string;
   toolName: string;
   arguments?: Record<string, unknown>;
+}
+
+export interface RescueImageToolInput extends ProjectReferenceInput {
+  operation: ImageRescueOperation;
+  sourceImageId: string;
+  targetImageId?: string;
+  targetImageName?: string;
+  targetTemplateName?: string;
+  targetTemplateCategory?: string;
+  targetMcpPort?: number;
+  sourceHistoryDirectoryPath?: string;
+  historyFilePath?: string;
+  selection?: ImageRescueEntrySelection;
+  exclude?: ImageRescueEntrySelection;
+  codeChangesOnly?: boolean;
+  includeEntryCounts?: boolean;
+  loadRepositories?: boolean;
+  repositoryActions?: ImageRescueRepositoryAction[];
+  confirm?: boolean;
 }
 
 export interface RouteToImageRoute {
@@ -146,6 +171,137 @@ function optionalBoolean(input: Record<string, unknown>, key: string): boolean {
   }
 
   return value;
+}
+
+function optionalNumber(
+  input: Record<string, unknown>,
+  key: string,
+): number | undefined {
+  const value = input[key];
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (typeof value !== "number" || !Number.isInteger(value)) {
+    throw new GatewayInputError(`${key} must be an integer`);
+  }
+
+  return value;
+}
+
+function numberArray(
+  value: unknown,
+  key: string,
+): number[] | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (!Array.isArray(value) || !value.every(Number.isInteger)) {
+    throw new GatewayInputError(`${key} must be an array of integers`);
+  }
+
+  return value;
+}
+
+function stringArray(
+  value: unknown,
+  key: string,
+): string[] | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (
+    !Array.isArray(value) ||
+    !value.every((item) => typeof item === "string" && item.length > 0)
+  ) {
+    throw new GatewayInputError(`${key} must be an array of non-empty strings`);
+  }
+
+  return value;
+}
+
+function optionalEntrySelection(
+  input: Record<string, unknown>,
+  key: string,
+): ImageRescueEntrySelection | undefined {
+  const value = input[key];
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new GatewayInputError(`${key} must be an object`);
+  }
+
+  const object = value as Record<string, unknown>;
+  return {
+    indexes: numberArray(object.indexes, `${key}.indexes`),
+    entryReferences: stringArray(
+      object.entryReferences,
+      `${key}.entryReferences`,
+    ),
+    startIndex: optionalNumber(object, "startIndex"),
+    endIndex: optionalNumber(object, "endIndex"),
+    latestCount: optionalNumber(object, "latestCount"),
+  };
+}
+
+function optionalRepositoryActions(
+  input: Record<string, unknown>,
+  key: string,
+): ImageRescueRepositoryAction[] | undefined {
+  const value = input[key];
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (!Array.isArray(value)) {
+    throw new GatewayInputError(`${key} must be an array`);
+  }
+
+  return value.map((item, index) => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) {
+      throw new GatewayInputError(`${key}[${index}] must be an object`);
+    }
+
+    const object = item as Record<string, unknown>;
+    const toolName = object.toolName;
+    if (
+      toolName !== undefined &&
+      toolName !== "load_repository" &&
+      toolName !== "edit_repository"
+    ) {
+      throw new GatewayInputError(
+        `${key}[${index}].toolName must be load_repository or edit_repository`,
+      );
+    }
+
+    return {
+      label: optionalString(object, "label"),
+      toolName: toolName as ImageRescueRepositoryAction["toolName"],
+      arguments: optionalObject(object, "arguments"),
+    };
+  });
+}
+
+function requireRescueOperation(
+  input: Record<string, unknown>,
+): ImageRescueOperation {
+  const value = input.operation;
+  if (
+    value === "snapshotSource" ||
+    value === "plan" ||
+    value === "prepareTarget" ||
+    value === "applyPlan"
+  ) {
+    return value;
+  }
+
+  throw new GatewayInputError(
+    "operation must be snapshotSource, plan, prepareTarget, or applyPlan",
+  );
 }
 
 function optionalObject(
@@ -241,6 +397,7 @@ export class PlexusGateway {
   private readonly healthClient: PharoMcpHealthClient;
   private readonly projectOpen: typeof openProject;
   private readonly projectClose: typeof closeProject;
+  private readonly imageRescue: typeof rescueImage;
   private readonly pharoTools: Tool[];
   private readonly pharoToolNames: Set<string>;
   private readonly pharoScope: ProjectReferenceInput;
@@ -253,6 +410,7 @@ export class PlexusGateway {
       options.healthClient ?? new HttpPharoMcpHealthClient();
     this.projectOpen = options.projectOpen ?? openProject;
     this.projectClose = options.projectClose ?? closeProject;
+    this.imageRescue = options.imageRescue ?? rescueImage;
     this.pharoTools = buildPharoFacadeTools(options.pharoTools ?? []);
     this.pharoToolNames = new Set(this.pharoTools.map((tool) => tool.name));
     this.pharoScope = options.pharoScope ?? {};
@@ -373,6 +531,45 @@ export class PlexusGateway {
     }
   }
 
+  async rescueImage(
+    input: RescueImageToolInput,
+  ): Promise<GatewayToolResult<ImageRescueResult>> {
+    try {
+      if (!input.projectPath) {
+        throw new GatewayInputError("projectPath is required for image rescue");
+      }
+
+      const rescueResult = await this.imageRescue({
+        ...input,
+        projectRoot: input.projectPath,
+        imageMcpClient: {
+          callTool: async (image, toolName, argumentsValue) => {
+            const routed = await this.callRoutedImageTool(
+              input,
+              image.id,
+              toolName,
+              argumentsValue,
+            );
+            return routed.result;
+          },
+        },
+        healthClient: this.healthClient,
+      });
+
+      if (rescueResult.state) {
+        this.routingTable.upsertProject(
+          rescueResult.projectRoot,
+          rescueResult.statePath,
+          rescueResult.state,
+        );
+      }
+
+      return result(rescueResult);
+    } catch (error) {
+      return failure(error);
+    }
+  }
+
   async callPharoTool(
     toolName: string,
     inputValue: unknown,
@@ -448,6 +645,37 @@ export class PlexusGateway {
             imageId: requireString(input, "imageId"),
             toolName: requireString(input, "toolName"),
             arguments: optionalObject(input, "arguments"),
+          });
+
+        case "plexus_rescue_image":
+          return this.rescueImage({
+            projectPath: requireString(input, "projectPath"),
+            projectId: optionalString(input, "projectId"),
+            workspaceId: optionalString(input, "workspaceId"),
+            targetId: optionalString(input, "targetId"),
+            stateRoot: optionalString(input, "stateRoot"),
+            operation: requireRescueOperation(input),
+            sourceImageId: requireString(input, "sourceImageId"),
+            targetImageId: optionalString(input, "targetImageId"),
+            targetImageName: optionalString(input, "targetImageName"),
+            targetTemplateName: optionalString(input, "targetTemplateName"),
+            targetTemplateCategory: optionalString(input, "targetTemplateCategory"),
+            targetMcpPort: optionalNumber(input, "targetMcpPort"),
+            sourceHistoryDirectoryPath: optionalString(
+              input,
+              "sourceHistoryDirectoryPath",
+            ),
+            historyFilePath: optionalString(input, "historyFilePath"),
+            selection: optionalEntrySelection(input, "selection"),
+            exclude: optionalEntrySelection(input, "exclude"),
+            codeChangesOnly: optionalBoolean(input, "codeChangesOnly"),
+            includeEntryCounts: optionalBoolean(input, "includeEntryCounts"),
+            loadRepositories: optionalBoolean(input, "loadRepositories"),
+            repositoryActions: optionalRepositoryActions(
+              input,
+              "repositoryActions",
+            ),
+            confirm: optionalBoolean(input, "confirm"),
           });
 
         default:

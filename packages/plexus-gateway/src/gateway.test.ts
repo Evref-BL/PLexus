@@ -5,6 +5,8 @@ import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   saveProjectState,
+  type ImageRescueOptions,
+  type ImageRescueResult,
   type PharoMcpHealthClient,
   type ProjectCloseOptions,
   type ProjectCloseResult,
@@ -299,6 +301,80 @@ describe("PlexusGateway", () => {
     expect(routed).toEqual({
       content: [{ type: "text", text: "routed" }],
     });
+  });
+
+  it("exposes image rescue with routed Pharo MCP access", async () => {
+    const projectRoot = makeTempDir("plexus-project-");
+    const stateRoot = makeTempDir("plexus-state-");
+    const imageRouter = new FakeImageRouter();
+    const rescueCalls: ImageRescueOptions[] = [];
+    writeProjectConfig(projectRoot);
+    saveProjectState(statePath(stateRoot), runningState);
+
+    const gateway = new PlexusGateway({
+      imageRouter,
+      imageRescue: async (
+        options: ImageRescueOptions,
+      ): Promise<ImageRescueResult> => {
+        rescueCalls.push(options);
+        await options.imageMcpClient?.callTool(
+          runningState.images[0],
+          "manage-change-history",
+          {
+            operation: "listFiles",
+          },
+        );
+
+        return {
+          ok: true,
+          operation: options.operation,
+          projectRoot: options.projectRoot,
+          statePath: statePath(stateRoot),
+          state: runningState,
+          sourceImage: runningState.images[0],
+          sourceSnapshot: {
+            capturedAt: "2026-05-11T10:00:00.000Z",
+            paths: {},
+          },
+          warnings: [],
+        };
+      },
+    });
+
+    const rescueResult = data(
+      await gateway.handleTool("plexus_rescue_image", {
+        projectPath: projectRoot,
+        stateRoot,
+        workspaceId: "worktree-a",
+        operation: "applyPlan",
+        sourceImageId: "dev",
+        confirm: false,
+      }),
+    );
+
+    expect(rescueCalls[0]).toMatchObject({
+      operation: "applyPlan",
+      projectRoot: path.resolve(projectRoot),
+      sourceImageId: "dev",
+      confirm: false,
+    });
+    expect(imageRouter.calls).toEqual([
+      {
+        route: {
+          projectId: "project-123",
+          workspaceId: "worktree-a",
+          targetId: "project-123--worktree-a",
+          imageId: "dev",
+          imageName: "MyProject-dev",
+          port: 7123,
+        },
+        toolName: "manage-change-history",
+        argumentsValue: {
+          operation: "listFiles",
+        },
+      },
+    ]);
+    expect(rescueResult.operation).toBe("applyPlan");
   });
 
   it("exposes stable Pharo facade tools with a required imageId route field", async () => {

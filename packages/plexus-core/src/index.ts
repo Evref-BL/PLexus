@@ -1,4 +1,5 @@
 export * from "./config.js";
+export * from "./imageRescue.js";
 export * from "./pharoLauncherMcpClient.js";
 export * from "./pharoMcpHealth.js";
 export * from "./projectClose.js";
