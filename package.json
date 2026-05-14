@@ -10,7 +10,8 @@
     "plexus-gateway": "./packages/plexus-gateway/dist/index.js"
   },
   "workspaces": [
-    "packages/*"
+    "packages/plexus-core",
+    "packages/plexus-gateway"
   ],
   "engines": {
     "node": ">=24"

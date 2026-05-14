@@ -1,5 +1,17 @@
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { loadPharoLauncherMcpConfig } from "./config.js";
+import {
+  loadPharoLauncherMcpConfig,
+  pharoLauncherMcpCommandName,
+  pharoLauncherMcpPackageName,
+} from "./config.js";
+
+const repoRoot = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "../../..",
+);
 
 describe("loadPharoLauncherMcpConfig", () => {
   it("uses explicit environment variables", () => {
@@ -84,5 +96,35 @@ describe("loadPharoLauncherMcpConfig", () => {
       command: "pharo-launcher-mcp",
       args: [],
     });
+  });
+
+  it("keeps the Pharo Launcher MCP dependency on the pharo-launcher-mcp project", () => {
+    expect(pharoLauncherMcpPackageName).toBe("@evref-bl/pharo-launcher-mcp");
+    expect(pharoLauncherMcpCommandName).toBe("pharo-launcher-mcp");
+
+    const corePackage = JSON.parse(
+      fs.readFileSync(
+        path.join(repoRoot, "packages", "plexus-core", "package.json"),
+        "utf8",
+      ),
+    ) as {
+      dependencies?: Record<string, string>;
+    };
+    expect(corePackage.dependencies).toHaveProperty(pharoLauncherMcpPackageName);
+    expect(corePackage.dependencies).not.toHaveProperty("@evref-bl/mcp-pl");
+
+    const lockfile = JSON.parse(
+      fs.readFileSync(path.join(repoRoot, "package-lock.json"), "utf8"),
+    ) as {
+      packages?: Record<string, unknown>;
+    };
+    expect(lockfile.packages).toHaveProperty(
+      `node_modules/${pharoLauncherMcpPackageName}`,
+    );
+    expect(lockfile.packages).not.toHaveProperty("packages/pharo-launcher-mcp");
+
+    const serializedLockfile = JSON.stringify(lockfile);
+    expect(serializedLockfile).not.toContain("@evref-bl/mcp-pl");
+    expect(serializedLockfile).not.toContain("@plexus/pharo-launcher-mcp");
   });
 });

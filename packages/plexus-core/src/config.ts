@@ -16,13 +16,17 @@ export interface LoadPharoLauncherMcpConfigOptions {
 
 const require = createRequire(import.meta.url);
 
+export const pharoLauncherMcpPackageName =
+  "@evref-bl/pharo-launcher-mcp" as const;
+export const pharoLauncherMcpCommandName = "pharo-launcher-mcp" as const;
+
 function packageDirFromEntry(entry: string): string {
   return path.dirname(path.dirname(entry));
 }
 
 function resolveInstalledPharoLauncherMcpEntry(): string | undefined {
   try {
-    return require.resolve("@evref-bl/pharo-launcher-mcp");
+    return require.resolve(pharoLauncherMcpPackageName);
   } catch {
     return undefined;
   }
@@ -81,7 +85,7 @@ export function loadPharoLauncherMcpConfig(
 
     return {
       source: "command",
-      command: "pharo-launcher-mcp",
+      command: pharoLauncherMcpCommandName,
       args: [],
     };
   }
