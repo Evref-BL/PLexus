@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
+import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -20,12 +21,13 @@ function parseArgs(argv) {
     imageSpecs: [],
     stepSpecs: [],
     scenario: "basic",
+    createSourceFromTemplate: false,
     pollIntervalMs: 500,
     processTimeoutMs: 30_000,
     healthTimeoutMs: 120_000,
-    toolName: "evaluate",
-    toolArgumentsJson: '{"expression":"3 + 4"}',
-    expectedText: "7",
+    toolName: "find-packages",
+    toolArgumentsJson: '{"projectNames":["MCP"]}',
+    expectedText: "packages found",
     keepTemp: false,
   };
 
@@ -95,6 +97,18 @@ function parseArgs(argv) {
       case "--scenario":
         options.scenario = next();
         break;
+      case "--createSourceFromTemplate":
+        options.createSourceFromTemplate = true;
+        break;
+      case "--sourceImageName":
+        options.sourceImageName = next();
+        break;
+      case "--sourceTemplateName":
+        options.sourceTemplateName = next();
+        break;
+      case "--sourceTemplateCategory":
+        options.sourceTemplateCategory = next();
+        break;
       case "--pollIntervalMs":
         options.pollIntervalMs = Number(next());
         break;
@@ -117,10 +131,22 @@ function parseArgs(argv) {
   options.projectRoot ??= process.env.PLEXUS_SMOKE_PROJECT_ROOT;
   options.stateRoot ??= process.env.PLEXUS_SMOKE_STATE_ROOT;
   options.fixtureRoot ??= process.env.PLEXUS_SMOKE_FIXTURE_ROOT;
+  options.createSourceFromTemplate ||= booleanEnv(
+    process.env.PLEXUS_SMOKE_CREATE_SOURCE_FROM_TEMPLATE,
+  );
+  options.sourceImageName ??= process.env.PLEXUS_SMOKE_SOURCE_IMAGE_NAME;
+  options.sourceTemplateName ??= process.env.PLEXUS_SMOKE_SOURCE_TEMPLATE_NAME;
+  options.sourceTemplateCategory ??=
+    process.env.PLEXUS_SMOKE_SOURCE_TEMPLATE_CATEGORY;
   options.workspaceId ??=
     process.env.PLEXUS_SMOKE_WORKSPACE_ID ??
     `smoke-${new Date().toISOString().replaceAll(/[^0-9A-Za-z]+/g, "-")}-${process.pid}`;
   options.targetId ??= process.env.PLEXUS_SMOKE_TARGET_ID;
+  options.toolName = process.env.PLEXUS_SMOKE_TOOL_NAME ?? options.toolName;
+  options.toolArgumentsJson =
+    process.env.PLEXUS_SMOKE_TOOL_ARGUMENTS_JSON ?? options.toolArgumentsJson;
+  options.expectedText =
+    process.env.PLEXUS_SMOKE_EXPECTED_TEXT ?? options.expectedText;
   options.loadScript ??=
     process.env.PLEXUS_SMOKE_LOAD_SCRIPT ??
     path.join(repoRoot, "pharo", "load-mcp.st");
@@ -145,9 +171,10 @@ function usage() {
     "  npm run smoke:open-route-close -- --copyFromImageName <ExistingImage>",
     "  npm run smoke:open-route-close -- --imageName <ExistingDisposableImage>",
     "  npm run smoke:open-route-close -- --imageSpecJson '{\"id\":\"dev\",\"copyFromImageName\":\"MCP12-2\"}' --imageSpecJson '{\"id\":\"peer\",\"copyFromImageName\":\"MCP12-2\"}'",
+    "  npm run smoke:open-route-close -- --createSourceFromTemplate",
     "",
     "Required:",
-    "  One image source via --copyFromImageName, --imageName, --imageSpecJson, or matching PLEXUS_SMOKE_* env vars",
+    "  One image source via --copyFromImageName, --imageName, --imageSpecJson, --createSourceFromTemplate, or matching PLEXUS_SMOKE_* env vars",
     "",
     "Optional:",
     "  --projectRoot <path>          Defaults to an owned temp project",
@@ -156,14 +183,18 @@ function usage() {
     "  --workspaceId <id>            Defaults to a unique smoke id",
     "  --targetId <id>               Overrides the runtime target id",
     "  --projectId <id>              Defaults to smoke-open-route-close",
-    "  --imageId <id>                Defaults to dev for the legacy one-image path",
+    "  --imageId <id>                Defaults to dev for the one-image path",
     "  --port <number>               Defaults to PLexus allocation",
     "  --loadScript <path>           Defaults to pharo/load-mcp.st in this repo",
-    "  --toolName <name>             Defaults to evaluate",
-    "  --toolArgumentsJson <json>    Defaults to {\"expression\":\"3 + 4\"}",
-    "  --expectedText <text>         Defaults to 7 for the legacy/default probe",
+    "  --toolName <name>             Defaults to find-packages",
+    "  --toolArgumentsJson <json>    Defaults to {\"projectNames\":[\"MCP\"]}",
+    "  --expectedText <text>         Defaults to packages found for the read-only probe",
     "  --stepJson <json>             Adds a routed tool step; use forEachImage=true to fan out",
     "  --scenario <name>             basic or project-edit-export",
+    "  --createSourceFromTemplate    Create a temporary source image, then copy smoke images from it",
+    "  --sourceImageName <name>       Overrides the temporary source image name",
+    "  --sourceTemplateName <name>    Template used with --createSourceFromTemplate",
+    "  --sourceTemplateCategory <cat> Template category used with --createSourceFromTemplate",
     "  --keepTemp                   Keep generated temp project/state/fixture dirs",
     "",
     "Image spec JSON fields:",
@@ -219,6 +250,10 @@ function appendJsonArrayEnv(target, value, name) {
     }
     target.push(entry);
   }
+}
+
+function booleanEnv(value) {
+  return value === "1" || value?.toLowerCase() === "true";
 }
 
 function assertValidOptions(options) {
@@ -284,7 +319,7 @@ function normalizeImageSpecs(options) {
 
     const imageName = stringProperty(rawImage, "imageName");
     const copyFromImageName = stringProperty(rawImage, "copyFromImageName");
-    if (!imageName && !copyFromImageName) {
+    if (!imageName && !copyFromImageName && !options.createSourceFromTemplate) {
       throw new Error(
         `Image ${id} is missing imageName or copyFromImageName`,
       );
@@ -465,6 +500,34 @@ function launcherData(result) {
   return result.data;
 }
 
+function launcherErrorDetails(error) {
+  if (error && typeof error === "object" && "result" in error) {
+    return JSON.stringify(error.result, null, 2);
+  }
+
+  return error instanceof Error ? error.message : String(error);
+}
+
+async function callLauncherTool(client, toolName, argumentsValue = {}) {
+  try {
+    return await client.callTool(toolName, argumentsValue);
+  } catch (error) {
+    throw new Error(`${toolName} failed: ${launcherErrorDetails(error)}`);
+  }
+}
+
+function dataArray(value) {
+  return Array.isArray(value) ? value : [];
+}
+
+function requiredName(value, label) {
+  if (typeof value !== "string" || value.length === 0) {
+    throw new Error(`${label} is not a non-empty string`);
+  }
+
+  return value;
+}
+
 function processMatchesImage(process, imageName) {
   return (
     process.imageName === imageName ||
@@ -475,7 +538,7 @@ function processMatchesImage(process, imageName) {
 }
 
 async function listImages(client, nameFilter) {
-  const result = await client.callTool("pharo_launcher_image_list", {
+  const result = await callLauncherTool(client, "pharo_launcher_image_list", {
     ...(nameFilter ? { nameFilter } : {}),
     format: "ston",
   });
@@ -513,7 +576,7 @@ async function waitForImageExists(client, imageName, timeoutMs = 30_000) {
 }
 
 async function processForImage(client, imageName) {
-  const result = await client.callTool("pharo_launcher_process_list", {});
+  const result = await callLauncherTool(client, "pharo_launcher_process_list", {});
   const processes = launcherData(result) ?? [];
   return processes.find((process) => processMatchesImage(process, imageName));
 }
@@ -576,6 +639,123 @@ async function routeStep(gateway, targetId, step) {
   return routedData;
 }
 
+function postImageJsonRpc(port, payload, timeoutMs = 30_000) {
+  const body = JSON.stringify(payload);
+
+  return new Promise((resolve, reject) => {
+    const request = http.request(
+      {
+        hostname: "127.0.0.1",
+        port,
+        path: "/",
+        method: "POST",
+        headers: {
+          accept: "application/json, text/event-stream",
+          "content-type": "application/json",
+          "content-length": Buffer.byteLength(body),
+          connection: "close",
+        },
+        timeout: timeoutMs,
+      },
+      (response) => {
+        const chunks = [];
+        response.on("data", (chunk) => {
+          chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+        });
+        response.on("end", () => {
+          if (
+            response.statusCode === undefined ||
+            response.statusCode < 200 ||
+            response.statusCode >= 300
+          ) {
+            reject(
+              new Error(
+                `HTTP ${response.statusCode ?? "unknown"} ${
+                  response.statusMessage ?? ""
+                }`.trim(),
+              ),
+            );
+            return;
+          }
+
+          try {
+            resolve(JSON.parse(Buffer.concat(chunks).toString("utf8")));
+          } catch (error) {
+            reject(
+              new Error(
+                `JSON-RPC response was not valid JSON: ${
+                  error instanceof Error ? error.message : String(error)
+                }`,
+              ),
+            );
+          }
+        });
+      },
+    );
+
+    request.on("timeout", () => {
+      request.destroy(new Error(`JSON-RPC request timed out after ${timeoutMs}ms`));
+    });
+    request.on("error", reject);
+    request.end(body);
+  });
+}
+
+function requireJsonRpcResult(response, label) {
+  if (!response || typeof response !== "object" || Array.isArray(response)) {
+    throw new Error(`${label} did not return a JSON-RPC object`);
+  }
+
+  if ("error" in response) {
+    throw new Error(`${label} failed: ${JSON.stringify(response.error)}`);
+  }
+
+  if (!("result" in response)) {
+    throw new Error(`${label} did not return a JSON-RPC result`);
+  }
+
+  return response.result;
+}
+
+async function assertImageMcpToolsReady(stateAfterOpen, options) {
+  for (const image of options.images) {
+    const imageState = stateAfterOpen?.images.find(
+      (candidate) => candidate.id === image.id,
+    );
+    if (!imageState?.assignedPort) {
+      throw new Error(`Image ${image.id} is missing an assigned MCP port`);
+    }
+
+    const result = requireJsonRpcResult(
+      await postImageJsonRpc(imageState.assignedPort, {
+        jsonrpc: "2.0",
+        id: `plexus-smoke-tools-${image.id}`,
+        method: "tools/list",
+      }),
+      `tools/list ${image.id}`,
+    );
+    const tools =
+      result && typeof result === "object" && Array.isArray(result.tools)
+        ? result.tools
+        : [];
+    const toolNames = tools
+      .map((tool) =>
+        tool && typeof tool === "object" && typeof tool.name === "string"
+          ? tool.name
+          : undefined,
+      )
+      .filter(Boolean);
+
+    if (!toolNames.includes(options.toolName)) {
+      throw new Error(
+        `Image ${image.id} MCP tools/list did not include ${options.toolName}; returned ${toolNames.join(", ")}`,
+      );
+    }
+
+    textResult("mcp tools/list", `${image.id}=${toolNames.length} tools`);
+  }
+}
+
 async function runDefaultRouteProbes(gateway, targetId, options) {
   for (const image of options.images) {
     await routeStep(gateway, targetId, {
@@ -616,7 +796,7 @@ async function runMultiImageIsolationProbe(gateway, targetId, options) {
       imageId: image.id,
       toolName: "evaluate",
       arguments: {
-        expression:
+        code:
           "Smalltalk globals at: #PLexusSmokeIsolationToken put: UUID new asString",
       },
     });
@@ -637,7 +817,7 @@ async function runMultiImageIsolationProbe(gateway, targetId, options) {
     imageId: firstImage.id,
     toolName: "evaluate",
     arguments: {
-      expression:
+      code:
         "Smalltalk globals at: #PLexusSmokeIsolationToken ifAbsent: [ 'missing' ]",
     },
   });
@@ -697,7 +877,7 @@ async function runProjectEditExportScenario(gateway, targetId, projectPaths, opt
       imageId: image.id,
       toolName: "evaluate",
       arguments: {
-        expression: `${className} new answer`,
+        code: `${className} new answer`,
       },
       expectedText: "42",
     });
@@ -858,6 +1038,103 @@ function generatedSmokeImageName(image) {
   return `PlexusSmoke${id || "Image"}${Date.now()}${process.pid}${image.index}`;
 }
 
+function generatedSourceImageName() {
+  return `PlexusSmokeSource${Date.now()}${process.pid}`;
+}
+
+async function chooseSourceTemplate(client, options) {
+  if (options.sourceTemplateName) {
+    return {
+      name: options.sourceTemplateName,
+      ...(options.sourceTemplateCategory
+        ? { category: options.sourceTemplateCategory }
+        : {}),
+    };
+  }
+
+  const vms = dataArray(
+    launcherData(
+      await callLauncherTool(client, "pharo_launcher_vm_list", {
+        format: "ston",
+      }),
+    ),
+  );
+  const availableVersions = vms
+    .map((vm) =>
+      typeof vm.id === "string" ? vm.id.match(/^(\d+)-/)?.[1] : undefined,
+    )
+    .filter(Boolean);
+  const templates = dataArray(
+    launcherData(
+      await callLauncherTool(client, "pharo_launcher_template_list", {
+        format: "ston",
+      }),
+    ),
+  );
+  const template =
+    templates.find((candidate) => {
+      const name = typeof candidate.name === "string" ? candidate.name : "";
+      const url = typeof candidate.url === "string" ? candidate.url : "";
+
+      return availableVersions.some(
+        (version) =>
+          name.includes(`Pharo ${Number(version)}.`) ||
+          url.includes(`/${version}/`),
+      );
+    }) ?? templates.find((candidate) => typeof candidate.name === "string");
+
+  if (!template) {
+    throw new Error("No PharoLauncher template with a name was returned");
+  }
+
+  return {
+    name: requiredName(template.name, "template.name"),
+    ...(typeof template.category === "string"
+      ? { category: template.category }
+      : {}),
+  };
+}
+
+async function prepareTemplateSourceImage(client, options) {
+  if (!options.createSourceFromTemplate) {
+    return;
+  }
+
+  const sourceImageName = options.sourceImageName ?? generatedSourceImageName();
+  if (await imageExists(client, sourceImageName)) {
+    throw new Error(
+      `Temporary source image already exists in PharoLauncher: ${sourceImageName}`,
+    );
+  }
+
+  const template = await chooseSourceTemplate(client, options);
+  textResult(
+    "source template",
+    `${template.category ? `${template.category}/` : ""}${template.name}`,
+  );
+  textResult("source image", sourceImageName);
+
+  launcherData(
+    await callLauncherTool(client, "pharo_launcher_image_create", {
+      templateName: template.name,
+      ...(template.category ? { templateCategory: template.category } : {}),
+      newImageName: sourceImageName,
+      noLaunch: true,
+    }),
+  );
+
+  if (!(await waitForImageExists(client, sourceImageName))) {
+    throw new Error(
+      `Temporary source image did not become visible in PharoLauncher: ${sourceImageName}`,
+    );
+  }
+
+  options.createdSourceImageName = sourceImageName;
+  for (const image of options.images) {
+    image.copyFromImageName ??= sourceImageName;
+  }
+}
+
 async function prepareImages(client, options) {
   for (const image of options.images) {
     if (image.copyFromImageName) {
@@ -877,10 +1154,14 @@ async function prepareImages(client, options) {
         );
       }
 
-      const copyResult = await client.callTool("pharo_launcher_image_copy", {
-        imageName: image.copyFromImageName,
-        newImageName: image.imageName,
-      });
+      const copyResult = await callLauncherTool(
+        client,
+        "pharo_launcher_image_copy",
+        {
+          imageName: image.copyFromImageName,
+          newImageName: image.imageName,
+        },
+      );
       launcherData(copyResult);
       image.copied = true;
       textResult("image copied", image.id);
@@ -965,19 +1246,30 @@ async function assertClosed(client, gateway, openData, projectPaths, options) {
     targetId: openData.state.targetId,
     refreshHealth: true,
   });
-  const closedRoute = requireGatewayOk(statusAfterClose, "plexus_project_status");
-  for (const image of options.images) {
-    const closedImage = closedRoute.images?.find(
-      (candidate) => candidate.id === image.id,
+  if (statusAfterClose.ok) {
+    throw new Error(
+      `Closed target is still registered: ${JSON.stringify(
+        statusAfterClose.data,
+      )}`,
     );
-    const routeSummary = closedImage
-      ? `${closedImage.status}, routable=${closedImage.routable?.ok === true}`
-      : "not registered";
-    if (closedImage?.routable?.ok) {
-      throw new Error(`Closed image ${image.id} route is still routable`);
-    }
-    textResult("route after close", `${image.id}=${routeSummary}`);
   }
+  textResult("route after close", `${openData.state.targetId}=unregistered`);
+
+  const allStatusAfterClose = requireGatewayOk(
+    await gateway.handleTool("plexus_project_status", {
+      refreshHealth: true,
+    }),
+    "plexus_project_status all",
+  );
+  const allRoutes = Array.isArray(allStatusAfterClose)
+    ? allStatusAfterClose
+    : [allStatusAfterClose];
+  if (
+    allRoutes.some((route) => route?.targetId === openData.state.targetId)
+  ) {
+    throw new Error(`Closed target ${openData.state.targetId} remains in status`);
+  }
+  textResult("status after close", "closed target absent");
 }
 
 async function cleanupStep(label, action) {
@@ -1007,6 +1299,7 @@ async function main() {
   let openData;
 
   try {
+    await prepareTemplateSourceImage(client, options);
     await prepareImages(client, options);
 
     projectPaths = writeSmokeProjectConfig(options);
@@ -1030,7 +1323,9 @@ async function main() {
     textResult("open ok", openResult.ok);
     textResult("statePath", openData.statePath);
 
-    validateOpenedState(loadProjectState(openData.statePath), options);
+    const stateAfterOpen = loadProjectState(openData.statePath);
+    validateOpenedState(stateAfterOpen, options);
+    await assertImageMcpToolsReady(stateAfterOpen, options);
     await runDefaultRouteProbes(gateway, openData.state.targetId, options);
     await runMultiImageIsolationProbe(gateway, openData.state.targetId, options);
     await runConfiguredSteps(gateway, openData.state.targetId, options);
@@ -1067,7 +1362,7 @@ async function main() {
             console.error(
               `cleanup: killing ${image.imageName} with pid ${stillRunning.pid}`,
             );
-            await client.callTool("pharo_launcher_process_kill", {
+            await callLauncherTool(client, "pharo_launcher_process_kill", {
               imageName: image.imageName,
               confirm: true,
             });
@@ -1080,7 +1375,7 @@ async function main() {
       await cleanupStep(`copied image delete ${image.id}`, async () => {
         if (image.copied) {
           console.error(`cleanup: deleting copied image ${image.imageName}`);
-          await client.callTool("pharo_launcher_image_delete", {
+          await callLauncherTool(client, "pharo_launcher_image_delete", {
             imageName: image.imageName,
             force: true,
             confirm: true,
@@ -1088,6 +1383,19 @@ async function main() {
         }
       });
     }
+
+    await cleanupStep("source image delete", async () => {
+      if (options.createdSourceImageName) {
+        console.error(
+          `cleanup: deleting source image ${options.createdSourceImageName}`,
+        );
+        await callLauncherTool(client, "pharo_launcher_image_delete", {
+          imageName: options.createdSourceImageName,
+          force: true,
+          confirm: true,
+        });
+      }
+    });
 
     await cleanupStep("temp directory cleanup", async () => {
       if (projectPaths && !options.keepTemp) {

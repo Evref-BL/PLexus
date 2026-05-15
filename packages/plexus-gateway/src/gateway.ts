@@ -63,6 +63,11 @@ export interface ProjectStatusToolInput extends ProjectReferenceInput {
   refreshHealth?: boolean;
 }
 
+export interface GatewayUnregisterTargetResult {
+  removed: boolean;
+  route?: GatewayProjectRoute;
+}
+
 export interface RouteToImageToolInput extends ProjectReferenceInput {
   imageId: string;
   toolName: string;
@@ -293,10 +298,11 @@ export class PlexusGateway {
       });
 
       if (closeResult.state) {
-        this.routingTable.upsertProject(
+        this.routingTable.removeTarget(closeResult.state.targetId);
+      } else {
+        this.routingTable.removeProjectRootRoutes(
           closeResult.projectRoot,
-          closeResult.statePath,
-          closeResult.state,
+          input.workspaceId ? sanitizeRuntimeId(input.workspaceId) : undefined,
         );
       }
 
@@ -306,10 +312,32 @@ export class PlexusGateway {
     }
   }
 
+  async unregisterTarget(
+    input: ProjectReferenceInput,
+  ): Promise<GatewayToolResult<GatewayUnregisterTargetResult>> {
+    try {
+      const route = this.findRegisteredRoute(input);
+      const removed = route
+        ? this.routingTable.removeTarget(route.targetId)
+        : undefined;
+
+      return result({
+        removed: Boolean(removed),
+        ...(removed ? { route: removed } : {}),
+      });
+    } catch (error) {
+      return failure(error);
+    }
+  }
+
   async status(
     input: ProjectStatusToolInput,
   ): Promise<GatewayToolResult<GatewayProjectRoute | GatewayProjectRoute[]>> {
     try {
+      if (!input.projectPath && !input.projectId && !input.targetId) {
+        this.routingTable.removeRoutesWithMissingStatePaths();
+      }
+
       const routes = await this.resolveProjectRoutes(input);
 
       if (input.refreshHealth) {
@@ -391,6 +419,15 @@ export class PlexusGateway {
             workspaceId: optionalString(input, "workspaceId"),
           });
 
+        case "plexus_gateway_unregister_target":
+          return this.unregisterTarget({
+            projectPath: optionalString(input, "projectPath"),
+            projectId: optionalString(input, "projectId"),
+            workspaceId: optionalString(input, "workspaceId"),
+            targetId: optionalString(input, "targetId"),
+            stateRoot: optionalString(input, "stateRoot"),
+          });
+
         case "plexus_project_status":
           return this.status({
             projectPath: optionalString(input, "projectPath"),
@@ -422,6 +459,42 @@ export class PlexusGateway {
     } catch (error) {
       return failure(error);
     }
+  }
+
+  private findRegisteredRoute(
+    input: ProjectReferenceInput,
+  ): GatewayProjectRoute | undefined {
+    if (input.targetId) {
+      return this.routingTable.getTarget(input.targetId);
+    }
+
+    if (input.projectId && input.workspaceId) {
+      return this.routingTable.getProjectWorkspace(
+        input.projectId,
+        sanitizeRuntimeId(input.workspaceId),
+      );
+    }
+
+    if (input.projectPath) {
+      const reference = projectReferenceFromPath(
+        input.projectPath,
+        input.stateRoot,
+        input.workspaceId,
+      );
+
+      if (reference.state) {
+        return this.routingTable.getTarget(reference.state.targetId);
+      }
+
+      return this.routingTable.findProjectRootRoutes(
+        reference.projectRoot,
+        input.workspaceId ? sanitizeRuntimeId(input.workspaceId) : undefined,
+      )[0];
+    }
+
+    throw new GatewayInputError(
+      "targetId, projectId with workspaceId, or projectPath is required",
+    );
   }
 
   private async resolveProjectRoutes(

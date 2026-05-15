@@ -71,6 +71,12 @@ export const gatewayTools = [
     }),
   },
   {
+    name: "plexus_gateway_unregister_target",
+    description:
+      "Remove a registered gateway target route without opening or closing project images.",
+    inputSchema: objectSchema(projectReferenceProperties),
+  },
+  {
     name: "plexus_route_to_image",
     description:
       "Route a Pharo MCP tool call to the MCP server running inside a selected image.",

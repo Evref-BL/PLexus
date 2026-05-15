@@ -132,12 +132,21 @@ npm run build
 npm run smoke:open-route-close -- --copyFromImageName MCP12-2
 ```
 
+When no existing image is known to be copyable, let the smoke create a
+temporary source image from the local launcher templates and copy the runtime
+image from that source:
+
+```sh
+npm run smoke:open-route-close -- --createSourceFromTemplate
+```
+
 The smoke creates a disposable PLexus project and isolated state root, copies
 the source image when `--copyFromImageName` is used, opens it through an
-in-process `PlexusGateway`, routes a default Pharo MCP probe into every active
+in-process `PlexusGateway`, verifies `tools/list` exposes the current
+MCP-Pharo `find-packages` tool, routes that read-only probe into every active
 image, closes the images, checks that the processes are gone, checks that the
-closed routes are not routable, then deletes copied images and temp
-directories.
+closed target is unregistered from gateway status, then deletes copied images,
+temporary source images, and temp directories.
 
 Use `--imageSpecJson` more than once to exercise the real multi-image shape:
 
@@ -172,7 +181,7 @@ Use `--stepJson` for extra routed calls, for example:
 ```sh
 npm run smoke:open-route-close -- \
   --copyFromImageName MCP12-2 \
-  --stepJson '{"forEachImage":true,"toolName":"find-packages","arguments":{"pattern":"MCP"},"expectedText":"MCP"}'
+  --stepJson '{"forEachImage":true,"toolName":"find-packages","arguments":{"projectNames":["MCP"]},"expectedText":"packages found"}'
 ```
 
 ## Useful Docs

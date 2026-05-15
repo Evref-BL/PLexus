@@ -97,6 +97,7 @@ describe("project startup scripts", () => {
       "'C:/dev/code/git/my-project/pharo/load-mcp.st' asFileReference",
     );
     expect(source).toContain("githubUser: 'Evref-BL' project: 'MCP'");
+    expect(source).toContain("commitish: 'develop' path: ''");
     expect(source).toContain("baseline: 'MCP'");
     expect(source).toContain(
       "Smalltalk globals at: #PLexusGitTransport put: 'ssh'.",

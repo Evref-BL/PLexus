@@ -4,6 +4,8 @@ import type {
   ProjectImageState,
   ProjectState,
 } from "@plexus/core";
+import fs from "node:fs";
+import path from "node:path";
 
 export type GatewayImageHealth = "unknown" | "healthy" | "unhealthy";
 export type GatewayImageRoutabilityCode =
@@ -178,6 +180,70 @@ export class PlexusRoutingTable {
 
   getTarget(targetId: string): GatewayProjectRoute | undefined {
     return this.targets.get(targetId);
+  }
+
+  removeTarget(targetId: string): GatewayProjectRoute | undefined {
+    const route = this.targets.get(targetId);
+    if (route) {
+      this.targets.delete(targetId);
+    }
+
+    return route;
+  }
+
+  removeProjectWorkspace(
+    projectId: string,
+    workspaceId: string,
+  ): GatewayProjectRoute | undefined {
+    const route = this.getProjectWorkspace(projectId, workspaceId);
+    return route ? this.removeTarget(route.targetId) : undefined;
+  }
+
+  removeProjectRootRoutes(
+    projectRoot: string,
+    workspaceId?: string,
+  ): GatewayProjectRoute[] {
+    const routes = this.findProjectRootRoutes(projectRoot, workspaceId);
+    const removed: GatewayProjectRoute[] = [];
+
+    for (const route of routes) {
+      const deleted = this.removeTarget(route.targetId);
+      if (deleted) {
+        removed.push(deleted);
+      }
+    }
+
+    return removed;
+  }
+
+  findProjectRootRoutes(
+    projectRoot: string,
+    workspaceId?: string,
+  ): GatewayProjectRoute[] {
+    const resolvedProjectRoot = path.resolve(projectRoot);
+
+    return this.listTargets().filter(
+      (route) =>
+        route.projectRoot === resolvedProjectRoot &&
+        (workspaceId === undefined || route.workspaceId === workspaceId),
+    );
+  }
+
+  removeRoutesWithMissingStatePaths(
+    statePathExists: (statePath: string) => boolean = fs.existsSync,
+  ): GatewayProjectRoute[] {
+    const removed: GatewayProjectRoute[] = [];
+
+    for (const route of this.listTargets()) {
+      if (!statePathExists(route.statePath)) {
+        const deleted = this.removeTarget(route.targetId);
+        if (deleted) {
+          removed.push(deleted);
+        }
+      }
+    }
+
+    return removed;
   }
 
   getProjectWorkspace(

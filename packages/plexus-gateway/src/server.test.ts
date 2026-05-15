@@ -120,6 +120,7 @@ describe("gateway server", () => {
       "plexus_project_open",
       "plexus_project_close",
       "plexus_project_status",
+      "plexus_gateway_unregister_target",
       "plexus_route_to_image",
     ]);
   });

@@ -81,7 +81,7 @@ PLexus Gateway routing tools:
 - Keep/rename gateway-only tools in the gateway:
   - `plexus_gateway_status`
   - `plexus_gateway_register_project` (or `...register_target`)
-  - `plexus_gateway_unregister_project` (or `...unregister_target`)
+  - `plexus_gateway_unregister_target`
 
 Until the move is completed, you may still see lifecycle tools implemented in `@plexus/gateway`. Treat that as transitional code: new lifecycle features belong in PLexus, and new routing features belong in the gateway.
 
