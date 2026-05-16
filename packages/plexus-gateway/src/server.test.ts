@@ -115,19 +115,77 @@ afterEach(async () => {
 });
 
 describe("gateway server", () => {
-  it("exposes the PLexus gateway tools", () => {
+  it("keeps raw image routing out of the default gateway tool set", () => {
     expect(gatewayTools.map((tool) => tool.name)).toEqual([
       "plexus_gateway_register_target",
       "plexus_gateway_unregister_target",
       "plexus_gateway_status",
       "plexus_gateway_cleanup_stale_routes",
-      "plexus_route_to_image",
     ]);
   });
 
-  it("returns routed image MCP results directly over MCP", async () => {
+  it("uses the gateway surface as the agent-facing Pharo proxy", async () => {
+    const server = createGatewayServerWithOptions(
+      new PlexusGateway({
+        pharoTools: [
+          {
+            name: "pharo_eval",
+            inputSchema: {
+              type: "object",
+              properties: {
+                code: { type: "string" },
+              },
+              required: ["code"],
+            },
+          },
+        ],
+      }),
+      {
+        surface: "gateway",
+      },
+    );
+    const client = new Client(
+      {
+        name: "plexus-gateway-test",
+        version: "0.0.0",
+      },
+      {
+        capabilities: {},
+      },
+    );
+    const [clientTransport, serverTransport] =
+      InMemoryTransport.createLinkedPair();
+
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+
+    try {
+      await expect(client.listTools()).resolves.toMatchObject({
+        tools: [
+          {
+            name: "pharo_eval",
+            inputSchema: {
+              required: ["imageId", "code"],
+            },
+          },
+        ],
+      });
+      const toolList = await client.listTools();
+      expect(toolList.tools.map((tool) => tool.name)).not.toContain(
+        "plexus_route_to_image",
+      );
+      expect(toolList.tools.map((tool) => tool.name)).not.toContain(
+        "plexus_gateway_status",
+      );
+    } finally {
+      await client.close();
+      await server.close();
+    }
+  });
+
+  it("hides raw routing over MCP unless explicitly opted in", async () => {
     const server = createGatewayServerWithOptions(new DirectRouteGateway(), {
-      surface: "gateway",
+      surface: "admin",
     });
     const client = new Client(
       {
@@ -145,6 +203,57 @@ describe("gateway server", () => {
     await client.connect(clientTransport);
 
     try {
+      const toolList = await client.listTools();
+      expect(toolList.tools.map((tool) => tool.name)).not.toContain(
+        "plexus_route_to_image",
+      );
+      await expect(
+        client.callTool({
+          name: "plexus_route_to_image",
+          arguments: {
+            imageId: "dev",
+            toolName: "pharo_eval",
+          },
+        }),
+      ).resolves.toMatchObject({
+        isError: true,
+      });
+    } finally {
+      await client.close();
+      await server.close();
+    }
+  });
+
+  it("returns raw routed image MCP results over the gateway surface when opted in", async () => {
+    const server = createGatewayServerWithOptions(new DirectRouteGateway(), {
+      surface: "gateway",
+      exposeRawRoutingTool: true,
+    });
+    const client = new Client(
+      {
+        name: "plexus-gateway-test",
+        version: "0.0.0",
+      },
+      {
+        capabilities: {},
+      },
+    );
+    const [clientTransport, serverTransport] =
+      InMemoryTransport.createLinkedPair();
+
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+
+    try {
+      await expect(client.listTools()).resolves.toMatchObject({
+        tools: expect.arrayContaining([
+          expect.objectContaining({ name: "plexus_route_to_image" }),
+        ]),
+      });
+      const toolList = await client.listTools();
+      expect(toolList.tools.map((tool) => tool.name)).not.toContain(
+        "plexus_gateway_status",
+      );
       await expect(
         client.callTool({
           name: "plexus_route_to_image",
@@ -208,14 +317,15 @@ describe("gateway server", () => {
 
     expect(
       parseGatewayEnvironmentOptions({
-        PLEXUS_GATEWAY_SURFACE: "pharo",
+        PLEXUS_GATEWAY_SURFACE: "gateway",
         PLEXUS_PROJECT_ID: "project-123",
         PLEXUS_WORKSPACE_ID: "task-123",
         PLEXUS_TARGET_ID: "project-123--task-123",
         PLEXUS_PHARO_TOOLS_JSON: JSON.stringify(pharoTools),
       }),
     ).toEqual({
-      surface: "pharo",
+      surface: "gateway",
+      exposeRawRoutingTool: false,
       pharoTools,
       pharoScope: {
         projectId: "project-123",
@@ -225,9 +335,9 @@ describe("gateway server", () => {
     });
   });
 
-  it("creates a pharo-only gateway from environment", () => {
+  it("creates an agent-facing Pharo proxy gateway from environment", () => {
     const { gateway, serverOptions } = createGatewayFromEnvironment({
-      PLEXUS_GATEWAY_SURFACE: "pharo",
+      PLEXUS_GATEWAY_SURFACE: "gateway",
       PLEXUS_PROJECT_ID: "project-123",
       PLEXUS_WORKSPACE_ID: "task-123",
       PLEXUS_PHARO_TOOLS_JSON: JSON.stringify([
@@ -244,7 +354,10 @@ describe("gateway server", () => {
       ]),
     });
 
-    expect(serverOptions).toEqual({ surface: "pharo" });
+    expect(serverOptions).toEqual({
+      surface: "gateway",
+      exposeRawRoutingTool: false,
+    });
     expect(gateway.listPharoTools()).toMatchObject([
       {
         name: "pharo_eval",

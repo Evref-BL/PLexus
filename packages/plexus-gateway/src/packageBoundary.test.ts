@@ -1,13 +1,21 @@
 import fs from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { gatewayTools } from "./server.js";
+import { gatewayTools, rawRoutingTool } from "./server.js";
+
+const packageRoot = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "..",
+);
 
 function readPackageJson(): {
   dependencies?: Record<string, string>;
   devDependencies?: Record<string, string>;
 } {
-  return JSON.parse(fs.readFileSync(path.resolve("package.json"), "utf8")) as {
+  return JSON.parse(
+    fs.readFileSync(path.join(packageRoot, "package.json"), "utf8"),
+  ) as {
     dependencies?: Record<string, string>;
     devDependencies?: Record<string, string>;
   };
@@ -36,18 +44,18 @@ describe("gateway package boundary", () => {
 
     expect(dependencies).not.toHaveProperty("@plexus/core");
 
-    for (const filePath of sourceFiles(path.resolve("src"))) {
+    for (const filePath of sourceFiles(path.join(packageRoot, "src"))) {
       expect(fs.readFileSync(filePath, "utf8")).not.toContain("@plexus/core");
     }
   });
 
-  it("only exposes gateway-owned MCP tools", () => {
+  it("keeps default gateway-owned MCP tools to route management", () => {
     expect(gatewayTools.map((tool) => tool.name)).toEqual([
       "plexus_gateway_register_target",
       "plexus_gateway_unregister_target",
       "plexus_gateway_status",
       "plexus_gateway_cleanup_stale_routes",
-      "plexus_route_to_image",
     ]);
+    expect(rawRoutingTool.name).toBe("plexus_route_to_image");
   });
 });

@@ -93,18 +93,18 @@ PHARO_LAUNCHER_MCP_ENTRY=/srv/git/pharo-launcher-mcp/dist/index.js
 PLexus-managed Kanban agents should see two Pharo-facing MCP surfaces:
 
 - `pharo-launcher` for workspace-scoped image lifecycle.
-- `pharo` for routed image-local code tools.
+- `gateway` for routed image-local code tools.
 
 The agent workflow is:
 
 ```text
 list/create/start an image with pharo-launcher
 load or pull the project in that image
-pass imageId to every pharo code tool call
-run tests and inspect/edit code through pharo
+pass imageId to every gateway code tool call
+run tests and inspect/edit code through gateway
 ```
 
-`pharo.tools/list` is stable for the project and is not rewritten when images
+`gateway.tools/list` is stable for the project and is not rewritten when images
 start or stop. Image selection is data, carried by the `imageId` argument.
 
 See `docs/kanban-agent-pharo-access.md` for the full workflow and routing error
@@ -129,11 +129,11 @@ these managed server names. This Windows example keeps Windows path values:
         "PLEXUS_STATE_ROOT": "C:\\dev\\code\\git\\.plexus-state"
       }
     },
-    "pharo": {
+    "gateway": {
       "command": "plexus-gateway",
       "args": ["--stdio"],
       "env": {
-        "PLEXUS_GATEWAY_SURFACE": "pharo",
+        "PLEXUS_GATEWAY_SURFACE": "gateway",
         "PLEXUS_PROJECT_ROOT": "C:\\path\\to\\worktree",
         "PLEXUS_PROJECT_ID": "project-123",
         "PLEXUS_WORKSPACE_ID": "task-123",
@@ -159,7 +159,7 @@ paths:
         "PLEXUS_STATE_ROOT": "/srv/git/.plexus-state"
       }
     },
-    "pharo": {
+    "gateway": {
       "env": {
         "PLEXUS_PROJECT_ROOT": "/srv/git/worktree",
         "PLEXUS_STATE_ROOT": "/srv/git/.plexus-state"
@@ -170,9 +170,15 @@ paths:
 ```
 
 The `pharo-launcher` entry starts the PLexus-scoped launcher facade, not raw
-pharo-launcher-mcp. The `pharo` entry starts the gateway in Pharo facade mode with the
-project tool contract serialized in `PLEXUS_PHARO_TOOLS_JSON`; the gateway adds
-the required `imageId` routing field to those tools.
+pharo-launcher-mcp. The `gateway` entry starts the gateway in agent-facing Pharo
+proxy mode with the project tool contract serialized in
+`PLEXUS_PHARO_TOOLS_JSON`; the gateway adds the required `imageId` routing field
+to those tools.
+
+During migration, older workspaces may still contain a managed `pharo` entry or
+`PLEXUS_GATEWAY_SURFACE=pharo`; both should be replaced by `gateway` in new
+generated config. Raw `plexus_route_to_image` is not part of this normal agent
+config and remains behind explicit raw-routing opt-in for admin/debug use.
 
 ## Repository Scripts
 

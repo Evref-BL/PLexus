@@ -6,6 +6,7 @@ import {
   buildPlexusWorkspaceMcpConfig,
   buildPharoLauncherMcpServerConfig,
   buildPharoMcpServerConfig,
+  defaultPharoMcpServerName,
   mergeWorkspaceMcpServers,
   resolvePlexusWorkspaceMcpScope,
 } from "./workspaceMcpConfig.js";
@@ -92,7 +93,7 @@ describe("workspace MCP config", () => {
 
       for (const server of [
         config.servers["pharo-launcher"],
-        config.servers.pharo,
+        config.servers.gateway,
       ]) {
         expect(server.env).toMatchObject({
           PLEXUS_PROJECT_ROOT: expectedProjectRoot,
@@ -128,7 +129,35 @@ describe("workspace MCP config", () => {
     });
   });
 
-  it("builds a scoped pharo facade server entry with the project tool contract", () => {
+  it("uses gateway as the default agent-facing Pharo proxy server name", () => {
+    const config = buildPlexusWorkspaceMcpConfig({
+      projectRoot: "C:\\dev\\code\\git\\Project-worktree",
+      projectConfig,
+      workspaceId: "task-123",
+      stateRoot: "C:\\dev\\code\\git\\.plexus-state",
+      pharoTools: [pharoEvalTool],
+    });
+
+    expect(defaultPharoMcpServerName).toBe("gateway");
+    expect(Object.keys(config.servers).sort()).toEqual([
+      "gateway",
+      "pharo-launcher",
+    ]);
+    expect(config.servers.gateway).toMatchObject({
+      command: "plexus-gateway",
+      args: ["--stdio"],
+      env: {
+        PLEXUS_GATEWAY_SURFACE: "gateway",
+        PLEXUS_WORKSPACE_ID: "task-123",
+      },
+    });
+    expect(config.servers.gateway.env).not.toHaveProperty(
+      "PLEXUS_EXPOSE_RAW_ROUTING_TOOL",
+    );
+    expect(config.servers).not.toHaveProperty("pharo");
+  });
+
+  it("builds a scoped gateway Pharo proxy server entry with the project tool contract", () => {
     const server = buildPharoMcpServerConfig({
       projectRoot: "C:\\dev\\code\\git\\Project-worktree",
       projectConfig,
@@ -147,7 +176,7 @@ describe("workspace MCP config", () => {
       command: "plexus-gateway",
       args: ["--stdio"],
       env: {
-        PLEXUS_GATEWAY_SURFACE: "pharo",
+        PLEXUS_GATEWAY_SURFACE: "gateway",
         PLEXUS_PROJECT_ROOT: path.resolve("C:\\dev\\code\\git\\Project-worktree"),
         PLEXUS_PROJECT_ID: "project-123",
         PLEXUS_WORKSPACE_ID: "task-123",
@@ -190,9 +219,9 @@ describe("workspace MCP config", () => {
           PLEXUS_WORKSPACE_ID: "task-123",
         },
       },
-      pharo: {
+      gateway: {
         env: {
-          PLEXUS_GATEWAY_SURFACE: "pharo",
+          PLEXUS_GATEWAY_SURFACE: "gateway",
           PLEXUS_WORKSPACE_ID: "task-123",
         },
       },
@@ -203,8 +232,8 @@ describe("workspace MCP config", () => {
     expect(
       mergeWorkspaceMcpServers(
         {
-          pharo: {
-            command: "old-pharo",
+          gateway: {
+            command: "old-gateway",
             args: [],
           },
           unrelated: {
@@ -213,15 +242,15 @@ describe("workspace MCP config", () => {
           },
         },
         {
-          pharo: {
-            command: "new-pharo",
+          gateway: {
+            command: "new-gateway",
             args: ["--stdio"],
           },
         },
       ),
     ).toEqual({
-      pharo: {
-        command: "new-pharo",
+      gateway: {
+        command: "new-gateway",
         args: ["--stdio"],
       },
       unrelated: {

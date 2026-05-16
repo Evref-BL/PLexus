@@ -62,11 +62,16 @@ exposes image access as two scoped MCP surfaces:
 
 - `pharo-launcher`: a PLexus-scoped facade over pharo-launcher-mcp for image lifecycle
   operations in the current project/workspace.
-- `pharo`: a stable project-wide Pharo MCP facade that adds an explicit
-  `imageId` routing argument to each image tool.
+- `gateway`: a stable project-wide Pharo MCP proxy that adds an explicit
+  `imageId` routing argument to each typed image tool.
 
 The detailed contract for the scoped launcher facade is in
 `docs/kanban-agent-pharo-access.md`.
+
+Route registration, route status, stale-route cleanup, and raw
+`plexus_route_to_image` calls are internal/admin gateway plumbing. They are not
+normal agent-facing MCP surfaces; raw routing is hidden unless explicitly
+enabled for admin/debug migration work.
 
 ### Pharo Image Worker
 

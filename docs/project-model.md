@@ -155,11 +155,11 @@ projectId + workspaceId
 
 ### PLexus Gateway (Routing Only)
 
-Gateway routing tools (for example `plexus_route_to_image`) should route using the gateway's in-memory registrations keyed by `targetId`. The gateway should not resolve projects from disk or derive workspace identity from `projectPath`; that work belongs in PLexus, which then registers/updates routes in the gateway.
+Gateway proxy calls should route using the gateway's in-memory registrations keyed by `targetId`. The gateway should not resolve projects from disk or derive workspace identity from `projectPath`; that work belongs in PLexus, which then registers/updates routes in the gateway.
 
-`projectId` alone can list all registered targets for that project. It must not be used for `plexus_route_to_image` when more than one workspace is registered, because the image id may exist in several workspaces.
+`projectId` alone can list all registered targets for that project. It must not be used for image routing when more than one workspace is registered, because the image id may exist in several workspaces.
 
-Project/workspace lifecycle tools (`plexus_project_open`, `plexus_project_close`, `plexus_project_status`) belong to PLexus. Gateway-only tools belong to the PLexus Gateway (for example `plexus_route_to_image`, `plexus_gateway_register_target`, `plexus_gateway_unregister_target`, `plexus_gateway_status`, and `plexus_gateway_cleanup_stale_routes`). See `docs/package-boundaries.md`.
+Project/workspace lifecycle tools (`plexus_project_open`, `plexus_project_close`, `plexus_project_status`) belong to PLexus. Gateway route registration/status/cleanup tools belong to PLexus Gateway internal/admin plumbing. The normal agent-facing Pharo MCP proxy is the `gateway` server; raw `plexus_route_to_image` is an explicit opt-in escape hatch, not part of default agent config. See `docs/package-boundaries.md`.
 
 ## Port And Image Isolation
 

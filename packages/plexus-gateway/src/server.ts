@@ -71,24 +71,124 @@ export const gatewayTools = [
       "Remove registered gateway target routes whose runtime state files are gone.",
     inputSchema: objectSchema({}),
   },
-  {
-    name: "plexus_route_to_image",
-    description:
-      "Route a Pharo MCP tool call to the MCP server running inside a selected image.",
-    inputSchema: objectSchema(
-      {
-        ...routeReferenceProperties,
-        imageId: stringSchema,
-        toolName: stringSchema,
-        arguments: {
-          type: "object",
-          additionalProperties: true,
-        },
-      },
-      ["imageId", "toolName"],
-    ),
-  },
 ] as const;
+
+export const rawRoutingTool = {
+  name: "plexus_route_to_image",
+  description:
+    "Route a Pharo MCP tool call to the MCP server running inside a selected image.",
+  inputSchema: objectSchema(
+    {
+      ...routeReferenceProperties,
+      imageId: stringSchema,
+      toolName: stringSchema,
+      arguments: {
+        type: "object",
+        additionalProperties: true,
+      },
+    },
+    ["imageId", "toolName"],
+  ),
+} as const;
+
+const legacyGatewaySurface = "pharo";
+
+export type GatewaySurface =
+  | "combined"
+  | "admin"
+  | "gateway"
+  | typeof legacyGatewaySurface;
+
+export interface GatewayServerOptions {
+  surface?: GatewaySurface;
+  exposeRawRoutingTool?: boolean;
+}
+
+export interface GatewayEnvironmentOptions {
+  surface: GatewaySurface;
+  exposeRawRoutingTool: boolean;
+  pharoTools: Tool[];
+  pharoScope: GatewayRouteReferenceInput;
+}
+
+function agentGatewaySurface(surface: GatewaySurface): boolean {
+  return surface === "gateway" || surface === legacyGatewaySurface;
+}
+
+function pharoToolsVisible(surface: GatewaySurface): boolean {
+  return agentGatewaySurface(surface) || surface === "combined";
+}
+
+function adminToolsVisible(surface: GatewaySurface): boolean {
+  return surface === "admin" || surface === "combined";
+}
+
+function visibleAdminTools(exposeRawRoutingTool: boolean): Tool[] {
+  return [
+    ...gatewayTools,
+    ...(exposeRawRoutingTool ? [rawRoutingTool] : []),
+  ] as Tool[];
+}
+
+function visibleRawRoutingTools(exposeRawRoutingTool: boolean): Tool[] {
+  return (exposeRawRoutingTool ? [rawRoutingTool] : []) as Tool[];
+}
+
+function visibleTools(
+  gateway: PlexusGateway,
+  surface: GatewaySurface,
+  exposeRawRoutingTool: boolean,
+): Tool[] {
+  return [
+    ...(adminToolsVisible(surface)
+      ? visibleAdminTools(exposeRawRoutingTool)
+      : []),
+    ...(!adminToolsVisible(surface) && exposeRawRoutingTool
+      ? visibleRawRoutingTools(exposeRawRoutingTool)
+      : []),
+    ...(pharoToolsVisible(surface) ? gateway.listPharoTools() : []),
+  ];
+}
+
+function parseBooleanEnv(value: string | undefined, name: string): boolean {
+  if (value === undefined || value.trim().length === 0) {
+    return false;
+  }
+
+  const normalized = value.trim().toLowerCase();
+  if (normalized === "true" || normalized === "1" || normalized === "yes") {
+    return true;
+  }
+
+  if (normalized === "false" || normalized === "0" || normalized === "no") {
+    return false;
+  }
+
+  throw new Error(`${name} must be true or false`);
+}
+
+export const legacyGatewayTools = [...gatewayTools, rawRoutingTool] as const;
+
+/*
+ * `pharo` is retained as a temporary compatibility alias for the agent-facing
+ * gateway proxy. New generated config should use `gateway`.
+ */
+function parseGatewaySurface(value: string | undefined): GatewaySurface {
+  if (value === undefined || value.trim().length === 0) {
+    return "combined";
+  }
+
+  if (
+    value === "combined" ||
+    value === "admin" ||
+    value === "gateway" ||
+    value === legacyGatewaySurface
+  ) {
+    return value;
+  }
+
+  throw new Error(`Unsupported PLexus gateway surface: ${value}`);
+}
 
 export interface GatewayHttpServerOptions {
   host?: string;
@@ -101,18 +201,6 @@ export interface GatewayCliOptions {
   transport: "stdio" | "http";
   host: string;
   port: number;
-}
-
-export type GatewaySurface = "combined" | "gateway" | "pharo";
-
-export interface GatewayServerOptions {
-  surface?: GatewaySurface;
-}
-
-export interface GatewayEnvironmentOptions {
-  surface: GatewaySurface;
-  pharoTools: Tool[];
-  pharoScope: GatewayRouteReferenceInput;
 }
 
 type ToolResult = CallToolResult;
@@ -169,6 +257,7 @@ export function createGatewayServerWithOptions(
   options: GatewayServerOptions = {},
 ): Server {
   const surface = options.surface ?? "combined";
+  const exposeRawRoutingTool = options.exposeRawRoutingTool ?? false;
   const server = new Server(
     {
       name: "plexus-gateway",
@@ -182,14 +271,11 @@ export function createGatewayServerWithOptions(
   );
 
   server.setRequestHandler(ListToolsRequestSchema, async () => ({
-    tools: [
-      ...(surface === "pharo" ? [] : gatewayTools),
-      ...(surface === "gateway" ? [] : gateway.listPharoTools()),
-    ],
+    tools: visibleTools(gateway, surface, exposeRawRoutingTool),
   }));
 
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
-    if (gateway.isPharoTool(request.params.name)) {
+    if (gateway.isPharoTool(request.params.name) && pharoToolsVisible(surface)) {
       const result = await gateway.callPharoTool(
         request.params.name,
         request.params.arguments ?? {},
@@ -202,7 +288,34 @@ export function createGatewayServerWithOptions(
       return directToolResult(result.data);
     }
 
-    if (surface === "pharo") {
+    if (request.params.name === "plexus_route_to_image") {
+      if (!exposeRawRoutingTool) {
+        return jsonResult(
+          {
+            ok: false,
+            error:
+              "Raw image routing is disabled; set PLEXUS_EXPOSE_RAW_ROUTING_TOOL=true to expose plexus_route_to_image.",
+          },
+          true,
+        );
+      }
+
+      const result = await gateway.handleTool(
+        request.params.name,
+        request.params.arguments ?? {},
+      );
+
+      if (!result.ok) {
+        return jsonResult(result, true);
+      }
+
+      return directToolResult(
+        result.data,
+        result.route ? { plexusRoute: result.route } : undefined,
+      );
+    }
+
+    if (agentGatewaySurface(surface)) {
       return jsonResult(
         {
           ok: false,
@@ -219,13 +332,6 @@ export function createGatewayServerWithOptions(
 
     if (!result.ok) {
       return jsonResult(result, true);
-    }
-
-    if (request.params.name === "plexus_route_to_image") {
-      return directToolResult(
-        result.data,
-        result.route ? { plexusRoute: result.route } : undefined,
-      );
     }
 
     return jsonResult(result);
@@ -247,23 +353,15 @@ function parseJsonArrayEnv(value: string | undefined, name: string): unknown[] {
   return parsed;
 }
 
-function parseGatewaySurface(value: string | undefined): GatewaySurface {
-  if (value === undefined || value.trim().length === 0) {
-    return "combined";
-  }
-
-  if (value === "combined" || value === "gateway" || value === "pharo") {
-    return value;
-  }
-
-  throw new Error(`Unsupported PLexus gateway surface: ${value}`);
-}
-
 export function parseGatewayEnvironmentOptions(
   env: NodeJS.ProcessEnv = process.env,
 ): GatewayEnvironmentOptions {
   return {
     surface: parseGatewaySurface(env.PLEXUS_GATEWAY_SURFACE),
+    exposeRawRoutingTool: parseBooleanEnv(
+      env.PLEXUS_EXPOSE_RAW_ROUTING_TOOL,
+      "PLEXUS_EXPOSE_RAW_ROUTING_TOOL",
+    ),
     pharoTools: parseJsonArrayEnv(
       env.PLEXUS_PHARO_TOOLS_JSON,
       "PLEXUS_PHARO_TOOLS_JSON",
@@ -287,6 +385,7 @@ export function createGatewayFromEnvironment(
     }),
     serverOptions: {
       surface: options.surface,
+      exposeRawRoutingTool: options.exposeRawRoutingTool,
     },
   };
 }

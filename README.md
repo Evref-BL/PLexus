@@ -12,7 +12,8 @@ selected image.
   `pharo-launcher-mcp`.
 - Keeps image names, MCP ports, and runtime state isolated per agent run.
 - Exposes a scoped `pharo-launcher` MCP surface for image lifecycle.
-- Routes `pharo` MCP tool calls to a selected image by `imageId`.
+- Exposes `gateway` as the agent-facing Pharo MCP proxy, routing project tool
+  calls to a selected image by `imageId`.
 - Preserves Pharo Launcher as the low-level profile and image provider.
 
 ## Requirements
@@ -128,11 +129,16 @@ Kanban-spawned agents should use two MCP surfaces:
 
 - `pharo-launcher`: list, create, start, inspect, and stop images scoped to the
   current PLexus target.
-- `pharo`: run project Pharo tools against one image by passing `imageId`.
+- `gateway`: run project Pharo tools against one image by passing `imageId`.
 
 The agent chooses or starts an image through `pharo-launcher`, then passes the
-returned `imageId` to every `pharo` call. Tool names stay stable while image
+returned `imageId` to every `gateway` call. Tool names stay stable while image
 availability is represented as runtime data.
+
+Older configs may still contain a `pharo` server name or `pharo` gateway surface
+as a temporary compatibility alias. New generated workspace MCP config should
+use `gateway`; raw `plexus_route_to_image` routing is hidden unless explicitly
+enabled for admin/debug work with `PLEXUS_EXPOSE_RAW_ROUTING_TOOL=true`.
 
 ## More Documentation
 

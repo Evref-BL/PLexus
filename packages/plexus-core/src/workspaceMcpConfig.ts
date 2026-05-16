@@ -8,7 +8,7 @@ import {
 } from "./projectState.js";
 
 export const defaultPharoLauncherMcpServerName = "pharo-launcher";
-export const defaultPharoMcpServerName = "pharo";
+export const defaultPharoMcpServerName = "gateway";
 
 export interface WorkspaceMcpServerConfig {
   command: string;
@@ -108,7 +108,7 @@ export function buildPharoMcpServerConfig(
     args: ["--stdio"],
     env: {
       ...scopeEnv(scope),
-      PLEXUS_GATEWAY_SURFACE: "pharo",
+      PLEXUS_GATEWAY_SURFACE: "gateway",
       PLEXUS_PHARO_TOOLS_JSON: JSON.stringify(options.pharoTools),
       ...(contractJson ? { PLEXUS_PHARO_MCP_CONTRACT_JSON: contractJson } : {}),
     },

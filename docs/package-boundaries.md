@@ -29,7 +29,8 @@ Routing-only MCP server.
 - Route status for registered targets/images
 - Explicit stale-route cleanup for routes whose runtime state file is gone
 - Forwarding MCP calls to image-scoped MCP servers (HTTP to `http://127.0.0.1:<port>/mcp`)
-- The stable project-wide `pharo` facade that routes calls by explicit `imageId`
+- The stable project-wide `gateway` facade that routes typed Pharo MCP calls by
+  explicit `imageId`
 
 **Must not depend on**
 
@@ -82,18 +83,28 @@ PLexus orchestration tools:
 - `plexus_project_status`
 - `plexus_rescue_image`
 
-PLexus Gateway routing tools:
+PLexus Gateway internal/admin route-management tools:
 
 - `plexus_gateway_register_target`
 - `plexus_gateway_unregister_target`
 - `plexus_gateway_status`
 - `plexus_gateway_cleanup_stale_routes`
-- `plexus_route_to_image`
+
+Raw gateway escape hatch:
+
+- `plexus_route_to_image`: hidden by default and exposed only when raw routing is
+  explicitly enabled for admin/debug use with
+  `PLEXUS_EXPOSE_RAW_ROUTING_TOOL=true`.
 
 Agent-facing Kanban MCP surfaces:
 
 - `pharo-launcher`: belongs to PLexus orchestration. It is a scoped facade over pharo-launcher-mcp and must not expose raw host-wide PharoLauncher mutation.
-- `pharo`: belongs to the routing layer. It is a stable facade over the project-wide Pharo MCP contract and routes calls by explicit `imageId`.
+- `gateway`: belongs to the routing layer. It is a stable facade over the
+  project-wide Pharo MCP contract and routes calls by explicit `imageId`.
+
+`pharo` remains only a temporary compatibility alias for older generated agent
+config. New configs should expose `gateway`, and route-management tools should
+stay out of normal agent-facing MCP config.
 
 See `docs/kanban-agent-pharo-access.md` for the scoped launcher design.
 
