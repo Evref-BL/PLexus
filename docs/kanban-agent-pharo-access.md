@@ -83,6 +83,10 @@ PLexus generates the workspace MCP entries for this scope. The managed server
 names are `pharo-launcher` and `pharo`; unrelated user MCP entries should be
 preserved when those managed entries are updated.
 
+Generated path environment values preserve the path style supplied by the
+caller. Windows worktree and state roots stay in `C:\...` form, while POSIX
+roots stay in `/...` form.
+
 ## Image Handles
 
 `imageId` is the public handle for agents. It is a PLexus runtime handle, not a

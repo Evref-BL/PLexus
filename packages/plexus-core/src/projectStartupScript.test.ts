@@ -109,6 +109,32 @@ describe("project startup scripts", () => {
     expect(source).toContain("Semaphore new wait.");
   });
 
+  it.each([
+    [
+      "Windows",
+      "C:\\dev\\code\\git\\my-project",
+      "C:/dev/code/git/my-project/pharo/load-mcp.st",
+    ],
+    [
+      "POSIX",
+      "/srv/git/my-project",
+      "/srv/git/my-project/pharo/load-mcp.st",
+    ],
+  ])(
+    "preserves %s project-root style in generated Smalltalk load-script paths",
+    (_style, projectRoot, expectedLoadScriptPath) => {
+      const source = generateImageStartupScript({
+        projectRoot,
+        imageConfig: config.images[0],
+        imageState,
+      });
+
+      expect(source).toContain(
+        `'${expectedLoadScriptPath}' asFileReference`,
+      );
+    },
+  );
+
   it("generates image Git configuration for custom SSH keys", () => {
     const projectRoot = path.join("C:", "dev", "code", "git", "my-project");
     const source = generateImageStartupScript({

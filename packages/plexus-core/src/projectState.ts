@@ -1,6 +1,10 @@
 import fs from "node:fs";
-import path from "node:path";
 import type { ProjectConfig } from "./projectConfig.js";
+import {
+  basenamePathLike,
+  dirnamePathLike,
+  joinPathLike,
+} from "./pathStyle.js";
 
 export const plexusStateDirectoryName = ".plexus";
 export const plexusProjectsStateDirectoryName = "projects";
@@ -135,7 +139,7 @@ export class ProjectStateError extends Error {
 }
 
 export function defaultPlexusStateRoot(projectRoot: string): string {
-  return path.join(projectRoot, plexusStateDirectoryName);
+  return joinPathLike(projectRoot, plexusStateDirectoryName);
 }
 
 export function sanitizeRuntimeId(value: string): string {
@@ -144,7 +148,7 @@ export function sanitizeRuntimeId(value: string): string {
 }
 
 export function defaultWorkspaceId(projectRoot: string): string {
-  return sanitizeRuntimeId(path.basename(path.resolve(projectRoot)));
+  return sanitizeRuntimeId(basenamePathLike(projectRoot));
 }
 
 export function defaultTargetId(projectId: string, workspaceId: string): string {
@@ -154,8 +158,11 @@ export function defaultTargetId(projectId: string, workspaceId: string): string 
 export function projectWorkspacesStateDirectoryPath(
   options: Omit<ProjectStatePathOptions, "workspaceId">,
 ): string {
-  return path.join(
-    options.stateRoot ?? defaultPlexusStateRoot(options.projectRoot),
+  const stateRoot =
+    options.stateRoot ?? defaultPlexusStateRoot(options.projectRoot);
+
+  return joinPathLike(
+    stateRoot,
     plexusProjectsStateDirectoryName,
     options.projectId,
     plexusWorkspacesStateDirectoryName,
@@ -165,7 +172,7 @@ export function projectWorkspacesStateDirectoryPath(
 export function projectStateDirectoryPath(
   options: ProjectStatePathOptions,
 ): string {
-  return path.join(
+  return joinPathLike(
     projectWorkspacesStateDirectoryPath(options),
     options.workspaceId
       ? sanitizeRuntimeId(options.workspaceId)
@@ -174,7 +181,7 @@ export function projectStateDirectoryPath(
 }
 
 export function projectStatePath(options: ProjectStatePathOptions): string {
-  return path.join(projectStateDirectoryPath(options), projectStateFileName);
+  return joinPathLike(projectStateDirectoryPath(options), projectStateFileName);
 }
 
 export function projectStatePathForConfig(
@@ -266,7 +273,7 @@ export function loadProjectState(filePath: string): ProjectState | undefined {
 }
 
 export function saveProjectState(filePath: string, state: ProjectState): void {
-  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  fs.mkdirSync(dirnamePathLike(filePath), { recursive: true });
   fs.writeFileSync(filePath, `${JSON.stringify(state, null, 2)}\n`, "utf8");
 }
 
@@ -291,7 +298,7 @@ export function collectReservedProjectPorts(
     }
 
     const state = loadProjectState(
-      path.join(workspacesDir, entry.name, projectStateFileName),
+      joinPathLike(workspacesDir, entry.name, projectStateFileName),
     );
     for (const image of state?.images ?? []) {
       if (image.status !== "stopped") {

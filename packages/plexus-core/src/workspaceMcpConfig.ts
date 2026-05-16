@@ -1,5 +1,5 @@
-import path from "node:path";
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
+import { resolvePathLike } from "./pathStyle.js";
 import { loadProjectConfig, type ProjectConfig } from "./projectConfig.js";
 import {
   defaultTargetId,
@@ -54,7 +54,7 @@ function optionalJsonEnv(value: unknown): string | undefined {
 export function resolvePlexusWorkspaceMcpScope(
   options: Omit<BuildPlexusWorkspaceMcpConfigOptions, "pharoTools">,
 ): PlexusWorkspaceMcpScope {
-  const projectRoot = path.resolve(options.projectRoot);
+  const projectRoot = resolvePathLike(options.projectRoot);
   const config = options.projectConfig ?? loadProjectConfig(projectRoot);
   const workspaceId = options.workspaceId ?? defaultWorkspaceId(projectRoot);
   const targetId =
@@ -65,7 +65,9 @@ export function resolvePlexusWorkspaceMcpScope(
     projectId: config.kanban.projectId,
     workspaceId,
     targetId,
-    ...(options.stateRoot ? { stateRoot: path.resolve(options.stateRoot) } : {}),
+    ...(options.stateRoot
+      ? { stateRoot: resolvePathLike(options.stateRoot) }
+      : {}),
   };
 }
 

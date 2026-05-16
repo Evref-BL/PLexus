@@ -85,6 +85,45 @@ describe("project state", () => {
     );
   });
 
+  it.each([
+    [
+      "Windows",
+      "C:\\dev\\code\\git\\my-project",
+      "C:\\dev\\code\\git\\.plexus-state",
+      path.win32,
+    ],
+    [
+      "POSIX",
+      "/srv/git/my-project",
+      "/srv/git/.plexus-state",
+      path.posix,
+    ],
+  ])(
+    "preserves %s absolute path style when generating runtime state paths",
+    (_style, projectRoot, stateRoot, pathApi) => {
+      expect(defaultWorkspaceId(projectRoot)).toBe("my-project");
+      expect(defaultPlexusStateRoot(projectRoot)).toBe(
+        pathApi.join(projectRoot, ".plexus"),
+      );
+      expect(
+        projectStatePath({
+          projectRoot,
+          projectId: "project-123",
+          stateRoot,
+        }),
+      ).toBe(
+        pathApi.join(
+          stateRoot,
+          "projects",
+          "project-123",
+          "workspaces",
+          "my-project",
+          "state.json",
+        ),
+      );
+    },
+  );
+
   it("allows callers to keep runtime state outside the project root", () => {
     const projectRoot = path.join("C:", "dev", "code", "git", "my-project");
     const stateRoot = path.join("C:", "dev", "plexus-state");

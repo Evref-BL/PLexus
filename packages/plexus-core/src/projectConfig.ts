@@ -1,5 +1,5 @@
 import fs from "node:fs";
-import path from "node:path";
+import { joinPathLike } from "./pathStyle.js";
 
 export const plexusProjectConfigFileName = "plexus.project.json";
 
@@ -348,7 +348,7 @@ export function parseProjectConfig(value: unknown): ProjectConfig {
 }
 
 export function projectConfigPath(projectRoot: string): string {
-  return path.join(projectRoot, plexusProjectConfigFileName);
+  return joinPathLike(projectRoot, plexusProjectConfigFileName);
 }
 
 export function loadProjectConfig(projectRoot: string): ProjectConfig {
