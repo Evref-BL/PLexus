@@ -187,6 +187,8 @@ npm run smoke:open-route-close -- \
 ## Useful Docs
 
 - `docs/architecture.md`: runtime architecture and target registry model.
+- `docs/live-smoke-runner-boundary.md`: disposable live-smoke approval,
+  timeout, artifact, and cleanup boundary.
 - `docs/project-model.md`: project/workspace/target/image arity.
 - `docs/kanban-agent-pharo-access.md`: scoped launcher and routed Pharo facade.
 - `docs/vibe-kanban-setup.md`: workspace and agent setup.
