@@ -199,6 +199,96 @@ describe("project open", () => {
     });
   });
 
+  it("can scope project open to selected active images", async () => {
+    const projectRoot = makeTempDir("plexus-project-");
+    const stateRoot = makeTempDir("plexus-state-");
+    writeProjectConfig(projectRoot, {
+      images: [
+        {
+          id: "dev",
+          imageName: "MyProject-dev",
+          active: true,
+          mcp: {
+            loadScript: "pharo/load-mcp.st",
+          },
+        },
+        {
+          id: "baseline",
+          imageName: "MyProject-baseline",
+          active: true,
+          mcp: {
+            loadScript: "pharo/load-mcp.st",
+          },
+        },
+      ],
+    });
+    const pharoLauncherMcpClient = new FakePharoLauncherMcpClient([
+      {
+        pid: 5678,
+        imageName: "MyProject-baseline",
+        commandLine: "PharoConsole.exe MyProject-baseline.image",
+      },
+    ]);
+    const healthClient = new FakeHealthClient(true);
+
+    const result = await openProject({
+      projectRoot,
+      stateRoot,
+      workspaceId: "worktree-a",
+      imageIds: ["baseline"],
+      pharoLauncherMcpClient,
+      healthClient,
+      now: fixedNow,
+      sleep: async () => {},
+      poll: {
+        intervalMs: 0,
+      },
+    });
+
+    const baselineScriptPath = path.join(
+      stateRoot,
+      "projects",
+      "project-123",
+      "workspaces",
+      "worktree-a",
+      "scripts",
+      "start-baseline.st",
+    );
+
+    expect(result.ok).toBe(true);
+    expect(pharoLauncherMcpClient.calls).toEqual([
+      {
+        name: "pharo_launcher_image_launch",
+        argumentsValue: {
+          imageName: "MyProject-baseline",
+          detached: true,
+          script: baselineScriptPath,
+        },
+      },
+      {
+        name: "pharo_launcher_process_list",
+        argumentsValue: {},
+      },
+    ]);
+    expect(healthClient.ports).toEqual([7101]);
+    expect(fs.existsSync(baselineScriptPath)).toBe(true);
+    expect(result.state.images).toEqual([
+      {
+        id: "dev",
+        imageName: "MyProject-dev",
+        assignedPort: 7100,
+        status: "stopped",
+      },
+      {
+        id: "baseline",
+        imageName: "MyProject-baseline",
+        assignedPort: 7101,
+        pid: 5678,
+        status: "running",
+      },
+    ]);
+  });
+
   it("reuses previous runtime port allocations before launching", async () => {
     const projectRoot = makeTempDir("plexus-project-");
     const stateRoot = makeTempDir("plexus-state-");

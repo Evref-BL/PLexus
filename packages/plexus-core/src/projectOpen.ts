@@ -45,6 +45,7 @@ export interface ProjectOpenOptions {
   stateRoot?: string;
   workspaceId?: string;
   targetId?: string;
+  imageIds?: string[];
   pharoLauncherMcpClient?: PharoLauncherMcpToolClient;
   healthClient?: PharoMcpHealthClient;
   portRange?: ProjectPortRange;
@@ -261,6 +262,22 @@ function activeStateImages(state: ProjectState): ProjectImageState[] {
   return state.images.filter((image) => image.status === "starting");
 }
 
+function applyScopedImageSelection(
+  state: ProjectState,
+  imageIds: string[] | undefined,
+): void {
+  if (!imageIds) {
+    return;
+  }
+
+  const selectedIds = new Set(imageIds);
+  for (const image of state.images) {
+    if (!selectedIds.has(image.id)) {
+      image.status = "stopped";
+    }
+  }
+}
+
 export async function openProject(
   options: ProjectOpenOptions,
 ): Promise<ProjectOpenResult> {
@@ -291,6 +308,7 @@ export async function openProject(
     reservedPorts,
     ...(options.portRange ? { portRange: options.portRange } : {}),
   });
+  applyScopedImageSelection(state, options.imageIds);
   const client =
     options.pharoLauncherMcpClient ??
     (await createStdioPharoLauncherMcpClient());

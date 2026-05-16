@@ -181,6 +181,7 @@ export class ScopedPharoLauncher {
       workspaceId: before.scope.workspaceId,
       targetId: before.scope.targetId,
       stateRoot: before.scope.stateRoot,
+      imageIds: [imageId],
     });
 
     return this.imageInfo(imageId);
