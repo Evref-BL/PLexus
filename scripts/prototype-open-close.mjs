@@ -7,7 +7,7 @@ import {
   createStdioPharoLauncherMcpClient,
   loadProjectState,
   openProject,
-} from "@plexus/core";
+} from "@evref-bl/plexus-core";
 
 function parseArgs(argv) {
   const options = {

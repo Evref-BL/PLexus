@@ -42,10 +42,10 @@ describe("gateway package boundary", () => {
       ...packageJson.devDependencies,
     };
 
-    expect(dependencies).not.toHaveProperty("@plexus/core");
+    expect(dependencies).not.toHaveProperty("@evref-bl/plexus-core");
 
     for (const filePath of sourceFiles(path.join(packageRoot, "src"))) {
-      expect(fs.readFileSync(filePath, "utf8")).not.toContain("@plexus/core");
+      expect(fs.readFileSync(filePath, "utf8")).not.toContain("@evref-bl/plexus-core");
     }
   });
 

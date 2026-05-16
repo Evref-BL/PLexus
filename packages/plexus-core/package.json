@@ -1,12 +1,27 @@
 {
-  "name": "@plexus/core",
-  "version": "0.1.0",
-  "private": true,
+  "name": "@evref-bl/plexus-core",
+  "version": "0.1.0-alpha.0",
+  "private": false,
+  "description": "PLexus project, workspace, and image lifecycle orchestration tools.",
+  "license": "Apache-2.0",
   "type": "module",
   "main": "./dist/index.js",
+  "exports": {
+    ".": "./dist/index.js"
+  },
   "types": "./dist/index.d.ts",
   "bin": {
-    "plexus": "./dist/cli.js"
+    "plexus": "dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "package.json"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=24"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",

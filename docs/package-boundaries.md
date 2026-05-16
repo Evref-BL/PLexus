@@ -19,7 +19,7 @@ Standalone PharoLauncher MCP server (separate repository: `@evref-bl/pharo-launc
 - PLexus
 - PLexus Gateway
 
-### PLexus Gateway (`@plexus/gateway`)
+### PLexus Gateway (`@evref-bl/plexus-gateway`)
 
 Routing-only MCP server.
 
@@ -36,12 +36,12 @@ Routing-only MCP server.
 
 **Must not depend on**
 
-- PLexus orchestration (`@plexus/core` / CLI)
+- PLexus orchestration (`@evref-bl/plexus-core` / CLI)
 - pharo-launcher-mcp (`@evref-bl/pharo-launcher-mcp`)
 
 The gateway does not read `plexus.project.json` or workspace state from disk to discover projects. PLexus core owns orchestration/state and registers already-resolved target routes in the gateway.
 
-### PLexus Orchestration (`@plexus/core` + CLI)
+### PLexus Orchestration (`@evref-bl/plexus-core` + CLI)
 
 Project/workspace/image orchestration and lifecycle.
 
@@ -63,15 +63,15 @@ Project/workspace/image orchestration and lifecycle.
 - pharo-launcher-mcp (`@evref-bl/pharo-launcher-mcp`)
 - The gateway route-management API at runtime
 
-`@plexus/core` does not need an npm dependency on `@plexus/gateway` to own lifecycle. It can register routes through an in-process adapter in tests/smokes or through the gateway MCP API in deployed use.
+`@evref-bl/plexus-core` does not need an npm dependency on `@evref-bl/plexus-gateway` to own lifecycle. It can register routes through an in-process adapter in tests/smokes or through the gateway MCP API in deployed use.
 
 ## Dependency Direction
 
 ```text
-@evref-bl/pharo-launcher-mcp        @plexus/gateway
+@evref-bl/pharo-launcher-mcp        @evref-bl/plexus-gateway
         ^                              ^
         |                              |
-        +---------- @plexus/core / PLexus CLI
+        +---------- @evref-bl/plexus-core / PLexus CLI
 ```
 
 - PLexus core depends on pharo-launcher-mcp as a package.

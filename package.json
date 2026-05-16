@@ -17,7 +17,7 @@
     "node": ">=24"
   },
   "scripts": {
-    "build": "npm run build -w @plexus/core && npm run build -w @plexus/gateway",
+    "build": "npm run build -w @evref-bl/plexus-core && npm run build -w @evref-bl/plexus-gateway",
     "test": "npm run test --workspaces",
     "typecheck": "npm run typecheck --workspaces",
     "clean": "npm run clean --workspaces",

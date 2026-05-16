@@ -9,8 +9,8 @@ import {
   createStdioPharoLauncherMcpClient,
   loadProjectState,
   PlexusProjectLifecycle,
-} from "@plexus/core";
-import { PlexusGateway } from "@plexus/gateway";
+} from "@evref-bl/plexus-core";
+import { PlexusGateway } from "@evref-bl/plexus-gateway";
 
 const scriptPath = fileURLToPath(import.meta.url);
 const repoRoot = path.dirname(path.dirname(scriptPath));

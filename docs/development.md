@@ -25,11 +25,11 @@ scripts/
 
 The intended split is:
 
-- `@plexus/core` / CLI owns project config, workspace and image lifecycle,
+- `@evref-bl/plexus-core` / CLI owns project config, workspace and image lifecycle,
   runtime state, port allocation, startup script generation, health checks,
   lifecycle MCP tools, route registration through the gateway route-management
   API, image rescue, and the scoped `pharo-launcher` facade.
-- `@plexus/gateway` owns route registration, route status, and forwarding
+- `@evref-bl/plexus-gateway` owns route registration, route status, and forwarding
   project Pharo MCP calls to image-scoped MCP servers.
 - `@evref-bl/pharo-launcher-mcp` owns raw PharoLauncher CLI integration.
 
@@ -58,8 +58,8 @@ Static portability checks do not require Pharo images, live PLexus routes,
 process startup, or Docker:
 
 ```sh
-npm run test -w @plexus/core -- workspaceMcpConfig projectState projectStartupScript config
-npm run typecheck -w @plexus/core
+npm run test -w @evref-bl/plexus-core -- workspaceMcpConfig projectState projectStartupScript config
+npm run typecheck -w @evref-bl/plexus-core
 ```
 
 Optional Linux verification through Docker is non-default. Run it only in an
