@@ -1,11 +1,46 @@
-import type {
-  PharoMcpContractReference,
-  ProjectImagePharoMcpContractState,
-  ProjectImageState,
-  ProjectState,
-} from "@plexus/core";
 import fs from "node:fs";
 import path from "node:path";
+
+export type GatewayProjectImageStatus =
+  | "starting"
+  | "running"
+  | "stopped"
+  | "failed";
+export type GatewayPharoMcpContractStatus =
+  | "unknown"
+  | "matching"
+  | "mismatched";
+
+export interface GatewayPharoMcpContractReference {
+  id?: string;
+  hash?: string;
+}
+
+export interface GatewayProjectImagePharoMcpContractState
+  extends GatewayPharoMcpContractReference {
+  status?: GatewayPharoMcpContractStatus;
+  expectedId?: string;
+  expectedHash?: string;
+}
+
+export interface GatewayProjectImageState {
+  id: string;
+  imageName: string;
+  assignedPort: number;
+  pid?: number;
+  status: GatewayProjectImageStatus;
+  pharoMcpContract?: GatewayProjectImagePharoMcpContractState;
+}
+
+export interface GatewayProjectState {
+  projectId: string;
+  projectName: string;
+  workspaceId: string;
+  targetId: string;
+  pharoMcpContract?: GatewayPharoMcpContractReference;
+  images: GatewayProjectImageState[];
+  updatedAt: string;
+}
 
 export type GatewayImageHealth = "unknown" | "healthy" | "unhealthy";
 export type GatewayImageRoutabilityCode =
@@ -25,10 +60,10 @@ export interface GatewayImageRoute {
   imageName: string;
   port: number;
   pid?: number;
-  status: ProjectImageState["status"];
+  status: GatewayProjectImageStatus;
   health: GatewayImageHealth;
   routable: GatewayImageRoutability;
-  pharoMcpContract?: ProjectImagePharoMcpContractState;
+  pharoMcpContract?: GatewayProjectImagePharoMcpContractState;
   updatedAt: string;
 }
 
@@ -39,12 +74,14 @@ export interface GatewayProjectRoute {
   targetId: string;
   projectRoot: string;
   statePath: string;
-  pharoMcpContract?: PharoMcpContractReference;
+  pharoMcpContract?: GatewayPharoMcpContractReference;
   images: GatewayImageRoute[];
   updatedAt: string;
 }
 
-function contractLabel(contract: PharoMcpContractReference | undefined): string {
+function contractLabel(
+  contract: GatewayPharoMcpContractReference | undefined,
+): string {
   if (!contract) {
     return "none";
   }
@@ -53,8 +90,8 @@ function contractLabel(contract: PharoMcpContractReference | undefined): string 
 }
 
 function requiredProjectContractFields(
-  contract: PharoMcpContractReference | undefined,
-): Array<keyof PharoMcpContractReference> {
+  contract: GatewayPharoMcpContractReference | undefined,
+): Array<keyof GatewayPharoMcpContractReference> {
   if (!contract) {
     return [];
   }
@@ -63,8 +100,8 @@ function requiredProjectContractFields(
 }
 
 function contractRoutability(
-  projectContract: PharoMcpContractReference | undefined,
-  imageContract: ProjectImagePharoMcpContractState | undefined,
+  projectContract: GatewayPharoMcpContractReference | undefined,
+  imageContract: GatewayProjectImagePharoMcpContractState | undefined,
   imageId: string,
 ): GatewayImageRoutability {
   if (imageContract?.status === "mismatched") {
@@ -118,8 +155,8 @@ function contractRoutability(
 }
 
 function imageRoutability(
-  projectContract: PharoMcpContractReference | undefined,
-  image: ProjectImageState,
+  projectContract: GatewayPharoMcpContractReference | undefined,
+  image: GatewayProjectImageState,
 ): GatewayImageRoutability {
   if (image.status !== "running") {
     return {
@@ -142,7 +179,7 @@ export class PlexusRoutingTable {
   upsertProject(
     projectRoot: string,
     statePath: string,
-    state: ProjectState,
+    state: GatewayProjectState,
   ): GatewayProjectRoute {
     const existing = this.targets.get(state.targetId);
     const existingHealth = new Map(
@@ -153,7 +190,7 @@ export class PlexusRoutingTable {
       projectName: state.projectName,
       workspaceId: state.workspaceId,
       targetId: state.targetId,
-      projectRoot,
+      projectRoot: path.resolve(projectRoot),
       statePath,
       ...(state.pharoMcpContract
         ? { pharoMcpContract: state.pharoMcpContract }
@@ -197,36 +234,6 @@ export class PlexusRoutingTable {
   ): GatewayProjectRoute | undefined {
     const route = this.getProjectWorkspace(projectId, workspaceId);
     return route ? this.removeTarget(route.targetId) : undefined;
-  }
-
-  removeProjectRootRoutes(
-    projectRoot: string,
-    workspaceId?: string,
-  ): GatewayProjectRoute[] {
-    const routes = this.findProjectRootRoutes(projectRoot, workspaceId);
-    const removed: GatewayProjectRoute[] = [];
-
-    for (const route of routes) {
-      const deleted = this.removeTarget(route.targetId);
-      if (deleted) {
-        removed.push(deleted);
-      }
-    }
-
-    return removed;
-  }
-
-  findProjectRootRoutes(
-    projectRoot: string,
-    workspaceId?: string,
-  ): GatewayProjectRoute[] {
-    const resolvedProjectRoot = path.resolve(projectRoot);
-
-    return this.listTargets().filter(
-      (route) =>
-        route.projectRoot === resolvedProjectRoot &&
-        (workspaceId === undefined || route.workspaceId === workspaceId),
-    );
   }
 
   removeRoutesWithMissingStatePaths(

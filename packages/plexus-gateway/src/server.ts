@@ -8,7 +8,7 @@ import {
   type CallToolResult,
   type Tool,
 } from "@modelcontextprotocol/sdk/types.js";
-import { PlexusGateway, type ProjectReferenceInput } from "./gateway.js";
+import { PlexusGateway, type GatewayRouteReferenceInput } from "./gateway.js";
 
 const stringSchema = { type: "string", minLength: 1 } as const;
 const optionalStringSchema = { type: "string", minLength: 1 } as const;
@@ -25,85 +25,51 @@ function objectSchema(
   } as const;
 }
 
-const projectReferenceProperties = {
-  projectPath: optionalStringSchema,
+const routeReferenceProperties = {
   projectId: optionalStringSchema,
   workspaceId: optionalStringSchema,
   targetId: optionalStringSchema,
-  stateRoot: optionalStringSchema,
 } as const;
 
-const historyEntrySelectionSchema = objectSchema({
-  indexes: {
-    type: "array",
-    items: { type: "integer" },
-  },
-  entryReferences: {
-    type: "array",
-    items: stringSchema,
-  },
-  startIndex: { type: "integer" },
-  endIndex: { type: "integer" },
-  latestCount: { type: "integer", minimum: 1 },
-});
-
-const repositoryActionSchema = objectSchema(
-  {
-    label: optionalStringSchema,
-    toolName: {
-      type: "string",
-      enum: ["load_repository", "edit_repository"],
-    },
-    arguments: {
-      type: "object",
-      additionalProperties: true,
-    },
-  },
-  ["arguments"],
-);
+const projectStateSchema = {
+  type: "object",
+  additionalProperties: true,
+} as const;
 
 export const gatewayTools = [
   {
-    name: "plexus_project_open",
+    name: "plexus_gateway_register_target",
     description:
-      "Open a PLexus project: launch active images, update runtime state, and register routes.",
+      "Register or update one gateway target route from PLexus runtime state.",
     inputSchema: objectSchema(
       {
-        projectPath: stringSchema,
-        workspaceId: optionalStringSchema,
-        targetId: optionalStringSchema,
-        stateRoot: optionalStringSchema,
+        projectRoot: stringSchema,
+        statePath: stringSchema,
+        state: projectStateSchema,
       },
-      ["projectPath"],
+      ["projectRoot", "statePath", "state"],
     ),
-  },
-  {
-    name: "plexus_project_close",
-    description:
-      "Close a PLexus project: stop running images and update runtime state.",
-    inputSchema: objectSchema(
-      {
-        projectPath: stringSchema,
-        workspaceId: optionalStringSchema,
-        stateRoot: optionalStringSchema,
-      },
-      ["projectPath"],
-    ),
-  },
-  {
-    name: "plexus_project_status",
-    description:
-      "Return gateway route status for a project path, project id, or all registered projects.",
-    inputSchema: objectSchema({
-      ...projectReferenceProperties,
-      refreshHealth: { type: "boolean" },
-    }),
   },
   {
     name: "plexus_gateway_unregister_target",
     description:
       "Remove a registered gateway target route without opening or closing project images.",
-    inputSchema: objectSchema(projectReferenceProperties),
+    inputSchema: objectSchema(routeReferenceProperties),
+  },
+  {
+    name: "plexus_gateway_status",
+    description:
+      "Return gateway route status for registered targets/images.",
+    inputSchema: objectSchema({
+      ...routeReferenceProperties,
+      refreshHealth: { type: "boolean" },
+    }),
+  },
+  {
+    name: "plexus_gateway_cleanup_stale_routes",
+    description:
+      "Remove registered gateway target routes whose runtime state files are gone.",
+    inputSchema: objectSchema({}),
   },
   {
     name: "plexus_route_to_image",
@@ -111,7 +77,7 @@ export const gatewayTools = [
       "Route a Pharo MCP tool call to the MCP server running inside a selected image.",
     inputSchema: objectSchema(
       {
-        ...projectReferenceProperties,
+        ...routeReferenceProperties,
         imageId: stringSchema,
         toolName: stringSchema,
         arguments: {
@@ -120,39 +86,6 @@ export const gatewayTools = [
         },
       },
       ["imageId", "toolName"],
-    ),
-  },
-  {
-    name: "plexus_rescue_image",
-    description:
-      "Plan or run rescue of a crashed Pharo image into a new image by recreating launcher state, restoring repositories when possible, and applying selected history entries from the source image ombu files.",
-    inputSchema: objectSchema(
-      {
-        ...projectReferenceProperties,
-        operation: {
-          type: "string",
-          enum: ["snapshotSource", "plan", "prepareTarget", "applyPlan"],
-        },
-        sourceImageId: stringSchema,
-        targetImageId: optionalStringSchema,
-        targetImageName: optionalStringSchema,
-        targetTemplateName: optionalStringSchema,
-        targetTemplateCategory: optionalStringSchema,
-        targetMcpPort: { type: "integer", minimum: 1, maximum: 65_535 },
-        sourceHistoryDirectoryPath: optionalStringSchema,
-        historyFilePath: optionalStringSchema,
-        selection: historyEntrySelectionSchema,
-        exclude: historyEntrySelectionSchema,
-        codeChangesOnly: { type: "boolean" },
-        includeEntryCounts: { type: "boolean" },
-        loadRepositories: { type: "boolean" },
-        repositoryActions: {
-          type: "array",
-          items: repositoryActionSchema,
-        },
-        confirm: { type: "boolean" },
-      },
-      ["projectPath", "operation", "sourceImageId"],
     ),
   },
 ] as const;
@@ -179,7 +112,7 @@ export interface GatewayServerOptions {
 export interface GatewayEnvironmentOptions {
   surface: GatewaySurface;
   pharoTools: Tool[];
-  pharoScope: ProjectReferenceInput;
+  pharoScope: GatewayRouteReferenceInput;
 }
 
 type ToolResult = CallToolResult;
@@ -336,11 +269,9 @@ export function parseGatewayEnvironmentOptions(
       "PLEXUS_PHARO_TOOLS_JSON",
     ) as Tool[],
     pharoScope: {
-      projectPath: env.PLEXUS_PROJECT_ROOT,
       projectId: env.PLEXUS_PROJECT_ID,
       workspaceId: env.PLEXUS_WORKSPACE_ID ?? env.VIBE_KANBAN_WORKSPACE_ID,
       targetId: env.PLEXUS_TARGET_ID,
-      stateRoot: env.PLEXUS_STATE_ROOT,
     },
   };
 }

@@ -4,25 +4,19 @@ import path from "node:path";
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import { afterEach, describe, expect, it } from "vitest";
 import {
-  saveProjectState,
-  type ImageRescueOptions,
-  type ImageRescueResult,
-  type PharoMcpHealthClient,
-  type ProjectCloseOptions,
-  type ProjectCloseResult,
-  type ProjectOpenOptions,
-  type ProjectOpenResult,
-  type ProjectState,
-} from "@plexus/core";
-import { PlexusGateway, type GatewayToolResult } from "./gateway.js";
+  PlexusGateway,
+  type GatewayImageHealthClient,
+  type GatewayToolResult,
+} from "./gateway.js";
 import type {
   ImageMcpRoute,
   ImageMcpToolRouter,
 } from "./imageMcpRouter.js";
+import type { GatewayProjectState } from "./routingTable.js";
 
 const tempDirs: string[] = [];
 
-const runningState: ProjectState = {
+const runningState: GatewayProjectState = {
   projectId: "project-123",
   projectName: "my-project",
   workspaceId: "worktree-a",
@@ -79,7 +73,7 @@ class FakeImageRouter implements ImageMcpToolRouter {
   }
 }
 
-class FakeHealthClient implements PharoMcpHealthClient {
+class FakeHealthClient implements GatewayImageHealthClient {
   readonly ports: number[] = [];
 
   async check(port: number): Promise<boolean> {
@@ -94,35 +88,6 @@ function makeTempDir(prefix: string): string {
   return tempDir;
 }
 
-function writeProjectConfig(projectRoot: string): void {
-  fs.writeFileSync(
-    path.join(projectRoot, "plexus.project.json"),
-    JSON.stringify(
-      {
-        name: "my-project",
-        kanban: {
-          provider: "vibe-kanban",
-          projectId: "project-123",
-        },
-        images: [
-          {
-            id: "dev",
-            imageName: "MyProject-dev",
-            active: true,
-            mcp: {
-              port: 7123,
-              loadScript: "pharo/load-mcp.st",
-            },
-          },
-        ],
-      },
-      null,
-      2,
-    ),
-    "utf8",
-  );
-}
-
 function statePath(stateRoot: string, workspaceId = "worktree-a"): string {
   return path.join(
     stateRoot,
@@ -132,6 +97,20 @@ function statePath(stateRoot: string, workspaceId = "worktree-a"): string {
     workspaceId,
     "state.json",
   );
+}
+
+async function registerTarget(
+  gateway: PlexusGateway,
+  state: GatewayProjectState = runningState,
+  stateFilePath = "state.json",
+): Promise<void> {
+  await expect(
+    gateway.handleTool("plexus_gateway_register_target", {
+      projectRoot: makeTempDir("plexus-project-"),
+      statePath: stateFilePath,
+      state,
+    }),
+  ).resolves.toMatchObject({ ok: true });
 }
 
 function data<T>(result: GatewayToolResult<T>): T {
@@ -147,36 +126,25 @@ afterEach(() => {
 });
 
 describe("PlexusGateway", () => {
-  it("opens a project and registers image routes", async () => {
+  it("registers a target route from PLexus runtime state", async () => {
+    const gateway = new PlexusGateway();
     const projectRoot = makeTempDir("plexus-project-");
-    const stateRoot = makeTempDir("plexus-state-");
-    const stateFilePath = statePath(stateRoot);
-    const gateway = new PlexusGateway({
-      projectOpen: async (
-        options: ProjectOpenOptions,
-      ): Promise<ProjectOpenResult> => ({
-        ok: true,
-        projectRoot: path.resolve(options.projectRoot),
+    const stateFilePath = statePath(makeTempDir("plexus-state-"));
+
+    const registerResult = data(
+      await gateway.handleTool("plexus_gateway_register_target", {
+        projectRoot,
         statePath: stateFilePath,
         state: runningState,
-        failures: [],
       }),
-    });
-
-    const openResult = await gateway.handleTool("plexus_project_open", {
-      projectPath: projectRoot,
-      stateRoot,
-      workspaceId: "worktree-a",
-    });
-    expect(openResult.ok).toBe(true);
-
+    );
     const status = data(
-      await gateway.handleTool("plexus_project_status", {
+      await gateway.handleTool("plexus_gateway_status", {
         projectId: "project-123",
       }),
     );
 
-    expect(status).toMatchObject({
+    expect(registerResult).toMatchObject({
       projectId: "project-123",
       workspaceId: "worktree-a",
       projectRoot: path.resolve(projectRoot),
@@ -199,29 +167,16 @@ describe("PlexusGateway", () => {
         },
       ],
     });
+    expect(status).toMatchObject(registerResult);
   });
 
   it("refreshes health for running image routes", async () => {
     const healthClient = new FakeHealthClient();
-    const gateway = new PlexusGateway({
-      healthClient,
-      projectOpen: async (
-        options: ProjectOpenOptions,
-      ): Promise<ProjectOpenResult> => ({
-        ok: true,
-        projectRoot: path.resolve(options.projectRoot),
-        statePath: "state.json",
-        state: runningState,
-        failures: [],
-      }),
-    });
+    const gateway = new PlexusGateway({ healthClient });
 
-    await gateway.handleTool("plexus_project_open", {
-      projectPath: makeTempDir("plexus-project-"),
-      workspaceId: "worktree-a",
-    });
+    await registerTarget(gateway);
     const status = data(
-      await gateway.handleTool("plexus_project_status", {
+      await gateway.handleTool("plexus_gateway_status", {
         projectId: "project-123",
         workspaceId: "worktree-a",
         refreshHealth: true,
@@ -245,23 +200,9 @@ describe("PlexusGateway", () => {
 
   it("routes Pharo MCP calls to the selected running image", async () => {
     const imageRouter = new FakeImageRouter();
-    const gateway = new PlexusGateway({
-      imageRouter,
-      projectOpen: async (
-        options: ProjectOpenOptions,
-      ): Promise<ProjectOpenResult> => ({
-        ok: true,
-        projectRoot: path.resolve(options.projectRoot),
-        statePath: "state.json",
-        state: runningState,
-        failures: [],
-      }),
-    });
+    const gateway = new PlexusGateway({ imageRouter });
 
-    await gateway.handleTool("plexus_project_open", {
-      projectPath: makeTempDir("plexus-project-"),
-      workspaceId: "worktree-a",
-    });
+    await registerTarget(gateway);
     const routeResult = await gateway.handleTool("plexus_route_to_image", {
       projectId: "project-123",
       workspaceId: "worktree-a",
@@ -303,114 +244,12 @@ describe("PlexusGateway", () => {
     });
   });
 
-  it("exposes image rescue with routed Pharo MCP access", async () => {
-    const projectRoot = makeTempDir("plexus-project-");
-    const stateRoot = makeTempDir("plexus-state-");
-    const imageRouter = new FakeImageRouter();
-    const rescueCalls: ImageRescueOptions[] = [];
-    writeProjectConfig(projectRoot);
-    saveProjectState(statePath(stateRoot), runningState);
-
-    const gateway = new PlexusGateway({
-      imageRouter,
-      imageRescue: async (
-        options: ImageRescueOptions,
-      ): Promise<ImageRescueResult> => {
-        rescueCalls.push(options);
-        await options.imageMcpClient?.callTool(
-          runningState.images[0],
-          "manage-change-history",
-          {
-            operation: "listFiles",
-          },
-        );
-
-        return {
-          ok: true,
-          operation: options.operation,
-          projectRoot: options.projectRoot,
-          statePath: statePath(stateRoot),
-          state: runningState,
-          sourceImage: runningState.images[0],
-          sourceSnapshot: {
-            capturedAt: "2026-05-11T10:00:00.000Z",
-            paths: {},
-          },
-          warnings: [],
-        };
-      },
-    });
-
-    const rescueResult = data(
-      await gateway.handleTool("plexus_rescue_image", {
-        projectPath: projectRoot,
-        stateRoot,
-        workspaceId: "worktree-a",
-        operation: "applyPlan",
-        sourceImageId: "dev",
-        confirm: false,
-      }),
-    );
-
-    expect(rescueCalls[0]).toMatchObject({
-      operation: "applyPlan",
-      projectRoot: path.resolve(projectRoot),
-      sourceImageId: "dev",
-      confirm: false,
-    });
-    expect(imageRouter.calls).toEqual([
-      {
-        route: {
-          projectId: "project-123",
-          workspaceId: "worktree-a",
-          targetId: "project-123--worktree-a",
-          imageId: "dev",
-          imageName: "MyProject-dev",
-          port: 7123,
-        },
-        toolName: "manage-change-history",
-        argumentsValue: {
-          operation: "listFiles",
-        },
-      },
-    ]);
-    expect(rescueResult.operation).toBe("applyPlan");
-  });
-
-  it("exposes stable Pharo facade tools with a required imageId route field", async () => {
-    const stoppedState: ProjectState = {
-      ...runningState,
-      images: runningState.images.map((image) => ({
-        ...image,
-        status: "stopped" as const,
-      })),
-    };
+  it("exposes stable Pharo facade tools with a required imageId route field", () => {
     const gateway = new PlexusGateway({
       pharoTools: [pharoEvalTool],
-      projectOpen: async (
-        options: ProjectOpenOptions,
-      ): Promise<ProjectOpenResult> => ({
-        ok: true,
-        projectRoot: path.resolve(options.projectRoot),
-        statePath: "state.json",
-        state: runningState,
-        failures: [],
-      }),
-      projectClose: async (
-        options: ProjectCloseOptions,
-      ): Promise<ProjectCloseResult> => ({
-        ok: true,
-        projectRoot: path.resolve(options.projectRoot),
-        statePath: "state.json",
-        state: stoppedState,
-        stoppedImages: stoppedState.images,
-        failures: [],
-      }),
     });
-    const projectRoot = makeTempDir("plexus-project-");
-    const initialTools = gateway.listPharoTools();
 
-    expect(initialTools).toMatchObject([
+    expect(gateway.listPharoTools()).toMatchObject([
       {
         name: "pharo_eval",
         inputSchema: {
@@ -429,22 +268,11 @@ describe("PlexusGateway", () => {
         },
       },
     ]);
-
-    await gateway.handleTool("plexus_project_open", {
-      projectPath: projectRoot,
-      workspaceId: "worktree-a",
-    });
-    await gateway.handleTool("plexus_project_close", {
-      projectPath: projectRoot,
-      workspaceId: "worktree-a",
-    });
-
-    expect(gateway.listPharoTools()).toEqual(initialTools);
   });
 
   it("routes Pharo facade calls to the selected image and strips imageId", async () => {
     const imageRouter = new FakeImageRouter();
-    const twoImageState: ProjectState = {
+    const twoImageState: GatewayProjectState = {
       ...runningState,
       images: runningState.images.map((image, index) => ({
         ...image,
@@ -459,21 +287,9 @@ describe("PlexusGateway", () => {
         projectId: "project-123",
         workspaceId: "worktree-a",
       },
-      projectOpen: async (
-        options: ProjectOpenOptions,
-      ): Promise<ProjectOpenResult> => ({
-        ok: true,
-        projectRoot: path.resolve(options.projectRoot),
-        statePath: "state.json",
-        state: twoImageState,
-        failures: [],
-      }),
     });
 
-    await gateway.handleTool("plexus_project_open", {
-      projectPath: makeTempDir("plexus-project-"),
-      workspaceId: "worktree-a",
-    });
+    await registerTarget(gateway, twoImageState);
 
     expect(
       data(
@@ -537,21 +353,9 @@ describe("PlexusGateway", () => {
         projectId: "project-123",
         workspaceId: "worktree-a",
       },
-      projectOpen: async (
-        options: ProjectOpenOptions,
-      ): Promise<ProjectOpenResult> => ({
-        ok: true,
-        projectRoot: path.resolve(options.projectRoot),
-        statePath: "state.json",
-        state: runningState,
-        failures: [],
-      }),
     });
 
-    await gateway.handleTool("plexus_project_open", {
-      projectPath: makeTempDir("plexus-project-"),
-      workspaceId: "worktree-a",
-    });
+    await registerTarget(gateway);
 
     await expect(
       gateway.callPharoTool("pharo_eval", {
@@ -584,7 +388,7 @@ describe("PlexusGateway", () => {
 
   it("rejects Pharo facade calls for image ids outside the scoped workspace", async () => {
     const imageRouter = new FakeImageRouter();
-    const stateA: ProjectState = {
+    const stateA: GatewayProjectState = {
       ...runningState,
       workspaceId: "worktree-a",
       targetId: "project-123--worktree-a",
@@ -598,7 +402,7 @@ describe("PlexusGateway", () => {
         },
       ],
     };
-    const stateB: ProjectState = {
+    const stateB: GatewayProjectState = {
       ...runningState,
       workspaceId: "worktree-b",
       targetId: "project-123--worktree-b",
@@ -619,29 +423,10 @@ describe("PlexusGateway", () => {
         projectId: "project-123",
         workspaceId: "worktree-a",
       },
-      projectOpen: async (
-        options: ProjectOpenOptions,
-      ): Promise<ProjectOpenResult> => {
-        const workspaceId = options.workspaceId ?? "worktree-a";
-        const state = workspaceId === "worktree-b" ? stateB : stateA;
-        return {
-          ok: true,
-          projectRoot: path.resolve(options.projectRoot),
-          statePath: statePath("state-root", workspaceId),
-          state,
-          failures: [],
-        };
-      },
     });
 
-    await gateway.handleTool("plexus_project_open", {
-      projectPath: makeTempDir("plexus-project-a-"),
-      workspaceId: "worktree-a",
-    });
-    await gateway.handleTool("plexus_project_open", {
-      projectPath: makeTempDir("plexus-project-b-"),
-      workspaceId: "worktree-b",
-    });
+    await registerTarget(gateway, stateA);
+    await registerTarget(gateway, stateB);
 
     await expect(
       gateway.callPharoTool("pharo_eval", {
@@ -658,7 +443,7 @@ describe("PlexusGateway", () => {
 
   it("reports and rejects Pharo MCP contract mismatches before forwarding", async () => {
     const imageRouter = new FakeImageRouter();
-    const contractState: ProjectState = {
+    const contractState: GatewayProjectState = {
       ...runningState,
       pharoMcpContract: {
         id: "project-contract",
@@ -698,24 +483,12 @@ describe("PlexusGateway", () => {
         projectId: "project-123",
         workspaceId: "worktree-a",
       },
-      projectOpen: async (
-        options: ProjectOpenOptions,
-      ): Promise<ProjectOpenResult> => ({
-        ok: true,
-        projectRoot: path.resolve(options.projectRoot),
-        statePath: "state.json",
-        state: contractState,
-        failures: [],
-      }),
     });
 
-    await gateway.handleTool("plexus_project_open", {
-      projectPath: makeTempDir("plexus-project-"),
-      workspaceId: "worktree-a",
-    });
+    await registerTarget(gateway, contractState);
 
     const status = data(
-      await gateway.handleTool("plexus_project_status", {
+      await gateway.handleTool("plexus_gateway_status", {
         projectId: "project-123",
         workspaceId: "worktree-a",
       }),
@@ -768,22 +541,9 @@ describe("PlexusGateway", () => {
   });
 
   it("refuses to route to stopped images", async () => {
-    const gateway = new PlexusGateway({
-      projectOpen: async (
-        options: ProjectOpenOptions,
-      ): Promise<ProjectOpenResult> => ({
-        ok: true,
-        projectRoot: path.resolve(options.projectRoot),
-        statePath: "state.json",
-        state: runningState,
-        failures: [],
-      }),
-    });
+    const gateway = new PlexusGateway();
 
-    await gateway.handleTool("plexus_project_open", {
-      projectPath: makeTempDir("plexus-project-"),
-      workspaceId: "worktree-a",
-    });
+    await registerTarget(gateway);
 
     expect(
       await gateway.handleTool("plexus_route_to_image", {
@@ -798,80 +558,10 @@ describe("PlexusGateway", () => {
     });
   });
 
-  it("closes a project and unregisters the target route", async () => {
-    const closedState: ProjectState = {
-      ...runningState,
-      updatedAt: "2026-04-25T11:00:00.000Z",
-      images: runningState.images.map((image) => ({
-        ...image,
-        status: "stopped" as const,
-      })),
-    };
-    const gateway = new PlexusGateway({
-      projectOpen: async (
-        options: ProjectOpenOptions,
-      ): Promise<ProjectOpenResult> => ({
-        ok: true,
-        projectRoot: path.resolve(options.projectRoot),
-        statePath: "state.json",
-        state: runningState,
-        failures: [],
-      }),
-      projectClose: async (
-        options: ProjectCloseOptions,
-      ): Promise<ProjectCloseResult> => ({
-        ok: true,
-        projectRoot: path.resolve(options.projectRoot),
-        statePath: "state.json",
-        state: closedState,
-        stoppedImages: closedState.images,
-        failures: [],
-      }),
-    });
-    const projectRoot = makeTempDir("plexus-project-");
-
-    await gateway.handleTool("plexus_project_open", {
-      projectPath: projectRoot,
-      workspaceId: "worktree-a",
-    });
-    await gateway.handleTool("plexus_project_close", {
-      projectPath: projectRoot,
-      workspaceId: "worktree-a",
-    });
-
-    await expect(
-      gateway.handleTool("plexus_project_status", {
-        projectId: "project-123",
-        workspaceId: "worktree-a",
-      }),
-    ).resolves.toMatchObject({
-      ok: false,
-      error: "No route is registered for: project-123/worktree-a",
-    });
-
-    expect(
-      data(await gateway.handleTool("plexus_project_status", {})),
-    ).toEqual([]);
-  });
-
   it("unregisters a target explicitly without touching project images", async () => {
-    const gateway = new PlexusGateway({
-      projectOpen: async (
-        options: ProjectOpenOptions,
-      ): Promise<ProjectOpenResult> => ({
-        ok: true,
-        projectRoot: path.resolve(options.projectRoot),
-        statePath: "state.json",
-        state: runningState,
-        failures: [],
-      }),
-    });
-    const projectRoot = makeTempDir("plexus-project-");
+    const gateway = new PlexusGateway();
 
-    await gateway.handleTool("plexus_project_open", {
-      projectPath: projectRoot,
-      workspaceId: "worktree-a",
-    });
+    await registerTarget(gateway);
     const unregisterResult = data(
       await gateway.handleTool("plexus_gateway_unregister_target", {
         targetId: "project-123--worktree-a",
@@ -899,71 +589,33 @@ describe("PlexusGateway", () => {
   });
 
   it("prunes registered routes when their runtime state file disappears", async () => {
-    const projectRoot = makeTempDir("plexus-project-");
     const stateRoot = makeTempDir("plexus-state-");
     const stateFilePath = statePath(stateRoot);
-    saveProjectState(stateFilePath, runningState);
-    const gateway = new PlexusGateway({
-      projectOpen: async (
-        options: ProjectOpenOptions,
-      ): Promise<ProjectOpenResult> => ({
-        ok: true,
-        projectRoot: path.resolve(options.projectRoot),
-        statePath: stateFilePath,
-        state: runningState,
-        failures: [],
-      }),
-    });
+    fs.mkdirSync(path.dirname(stateFilePath), { recursive: true });
+    fs.writeFileSync(stateFilePath, JSON.stringify(runningState), "utf8");
+    const gateway = new PlexusGateway();
 
-    await gateway.handleTool("plexus_project_open", {
-      projectPath: projectRoot,
-      stateRoot,
-      workspaceId: "worktree-a",
-    });
+    await registerTarget(gateway, runningState, stateFilePath);
     fs.rmSync(stateFilePath);
 
     expect(
-      data(
-        await gateway.handleTool("plexus_project_status", {
-          refreshHealth: true,
-        }),
-      ),
-    ).toEqual([]);
-  });
-
-  it("hydrates status from runtime state when a project path is provided", async () => {
-    const projectRoot = makeTempDir("plexus-project-");
-    const stateRoot = makeTempDir("plexus-state-");
-    writeProjectConfig(projectRoot);
-    saveProjectState(statePath(stateRoot), runningState);
-    const gateway = new PlexusGateway();
-
-    const status = data(
-      await gateway.handleTool("plexus_project_status", {
-        projectPath: projectRoot,
-        stateRoot,
-        workspaceId: "worktree-a",
-      }),
+      data(await gateway.handleTool("plexus_gateway_cleanup_stale_routes", {})),
+    ).toMatchObject({
+      removed: [
+        {
+          projectId: "project-123",
+          targetId: "project-123--worktree-a",
+        },
+      ],
+    });
+    expect(data(await gateway.handleTool("plexus_gateway_status", {}))).toEqual(
+      [],
     );
-
-    expect(status).toMatchObject({
-      projectId: "project-123",
-      statePath: statePath(stateRoot),
-      workspaceId: "worktree-a",
-      targetId: "project-123--worktree-a",
-    });
-    expect(status.images[0]).toMatchObject({
-      id: "dev",
-      port: 7123,
-      status: "running",
-    });
   });
 
   it("keeps parallel worktree routes separate for the same project", async () => {
-    const projectRootA = makeTempDir("plexus-project-a-");
-    const projectRootB = makeTempDir("plexus-project-b-");
     const stateRoot = makeTempDir("plexus-state-");
-    const stateA: ProjectState = {
+    const stateA: GatewayProjectState = {
       ...runningState,
       workspaceId: "worktree-a",
       targetId: "project-123--worktree-a",
@@ -977,7 +629,7 @@ describe("PlexusGateway", () => {
         },
       ],
     };
-    const stateB: ProjectState = {
+    const stateB: GatewayProjectState = {
       ...runningState,
       workspaceId: "worktree-b",
       targetId: "project-123--worktree-b",
@@ -992,36 +644,13 @@ describe("PlexusGateway", () => {
       ],
     };
     const imageRouter = new FakeImageRouter();
-    const gateway = new PlexusGateway({
-      imageRouter,
-      projectOpen: async (
-        options: ProjectOpenOptions,
-      ): Promise<ProjectOpenResult> => {
-        const workspaceId = options.workspaceId ?? "worktree-a";
-        const state = workspaceId === "worktree-b" ? stateB : stateA;
-        return {
-          ok: true,
-          projectRoot: path.resolve(options.projectRoot),
-          statePath: statePath(stateRoot, workspaceId),
-          state,
-          failures: [],
-        };
-      },
-    });
+    const gateway = new PlexusGateway({ imageRouter });
 
-    await gateway.handleTool("plexus_project_open", {
-      projectPath: projectRootA,
-      stateRoot,
-      workspaceId: "worktree-a",
-    });
-    await gateway.handleTool("plexus_project_open", {
-      projectPath: projectRootB,
-      stateRoot,
-      workspaceId: "worktree-b",
-    });
+    await registerTarget(gateway, stateA, statePath(stateRoot, "worktree-a"));
+    await registerTarget(gateway, stateB, statePath(stateRoot, "worktree-b"));
 
     const routes = data(
-      await gateway.handleTool("plexus_project_status", {
+      await gateway.handleTool("plexus_gateway_status", {
         projectId: "project-123",
       }),
     );
@@ -1067,6 +696,19 @@ describe("PlexusGateway", () => {
     });
     expect(data(routeResult)).toEqual({
       content: [{ type: "text", text: "routed" }],
+    });
+  });
+
+  it("does not own PLexus lifecycle tools", async () => {
+    const gateway = new PlexusGateway();
+
+    await expect(
+      gateway.handleTool("plexus_project_open", {
+        projectPath: makeTempDir("plexus-project-"),
+      }),
+    ).resolves.toMatchObject({
+      ok: false,
+      error: "Unknown tool: plexus_project_open",
     });
   });
 });

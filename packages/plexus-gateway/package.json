@@ -15,8 +15,7 @@
     "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\""
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.29.0",
-    "@plexus/core": "0.1.0"
+    "@modelcontextprotocol/sdk": "^1.29.0"
   },
   "devDependencies": {}
 }

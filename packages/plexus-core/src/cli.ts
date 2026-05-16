@@ -1,13 +1,17 @@
 #!/usr/bin/env node
 import { closeProject, ProjectCloseError } from "./projectClose.js";
+import { PlexusProjectLifecycle } from "./projectLifecycle.js";
 import { openProject, ProjectOpenError } from "./projectOpen.js";
 import { startScopedPharoLauncherServer } from "./scopedPharoLauncherServer.js";
+import { startProjectLifecycleServer } from "./server.js";
 
 function usage(): string {
   return [
     "Usage:",
     "  plexus project open <path> [--workspace-id <id>] [--target-id <id>] [--state-root <path>]",
     "  plexus project close <path> [--workspace-id <id>] [--state-root <path>]",
+    "  plexus project status <path> [--workspace-id <id>] [--state-root <path>]",
+    "  plexus mcp project",
     "  plexus mcp pharo-launcher [--project-path <path>] [--workspace-id <id>] [--target-id <id>] [--state-root <path>]",
     "",
     "Environment:",
@@ -95,9 +99,16 @@ async function main(argv: string[]): Promise<number> {
     return 0;
   }
 
+  if (parsed.scope === "mcp" && parsed.command === "project") {
+    await startProjectLifecycleServer();
+    return 0;
+  }
+
   if (
     parsed.scope !== "project" ||
-    (parsed.command !== "open" && parsed.command !== "close") ||
+    (parsed.command !== "open" &&
+      parsed.command !== "close" &&
+      parsed.command !== "status") ||
     !parsed.projectPath
   ) {
     console.error(usage());
@@ -125,6 +136,17 @@ async function main(argv: string[]): Promise<number> {
         ),
       );
       return 0;
+    }
+
+    if (parsed.command === "status") {
+      const lifecycle = new PlexusProjectLifecycle();
+      const status = await lifecycle.status({
+        projectPath: parsed.projectPath,
+        stateRoot,
+        workspaceId,
+      });
+      console.log(JSON.stringify(status, null, 2));
+      return status.ok ? 0 : 1;
     }
 
     const result = await closeProject({

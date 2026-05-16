@@ -117,12 +117,11 @@ afterEach(async () => {
 describe("gateway server", () => {
   it("exposes the PLexus gateway tools", () => {
     expect(gatewayTools.map((tool) => tool.name)).toEqual([
-      "plexus_project_open",
-      "plexus_project_close",
-      "plexus_project_status",
+      "plexus_gateway_register_target",
       "plexus_gateway_unregister_target",
+      "plexus_gateway_status",
+      "plexus_gateway_cleanup_stale_routes",
       "plexus_route_to_image",
-      "plexus_rescue_image",
     ]);
   });
 
@@ -210,22 +209,18 @@ describe("gateway server", () => {
     expect(
       parseGatewayEnvironmentOptions({
         PLEXUS_GATEWAY_SURFACE: "pharo",
-        PLEXUS_PROJECT_ROOT: "C:\\dev\\code\\git\\Project-worktree",
         PLEXUS_PROJECT_ID: "project-123",
         PLEXUS_WORKSPACE_ID: "task-123",
         PLEXUS_TARGET_ID: "project-123--task-123",
-        PLEXUS_STATE_ROOT: "C:\\dev\\code\\git\\.plexus-state",
         PLEXUS_PHARO_TOOLS_JSON: JSON.stringify(pharoTools),
       }),
     ).toEqual({
       surface: "pharo",
       pharoTools,
       pharoScope: {
-        projectPath: "C:\\dev\\code\\git\\Project-worktree",
         projectId: "project-123",
         workspaceId: "task-123",
         targetId: "project-123--task-123",
-        stateRoot: "C:\\dev\\code\\git\\.plexus-state",
       },
     });
   });
@@ -296,7 +291,7 @@ describe("gateway server", () => {
     await expect(postMcp(port, "tools/list")).resolves.toMatchObject({
       result: {
         tools: expect.arrayContaining([
-          expect.objectContaining({ name: "plexus_project_status" }),
+          expect.objectContaining({ name: "plexus_gateway_status" }),
         ]),
       },
     });

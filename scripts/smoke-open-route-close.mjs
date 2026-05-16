@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 import {
   createStdioPharoLauncherMcpClient,
   loadProjectState,
+  PlexusProjectLifecycle,
 } from "@plexus/core";
 import { PlexusGateway } from "@plexus/gateway";
 
@@ -1223,8 +1224,8 @@ function validateOpenedState(stateAfterOpen, options) {
   }
 }
 
-async function assertClosed(client, gateway, openData, projectPaths, options) {
-  const closeResult = await gateway.handleTool("plexus_project_close", {
+async function assertClosed(client, lifecycle, gateway, openData, projectPaths, options) {
+  const closeResult = await lifecycle.handleTool("plexus_project_close", {
     projectPath: projectPaths.projectRoot,
     stateRoot: projectPaths.stateRoot,
     workspaceId: options.workspaceId,
@@ -1242,7 +1243,7 @@ async function assertClosed(client, gateway, openData, projectPaths, options) {
     textResult("process after close", `${image.id}=gone`);
   }
 
-  const statusAfterClose = await gateway.handleTool("plexus_project_status", {
+  const statusAfterClose = await gateway.handleTool("plexus_gateway_status", {
     targetId: openData.state.targetId,
     refreshHealth: true,
   });
@@ -1256,10 +1257,10 @@ async function assertClosed(client, gateway, openData, projectPaths, options) {
   textResult("route after close", `${openData.state.targetId}=unregistered`);
 
   const allStatusAfterClose = requireGatewayOk(
-    await gateway.handleTool("plexus_project_status", {
+    await gateway.handleTool("plexus_gateway_status", {
       refreshHealth: true,
     }),
-    "plexus_project_status all",
+    "plexus_gateway_status all",
   );
   const allRoutes = Array.isArray(allStatusAfterClose)
     ? allStatusAfterClose
@@ -1294,6 +1295,10 @@ async function main() {
   assertValidOptions(options);
   const client = await createStdioPharoLauncherMcpClient();
   const gateway = new PlexusGateway();
+  const lifecycle = new PlexusProjectLifecycle({
+    routeRegistry: gateway,
+    imageToolCaller: gateway,
+  });
   let opened = false;
   let projectPaths;
   let openData;
@@ -1312,7 +1317,7 @@ async function main() {
       textResult("imageName", `${image.id}=${image.imageName}`);
     }
 
-    const openResult = await gateway.handleTool("plexus_project_open", {
+    const openResult = await lifecycle.handleTool("plexus_project_open", {
       projectPath: projectPaths.projectRoot,
       stateRoot: projectPaths.stateRoot,
       workspaceId: options.workspaceId,
@@ -1339,14 +1344,14 @@ async function main() {
       );
     }
 
-    await assertClosed(client, gateway, openData, projectPaths, options);
+    await assertClosed(client, lifecycle, gateway, openData, projectPaths, options);
     opened = false;
 
     return 0;
   } finally {
     if (opened && projectPaths) {
       await cleanupStep("project close", async () => {
-        await gateway.handleTool("plexus_project_close", {
+        await lifecycle.handleTool("plexus_project_close", {
           projectPath: projectPaths.projectRoot,
           stateRoot: projectPaths.stateRoot,
           workspaceId: options.workspaceId,

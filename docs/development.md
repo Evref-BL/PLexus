@@ -27,14 +27,12 @@ The intended split is:
 
 - `@plexus/core` / CLI owns project config, workspace and image lifecycle,
   runtime state, port allocation, startup script generation, health checks,
-  route registration, and the scoped `pharo-launcher` facade.
+  lifecycle MCP tools, route registration through the gateway route-management
+  API, image rescue, and the scoped `pharo-launcher` facade.
 - `@plexus/gateway` owns route registration, route status, and forwarding
   project Pharo MCP calls to image-scoped MCP servers.
 - `@evref-bl/pharo-launcher-mcp` owns raw PharoLauncher CLI integration.
 
-The repository is still transitional. Lifecycle tools may still be exposed by
-the gateway, and the gateway may still import `@plexus/core`. New lifecycle
-behavior belongs in PLexus core; new routing behavior belongs in the gateway.
 See `docs/package-boundaries.md` for the full contract.
 
 ## Build And Test
@@ -141,8 +139,9 @@ npm run smoke:open-route-close -- --createSourceFromTemplate
 ```
 
 The smoke creates a disposable PLexus project and isolated state root, copies
-the source image when `--copyFromImageName` is used, opens it through an
-in-process `PlexusGateway`, verifies `tools/list` exposes the current Pharo MCP
+the source image when `--copyFromImageName` is used, opens it through PLexus
+core lifecycle orchestration, registers the route in an in-process
+`PlexusGateway`, verifies `tools/list` exposes the current Pharo MCP
 `find-packages` tool, routes that read-only probe into every active image,
 closes the images, checks that the processes are gone, checks that the closed
 target is unregistered from gateway status, then deletes copied images,

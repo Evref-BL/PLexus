@@ -1,24 +1,4 @@
-import path from "node:path";
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
-import {
-  closeProject,
-  HttpPharoMcpHealthClient,
-  rescueImage,
-  loadProjectConfig,
-  loadProjectState,
-  openProject,
-  projectStatePathForConfig,
-  sanitizeRuntimeId,
-  type ImageRescueEntrySelection,
-  type ImageRescueOperation,
-  type ImageRescueRepositoryAction,
-  type ImageRescueResult,
-  type PharoMcpHealthClient,
-  type ProjectCloseResult,
-  type ProjectConfig,
-  type ProjectOpenResult,
-  type ProjectState,
-} from "@plexus/core";
 import {
   StreamableHttpImageMcpToolRouter,
   type ImageMcpToolRouter,
@@ -31,41 +11,139 @@ import {
   PlexusRoutingTable,
   type GatewayImageRoute,
   type GatewayProjectRoute,
+  type GatewayProjectState,
 } from "./routingTable.js";
+
+export interface GatewayImageHealthClient {
+  check(port: number): Promise<boolean>;
+}
+
+export interface HttpGatewayImageHealthClientOptions {
+  host?: string;
+  paths?: string[];
+  mcpPath?: string;
+  probeMethods?: string[];
+  timeoutMs?: number;
+}
+
+export class HttpGatewayImageHealthClient implements GatewayImageHealthClient {
+  private readonly host: string;
+  private readonly paths: string[];
+  private readonly mcpPath: string;
+  private readonly probeMethods: string[];
+  private readonly timeoutMs: number;
+
+  constructor(options: HttpGatewayImageHealthClientOptions = {}) {
+    this.host = options.host ?? "127.0.0.1";
+    this.paths = options.paths ?? ["/health"];
+    this.mcpPath = options.mcpPath ?? "/";
+    this.probeMethods = options.probeMethods ?? ["ping"];
+    this.timeoutMs = options.timeoutMs ?? 1_000;
+  }
+
+  async check(port: number): Promise<boolean> {
+    for (const method of this.probeMethods) {
+      try {
+        const response = await this.fetchWithTimeout(
+          `http://${this.host}:${port}${this.mcpPath}`,
+          {
+            method: "POST",
+            headers: {
+              accept: "application/json, text/event-stream",
+              "content-type": "application/json",
+            },
+            body: JSON.stringify({
+              jsonrpc: "2.0",
+              id: "plexus-gateway-health-check",
+              method,
+            }),
+          },
+        );
+
+        if (await this.isJsonRpcResponse(response)) {
+          return true;
+        }
+      } catch {
+        // Route health is best-effort and should not hide route status.
+      }
+    }
+
+    for (const pathname of this.paths) {
+      try {
+        const response = await this.fetchWithTimeout(
+          `http://${this.host}:${port}${pathname}`,
+        );
+        if (response.ok) {
+          return true;
+        }
+      } catch {
+        // Route health is best-effort and should not hide route status.
+      }
+    }
+
+    return false;
+  }
+
+  private async fetchWithTimeout(
+    input: string,
+    init: Record<string, unknown> = {},
+  ): Promise<{ ok: boolean; json(): Promise<unknown> }> {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
+
+    try {
+      const response = await fetch(input, {
+        ...init,
+        signal: controller.signal,
+      });
+      return response as { ok: boolean; json(): Promise<unknown> };
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
+  private async isJsonRpcResponse(
+    response: { json(): Promise<unknown> },
+  ): Promise<boolean> {
+    let payload: unknown;
+    try {
+      payload = await response.json();
+    } catch {
+      return false;
+    }
+
+    if (!isObject(payload)) {
+      return false;
+    }
+
+    return (
+      payload.jsonrpc === "2.0" &&
+      ("result" in payload || "error" in payload)
+    );
+  }
+}
 
 export interface PlexusGatewayOptions {
   routingTable?: PlexusRoutingTable;
   imageRouter?: ImageMcpToolRouter;
-  healthClient?: PharoMcpHealthClient;
-  projectOpen?: typeof openProject;
-  projectClose?: typeof closeProject;
-  imageRescue?: typeof rescueImage;
+  healthClient?: GatewayImageHealthClient;
   pharoTools?: readonly Tool[];
-  pharoScope?: ProjectReferenceInput;
+  pharoScope?: GatewayRouteReferenceInput;
 }
 
-export interface ProjectReferenceInput {
-  projectPath?: string;
+export interface GatewayRouteReferenceInput {
   projectId?: string;
   workspaceId?: string;
   targetId?: string;
-  stateRoot?: string;
 }
 
-export interface ProjectOpenToolInput {
-  projectPath: string;
-  stateRoot?: string;
-  workspaceId?: string;
-  targetId?: string;
+export interface GatewayRegisterTargetInput {
+  projectRoot: string;
+  statePath: string;
+  state: GatewayProjectState;
 }
 
-export interface ProjectCloseToolInput {
-  projectPath: string;
-  stateRoot?: string;
-  workspaceId?: string;
-}
-
-export interface ProjectStatusToolInput extends ProjectReferenceInput {
+export interface GatewayStatusToolInput extends GatewayRouteReferenceInput {
   refreshHealth?: boolean;
 }
 
@@ -74,29 +152,14 @@ export interface GatewayUnregisterTargetResult {
   route?: GatewayProjectRoute;
 }
 
-export interface RouteToImageToolInput extends ProjectReferenceInput {
+export interface GatewayCleanupStaleRoutesResult {
+  removed: GatewayProjectRoute[];
+}
+
+export interface RouteToImageToolInput extends GatewayRouteReferenceInput {
   imageId: string;
   toolName: string;
   arguments?: Record<string, unknown>;
-}
-
-export interface RescueImageToolInput extends ProjectReferenceInput {
-  operation: ImageRescueOperation;
-  sourceImageId: string;
-  targetImageId?: string;
-  targetImageName?: string;
-  targetTemplateName?: string;
-  targetTemplateCategory?: string;
-  targetMcpPort?: number;
-  sourceHistoryDirectoryPath?: string;
-  historyFilePath?: string;
-  selection?: ImageRescueEntrySelection;
-  exclude?: ImageRescueEntrySelection;
-  codeChangesOnly?: boolean;
-  includeEntryCounts?: boolean;
-  loadRepositories?: boolean;
-  repositoryActions?: ImageRescueRepositoryAction[];
-  confirm?: boolean;
 }
 
 export interface RouteToImageRoute {
@@ -130,6 +193,10 @@ class GatewayInputError extends Error {
     super(message);
     this.name = "GatewayInputError";
   }
+}
+
+function isObject(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
 function requireString(
@@ -173,137 +240,6 @@ function optionalBoolean(input: Record<string, unknown>, key: string): boolean {
   return value;
 }
 
-function optionalNumber(
-  input: Record<string, unknown>,
-  key: string,
-): number | undefined {
-  const value = input[key];
-  if (value === undefined) {
-    return undefined;
-  }
-
-  if (typeof value !== "number" || !Number.isInteger(value)) {
-    throw new GatewayInputError(`${key} must be an integer`);
-  }
-
-  return value;
-}
-
-function numberArray(
-  value: unknown,
-  key: string,
-): number[] | undefined {
-  if (value === undefined) {
-    return undefined;
-  }
-
-  if (!Array.isArray(value) || !value.every(Number.isInteger)) {
-    throw new GatewayInputError(`${key} must be an array of integers`);
-  }
-
-  return value;
-}
-
-function stringArray(
-  value: unknown,
-  key: string,
-): string[] | undefined {
-  if (value === undefined) {
-    return undefined;
-  }
-
-  if (
-    !Array.isArray(value) ||
-    !value.every((item) => typeof item === "string" && item.length > 0)
-  ) {
-    throw new GatewayInputError(`${key} must be an array of non-empty strings`);
-  }
-
-  return value;
-}
-
-function optionalEntrySelection(
-  input: Record<string, unknown>,
-  key: string,
-): ImageRescueEntrySelection | undefined {
-  const value = input[key];
-  if (value === undefined) {
-    return undefined;
-  }
-
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    throw new GatewayInputError(`${key} must be an object`);
-  }
-
-  const object = value as Record<string, unknown>;
-  return {
-    indexes: numberArray(object.indexes, `${key}.indexes`),
-    entryReferences: stringArray(
-      object.entryReferences,
-      `${key}.entryReferences`,
-    ),
-    startIndex: optionalNumber(object, "startIndex"),
-    endIndex: optionalNumber(object, "endIndex"),
-    latestCount: optionalNumber(object, "latestCount"),
-  };
-}
-
-function optionalRepositoryActions(
-  input: Record<string, unknown>,
-  key: string,
-): ImageRescueRepositoryAction[] | undefined {
-  const value = input[key];
-  if (value === undefined) {
-    return undefined;
-  }
-
-  if (!Array.isArray(value)) {
-    throw new GatewayInputError(`${key} must be an array`);
-  }
-
-  return value.map((item, index) => {
-    if (!item || typeof item !== "object" || Array.isArray(item)) {
-      throw new GatewayInputError(`${key}[${index}] must be an object`);
-    }
-
-    const object = item as Record<string, unknown>;
-    const toolName = object.toolName;
-    if (
-      toolName !== undefined &&
-      toolName !== "load_repository" &&
-      toolName !== "edit_repository"
-    ) {
-      throw new GatewayInputError(
-        `${key}[${index}].toolName must be load_repository or edit_repository`,
-      );
-    }
-
-    return {
-      label: optionalString(object, "label"),
-      toolName: toolName as ImageRescueRepositoryAction["toolName"],
-      arguments: optionalObject(object, "arguments"),
-    };
-  });
-}
-
-function requireRescueOperation(
-  input: Record<string, unknown>,
-): ImageRescueOperation {
-  const value = input.operation;
-  if (
-    value === "snapshotSource" ||
-    value === "plan" ||
-    value === "prepareTarget" ||
-    value === "applyPlan"
-  ) {
-    return value;
-  }
-
-  throw new GatewayInputError(
-    "operation must be snapshotSource, plan, prepareTarget, or applyPlan",
-  );
-}
-
 function optionalObject(
   input: Record<string, unknown>,
   key: string,
@@ -313,45 +249,82 @@ function optionalObject(
     return {};
   }
 
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
+  if (!isObject(value)) {
     throw new GatewayInputError(`${key} must be an object`);
   }
 
-  return value as Record<string, unknown>;
+  return value;
 }
 
 function objectInput(input: unknown): Record<string, unknown> {
-  if (!input || typeof input !== "object" || Array.isArray(input)) {
+  if (!isObject(input)) {
     return {};
   }
 
-  return input as Record<string, unknown>;
+  return input;
 }
 
-function projectReferenceFromPath(
-  projectPath: string,
-  stateRoot: string | undefined,
-  workspaceId: string | undefined,
-): {
-  projectRoot: string;
-  config: ProjectConfig;
-  statePath: string;
-  state?: ProjectState;
-} {
-  const projectRoot = path.resolve(projectPath);
-  const config = loadProjectConfig(projectRoot);
-  const statePath = projectStatePathForConfig({
-    projectRoot,
-    config,
-    workspaceId,
-    stateRoot,
-  });
+function stateInput(input: Record<string, unknown>): GatewayProjectState {
+  const value = input.state;
+  if (!isObject(value)) {
+    throw new GatewayInputError("state is required");
+  }
+
+  const images = value.images;
+  if (!Array.isArray(images)) {
+    throw new GatewayInputError("state.images must be an array");
+  }
 
   return {
-    projectRoot,
-    config,
-    statePath,
-    state: loadProjectState(statePath),
+    projectId: requireString(value, "projectId"),
+    projectName: requireString(value, "projectName"),
+    workspaceId: requireString(value, "workspaceId"),
+    targetId: requireString(value, "targetId"),
+    updatedAt: requireString(value, "updatedAt"),
+    ...(isObject(value.pharoMcpContract)
+      ? { pharoMcpContract: value.pharoMcpContract }
+      : {}),
+    images: images.map((image, index) => {
+      if (!isObject(image)) {
+        throw new GatewayInputError(`state.images[${index}] must be an object`);
+      }
+
+      const assignedPort = image.assignedPort;
+      const pid = image.pid;
+      if (typeof assignedPort !== "number" || !Number.isInteger(assignedPort)) {
+        throw new GatewayInputError(
+          `state.images[${index}].assignedPort must be an integer`,
+        );
+      }
+      if (pid !== undefined && (typeof pid !== "number" || !Number.isInteger(pid))) {
+        throw new GatewayInputError(
+          `state.images[${index}].pid must be an integer`,
+        );
+      }
+
+      const status = requireString(image, "status");
+      if (
+        status !== "starting" &&
+        status !== "running" &&
+        status !== "stopped" &&
+        status !== "failed"
+      ) {
+        throw new GatewayInputError(
+          `state.images[${index}].status must be starting, running, stopped, or failed`,
+        );
+      }
+
+      return {
+        id: requireString(image, "id"),
+        imageName: requireString(image, "imageName"),
+        assignedPort,
+        ...(pid ? { pid } : {}),
+        status,
+        ...(isObject(image.pharoMcpContract)
+          ? { pharoMcpContract: image.pharoMcpContract }
+          : {}),
+      };
+    }),
   };
 }
 
@@ -394,23 +367,17 @@ function failure<T = unknown>(error: unknown): GatewayToolResult<T> {
 export class PlexusGateway {
   private readonly routingTable: PlexusRoutingTable;
   private readonly imageRouter: ImageMcpToolRouter;
-  private readonly healthClient: PharoMcpHealthClient;
-  private readonly projectOpen: typeof openProject;
-  private readonly projectClose: typeof closeProject;
-  private readonly imageRescue: typeof rescueImage;
+  private readonly healthClient: GatewayImageHealthClient;
   private readonly pharoTools: Tool[];
   private readonly pharoToolNames: Set<string>;
-  private readonly pharoScope: ProjectReferenceInput;
+  private readonly pharoScope: GatewayRouteReferenceInput;
 
   constructor(options: PlexusGatewayOptions = {}) {
     this.routingTable = options.routingTable ?? new PlexusRoutingTable();
     this.imageRouter =
       options.imageRouter ?? new StreamableHttpImageMcpToolRouter();
     this.healthClient =
-      options.healthClient ?? new HttpPharoMcpHealthClient();
-    this.projectOpen = options.projectOpen ?? openProject;
-    this.projectClose = options.projectClose ?? closeProject;
-    this.imageRescue = options.imageRescue ?? rescueImage;
+      options.healthClient ?? new HttpGatewayImageHealthClient();
     this.pharoTools = buildPharoFacadeTools(options.pharoTools ?? []);
     this.pharoToolNames = new Set(this.pharoTools.map((tool) => tool.name));
     this.pharoScope = options.pharoScope ?? {};
@@ -424,54 +391,30 @@ export class PlexusGateway {
     return this.pharoToolNames.has(name);
   }
 
-  async open(input: ProjectOpenToolInput): Promise<GatewayToolResult<ProjectOpenResult>> {
+  async registerTarget(
+    input: GatewayRegisterTargetInput,
+  ): Promise<GatewayToolResult<GatewayProjectRoute>> {
     try {
-      const openResult = await this.projectOpen({
-        projectRoot: input.projectPath,
-        stateRoot: input.stateRoot,
-        workspaceId: input.workspaceId,
-        targetId: input.targetId,
-      });
-
-      this.routingTable.upsertProject(
-        openResult.projectRoot,
-        openResult.statePath,
-        openResult.state,
+      return result(
+        this.routingTable.upsertProject(
+          input.projectRoot,
+          input.statePath,
+          input.state,
+        ),
       );
-
-      return result(openResult);
     } catch (error) {
       return failure(error);
     }
   }
 
-  async close(
-    input: ProjectCloseToolInput,
-  ): Promise<GatewayToolResult<ProjectCloseResult>> {
-    try {
-      const closeResult = await this.projectClose({
-        projectRoot: input.projectPath,
-        stateRoot: input.stateRoot,
-        workspaceId: input.workspaceId,
-      });
-
-      if (closeResult.state) {
-        this.routingTable.removeTarget(closeResult.state.targetId);
-      } else {
-        this.routingTable.removeProjectRootRoutes(
-          closeResult.projectRoot,
-          input.workspaceId ? sanitizeRuntimeId(input.workspaceId) : undefined,
-        );
-      }
-
-      return result(closeResult);
-    } catch (error) {
-      return failure(error);
-    }
+  async registerProjectRoute(
+    input: GatewayRegisterTargetInput,
+  ): Promise<GatewayToolResult<GatewayProjectRoute>> {
+    return this.registerTarget(input);
   }
 
   async unregisterTarget(
-    input: ProjectReferenceInput,
+    input: GatewayRouteReferenceInput,
   ): Promise<GatewayToolResult<GatewayUnregisterTargetResult>> {
     try {
       const route = this.findRegisteredRoute(input);
@@ -488,14 +431,16 @@ export class PlexusGateway {
     }
   }
 
+  async unregisterProjectRoute(
+    input: GatewayRouteReferenceInput,
+  ): Promise<GatewayToolResult<GatewayUnregisterTargetResult>> {
+    return this.unregisterTarget(input);
+  }
+
   async status(
-    input: ProjectStatusToolInput,
+    input: GatewayStatusToolInput,
   ): Promise<GatewayToolResult<GatewayProjectRoute | GatewayProjectRoute[]>> {
     try {
-      if (!input.projectPath && !input.projectId && !input.targetId) {
-        this.routingTable.removeRoutesWithMissingStatePaths();
-      }
-
       const routes = await this.resolveProjectRoutes(input);
 
       if (input.refreshHealth) {
@@ -505,6 +450,24 @@ export class PlexusGateway {
       }
 
       return result(routes.length === 1 ? routes[0] : routes);
+    } catch (error) {
+      return failure(error);
+    }
+  }
+
+  async getRouteStatus(
+    input: GatewayStatusToolInput,
+  ): Promise<GatewayToolResult<GatewayProjectRoute | GatewayProjectRoute[]>> {
+    return this.status(input);
+  }
+
+  async cleanupStaleRoutes(): Promise<
+    GatewayToolResult<GatewayCleanupStaleRoutesResult>
+  > {
+    try {
+      return result({
+        removed: this.routingTable.removeRoutesWithMissingStatePaths(),
+      });
     } catch (error) {
       return failure(error);
     }
@@ -531,43 +494,23 @@ export class PlexusGateway {
     }
   }
 
-  async rescueImage(
-    input: RescueImageToolInput,
-  ): Promise<GatewayToolResult<ImageRescueResult>> {
-    try {
-      if (!input.projectPath) {
-        throw new GatewayInputError("projectPath is required for image rescue");
-      }
-
-      const rescueResult = await this.imageRescue({
-        ...input,
-        projectRoot: input.projectPath,
-        imageMcpClient: {
-          callTool: async (image, toolName, argumentsValue) => {
-            const routed = await this.callRoutedImageTool(
-              input,
-              image.id,
-              toolName,
-              argumentsValue,
-            );
-            return routed.result;
-          },
-        },
-        healthClient: this.healthClient,
-      });
-
-      if (rescueResult.state) {
-        this.routingTable.upsertProject(
-          rescueResult.projectRoot,
-          rescueResult.statePath,
-          rescueResult.state,
-        );
-      }
-
-      return result(rescueResult);
-    } catch (error) {
-      return failure(error);
+  async callImageTool(
+    reference: GatewayRouteReferenceInput,
+    imageId: string,
+    toolName: string,
+    argumentsValue: Record<string, unknown>,
+  ): Promise<unknown> {
+    const routed = await this.routeToImage({
+      ...reference,
+      imageId,
+      toolName,
+      arguments: argumentsValue,
+    });
+    if (!routed.ok) {
+      throw new GatewayInputError(routed.error ?? "Image route failed");
     }
+
+    return routed.data;
   }
 
   async callPharoTool(
@@ -601,81 +544,39 @@ export class PlexusGateway {
       const input = objectInput(inputValue);
 
       switch (name) {
-        case "plexus_project_open":
-          return this.open({
-            projectPath: requireString(input, "projectPath"),
-            stateRoot: optionalString(input, "stateRoot"),
-            workspaceId: optionalString(input, "workspaceId"),
-            targetId: optionalString(input, "targetId"),
-          });
-
-        case "plexus_project_close":
-          return this.close({
-            projectPath: requireString(input, "projectPath"),
-            stateRoot: optionalString(input, "stateRoot"),
-            workspaceId: optionalString(input, "workspaceId"),
+        case "plexus_gateway_register_target":
+          return this.registerTarget({
+            projectRoot: requireString(input, "projectRoot"),
+            statePath: requireString(input, "statePath"),
+            state: stateInput(input),
           });
 
         case "plexus_gateway_unregister_target":
           return this.unregisterTarget({
-            projectPath: optionalString(input, "projectPath"),
             projectId: optionalString(input, "projectId"),
             workspaceId: optionalString(input, "workspaceId"),
             targetId: optionalString(input, "targetId"),
-            stateRoot: optionalString(input, "stateRoot"),
           });
 
-        case "plexus_project_status":
+        case "plexus_gateway_status":
           return this.status({
-            projectPath: optionalString(input, "projectPath"),
             projectId: optionalString(input, "projectId"),
             workspaceId: optionalString(input, "workspaceId"),
             targetId: optionalString(input, "targetId"),
-            stateRoot: optionalString(input, "stateRoot"),
             refreshHealth: optionalBoolean(input, "refreshHealth"),
           });
 
+        case "plexus_gateway_cleanup_stale_routes":
+          return this.cleanupStaleRoutes();
+
         case "plexus_route_to_image":
           return this.routeToImage({
-            projectPath: optionalString(input, "projectPath"),
             projectId: optionalString(input, "projectId"),
             workspaceId: optionalString(input, "workspaceId"),
             targetId: optionalString(input, "targetId"),
-            stateRoot: optionalString(input, "stateRoot"),
             imageId: requireString(input, "imageId"),
             toolName: requireString(input, "toolName"),
             arguments: optionalObject(input, "arguments"),
-          });
-
-        case "plexus_rescue_image":
-          return this.rescueImage({
-            projectPath: requireString(input, "projectPath"),
-            projectId: optionalString(input, "projectId"),
-            workspaceId: optionalString(input, "workspaceId"),
-            targetId: optionalString(input, "targetId"),
-            stateRoot: optionalString(input, "stateRoot"),
-            operation: requireRescueOperation(input),
-            sourceImageId: requireString(input, "sourceImageId"),
-            targetImageId: optionalString(input, "targetImageId"),
-            targetImageName: optionalString(input, "targetImageName"),
-            targetTemplateName: optionalString(input, "targetTemplateName"),
-            targetTemplateCategory: optionalString(input, "targetTemplateCategory"),
-            targetMcpPort: optionalNumber(input, "targetMcpPort"),
-            sourceHistoryDirectoryPath: optionalString(
-              input,
-              "sourceHistoryDirectoryPath",
-            ),
-            historyFilePath: optionalString(input, "historyFilePath"),
-            selection: optionalEntrySelection(input, "selection"),
-            exclude: optionalEntrySelection(input, "exclude"),
-            codeChangesOnly: optionalBoolean(input, "codeChangesOnly"),
-            includeEntryCounts: optionalBoolean(input, "includeEntryCounts"),
-            loadRepositories: optionalBoolean(input, "loadRepositories"),
-            repositoryActions: optionalRepositoryActions(
-              input,
-              "repositoryActions",
-            ),
-            confirm: optionalBoolean(input, "confirm"),
           });
 
         default:
@@ -690,7 +591,7 @@ export class PlexusGateway {
   }
 
   private findRegisteredRoute(
-    input: ProjectReferenceInput,
+    input: GatewayRouteReferenceInput,
   ): GatewayProjectRoute | undefined {
     if (input.targetId) {
       return this.routingTable.getTarget(input.targetId);
@@ -699,54 +600,18 @@ export class PlexusGateway {
     if (input.projectId && input.workspaceId) {
       return this.routingTable.getProjectWorkspace(
         input.projectId,
-        sanitizeRuntimeId(input.workspaceId),
-      );
-    }
-
-    if (input.projectPath) {
-      const reference = projectReferenceFromPath(
-        input.projectPath,
-        input.stateRoot,
         input.workspaceId,
       );
-
-      if (reference.state) {
-        return this.routingTable.getTarget(reference.state.targetId);
-      }
-
-      return this.routingTable.findProjectRootRoutes(
-        reference.projectRoot,
-        input.workspaceId ? sanitizeRuntimeId(input.workspaceId) : undefined,
-      )[0];
     }
 
     throw new GatewayInputError(
-      "targetId, projectId with workspaceId, or projectPath is required",
+      "targetId or projectId with workspaceId is required",
     );
   }
 
   private async resolveProjectRoutes(
-    input: ProjectReferenceInput,
+    input: GatewayRouteReferenceInput,
   ): Promise<GatewayProjectRoute[]> {
-    if (input.projectPath) {
-      const reference = projectReferenceFromPath(
-        input.projectPath,
-        input.stateRoot,
-        input.workspaceId,
-      );
-      if (!reference.state) {
-        return [];
-      }
-
-      return [
-        this.routingTable.upsertProject(
-          reference.projectRoot,
-          reference.statePath,
-          reference.state,
-        ),
-      ];
-    }
-
     if (input.targetId) {
       return [
         assertProjectRoute(
@@ -757,11 +622,13 @@ export class PlexusGateway {
     }
 
     if (input.projectId && input.workspaceId) {
-      const workspaceId = sanitizeRuntimeId(input.workspaceId);
       return [
         assertProjectRoute(
-          this.routingTable.getProjectWorkspace(input.projectId, workspaceId),
-          `${input.projectId}/${workspaceId}`,
+          this.routingTable.getProjectWorkspace(
+            input.projectId,
+            input.workspaceId,
+          ),
+          `${input.projectId}/${input.workspaceId}`,
         ),
       ];
     }
@@ -774,13 +641,13 @@ export class PlexusGateway {
   }
 
   private async resolveSingleProjectRoute(
-    input: ProjectReferenceInput,
+    input: GatewayRouteReferenceInput,
   ): Promise<GatewayProjectRoute> {
     const routes = await this.resolveProjectRoutes(input);
 
     if (routes.length === 0) {
       throw new GatewayInputError(
-        "projectPath, targetId, or projectId with workspaceId is required",
+        "targetId or projectId with workspaceId is required",
       );
     }
 
@@ -794,7 +661,7 @@ export class PlexusGateway {
   }
 
   private async callRoutedImageTool(
-    projectReference: ProjectReferenceInput,
+    projectReference: GatewayRouteReferenceInput,
     imageId: string,
     toolName: string,
     argumentsValue: Record<string, unknown>,

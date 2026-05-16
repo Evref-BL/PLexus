@@ -90,10 +90,22 @@ Close it:
 plexus project close <project-root> --workspace-id task-123 --state-root <shared-state-root>
 ```
 
+Inspect lifecycle state:
+
+```sh
+plexus project status <project-root> --workspace-id task-123 --state-root <shared-state-root>
+```
+
 Run the scoped launcher MCP surface for an agent run:
 
 ```sh
 plexus mcp pharo-launcher --project-path <project-root> --workspace-id task-123 --state-root <shared-state-root>
+```
+
+Run the project lifecycle MCP surface:
+
+```sh
+plexus mcp project
 ```
 
 Start the routing gateway:
