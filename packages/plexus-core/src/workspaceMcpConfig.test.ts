@@ -58,6 +58,50 @@ describe("workspace MCP config", () => {
     });
   });
 
+  it.each([
+    [
+      "Windows",
+      "C:\\dev\\code\\git\\Project-worktree",
+      "C:\\dev\\code\\git\\.plexus-state",
+      path.win32.resolve("C:\\dev\\code\\git\\Project-worktree"),
+      path.win32.resolve("C:\\dev\\code\\git\\.plexus-state"),
+    ],
+    [
+      "POSIX",
+      "/srv/git/Project-worktree",
+      "/srv/git/.plexus-state",
+      path.posix.resolve("/srv/git/Project-worktree"),
+      path.posix.resolve("/srv/git/.plexus-state"),
+    ],
+  ])(
+    "preserves %s absolute path style in generated MCP server environments",
+    (
+      _style,
+      projectRoot,
+      stateRoot,
+      expectedProjectRoot,
+      expectedStateRoot,
+    ) => {
+      const config = buildPlexusWorkspaceMcpConfig({
+        projectRoot,
+        projectConfig,
+        workspaceId: "task-123",
+        stateRoot,
+        pharoTools: [pharoEvalTool],
+      });
+
+      for (const server of [
+        config.servers["pharo-launcher"],
+        config.servers.pharo,
+      ]) {
+        expect(server.env).toMatchObject({
+          PLEXUS_PROJECT_ROOT: expectedProjectRoot,
+          PLEXUS_STATE_ROOT: expectedStateRoot,
+        });
+      }
+    },
+  );
+
   it("builds a scoped pharo-launcher server entry without raw host-wide pharo-launcher-mcp access", () => {
     expect(
       buildPharoLauncherMcpServerConfig({

@@ -105,6 +105,11 @@ plexus-gateway
 The shared state root should be the same for sibling worktrees so PLexus can
 avoid image-name and port collisions.
 
+Use native absolute paths for the host running PLexus. Generated PLexus and
+agent MCP configuration preserves Windows-style paths such as `C:\path\to\worktree`
+and POSIX-style paths such as `/srv/path/to/worktree` instead of rewriting them
+through the current host path separator.
+
 ## Agent Workflow
 
 Kanban-spawned agents should use two MCP surfaces:

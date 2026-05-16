@@ -52,9 +52,21 @@ Verify the local machine:
 .\scripts\verify-environment.ps1
 ```
 
-The verification script is currently PowerShell-based. Keep executable PLexus
-logic OS-agnostic; put unavoidable platform behavior behind small, named helpers
-or clearly labeled scripts.
+The verification script is a Windows PowerShell convenience check. Keep
+executable PLexus logic OS-agnostic; put unavoidable platform behavior behind
+small, named helpers or clearly labeled scripts.
+
+Static portability checks do not require Pharo images, live PLexus routes,
+process startup, or Docker:
+
+```sh
+npm run test -w @plexus/core -- workspaceMcpConfig projectState projectStartupScript config
+npm run typecheck -w @plexus/core
+```
+
+Optional Linux verification through Docker is non-default. Run it only in an
+approved isolated runner with an explicit cleanup plan; it should perform static
+checks such as typecheck and tests, not live image startup.
 
 ## pharo-launcher-mcp Resolution
 
@@ -74,6 +86,9 @@ Windows PowerShell example:
 $env:PHARO_LAUNCHER_MCP_COMMAND = "node"
 $env:PHARO_LAUNCHER_MCP_ENTRY = "C:\dev\code\git\pharo-launcher-mcp\dist\index.js"
 ```
+
+PLexus-generated runtime paths and agent MCP config preserve the caller's native
+path style. Windows paths remain `C:\...`; POSIX paths remain `/...`.
 
 ## Runtime State
 

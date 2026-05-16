@@ -1,5 +1,5 @@
-import path from "node:path";
 import { createRequire } from "node:module";
+import { dirnamePathLike, joinPathLike } from "./pathStyle.js";
 
 export interface PharoLauncherMcpConfig {
   source: "env" | "package" | "command";
@@ -21,8 +21,7 @@ export const pharoLauncherMcpPackageName =
 export const pharoLauncherMcpCommandName = "pharo-launcher-mcp" as const;
 
 function packageDirFromEntry(entry: string): string {
-  const pathApi = isWindowsPath(entry) ? path.win32 : path;
-  return pathApi.dirname(pathApi.dirname(entry));
+  return dirnamePathLike(dirnamePathLike(entry));
 }
 
 function resolveInstalledPharoLauncherMcpEntry(): string | undefined {
@@ -52,18 +51,8 @@ function parsePharoLauncherMcpArgs(
   return value.split(" ").filter(Boolean);
 }
 
-function isWindowsPath(value: string): boolean {
-  return /^[a-zA-Z]:[\\/]/.test(value) || value.startsWith("\\\\");
-}
-
 function defaultPharoLauncherMcpEntryForRepo(repoDir: string): string {
-  const pathApi = isWindowsPath(repoDir)
-    ? path.win32
-    : repoDir.startsWith("/")
-      ? path.posix
-      : path;
-
-  return pathApi.join(repoDir, "dist", "index.js");
+  return joinPathLike(repoDir, "dist", "index.js");
 }
 
 export function loadPharoLauncherMcpConfig(

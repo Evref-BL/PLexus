@@ -1,5 +1,9 @@
 # Vibe Kanban Setup
 
+The concrete paths in this guide are Windows examples unless a block is marked
+POSIX. PLexus-generated workspace MCP config also supports POSIX-style absolute
+paths and preserves the style supplied by the caller.
+
 ## Start Vibe Kanban
 
 ```powershell
@@ -48,6 +52,12 @@ Use one shared PLexus state root for every parallel worktree:
 PLEXUS_STATE_ROOT=C:\dev\code\git\.plexus-state
 ```
 
+POSIX example:
+
+```text
+PLEXUS_STATE_ROOT=/srv/git/.plexus-state
+```
+
 PLexus stores state under `projects/<project-id>/workspaces/<workspace-id>/state.json`. The default workspace id is the worktree directory name; override it with `PLEXUS_WORKSPACE_ID` only when the launcher or agent environment already has a stable task id to use.
 
 For project configs used by parallel worktrees, omit fixed `mcp.port` values and use image-name templates such as `MyProject-{workspaceId}-dev`. Fixed ports and fixed image names are useful for a single local workspace, but they intentionally collide when two task worktrees are opened at once.
@@ -69,6 +79,13 @@ pharo-launcher-mcp is resolved from the installed package by default. Use enviro
 ```text
 PHARO_LAUNCHER_MCP_COMMAND=node
 PHARO_LAUNCHER_MCP_ENTRY=C:\dev\code\git\pharo-launcher-mcp\dist\index.js
+```
+
+POSIX override example:
+
+```text
+PHARO_LAUNCHER_MCP_COMMAND=node
+PHARO_LAUNCHER_MCP_ENTRY=/srv/git/pharo-launcher-mcp/dist/index.js
 ```
 
 ## Agent Pharo Access
@@ -94,7 +111,7 @@ See `docs/kanban-agent-pharo-access.md` for the full workflow and routing error
 model.
 
 Generated workspace MCP config should preserve unrelated user entries and add
-these managed server names:
+these managed server names. This Windows example keeps Windows path values:
 
 ```json
 {
@@ -124,6 +141,28 @@ these managed server names:
         "PLEXUS_TARGET_ID": "project-123--task-123",
         "PLEXUS_STATE_ROOT": "C:\\dev\\code\\git\\.plexus-state",
         "PLEXUS_PHARO_TOOLS_JSON": "[...]"
+      }
+    }
+  }
+}
+```
+
+The same generated config can use POSIX roots when PLexus is called with POSIX
+paths:
+
+```json
+{
+  "servers": {
+    "pharo-launcher": {
+      "env": {
+        "PLEXUS_PROJECT_ROOT": "/srv/git/worktree",
+        "PLEXUS_STATE_ROOT": "/srv/git/.plexus-state"
+      }
+    },
+    "pharo": {
+      "env": {
+        "PLEXUS_PROJECT_ROOT": "/srv/git/worktree",
+        "PLEXUS_STATE_ROOT": "/srv/git/.plexus-state"
       }
     }
   }

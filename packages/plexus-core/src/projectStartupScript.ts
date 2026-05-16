@@ -1,6 +1,11 @@
 import fs from "node:fs";
-import path from "node:path";
 import type { ProjectConfig, ProjectImageConfig } from "./projectConfig.js";
+import {
+  dirnamePathLike,
+  isAbsolutePathLike,
+  joinPathLike,
+  resolvePathLike,
+} from "./pathStyle.js";
 import {
   projectStateDirectoryPath,
   type ProjectImageState,
@@ -72,7 +77,10 @@ export class ProjectStartupScriptError extends Error {
 export function projectScriptsDirectoryPath(
   options: ProjectScriptsDirectoryPathOptions,
 ): string {
-  return path.join(projectStateDirectoryPath(options), projectScriptsDirectoryName);
+  return joinPathLike(
+    projectStateDirectoryPath(options),
+    projectScriptsDirectoryName,
+  );
 }
 
 export function imageStartupScriptFileName(imageId: string): string {
@@ -88,7 +96,7 @@ export function imageStartupScriptFileName(imageId: string): string {
 export function imageStartupScriptPath(
   options: ProjectImageStartupScriptPathOptions,
 ): string {
-  return path.join(
+  return joinPathLike(
     projectScriptsDirectoryPath(options),
     imageStartupScriptFileName(options.imageId),
   );
@@ -100,14 +108,6 @@ function smalltalkString(value: string): string {
 
 function smalltalkPath(value: string): string {
   return smalltalkString(value.replace(/\\/g, "/"));
-}
-
-function isWindowsAbsolutePath(value: string): boolean {
-  return /^[A-Za-z]:[\\/]/.test(value) || value.startsWith("\\\\");
-}
-
-function isAbsolutePath(value: string): boolean {
-  return path.isAbsolute(value) || isWindowsAbsolutePath(value);
 }
 
 function generateGitConfigurationScript(imageConfig: ProjectImageConfig): string {
@@ -173,11 +173,9 @@ function resolveLoadScriptPath(
   projectRoot: string,
   imageConfig: ProjectImageConfig,
 ): string {
-  return isAbsolutePath(imageConfig.mcp.loadScript)
-    ? imageConfig.mcp.loadScript
-    : isWindowsAbsolutePath(projectRoot)
-      ? path.win32.resolve(projectRoot, imageConfig.mcp.loadScript)
-    : path.resolve(projectRoot, imageConfig.mcp.loadScript);
+  return isAbsolutePathLike(imageConfig.mcp.loadScript)
+    ? resolvePathLike(imageConfig.mcp.loadScript)
+    : resolvePathLike(projectRoot, imageConfig.mcp.loadScript);
 }
 
 function findProjectImageConfig(
@@ -253,7 +251,7 @@ export function writeImageStartupScript(
   });
   const source = generateImageStartupScript(options);
 
-  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  fs.mkdirSync(dirnamePathLike(filePath), { recursive: true });
   fs.writeFileSync(filePath, source, "utf8");
 
   return { filePath, source };
