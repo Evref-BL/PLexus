@@ -247,6 +247,12 @@ The gateway facade validates ownership and contract compatibility, strips
 server. Its `tools/list` must remain stable while images are added, stopped, or
 restarted.
 
+Gateway status and the PLexus scoped context both include route metadata for
+each image. That metadata names the `gateway` server, the required `imageId`
+argument, the route reference (`projectId`, `workspaceId`, and `targetId`), and
+the place a subagent should record the selected image handle before making
+Pharo tool calls.
+
 ## Why The Tool List Is Stable
 
 The gateway must not rewrite `gateway.tools/list` when images appear, disappear,

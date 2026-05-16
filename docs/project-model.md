@@ -171,6 +171,43 @@ Fixed `mcp.port` values are allowed, but they are not parallel-friendly. If anot
 
 PLexus does not create naming conventions on behalf of projects. It only renders the configured image-name template. The project owns conventions like `MyProject-{workspaceId}-dev`.
 
+## Scoped Context For Plugins
+
+DevNexus plugins and subagents should receive PLexus context as scoped data,
+not as host-wide PharoLauncher names. The core context model is keyed by:
+
+```text
+projectId
+workspaceId
+targetId
+imageId
+```
+
+The scoped context includes:
+
+- the resolved project root, state root, state file path, workspace id, and
+  target id
+- each declared image's public `imageId`
+- the rendered launcher image name as diagnostic/cleanup metadata, not as a
+  caller-controlled mutation key
+- ownership metadata showing that the image belongs to the current
+  project/workspace/target and is disposable with the workspace
+- safe create/start/stop/delete affordance descriptions that use scoped
+  `imageId` arguments only
+- cleanup metadata for PLexus workspace cleanup policy
+- gateway route metadata telling subagents to pass the selected `imageId` to
+  `gateway` tools
+
+The context validator rejects runtime state from a different project, workspace,
+or target. It also rejects state images that are not declared in the project
+config, so a plugin cannot smuggle arbitrary host images into the scoped agent
+surface.
+
+Deletion remains a workspace cleanup policy. The scoped context may describe
+cleanup paths for owned disposable images, but the normal agent-facing launcher
+surface must not expose host-wide image delete, VM delete, raw process kill, or
+filesystem mutation tools.
+
 ## Example
 
 ```text

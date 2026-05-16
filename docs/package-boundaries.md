@@ -31,6 +31,8 @@ Routing-only MCP server.
 - Forwarding MCP calls to image-scoped MCP servers (HTTP to `http://127.0.0.1:<port>/mcp`)
 - The stable project-wide `gateway` facade that routes typed Pharo MCP calls by
   explicit `imageId`
+- Route metadata that tells subagents where the scoped `imageId` comes from and
+  how to carry it into gateway tool calls
 
 **Must not depend on**
 
@@ -48,6 +50,8 @@ Project/workspace/image orchestration and lifecycle.
 - Project/workspace/image open, close, status, and runtime state on disk
 - Lifecycle MCP tools: `plexus_project_open`, `plexus_project_close`, and `plexus_project_status`
 - Image rescue planning/application (`plexus_rescue_image`)
+- The scoped project/workspace/target/image context model handed to DevNexus
+  plugins and subagents
 - Port allocation, startup script generation, image health polling
 - Policy around targets/workspaces (how to map Kanban/worktrees/images)
 - Calling pharo-launcher-mcp for PharoLauncher operations

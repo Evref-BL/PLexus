@@ -170,6 +170,43 @@ describe("PlexusGateway", () => {
     expect(status).toMatchObject(registerResult);
   });
 
+  it("includes route metadata explaining how subagents should carry imageId", async () => {
+    const gateway = new PlexusGateway();
+
+    await registerTarget(gateway);
+
+    const status = data(
+      await gateway.handleTool("plexus_gateway_status", {
+        projectId: "project-123",
+        workspaceId: "worktree-a",
+      }),
+    );
+
+    expect(status).toEqual(
+      expect.objectContaining({
+        images: expect.arrayContaining([
+          expect.objectContaining({
+            id: "dev",
+            routeMetadata: {
+              serverName: "gateway",
+              requiredArgument: "imageId",
+              imageId: "dev",
+              routeReference: {
+                projectId: "project-123",
+                workspaceId: "worktree-a",
+                targetId: "project-123--worktree-a",
+              },
+              imageIdSource:
+                "Read images[].imageId from PLexus scoped context, pharo-launcher image list, or gateway status",
+              recordHint:
+                "Record the selected imageId with the scoped project/workspace/target before calling gateway tools",
+            },
+          }),
+        ]),
+      }),
+    );
+  });
+
   it("refreshes health for running image routes", async () => {
     const healthClient = new FakeHealthClient();
     const gateway = new PlexusGateway({ healthClient });

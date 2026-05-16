@@ -55,6 +55,19 @@ export interface GatewayImageRoutability {
   message: string;
 }
 
+export interface GatewayImageRouteMetadata {
+  serverName: "gateway";
+  requiredArgument: "imageId";
+  imageId: string;
+  routeReference: {
+    projectId: string;
+    workspaceId: string;
+    targetId: string;
+  };
+  imageIdSource: string;
+  recordHint: string;
+}
+
 export interface GatewayImageRoute {
   id: string;
   imageName: string;
@@ -63,6 +76,7 @@ export interface GatewayImageRoute {
   status: GatewayProjectImageStatus;
   health: GatewayImageHealth;
   routable: GatewayImageRoutability;
+  routeMetadata: GatewayImageRouteMetadata;
   pharoMcpContract?: GatewayProjectImagePharoMcpContractState;
   updatedAt: string;
 }
@@ -173,6 +187,26 @@ function imageRoutability(
   );
 }
 
+function imageRouteMetadata(
+  state: GatewayProjectState,
+  imageId: string,
+): GatewayImageRouteMetadata {
+  return {
+    serverName: "gateway",
+    requiredArgument: "imageId",
+    imageId,
+    routeReference: {
+      projectId: state.projectId,
+      workspaceId: state.workspaceId,
+      targetId: state.targetId,
+    },
+    imageIdSource:
+      "Read images[].imageId from PLexus scoped context, pharo-launcher image list, or gateway status",
+    recordHint:
+      "Record the selected imageId with the scoped project/workspace/target before calling gateway tools",
+  };
+}
+
 export class PlexusRoutingTable {
   private readonly targets = new Map<string, GatewayProjectRoute>();
 
@@ -204,6 +238,7 @@ export class PlexusRoutingTable {
         status: image.status,
         health: existingHealth.get(image.id) ?? "unknown",
         routable: imageRoutability(state.pharoMcpContract, image),
+        routeMetadata: imageRouteMetadata(state, image.id),
         ...(image.pharoMcpContract
           ? { pharoMcpContract: image.pharoMcpContract }
           : {}),
