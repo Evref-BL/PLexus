@@ -1,16 +1,17 @@
 # Isolated Live-Smoke Runner Boundary
 
-This boundary defines what must be true before DevNexus or another coordinator
-authorizes a PLexus live smoke. It is a planning contract only. The current
-dogfood target may update documentation and run static checks, but it must not
-run `plexus project open`, `plexus project close`, Docker, Pharo Launcher image
-launches, gateway live probes, or host process mutation.
+This boundary defines what must be true before a caller authorizes a PLexus
+live smoke. It is a PLexus planning contract for disposable runtime checks, not
+permission for ad hoc host mutation. Until an approval record names the runner
+boundary, contributors may update documentation and run static checks, but they
+must not run `plexus project open`, `plexus project close`, Docker, Pharo
+Launcher image launches, gateway live probes, or host process mutation.
 
 ## Runner Ownership
 
-The live smoke runner is the only owner of runtime side effects. Agents may
-request a smoke by selecting a component work item, but they must not directly
-start images or mutate host processes.
+The live smoke runner is the only owner of runtime side effects. Callers may
+request a smoke, but they must not directly start images or mutate host
+processes outside the runner.
 
 The runner must:
 
@@ -33,8 +34,8 @@ A future approved run must use disposable inputs only:
 - a source image or template named in the approval record
 - no package installs, Git cleanup, commit, push, pull, or fetch
 
-Fixed image names and fixed ports are not acceptable for concurrent dogfood
-smokes because they can collide with another workspace.
+Fixed image names and fixed ports are not acceptable for concurrent live smokes
+because they can collide with another workspace.
 
 ## Cleanup Responsibilities
 

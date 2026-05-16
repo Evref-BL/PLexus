@@ -142,10 +142,10 @@ npm run smoke:open-route-close -- --createSourceFromTemplate
 
 The smoke creates a disposable PLexus project and isolated state root, copies
 the source image when `--copyFromImageName` is used, opens it through an
-in-process `PlexusGateway`, verifies `tools/list` exposes the current
-MCP-Pharo `find-packages` tool, routes that read-only probe into every active
-image, closes the images, checks that the processes are gone, checks that the
-closed target is unregistered from gateway status, then deletes copied images,
+in-process `PlexusGateway`, verifies `tools/list` exposes the current Pharo MCP
+`find-packages` tool, routes that read-only probe into every active image,
+closes the images, checks that the processes are gone, checks that the closed
+target is unregistered from gateway status, then deletes copied images,
 temporary source images, and temp directories.
 
 Use `--imageSpecJson` more than once to exercise the real multi-image shape:
