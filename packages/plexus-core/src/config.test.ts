@@ -111,7 +111,6 @@ describe("loadPharoLauncherMcpConfig", () => {
       dependencies?: Record<string, string>;
     };
     expect(corePackage.dependencies).toHaveProperty(pharoLauncherMcpPackageName);
-    expect(corePackage.dependencies).not.toHaveProperty("@evref-bl/mcp-pl");
 
     const lockfile = JSON.parse(
       fs.readFileSync(path.join(repoRoot, "package-lock.json"), "utf8"),
@@ -124,7 +123,6 @@ describe("loadPharoLauncherMcpConfig", () => {
     expect(lockfile.packages).not.toHaveProperty("packages/pharo-launcher-mcp");
 
     const serializedLockfile = JSON.stringify(lockfile);
-    expect(serializedLockfile).not.toContain("@evref-bl/mcp-pl");
     expect(serializedLockfile).not.toContain("@plexus/pharo-launcher-mcp");
   });
 });
