@@ -175,6 +175,79 @@ describe("project close", () => {
     ]);
   });
 
+  it("can scope project close to selected running images", async () => {
+    const projectRoot = makeTempDir("plexus-project-");
+    const stateRoot = makeTempDir("plexus-state-");
+    writeProjectConfig(projectRoot);
+    writeRuntimeState(stateRoot, {
+      projectId: "project-123",
+      projectName: "my-project",
+      workspaceId: "worktree-a",
+      targetId: "project-123--worktree-a",
+      updatedAt: "2026-04-25T10:00:00.000Z",
+      images: [
+        {
+          id: "dev",
+          imageName: "MyProject-dev",
+          assignedPort: 7123,
+          pid: 1234,
+          status: "running",
+        },
+        {
+          id: "baseline",
+          imageName: "MyProject-baseline",
+          assignedPort: 7124,
+          pid: 5678,
+          status: "running",
+        },
+      ],
+    });
+    const pharoLauncherMcpClient = new FakePharoLauncherMcpClient();
+
+    const result = await closeProject({
+      projectRoot,
+      stateRoot,
+      workspaceId: "worktree-a",
+      imageIds: ["baseline"],
+      pharoLauncherMcpClient,
+      now: fixedNow,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.stoppedImages).toEqual([
+      {
+        id: "baseline",
+        imageName: "MyProject-baseline",
+        assignedPort: 7124,
+        status: "stopped",
+      },
+    ]);
+    expect(pharoLauncherMcpClient.calls).toEqual([
+      {
+        name: "pharo_launcher_process_kill",
+        argumentsValue: {
+          imageName: "MyProject-baseline",
+          confirm: true,
+        },
+      },
+    ]);
+    expect(loadProjectState(result.statePath)?.images).toEqual([
+      {
+        id: "dev",
+        imageName: "MyProject-dev",
+        assignedPort: 7123,
+        pid: 1234,
+        status: "running",
+      },
+      {
+        id: "baseline",
+        imageName: "MyProject-baseline",
+        assignedPort: 7124,
+        status: "stopped",
+      },
+    ]);
+  });
+
   it("does nothing when runtime state does not exist", async () => {
     const projectRoot = makeTempDir("plexus-project-");
     const stateRoot = makeTempDir("plexus-state-");

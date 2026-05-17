@@ -90,15 +90,14 @@ function closeClientQuietly(client: PharoLauncherMcpToolClient): void {
   void client.close?.().catch(() => undefined);
 }
 
-function processMatchesImage(
+function processDirectlyMatchesImage(
   process: LauncherProcess,
   imageName: string,
 ): boolean {
   return (
     process.imageName === imageName ||
     path.basename(process.imagePath ?? "", ".image") === imageName ||
-    process.commandLine.includes(`${imageName}.image`) ||
-    process.commandLine.includes(imageName)
+    process.commandLine.includes(`${imageName}.image`)
   );
 }
 
@@ -159,7 +158,9 @@ async function pollProcessForImage(
     assertLauncherOk(result, "pharo_launcher_process_list");
     const processes = launcherResultData(result) ?? [];
 
-    return processes.find((process) => processMatchesImage(process, imageName));
+    return processes.find((process) =>
+      processDirectlyMatchesImage(process, imageName),
+    );
   });
 }
 
@@ -264,6 +265,7 @@ function activeStateImages(state: ProjectState): ProjectImageState[] {
 
 function applyScopedImageSelection(
   state: ProjectState,
+  previousState: ProjectState | undefined,
   imageIds: string[] | undefined,
 ): void {
   if (!imageIds) {
@@ -273,7 +275,14 @@ function applyScopedImageSelection(
   const selectedIds = new Set(imageIds);
   for (const image of state.images) {
     if (!selectedIds.has(image.id)) {
-      image.status = "stopped";
+      const previousImage = previousState?.images.find(
+        (candidate) => candidate.id === image.id,
+      );
+      if (previousImage) {
+        Object.assign(image, previousImage);
+      } else {
+        image.status = "stopped";
+      }
     }
   }
 }
@@ -308,7 +317,7 @@ export async function openProject(
     reservedPorts,
     ...(options.portRange ? { portRange: options.portRange } : {}),
   });
-  applyScopedImageSelection(state, options.imageIds);
+  applyScopedImageSelection(state, previousState, options.imageIds);
   const client =
     options.pharoLauncherMcpClient ??
     (await createStdioPharoLauncherMcpClient());

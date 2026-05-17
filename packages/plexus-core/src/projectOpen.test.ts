@@ -199,6 +199,47 @@ describe("project open", () => {
     });
   });
 
+  it("records the launched image process instead of the launcher wrapper", async () => {
+    const projectRoot = makeTempDir("plexus-project-");
+    const stateRoot = makeTempDir("plexus-state-");
+    writeProjectConfig(projectRoot);
+    const pharoLauncherMcpClient = new FakePharoLauncherMcpClient([
+      {
+        pid: 1000,
+        imageName: "PharoLauncher",
+        imagePath: "/Applications/PharoLauncher.app/PharoLauncher.image",
+        commandLine:
+          "/Applications/PharoLauncher.app/PharoLauncher.image image launch MyProject-dev",
+      },
+      {
+        pid: 1234,
+        imageName: "MyProject-dev",
+        imagePath: "/Users/ada/images/MyProject-dev/MyProject-dev.image",
+        commandLine:
+          "/Users/ada/vms/pharo /Users/ada/images/MyProject-dev/MyProject-dev.image eval start-dev.st",
+      },
+    ]);
+
+    const result = await openProject({
+      projectRoot,
+      stateRoot,
+      workspaceId: "worktree-a",
+      pharoLauncherMcpClient,
+      healthClient: new FakeHealthClient(true),
+      now: fixedNow,
+      sleep: async () => {},
+      poll: {
+        intervalMs: 0,
+      },
+    });
+
+    expect(result.state.images[0]).toMatchObject({
+      id: "dev",
+      pid: 1234,
+      status: "running",
+    });
+  });
+
   it("can scope project open to selected active images", async () => {
     const projectRoot = makeTempDir("plexus-project-");
     const stateRoot = makeTempDir("plexus-state-");
@@ -278,6 +319,100 @@ describe("project open", () => {
         imageName: "MyProject-dev",
         assignedPort: 7100,
         status: "stopped",
+      },
+      {
+        id: "baseline",
+        imageName: "MyProject-baseline",
+        assignedPort: 7101,
+        pid: 5678,
+        status: "running",
+      },
+    ]);
+  });
+
+  it("keeps unselected scoped images in their previous runtime state", async () => {
+    const projectRoot = makeTempDir("plexus-project-");
+    const stateRoot = makeTempDir("plexus-state-");
+    writeProjectConfig(projectRoot, {
+      images: [
+        {
+          id: "dev",
+          imageName: "MyProject-dev",
+          active: true,
+          mcp: {
+            loadScript: "pharo/load-mcp.st",
+          },
+        },
+        {
+          id: "baseline",
+          imageName: "MyProject-baseline",
+          active: true,
+          mcp: {
+            loadScript: "pharo/load-mcp.st",
+          },
+        },
+      ],
+    });
+    saveProjectState(
+      path.join(
+        stateRoot,
+        "projects",
+        "project-123",
+        "workspaces",
+        "worktree-a",
+        "state.json",
+      ),
+      {
+        projectId: "project-123",
+        projectName: "my-project",
+        workspaceId: "worktree-a",
+        targetId: "project-123--worktree-a",
+        updatedAt: "2026-04-25T09:00:00.000Z",
+        images: [
+          {
+            id: "dev",
+            imageName: "MyProject-dev",
+            assignedPort: 7100,
+            pid: 1234,
+            status: "running",
+          },
+          {
+            id: "baseline",
+            imageName: "MyProject-baseline",
+            assignedPort: 7101,
+            status: "stopped",
+          },
+        ],
+      },
+    );
+
+    const result = await openProject({
+      projectRoot,
+      stateRoot,
+      workspaceId: "worktree-a",
+      imageIds: ["baseline"],
+      pharoLauncherMcpClient: new FakePharoLauncherMcpClient([
+        {
+          pid: 5678,
+          imageName: "MyProject-baseline",
+          commandLine: "PharoConsole.exe MyProject-baseline.image",
+        },
+      ]),
+      healthClient: new FakeHealthClient(true),
+      now: fixedNow,
+      sleep: async () => {},
+      poll: {
+        intervalMs: 0,
+      },
+    });
+
+    expect(result.state.images).toEqual([
+      {
+        id: "dev",
+        imageName: "MyProject-dev",
+        assignedPort: 7100,
+        pid: 1234,
+        status: "running",
       },
       {
         id: "baseline",

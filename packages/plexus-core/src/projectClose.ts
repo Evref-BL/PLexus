@@ -23,6 +23,7 @@ export interface ProjectCloseOptions {
   projectRoot: string;
   stateRoot?: string;
   workspaceId?: string;
+  imageIds?: string[];
   pharoLauncherMcpClient?: PharoLauncherMcpToolClient;
   now?: () => Date;
 }
@@ -56,8 +57,16 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-function runningImages(state: ProjectState): ProjectImageState[] {
-  return state.images.filter((image) => image.status === "running");
+function imagesToClose(
+  state: ProjectState,
+  imageIds: string[] | undefined,
+): ProjectImageState[] {
+  const selectedIds = imageIds ? new Set(imageIds) : undefined;
+  return state.images.filter(
+    (image) =>
+      image.status === "running" &&
+      (!selectedIds || selectedIds.has(image.id)),
+  );
 }
 
 function assertLauncherOk(
@@ -104,7 +113,7 @@ export async function closeProject(
   const failures: ProjectCloseFailure[] = [];
 
   try {
-    for (const imageState of runningImages(state)) {
+    for (const imageState of imagesToClose(state, options.imageIds)) {
       try {
         const killResult = await client.callTool<LauncherCommandResult>(
           "pharo_launcher_process_kill",

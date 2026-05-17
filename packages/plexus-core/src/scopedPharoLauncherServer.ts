@@ -5,6 +5,7 @@ import {
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import { loadProjectConfig, type ProjectImageConfig } from "./projectConfig.js";
+import { closeProject } from "./projectClose.js";
 import { openProject } from "./projectOpen.js";
 import {
   defaultTargetId,
@@ -192,9 +193,14 @@ export class ScopedPharoLauncher {
     image: WorkspaceImageSummary;
   }> {
     const before = this.imageInfo(imageId);
-    throw new ScopedPharoLauncherError(
-      `Scoped per-image stop is not implemented for ${before.image.imageId}; use PLexus project close policy`,
-    );
+    await closeProject({
+      projectRoot: before.scope.projectRoot,
+      workspaceId: before.scope.workspaceId,
+      stateRoot: before.scope.stateRoot,
+      imageIds: [imageId],
+    });
+
+    return this.imageInfo(imageId);
   }
 }
 
@@ -220,7 +226,7 @@ export const scopedPharoLauncherTools = [
   {
     name: "pharo_launcher_image_stop",
     description:
-      "Reserved scoped stop entry point. Does not accept arbitrary host pids or image names.",
+      "Stop one workspace-scoped image through PLexus project close policy.",
     inputSchema: objectSchema(
       {
         imageId: stringSchema,
