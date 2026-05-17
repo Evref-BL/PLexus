@@ -11,6 +11,7 @@ import {
   PlexusProjectLifecycle,
 } from "@evref-bl/plexus-core";
 import { PlexusGateway } from "@evref-bl/plexus-gateway";
+import { buildLiveSmokeRunPlan } from "./live-smoke-runner-policy.mjs";
 
 const scriptPath = fileURLToPath(import.meta.url);
 const repoRoot = path.dirname(path.dirname(scriptPath));
@@ -58,6 +59,30 @@ function parseArgs(argv) {
         break;
       case "--projectRoot":
         options.projectRoot = next();
+        break;
+      case "--approvalProfile":
+        options.approvalProfile = next();
+        break;
+      case "--launcherProfile":
+        options.launcherProfile = next();
+        break;
+      case "--launcherProfileRoot":
+        options.launcherProfileRoot = next();
+        break;
+      case "--artifactRoot":
+        options.artifactRoot = next();
+        break;
+      case "--runId":
+        options.runId = next();
+        break;
+      case "--timeoutBudgetJson":
+        options.timeoutBudgetJson = next();
+        break;
+      case "--requiredWorkspacePrefix":
+        options.requiredWorkspacePrefix = next();
+        break;
+      case "--requiredTargetPrefix":
+        options.requiredTargetPrefix = next();
         break;
       case "--stateRoot":
         options.stateRoot = next();
@@ -130,6 +155,18 @@ function parseArgs(argv) {
   options.copyFromImageName ??= process.env.PLEXUS_SMOKE_COPY_FROM_IMAGE_NAME;
   options.imageName ??= process.env.PLEXUS_SMOKE_IMAGE_NAME;
   options.projectRoot ??= process.env.PLEXUS_SMOKE_PROJECT_ROOT;
+  options.approvalProfile ??= process.env.PLEXUS_SMOKE_APPROVAL_PROFILE;
+  options.launcherProfile ??= process.env.PLEXUS_SMOKE_LAUNCHER_PROFILE;
+  options.launcherProfileRoot ??=
+    process.env.PLEXUS_SMOKE_LAUNCHER_PROFILE_ROOT ??
+    process.env.PHARO_LAUNCHER_MCP_STATE_ROOT;
+  options.artifactRoot ??= process.env.PLEXUS_SMOKE_ARTIFACT_ROOT;
+  options.runId ??= process.env.PLEXUS_SMOKE_RUN_ID;
+  options.timeoutBudgetJson ??= process.env.PLEXUS_SMOKE_TIMEOUT_BUDGET_JSON;
+  options.requiredWorkspacePrefix ??=
+    process.env.PLEXUS_SMOKE_REQUIRED_WORKSPACE_PREFIX;
+  options.requiredTargetPrefix ??=
+    process.env.PLEXUS_SMOKE_REQUIRED_TARGET_PREFIX;
   options.stateRoot ??= process.env.PLEXUS_SMOKE_STATE_ROOT;
   options.fixtureRoot ??= process.env.PLEXUS_SMOKE_FIXTURE_ROOT;
   options.createSourceFromTemplate ||= booleanEnv(
@@ -178,8 +215,16 @@ function usage() {
     "  One image source via --copyFromImageName, --imageName, --imageSpecJson, --createSourceFromTemplate, or matching PLEXUS_SMOKE_* env vars",
     "",
     "Optional:",
+    "  --approvalProfile <id>       Required approval/profile id for live execution",
+    "  --launcherProfile <id>       pharo-launcher-mcp profile id; defaults to approval profile",
+    "  --launcherProfileRoot <path> Required isolated pharo-launcher-mcp profile root",
+    "  --artifactRoot <path>        Required artifact retention root",
+    "  --runId <id>                 Defaults to a unique smoke id",
+    "  --timeoutBudgetJson <json>   Overrides setup/open/routing/close/cleanup timeout ms",
+    "  --requiredWorkspacePrefix <p> Require workspace id prefix, e.g. dogfood-overnight",
+    "  --requiredTargetPrefix <p>    Require target id prefix, e.g. dogfood-overnight",
     "  --projectRoot <path>          Defaults to an owned temp project",
-    "  --stateRoot <path>            Defaults to an owned temp state root",
+    "  --stateRoot <path>            Required disposable state root",
     "  --fixtureRoot <path>          Defaults to an owned temp root for scenario repos",
     "  --workspaceId <id>            Defaults to a unique smoke id",
     "  --targetId <id>               Overrides the runtime target id",
@@ -285,6 +330,16 @@ function assertValidOptions(options) {
 
   options.images = normalizeImageSpecs(options);
   options.steps = normalizeStepSpecs(options);
+  const runPlan = buildLiveSmokeRunPlan(options, { repoRoot });
+  options.approvalProfile = runPlan.approvalProfile;
+  options.launcherProfile = runPlan.launcherProfile;
+  options.launcherProfileRoot = runPlan.launcherProfileRoot;
+  options.runId = runPlan.runId;
+  options.workspaceId = runPlan.workspaceId;
+  options.targetId = runPlan.targetId;
+  options.artifactRoot = runPlan.artifactRoot;
+  options.artifactDirectory = runPlan.artifactDirectory;
+  options.timeoutBudget = runPlan.timeoutBudget;
 
   if (!["basic", "project-edit-export"].includes(options.scenario)) {
     throw new Error("--scenario must be basic or project-edit-export");
@@ -483,6 +538,133 @@ function writeSmokeProjectConfig(options) {
     ownsStateRoot: options.stateRoot === undefined,
     ownsFixtureRoot: options.fixtureRoot === undefined,
   };
+}
+
+function writeJsonFile(filePath, value) {
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  fs.writeFileSync(filePath, `${JSON.stringify(value, null, 2)}\n`, "utf8");
+}
+
+function appendJsonLine(filePath, value) {
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  fs.appendFileSync(filePath, `${JSON.stringify(value)}\n`, "utf8");
+}
+
+function initializeArtifacts(options) {
+  fs.mkdirSync(options.artifactDirectory, { recursive: true });
+  const eventsPath = path.join(options.artifactDirectory, "events.jsonl");
+  const manifestPath = path.join(options.artifactDirectory, "manifest.json");
+  const manifest = {
+    runId: options.runId,
+    approvalProfile: options.approvalProfile,
+    launcherProfile: options.launcherProfile,
+    launcherProfileRoot: options.launcherProfileRoot,
+    artifactDirectory: options.artifactDirectory,
+    workspaceId: options.workspaceId,
+    targetId: options.targetId,
+    projectId: options.projectId,
+    scenario: options.scenario,
+    timeoutBudget: options.timeoutBudget,
+    images: options.images.map((image) => ({
+      id: image.id,
+      imageName: image.imageName,
+      copyFromImageName: image.copyFromImageName,
+      copied: image.copied,
+      port: image.port,
+    })),
+    startedAt: new Date().toISOString(),
+  };
+  writeJsonFile(manifestPath, manifest);
+  appendJsonLine(eventsPath, {
+    at: new Date().toISOString(),
+    event: "manifest-written",
+    manifestPath,
+  });
+  return { eventsPath, manifestPath };
+}
+
+function applyLauncherProfileEnvironment(options) {
+  const root = options.launcherProfileRoot;
+  process.env.PHARO_LAUNCHER_MCP_PROFILE = options.launcherProfile;
+  process.env.PHARO_LAUNCHER_MCP_STATE_ROOT = root;
+  process.env.PHARO_LAUNCHER_MCP_LAUNCHER_IMAGE = path.join(
+    root,
+    "launcher",
+    "PharoLauncher.image",
+  );
+  process.env.PHARO_LAUNCHER_MCP_IMAGES_DIR = path.join(root, "images");
+  process.env.PHARO_LAUNCHER_MCP_VMS_DIR = path.join(root, "vms");
+  process.env.PHARO_LAUNCHER_MCP_TEMPLATE_SOURCES_DIR = path.join(
+    root,
+    "templates",
+  );
+  process.env.PHARO_LAUNCHER_MCP_INIT_SCRIPTS_DIR = path.join(
+    root,
+    "init-scripts",
+  );
+  process.env.PHARO_LAUNCHER_MCP_LOGS_DIR = path.join(root, "logs");
+  recordEvent(options, "launcher-profile-environment-applied", {
+    profile: options.launcherProfile,
+    stateRoot: root,
+  });
+}
+
+function recordEvent(options, event, details = {}) {
+  if (!options.artifactEventsPath) {
+    return;
+  }
+  appendJsonLine(options.artifactEventsPath, {
+    at: new Date().toISOString(),
+    event,
+    ...details,
+  });
+}
+
+function snapshotJsonArtifact(options, name, value) {
+  if (!options.artifactDirectory || value === undefined) {
+    return;
+  }
+  const filePath = path.join(options.artifactDirectory, name);
+  writeJsonFile(filePath, value);
+  recordEvent(options, "artifact-written", { name, filePath });
+}
+
+function snapshotFileArtifact(options, sourcePath, name) {
+  if (
+    !options.artifactDirectory ||
+    !sourcePath ||
+    !fs.existsSync(sourcePath)
+  ) {
+    return;
+  }
+  const filePath = path.join(options.artifactDirectory, name);
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  fs.copyFileSync(sourcePath, filePath);
+  recordEvent(options, "artifact-copied", { name, sourcePath, filePath });
+}
+
+async function withPhaseTimeout(options, phase, action) {
+  const timeoutMs = options.timeoutBudget?.[`${phase}Ms`];
+  if (!timeoutMs) {
+    return action();
+  }
+
+  let timer;
+  try {
+    return await Promise.race([
+      action(),
+      new Promise((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error(`${phase} timed out after ${timeoutMs}ms`)),
+          timeoutMs,
+        );
+      }),
+    ]);
+  } finally {
+    if (timer) {
+      clearTimeout(timer);
+    }
+  }
 }
 
 function textResult(label, value) {
@@ -1293,6 +1475,11 @@ async function main() {
   }
 
   assertValidOptions(options);
+  const artifactFiles = initializeArtifacts(options);
+  options.artifactEventsPath = artifactFiles.eventsPath;
+  textResult("artifactDirectory", options.artifactDirectory);
+  recordEvent(options, "run-started");
+  applyLauncherProfileEnvironment(options);
   const client = await createStdioPharoLauncherMcpClient();
   const gateway = new PlexusGateway();
   const lifecycle = new PlexusProjectLifecycle({
@@ -1304,10 +1491,30 @@ async function main() {
   let openData;
 
   try {
-    await prepareTemplateSourceImage(client, options);
-    await prepareImages(client, options);
+    await withPhaseTimeout(options, "setup", async () => {
+      await prepareTemplateSourceImage(client, options);
+    });
+    await withPhaseTimeout(options, "imagePrepare", async () => {
+      await prepareImages(client, options);
+    });
+    snapshotJsonArtifact(
+      options,
+      "owned-images-before-open.json",
+      options.images.map((image) => ({
+        id: image.id,
+        imageName: image.imageName,
+        copyFromImageName: image.copyFromImageName,
+        copied: image.copied,
+      })),
+    );
 
     projectPaths = writeSmokeProjectConfig(options);
+    snapshotFileArtifact(
+      options,
+      path.join(projectPaths.projectRoot, "plexus.project.json"),
+      "plexus.project.json",
+    );
+    snapshotJsonArtifact(options, "project-paths.json", projectPaths);
     textResult("projectRoot", projectPaths.projectRoot);
     textResult("stateRoot", projectPaths.stateRoot);
     textResult("fixtureRoot", projectPaths.fixtureRoot);
@@ -1317,11 +1524,14 @@ async function main() {
       textResult("imageName", `${image.id}=${image.imageName}`);
     }
 
-    const openResult = await lifecycle.handleTool("plexus_project_open", {
-      projectPath: projectPaths.projectRoot,
-      stateRoot: projectPaths.stateRoot,
-      workspaceId: options.workspaceId,
-      ...(options.targetId ? { targetId: options.targetId } : {}),
+    const openResult = await withPhaseTimeout(options, "open", async () => {
+      recordEvent(options, "open-started");
+      return lifecycle.handleTool("plexus_project_open", {
+        projectPath: projectPaths.projectRoot,
+        stateRoot: projectPaths.stateRoot,
+        workspaceId: options.workspaceId,
+        ...(options.targetId ? { targetId: options.targetId } : {}),
+      });
     });
     openData = requireGatewayOk(openResult, "plexus_project_open");
     opened = true;
@@ -1329,91 +1539,141 @@ async function main() {
     textResult("statePath", openData.statePath);
 
     const stateAfterOpen = loadProjectState(openData.statePath);
+    snapshotJsonArtifact(options, "state-after-open.json", stateAfterOpen);
+    snapshotJsonArtifact(
+      options,
+      "gateway-status-after-open.json",
+      await gateway.handleTool("plexus_gateway_status", {
+        targetId: openData.state.targetId,
+        refreshHealth: false,
+      }),
+    );
     validateOpenedState(stateAfterOpen, options);
-    await assertImageMcpToolsReady(stateAfterOpen, options);
-    await runDefaultRouteProbes(gateway, openData.state.targetId, options);
-    await runMultiImageIsolationProbe(gateway, openData.state.targetId, options);
-    await runConfiguredSteps(gateway, openData.state.targetId, options);
+    await withPhaseTimeout(options, "routing", async () => {
+      await assertImageMcpToolsReady(stateAfterOpen, options);
+      await runDefaultRouteProbes(gateway, openData.state.targetId, options);
+      await runMultiImageIsolationProbe(gateway, openData.state.targetId, options);
+      await runConfiguredSteps(gateway, openData.state.targetId, options);
+    });
 
     if (options.scenario === "project-edit-export") {
-      await runProjectEditExportScenario(
-        gateway,
-        openData.state.targetId,
-        projectPaths,
-        options,
-      );
-    }
-
-    await assertClosed(client, lifecycle, gateway, openData, projectPaths, options);
-    opened = false;
-
-    return 0;
-  } finally {
-    if (opened && projectPaths) {
-      await cleanupStep("project close", async () => {
-        await lifecycle.handleTool("plexus_project_close", {
-          projectPath: projectPaths.projectRoot,
-          stateRoot: projectPaths.stateRoot,
-          workspaceId: options.workspaceId,
-        });
+      await withPhaseTimeout(options, "scenario", async () => {
+        await runProjectEditExportScenario(
+          gateway,
+          openData.state.targetId,
+          projectPaths,
+          options,
+        );
       });
     }
 
-    for (const image of options.images ?? []) {
-      if (image.imageName) {
-        await cleanupStep(`process cleanup ${image.id}`, async () => {
-          const stillRunning = await processForImage(client, image.imageName);
-          if (stillRunning) {
-            console.error(
-              `cleanup: killing ${image.imageName} with pid ${stillRunning.pid}`,
-            );
-            await callLauncherTool(client, "pharo_launcher_process_kill", {
+    await withPhaseTimeout(options, "close", async () => {
+      await assertClosed(client, lifecycle, gateway, openData, projectPaths, options);
+    });
+    snapshotJsonArtifact(
+      options,
+      "state-after-close.json",
+      loadProjectState(openData.statePath),
+    );
+    snapshotJsonArtifact(
+      options,
+      "gateway-status-after-close.json",
+      await gateway.handleTool("plexus_gateway_status", {
+        refreshHealth: false,
+      }),
+    );
+    opened = false;
+    recordEvent(options, "run-completed");
+
+    return 0;
+  } catch (error) {
+    recordEvent(options, "run-failed", {
+      message: error instanceof Error ? error.message : String(error),
+    });
+    throw error;
+  } finally {
+    await withPhaseTimeout(options, "cleanup", async () => {
+      recordEvent(options, "cleanup-started");
+      if (opened && projectPaths) {
+        await cleanupStep("project close", async () => {
+          await lifecycle.handleTool("plexus_project_close", {
+            projectPath: projectPaths.projectRoot,
+            stateRoot: projectPaths.stateRoot,
+            workspaceId: options.workspaceId,
+          });
+        });
+      }
+
+      for (const image of options.images ?? []) {
+        if (image.imageName) {
+          await cleanupStep(`process cleanup ${image.id}`, async () => {
+            const stillRunning = await processForImage(client, image.imageName);
+            if (stillRunning) {
+              console.error(
+                `cleanup: killing ${image.imageName} with pid ${stillRunning.pid}`,
+              );
+              recordEvent(options, "process-cleanup", {
+                imageId: image.id,
+                imageName: image.imageName,
+                pid: stillRunning.pid,
+              });
+              await callLauncherTool(client, "pharo_launcher_process_kill", {
+                imageName: image.imageName,
+                confirm: true,
+              });
+            }
+          });
+        }
+      }
+
+      for (const image of options.images ?? []) {
+        await cleanupStep(`copied image delete ${image.id}`, async () => {
+          if (image.copied) {
+            console.error(`cleanup: deleting copied image ${image.imageName}`);
+            recordEvent(options, "copied-image-delete", {
+              imageId: image.id,
               imageName: image.imageName,
+            });
+            await callLauncherTool(client, "pharo_launcher_image_delete", {
+              imageName: image.imageName,
+              force: true,
               confirm: true,
             });
           }
         });
       }
-    }
 
-    for (const image of options.images ?? []) {
-      await cleanupStep(`copied image delete ${image.id}`, async () => {
-        if (image.copied) {
-          console.error(`cleanup: deleting copied image ${image.imageName}`);
+      await cleanupStep("source image delete", async () => {
+        if (options.createdSourceImageName) {
+          console.error(
+            `cleanup: deleting source image ${options.createdSourceImageName}`,
+          );
+          recordEvent(options, "source-image-delete", {
+            imageName: options.createdSourceImageName,
+          });
           await callLauncherTool(client, "pharo_launcher_image_delete", {
-            imageName: image.imageName,
+            imageName: options.createdSourceImageName,
             force: true,
             confirm: true,
           });
         }
       });
-    }
 
-    await cleanupStep("source image delete", async () => {
-      if (options.createdSourceImageName) {
-        console.error(
-          `cleanup: deleting source image ${options.createdSourceImageName}`,
-        );
-        await callLauncherTool(client, "pharo_launcher_image_delete", {
-          imageName: options.createdSourceImageName,
-          force: true,
-          confirm: true,
-        });
-      }
-    });
+      await cleanupStep("temp directory cleanup", async () => {
+        if (projectPaths && !options.keepTemp) {
+          if (projectPaths.ownsProjectRoot) {
+            removeOwnedDirectory(projectPaths.projectRoot);
+          }
+          if (projectPaths.ownsStateRoot) {
+            removeOwnedDirectory(projectPaths.stateRoot);
+          }
+          if (projectPaths.ownsFixtureRoot) {
+            removeOwnedDirectory(projectPaths.fixtureRoot);
+          }
+        }
+      });
 
-    await cleanupStep("temp directory cleanup", async () => {
-      if (projectPaths && !options.keepTemp) {
-        if (projectPaths.ownsProjectRoot) {
-          removeOwnedDirectory(projectPaths.projectRoot);
-        }
-        if (projectPaths.ownsStateRoot) {
-          removeOwnedDirectory(projectPaths.stateRoot);
-        }
-        if (projectPaths.ownsFixtureRoot) {
-          removeOwnedDirectory(projectPaths.fixtureRoot);
-        }
-      }
+      recordEvent(options, "cleanup-completed");
     });
 
     await cleanupStep("mcp client close", async () => client.close?.());

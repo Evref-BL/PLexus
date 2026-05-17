@@ -18,7 +18,8 @@
   },
   "scripts": {
     "build": "npm run build -w @evref-bl/plexus-core && npm run build -w @evref-bl/plexus-gateway",
-    "test": "npm run test --workspaces",
+    "test": "npm run test --workspaces && npm run test:smoke-policy",
+    "test:smoke-policy": "node --test scripts/*.test.mjs",
     "typecheck": "npm run typecheck --workspaces",
     "clean": "npm run clean --workspaces",
     "prototype:open-close": "node scripts/prototype-open-close.mjs",
