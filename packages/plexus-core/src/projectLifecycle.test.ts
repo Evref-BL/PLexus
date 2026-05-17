@@ -333,7 +333,7 @@ describe("project lifecycle tools", () => {
     expect(pathRequests[0]?.url).toBe("http://gateway.local:8133/private-control");
   });
 
-  it("keeps legacy gateway MCP URL environment compatibility", async () => {
+  it("routes legacy default gateway MCP URL environment to route-control MCP", async () => {
     const requests: CapturedGatewayRequest[] = [];
     vi.stubGlobal("fetch", makeGatewayFetch(requests));
     const lifecycle = createProjectLifecycleFromEnvironment({
@@ -344,6 +344,20 @@ describe("project lifecycle tools", () => {
       targetId: runningState.targetId,
     });
 
-    expect(requests[0]?.url).toBe("http://gateway.local:8133/mcp");
+    expect(requests[0]?.url).toBe("http://gateway.local:8133/control-mcp");
+  });
+
+  it("keeps custom legacy gateway MCP URL environment compatibility", async () => {
+    const requests: CapturedGatewayRequest[] = [];
+    vi.stubGlobal("fetch", makeGatewayFetch(requests));
+    const lifecycle = createProjectLifecycleFromEnvironment({
+      PLEXUS_GATEWAY_MCP_URL: "http://gateway.local:8133/private-mcp",
+    } as NodeJS.ProcessEnv);
+
+    await lifecycle.handleTool("plexus_project_status", {
+      targetId: runningState.targetId,
+    });
+
+    expect(requests[0]?.url).toBe("http://gateway.local:8133/private-mcp");
   });
 });

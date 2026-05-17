@@ -60,6 +60,7 @@ export interface HttpGatewayRouteRegistryOptions {
   fetch?: typeof fetch;
 }
 
+const defaultGatewayAgentMcpPath = "/mcp";
 const defaultGatewayRouteControlMcpPath = "/control-mcp";
 
 export interface ProjectLifecycleOptions {
@@ -786,7 +787,8 @@ export function createProjectLifecycleFromEnvironment(
   env: NodeJS.ProcessEnv = process.env,
 ): PlexusProjectLifecycle {
   const routeControlUrl =
-    env.PLEXUS_GATEWAY_CONTROL_MCP_URL ?? env.PLEXUS_GATEWAY_MCP_URL;
+    env.PLEXUS_GATEWAY_CONTROL_MCP_URL ??
+    routeControlUrlFromLegacyGatewayUrl(env.PLEXUS_GATEWAY_MCP_URL);
   const routeControlPath =
     env.PLEXUS_GATEWAY_CONTROL_MCP_PATH ?? env.PLEXUS_GATEWAY_MCP_PATH;
   const routeRegistry =
@@ -805,4 +807,24 @@ export function createProjectLifecycleFromEnvironment(
       : undefined;
 
   return new PlexusProjectLifecycle({ routeRegistry });
+}
+
+function routeControlUrlFromLegacyGatewayUrl(
+  gatewayUrl: string | undefined,
+): string | undefined {
+  if (!gatewayUrl) {
+    return undefined;
+  }
+
+  try {
+    const url = new URL(gatewayUrl);
+    if (url.pathname === defaultGatewayAgentMcpPath) {
+      url.pathname = defaultGatewayRouteControlMcpPath;
+      return url.toString();
+    }
+  } catch {
+    return gatewayUrl;
+  }
+
+  return gatewayUrl;
 }
