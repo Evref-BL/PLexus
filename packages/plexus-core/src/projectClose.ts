@@ -1,4 +1,9 @@
 import path from "node:path";
+import {
+  defaultImagePortClaimChecks,
+  imagePortClaimsRootForConfig,
+  releaseImagePortClaimIfOwned,
+} from "./imagePortClaims.js";
 import { loadProjectConfig } from "./projectConfig.js";
 import {
   createStdioPharoLauncherMcpClient,
@@ -8,11 +13,13 @@ import {
   defaultWorkspaceId,
   loadProjectState,
   projectStatePathForConfig,
+  runtimeStatusForImages,
   sanitizeRuntimeId,
   saveProjectState,
   type ProjectImageState,
   type ProjectState,
 } from "./projectState.js";
+import type { PortClaimChecks } from "./portClaims.js";
 
 interface LauncherCommandResult<T = unknown> {
   ok: boolean;
@@ -26,6 +33,7 @@ export interface ProjectCloseOptions {
   imageIds?: string[];
   pharoLauncherMcpClient?: PharoLauncherMcpToolClient;
   now?: () => Date;
+  portClaimChecks?: PortClaimChecks;
 }
 
 export interface ProjectCloseFailure {
@@ -61,12 +69,17 @@ function imagesToClose(
   state: ProjectState,
   imageIds: string[] | undefined,
 ): ProjectImageState[] {
-  const selectedIds = imageIds ? new Set(imageIds) : undefined;
-  return state.images.filter(
-    (image) =>
-      image.status === "running" &&
-      (!selectedIds || selectedIds.has(image.id)),
+  return selectedImages(state, imageIds).filter(
+    (image) => image.status === "running",
   );
+}
+
+function selectedImages(
+  state: ProjectState,
+  imageIds: string[] | undefined,
+): ProjectImageState[] {
+  const selectedIds = imageIds ? new Set(imageIds) : undefined;
+  return state.images.filter((image) => !selectedIds || selectedIds.has(image.id));
 }
 
 function assertLauncherOk(
@@ -94,6 +107,9 @@ export async function closeProject(
   });
   const state = loadProjectState(statePath);
   const now = options.now ?? (() => new Date());
+  const claimsRoot = imagePortClaimsRootForConfig(projectRoot, config);
+  const portClaimChecks =
+    options.portClaimChecks ?? defaultImagePortClaimChecks();
 
   if (!state) {
     return {
@@ -105,15 +121,61 @@ export async function closeProject(
     };
   }
 
+  const selected = selectedImages(state, options.imageIds);
+  const images = imagesToClose(state, options.imageIds);
+  const stoppedImages: ProjectImageState[] = [];
+  const failures: ProjectCloseFailure[] = [];
+
+  if (images.length === 0) {
+    if (claimsRoot) {
+      for (const imageState of selected) {
+        try {
+          await releaseImagePortClaimIfOwned({
+            state,
+            image: imageState,
+            claimsRoot,
+            checks: portClaimChecks,
+          });
+        } catch (error) {
+          failures.push({
+            imageId: imageState.id,
+            imageName: imageState.imageName,
+            message: errorMessage(error),
+          });
+        }
+      }
+    }
+
+    state.updatedAt = now().toISOString();
+    state.runtimeStatus = runtimeStatusForImages(state.images);
+    saveProjectState(statePath, state);
+
+    const result: ProjectCloseResult = {
+      ok: failures.length === 0,
+      projectRoot,
+      statePath,
+      state,
+      stoppedImages: [],
+      failures,
+    };
+
+    if (!result.ok) {
+      throw new ProjectCloseError(
+        "One or more project images failed to close",
+        result,
+      );
+    }
+
+    return result;
+  }
+
   const client =
     options.pharoLauncherMcpClient ??
     (await createStdioPharoLauncherMcpClient());
   const ownsClient = !options.pharoLauncherMcpClient;
-  const stoppedImages: ProjectImageState[] = [];
-  const failures: ProjectCloseFailure[] = [];
 
   try {
-    for (const imageState of imagesToClose(state, options.imageIds)) {
+    for (const imageState of images) {
       try {
         const killResult = await client.callTool<LauncherCommandResult>(
           "pharo_launcher_process_kill",
@@ -136,7 +198,29 @@ export async function closeProject(
       }
     }
 
+    if (claimsRoot) {
+      for (const imageState of selected.filter(
+        (image) => image.status !== "running",
+      )) {
+        try {
+          await releaseImagePortClaimIfOwned({
+            state,
+            image: imageState,
+            claimsRoot,
+            checks: portClaimChecks,
+          });
+        } catch (error) {
+          failures.push({
+            imageId: imageState.id,
+            imageName: imageState.imageName,
+            message: errorMessage(error),
+          });
+        }
+      }
+    }
+
     state.updatedAt = now().toISOString();
+    state.runtimeStatus = runtimeStatusForImages(state.images);
     saveProjectState(statePath, state);
 
     const result: ProjectCloseResult = {

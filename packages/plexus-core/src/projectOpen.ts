@@ -1,5 +1,15 @@
 import path from "node:path";
-import { loadProjectConfig } from "./projectConfig.js";
+import {
+  loadProjectConfig,
+  resolveProjectRuntimePolicy,
+} from "./projectConfig.js";
+import {
+  defaultImagePortClaimChecks,
+  imagePortClaimsRootForConfig,
+  prepareImagePortClaims,
+  releasePreparedImagePortClaims,
+  type PreparedImagePortClaim,
+} from "./imagePortClaims.js";
 import {
   createStdioPharoLauncherMcpClient,
   type PharoLauncherMcpToolClient,
@@ -9,11 +19,13 @@ import {
   type PharoMcpHealthClient,
 } from "./pharoMcpHealth.js";
 import {
-  collectReservedProjectPorts,
+  collectReservedProjectPortOwners,
   createProjectState,
   defaultWorkspaceId,
   loadProjectState,
   projectStatePathForConfig,
+  projectStateRootForConfig,
+  runtimeStatusForImages,
   sanitizeRuntimeId,
   saveProjectState,
   type ProjectImageState,
@@ -21,6 +33,7 @@ import {
   type ProjectState,
 } from "./projectState.js";
 import { writeProjectImageStartupScript } from "./projectStartupScript.js";
+import type { PortClaimChecks } from "./portClaims.js";
 
 export interface LauncherCommandResult<T = unknown> {
   ok: boolean;
@@ -52,6 +65,7 @@ export interface ProjectOpenOptions {
   now?: () => Date;
   poll?: ProjectOpenPollOptions;
   sleep?: (durationMs: number) => Promise<void>;
+  portClaimChecks?: PortClaimChecks;
 }
 
 export interface ProjectOpenFailure {
@@ -301,12 +315,16 @@ export async function openProject(
     workspaceId,
     stateRoot: options.stateRoot,
   });
+  const resolvedStateRoot = projectStateRootForConfig(config, options.stateRoot);
   const previousState = loadProjectState(statePath);
   const now = options.now ?? (() => new Date());
-  const reservedPorts = collectReservedProjectPorts({
+  const runtime = resolveProjectRuntimePolicy(config);
+  const portRange = options.portRange ?? runtime.imagePorts.range;
+  const claimsRoot = imagePortClaimsRootForConfig(projectRoot, config);
+  const projectReservedOwners = collectReservedProjectPortOwners({
     projectRoot,
     projectId: config.kanban.projectId,
-    stateRoot: options.stateRoot,
+    stateRoot: resolvedStateRoot,
     excludeWorkspaceId: workspaceId,
   });
   const state = createProjectState(config, {
@@ -314,10 +332,46 @@ export async function openProject(
     previousState,
     workspaceId,
     targetId: options.targetId,
-    reservedPorts,
-    ...(options.portRange ? { portRange: options.portRange } : {}),
+    reservedPorts: claimsRoot
+      ? []
+      : projectReservedOwners.map((owner) => owner.port),
+    portRange,
   });
   applyScopedImageSelection(state, previousState, options.imageIds);
+  const imagesToOpen = activeStateImages(state);
+  const failures: ProjectOpenFailure[] = [];
+
+  if (imagesToOpen.length === 0) {
+    state.runtimeStatus = runtimeStatusForImages(state.images);
+    state.updatedAt = now().toISOString();
+    saveProjectState(statePath, state);
+
+    return {
+      ok: true,
+      projectRoot,
+      statePath,
+      state,
+      failures,
+    };
+  }
+
+  const portClaimChecks =
+    options.portClaimChecks ?? defaultImagePortClaimChecks();
+  let preparedPortClaims: PreparedImagePortClaim[] = [];
+  if (claimsRoot) {
+    preparedPortClaims = await prepareImagePortClaims({
+      config,
+      state,
+      previousState,
+      images: imagesToOpen,
+      projectReservedOwners,
+      claimsRoot,
+      portRange,
+      checks: portClaimChecks,
+      now,
+    });
+  }
+
   const client =
     options.pharoLauncherMcpClient ??
     (await createStdioPharoLauncherMcpClient());
@@ -330,10 +384,9 @@ export async function openProject(
     healthTimeoutMs: options.poll?.healthTimeoutMs ?? 5 * 60_000,
   };
   const sleep = options.sleep ?? defaultSleep;
-  const failures: ProjectOpenFailure[] = [];
 
   try {
-    for (const imageState of activeStateImages(state)) {
+    for (const imageState of imagesToOpen) {
       const imageConfig = config.images.find((image) => image.id === imageState.id);
       if (!imageConfig) {
         continue;
@@ -346,7 +399,7 @@ export async function openProject(
           imageId: imageState.id,
           imageState,
           workspaceId,
-          stateRoot: options.stateRoot,
+          stateRoot: resolvedStateRoot,
         });
 
         const launchClient = options.pharoLauncherMcpClient
@@ -386,6 +439,17 @@ export async function openProject(
         imageState.status = "running";
       } catch (error) {
         imageState.status = "failed";
+        if (claimsRoot) {
+          const claim = preparedPortClaims.find(
+            (candidate) => candidate.imageId === imageState.id,
+          );
+          if (claim?.created) {
+            await releasePreparedImagePortClaims(claimsRoot, [claim]);
+            preparedPortClaims = preparedPortClaims.filter(
+              (candidate) => candidate !== claim,
+            );
+          }
+        }
         failures.push({
           imageId: imageState.id,
           imageName: imageState.imageName,
@@ -394,6 +458,7 @@ export async function openProject(
       }
     }
 
+    state.runtimeStatus = runtimeStatusForImages(state.images);
     state.updatedAt = now().toISOString();
     saveProjectState(statePath, state);
 

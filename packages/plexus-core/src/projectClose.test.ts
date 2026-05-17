@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type { PharoLauncherMcpToolClient } from "./pharoLauncherMcpClient.js";
+import { claimPort, inspectPortClaim } from "./portClaims.js";
 import { closeProject, ProjectCloseError } from "./projectClose.js";
 import {
   loadProjectState,
@@ -79,6 +80,48 @@ function writeProjectConfig(projectRoot: string): void {
             active: false,
             mcp: {
               port: 7124,
+              loadScript: "pharo/load-mcp.st",
+            },
+          },
+        ],
+      },
+      null,
+      2,
+    ),
+    "utf8",
+  );
+}
+
+function writeHostLocalProjectConfig(projectRoot: string, claimsRoot: string): void {
+  fs.writeFileSync(
+    path.join(projectRoot, "plexus.project.json"),
+    JSON.stringify(
+      {
+        name: "my-project",
+        kanban: {
+          provider: "vibe-kanban",
+          projectId: "project-123",
+        },
+        runtime: {
+          imagePorts: {
+            allocation: "configured-or-dynamic",
+            range: {
+              start: 7200,
+              end: 7209,
+            },
+            coordination: {
+              mode: "host-local",
+              root: claimsRoot,
+            },
+          },
+        },
+        images: [
+          {
+            id: "dev",
+            imageName: "MyProject-dev",
+            active: true,
+            mcp: {
+              port: 7200,
               loadScript: "pharo/load-mcp.st",
             },
           },
@@ -246,6 +289,54 @@ describe("project close", () => {
         status: "stopped",
       },
     ]);
+  });
+
+  it("releases host-local image port claims after stopping owned images", async () => {
+    const projectRoot = makeTempDir("plexus-project-");
+    const stateRoot = makeTempDir("plexus-state-");
+    const claimsRoot = makeTempDir("plexus-port-claims-");
+    writeHostLocalProjectConfig(projectRoot, claimsRoot);
+    writeRuntimeState(stateRoot, {
+      projectId: "project-123",
+      projectName: "my-project",
+      workspaceId: "worktree-a",
+      targetId: "project-123--worktree-a",
+      updatedAt: "2026-04-25T10:00:00.000Z",
+      images: [
+        {
+          id: "dev",
+          imageName: "MyProject-dev",
+          assignedPort: 7200,
+          pid: 1234,
+          status: "running",
+        },
+      ],
+    });
+    await claimPort({
+      claimsRoot,
+      projectId: "project-123",
+      projectName: "my-project",
+      workspaceId: "worktree-a",
+      targetId: "project-123--worktree-a",
+      purpose: "image-mcp",
+      imageId: "dev",
+      requestedPort: 7200,
+      now: fixedNow,
+    });
+
+    const result = await closeProject({
+      projectRoot,
+      stateRoot,
+      workspaceId: "worktree-a",
+      pharoLauncherMcpClient: new FakePharoLauncherMcpClient(),
+      now: fixedNow,
+    });
+
+    expect(result.ok).toBe(true);
+    await expect(inspectPortClaim({ claimsRoot, port: 7200 })).resolves.toEqual({
+      status: "available",
+      port: 7200,
+    });
   });
 
   it("does nothing when runtime state does not exist", async () => {

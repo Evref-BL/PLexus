@@ -1,9 +1,15 @@
 import fs from "node:fs";
+import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type { PharoLauncherMcpToolClient } from "./pharoLauncherMcpClient.js";
 import type { PharoMcpHealthClient } from "./pharoMcpHealth.js";
+import {
+  claimPort,
+  inspectPortClaim,
+  listPortClaims,
+} from "./portClaims.js";
 import {
   openProject,
   ProjectOpenError,
@@ -74,6 +80,41 @@ function makeTempDir(prefix: string): string {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
   tempDirs.push(tempDir);
   return tempDir;
+}
+
+function hostLocalRuntime(claimsRoot: string, start = 7200, end = 7209) {
+  return {
+    imagePorts: {
+      allocation: "configured-or-dynamic",
+      range: { start, end },
+      coordination: {
+        mode: "host-local",
+        root: claimsRoot,
+      },
+    },
+  };
+}
+
+function dynamicImage(id = "dev", imageName = "MyProject-dev") {
+  return {
+    id,
+    imageName,
+    active: true,
+    mcp: {
+      loadScript: "pharo/load-mcp.st",
+    },
+  };
+}
+
+function listenOnLoopback(): Promise<net.Server> {
+  return new Promise((resolve, reject) => {
+    const server = net.createServer();
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      server.off("error", reject);
+      resolve(server);
+    });
+  });
 }
 
 function writeProjectConfig(
@@ -489,6 +530,289 @@ describe("project open", () => {
       assignedPort: 7130,
       pid: 1234,
       status: "running",
+    });
+  });
+
+  it("uses host-local claims to allocate dynamic ports across separate state roots", async () => {
+    const claimsRoot = makeTempDir("plexus-port-claims-");
+    const projectRootA = makeTempDir("plexus-project-a-");
+    const projectRootB = makeTempDir("plexus-project-b-");
+    const stateRootA = makeTempDir("plexus-state-a-");
+    const stateRootB = makeTempDir("plexus-state-b-");
+    writeProjectConfig(projectRootA, {
+      name: "project-a",
+      kanban: { provider: "vibe-kanban", projectId: "project-a" },
+      runtime: hostLocalRuntime(claimsRoot, 7200, 7201),
+      images: [dynamicImage("dev", "ProjectA-dev")],
+    });
+    writeProjectConfig(projectRootB, {
+      name: "project-b",
+      kanban: { provider: "vibe-kanban", projectId: "project-b" },
+      runtime: hostLocalRuntime(claimsRoot, 7200, 7201),
+      images: [dynamicImage("dev", "ProjectB-dev")],
+    });
+
+    const resultA = await openProject({
+      projectRoot: projectRootA,
+      stateRoot: stateRootA,
+      workspaceId: "worktree-a",
+      pharoLauncherMcpClient: new FakePharoLauncherMcpClient([
+        {
+          pid: 1001,
+          imageName: "ProjectA-dev",
+          commandLine: "PharoConsole.exe ProjectA-dev.image",
+        },
+      ]),
+      healthClient: new FakeHealthClient(true),
+      now: fixedNow,
+      sleep: async () => {},
+      poll: { intervalMs: 0 },
+    });
+    const resultB = await openProject({
+      projectRoot: projectRootB,
+      stateRoot: stateRootB,
+      workspaceId: "worktree-b",
+      pharoLauncherMcpClient: new FakePharoLauncherMcpClient([
+        {
+          pid: 1002,
+          imageName: "ProjectB-dev",
+          commandLine: "PharoConsole.exe ProjectB-dev.image",
+        },
+      ]),
+      healthClient: new FakeHealthClient(true),
+      now: fixedNow,
+      sleep: async () => {},
+      poll: { intervalMs: 0 },
+    });
+
+    expect(resultA.state.images[0].assignedPort).toBe(7200);
+    expect(resultB.state.images[0].assignedPort).toBe(7201);
+    await expect(listPortClaims({ claimsRoot })).resolves.toMatchObject([
+      { projectId: "project-a", workspaceId: "worktree-a", assignedPort: 7200 },
+      { projectId: "project-b", workspaceId: "worktree-b", assignedPort: 7201 },
+    ]);
+  });
+
+  it("keeps dynamic host-local allocation away from sibling workspace state", async () => {
+    const claimsRoot = makeTempDir("plexus-port-claims-");
+    const projectRoot = makeTempDir("plexus-project-");
+    const stateRoot = makeTempDir("plexus-state-");
+    writeProjectConfig(projectRoot, {
+      runtime: hostLocalRuntime(claimsRoot, 7200, 7201),
+      images: [dynamicImage()],
+    });
+    saveProjectState(
+      path.join(
+        stateRoot,
+        "projects",
+        "project-123",
+        "workspaces",
+        "worktree-a",
+        "state.json",
+      ),
+      {
+        projectId: "project-123",
+        projectName: "my-project",
+        workspaceId: "worktree-a",
+        targetId: "project-123--worktree-a",
+        updatedAt: "2026-04-25T09:00:00.000Z",
+        images: [
+          {
+            id: "dev",
+            imageName: "MyProject-dev",
+            assignedPort: 7200,
+            pid: 1111,
+            status: "running",
+          },
+        ],
+      },
+    );
+
+    const result = await openProject({
+      projectRoot,
+      stateRoot,
+      workspaceId: "worktree-b",
+      pharoLauncherMcpClient: new FakePharoLauncherMcpClient([
+        {
+          pid: 2222,
+          imageName: "MyProject-dev",
+          commandLine: "PharoConsole.exe MyProject-dev.image",
+        },
+      ]),
+      healthClient: new FakeHealthClient(true),
+      now: fixedNow,
+      sleep: async () => {},
+      poll: { intervalMs: 0 },
+    });
+
+    expect(result.state.images[0].assignedPort).toBe(7201);
+    await expect(listPortClaims({ claimsRoot })).resolves.toMatchObject([
+      { projectId: "project-123", workspaceId: "worktree-b", assignedPort: 7201 },
+    ]);
+  });
+
+  it("treats occupied host listener ports as unavailable before launch", async () => {
+    const claimsRoot = makeTempDir("plexus-port-claims-");
+    const projectRoot = makeTempDir("plexus-project-");
+    const stateRoot = makeTempDir("plexus-state-");
+    const server = await listenOnLoopback();
+    const address = server.address();
+    if (!address || typeof address === "string") {
+      throw new Error("Expected TCP listener address");
+    }
+    writeProjectConfig(projectRoot, {
+      runtime: hostLocalRuntime(claimsRoot, address.port, address.port),
+      images: [dynamicImage()],
+    });
+    const pharoLauncherMcpClient = new FakePharoLauncherMcpClient([
+      {
+        pid: 3333,
+        imageName: "MyProject-dev",
+        commandLine: "PharoConsole.exe MyProject-dev.image",
+      },
+    ]);
+
+    try {
+      await expect(
+        openProject({
+          projectRoot,
+          stateRoot,
+          workspaceId: "worktree-a",
+          pharoLauncherMcpClient,
+          healthClient: new FakeHealthClient(true),
+          now: fixedNow,
+          sleep: async () => {},
+          poll: { intervalMs: 0 },
+        }),
+      ).rejects.toThrow(`No available port in range ${address.port}-${address.port}`);
+      expect(pharoLauncherMcpClient.calls).toEqual([]);
+    } finally {
+      await new Promise<void>((resolve, reject) =>
+        server.close((error) => (error ? reject(error) : resolve())),
+      );
+    }
+  });
+
+  it("fails fixed-port host-local conflicts before launching and names the owner", async () => {
+    const claimsRoot = makeTempDir("plexus-port-claims-");
+    const projectRoot = makeTempDir("plexus-project-");
+    const stateRoot = makeTempDir("plexus-state-");
+    writeProjectConfig(projectRoot, {
+      runtime: hostLocalRuntime(claimsRoot, 7200, 7209),
+    });
+    await claimPort({
+      claimsRoot,
+      projectId: "other-project",
+      projectName: "Other Project",
+      workspaceId: "other-worktree",
+      targetId: "other-project--other-worktree",
+      purpose: "image-mcp",
+      imageId: "dev",
+      requestedPort: 7123,
+      now: fixedNow,
+    });
+    const pharoLauncherMcpClient = new FakePharoLauncherMcpClient([
+      {
+        pid: 4444,
+        imageName: "MyProject-dev",
+        commandLine: "PharoConsole.exe MyProject-dev.image",
+      },
+    ]);
+
+    let rejection: unknown;
+    try {
+      await openProject({
+        projectRoot,
+        stateRoot,
+        workspaceId: "worktree-a",
+        pharoLauncherMcpClient,
+        healthClient: new FakeHealthClient(true),
+        now: fixedNow,
+      });
+    } catch (error) {
+      rejection = error;
+    }
+
+    expect(rejection).toBeInstanceOf(Error);
+    expect((rejection as Error).message).toContain(
+      "Project project-123 image dev cannot use image MCP port 7123",
+    );
+    expect((rejection as Error).message).toContain(
+      "other-project--other-worktree",
+    );
+    expect(pharoLauncherMcpClient.calls).toEqual([]);
+  });
+
+  it("keeps a fixed port claimed by the same compatible target", async () => {
+    const claimsRoot = makeTempDir("plexus-port-claims-");
+    const projectRoot = makeTempDir("plexus-project-");
+    const stateRoot = makeTempDir("plexus-state-");
+    writeProjectConfig(projectRoot, {
+      runtime: hostLocalRuntime(claimsRoot, 7200, 7209),
+    });
+    await claimPort({
+      claimsRoot,
+      projectId: "project-123",
+      projectName: "my-project",
+      workspaceId: "worktree-a",
+      targetId: "project-123--worktree-a",
+      purpose: "image-mcp",
+      imageId: "dev",
+      requestedPort: 7123,
+      now: fixedNow,
+    });
+
+    const result = await openProject({
+      projectRoot,
+      stateRoot,
+      workspaceId: "worktree-a",
+      pharoLauncherMcpClient: new FakePharoLauncherMcpClient([
+        {
+          pid: 5555,
+          imageName: "MyProject-dev",
+          commandLine: "PharoConsole.exe MyProject-dev.image",
+        },
+      ]),
+      healthClient: new FakeHealthClient(true),
+      now: fixedNow,
+      sleep: async () => {},
+      poll: { intervalMs: 0 },
+    });
+
+    expect(result.state.images[0]).toMatchObject({
+      id: "dev",
+      assignedPort: 7123,
+      status: "running",
+    });
+  });
+
+  it("releases host-local claims created for images that fail to open", async () => {
+    const claimsRoot = makeTempDir("plexus-port-claims-");
+    const projectRoot = makeTempDir("plexus-project-");
+    const stateRoot = makeTempDir("plexus-state-");
+    writeProjectConfig(projectRoot, {
+      runtime: hostLocalRuntime(claimsRoot, 7200, 7209),
+      images: [dynamicImage()],
+    });
+
+    await expect(
+      openProject({
+        projectRoot,
+        stateRoot,
+        workspaceId: "worktree-a",
+        pharoLauncherMcpClient: new FakePharoLauncherMcpClient(
+          [],
+          new Error("launch failed"),
+        ),
+        healthClient: new FakeHealthClient(true),
+        now: fixedNow,
+        sleep: async () => {},
+      }),
+    ).rejects.toThrow(ProjectOpenError);
+
+    await expect(inspectPortClaim({ claimsRoot, port: 7200 })).resolves.toEqual({
+      status: "available",
+      port: 7200,
     });
   });
 

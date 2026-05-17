@@ -277,11 +277,22 @@ export function saveProjectState(filePath: string, state: ProjectState): void {
   fs.writeFileSync(filePath, `${JSON.stringify(state, null, 2)}\n`, "utf8");
 }
 
-export function collectReservedProjectPorts(
+export interface ReservedProjectPortOwner {
+  port: number;
+  projectId: string;
+  projectName: string;
+  workspaceId: string;
+  targetId: string;
+  imageId: string;
+  imageName: string;
+  status: ProjectImageStatus;
+}
+
+export function collectReservedProjectPortOwners(
   options: Omit<ProjectStatePathOptions, "workspaceId"> & {
     excludeWorkspaceId?: string;
   },
-): number[] {
+): ReservedProjectPortOwner[] {
   const workspacesDir = projectWorkspacesStateDirectoryPath(options);
   if (!fs.existsSync(workspacesDir)) {
     return [];
@@ -290,7 +301,7 @@ export function collectReservedProjectPorts(
   const excludedWorkspaceId = options.excludeWorkspaceId
     ? sanitizeRuntimeId(options.excludeWorkspaceId)
     : undefined;
-  const ports = new Set<number>();
+  const owners: ReservedProjectPortOwner[] = [];
 
   for (const entry of fs.readdirSync(workspacesDir, { withFileTypes: true })) {
     if (!entry.isDirectory() || entry.name === excludedWorkspaceId) {
@@ -300,14 +311,39 @@ export function collectReservedProjectPorts(
     const state = loadProjectState(
       joinPathLike(workspacesDir, entry.name, projectStateFileName),
     );
-    for (const image of state?.images ?? []) {
+    if (!state) {
+      continue;
+    }
+
+    for (const image of state.images) {
       if (image.status !== "stopped") {
-        ports.add(image.assignedPort);
+        owners.push({
+          port: image.assignedPort,
+          projectId: state.projectId,
+          projectName: state.projectName,
+          workspaceId: state.workspaceId,
+          targetId: state.targetId,
+          imageId: image.id,
+          imageName: image.imageName,
+          status: image.status,
+        });
       }
     }
   }
 
-  return [...ports];
+  return owners;
+}
+
+export function collectReservedProjectPorts(
+  options: Omit<ProjectStatePathOptions, "workspaceId"> & {
+    excludeWorkspaceId?: string;
+  },
+): number[] {
+  return [
+    ...new Set(
+      collectReservedProjectPortOwners(options).map((owner) => owner.port),
+    ),
+  ];
 }
 
 export interface ProjectImageNameTemplateContext {
