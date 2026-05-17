@@ -338,6 +338,7 @@ describe("gateway server", () => {
       transport: "stdio",
       host: "127.0.0.1",
       port: 7331,
+      mcpPath: "/mcp",
       routeControlMcpPath: "/control-mcp",
     });
   });
@@ -345,7 +346,15 @@ describe("gateway server", () => {
   it("parses explicit service mode from CLI and environment", () => {
     expect(
       parseGatewayServerCliOptions(
-        ["serve", "--host", "0.0.0.0", "--control-mcp-path", "/private-mcp"],
+        [
+          "serve",
+          "--host",
+          "0.0.0.0",
+          "--mcp-path",
+          "/agent-mcp",
+          "--control-mcp-path",
+          "/private-mcp",
+        ],
         {
           PLEXUS_MCP_PORT: "8123",
         },
@@ -354,6 +363,7 @@ describe("gateway server", () => {
       transport: "http",
       host: "0.0.0.0",
       port: 8123,
+      mcpPath: "/agent-mcp",
       routeControlMcpPath: "/private-mcp",
     });
   });

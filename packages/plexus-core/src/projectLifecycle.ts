@@ -9,12 +9,20 @@ import {
 } from "./imageRescue.js";
 import { loadProjectConfig } from "./projectConfig.js";
 import { closeProject, type ProjectCloseResult } from "./projectClose.js";
+import {
+  closeProjectGateway,
+  ensureProjectGateway,
+  projectGatewayStatus,
+  type ProjectGatewayRuntimeOptions,
+} from "./projectGateway.js";
 import { openProject, type ProjectOpenResult } from "./projectOpen.js";
 import {
   defaultWorkspaceId,
   loadProjectState,
   projectStatePathForConfig,
   sanitizeRuntimeId,
+  saveProjectState,
+  type ProjectGatewayState,
   type ProjectState,
 } from "./projectState.js";
 
@@ -69,6 +77,9 @@ export interface ProjectLifecycleOptions {
   projectOpen?: typeof openProject;
   projectClose?: typeof closeProject;
   imageRescue?: typeof rescueImage;
+  gateway?: ProjectGatewayRuntimeOptions & {
+    routeRegistryTimeoutMs?: number;
+  };
 }
 
 export interface ProjectOpenToolInput {
@@ -113,6 +124,7 @@ export interface ProjectLifecycleStatus {
   projectRoot?: string;
   statePath?: string;
   state?: ProjectState;
+  gateway?: ProjectGatewayState;
   route?: unknown;
 }
 
@@ -414,11 +426,13 @@ function lifecycleStatusFromRoute(route: unknown): ProjectLifecycleStatus {
 
   const statePath =
     typeof route.statePath === "string" ? route.statePath : undefined;
+  const state = statePath ? loadProjectState(statePath) : undefined;
   return {
     projectRoot:
       typeof route.projectRoot === "string" ? route.projectRoot : undefined,
     statePath,
-    state: statePath ? loadProjectState(statePath) : undefined,
+    state,
+    ...(state?.gateway ? { gateway: state.gateway } : {}),
     route,
   };
 }
@@ -505,6 +519,7 @@ export class PlexusProjectLifecycle {
   private readonly projectOpen: typeof openProject;
   private readonly projectClose: typeof closeProject;
   private readonly imageRescue: typeof rescueImage;
+  private readonly gateway: NonNullable<ProjectLifecycleOptions["gateway"]>;
 
   constructor(options: ProjectLifecycleOptions = {}) {
     this.routeRegistry = options.routeRegistry;
@@ -512,6 +527,7 @@ export class PlexusProjectLifecycle {
     this.projectOpen = options.projectOpen ?? openProject;
     this.projectClose = options.projectClose ?? closeProject;
     this.imageRescue = options.imageRescue ?? rescueImage;
+    this.gateway = options.gateway ?? {};
   }
 
   async open(
@@ -524,12 +540,41 @@ export class PlexusProjectLifecycle {
         workspaceId: input.workspaceId,
         targetId: input.targetId,
       });
+      let routeRegistry = this.routeRegistry;
+      let startedProjectGateway = false;
 
-      await this.registerRoute({
-        projectRoot: openResult.projectRoot,
-        statePath: openResult.statePath,
-        state: openResult.state,
-      });
+      if (!routeRegistry) {
+        const config = loadProjectConfig(openResult.projectRoot);
+        const gatewayResult = await ensureProjectGateway({
+          ...this.gateway,
+          projectRoot: openResult.projectRoot,
+          config,
+          state: openResult.state,
+        });
+        startedProjectGateway = gatewayResult.started;
+        saveProjectState(openResult.statePath, openResult.state);
+        routeRegistry = this.routeRegistryFromControlUrl(
+          gatewayResult.routeControlUrl,
+        );
+      }
+
+      try {
+        await this.registerRoute({
+          projectRoot: openResult.projectRoot,
+          statePath: openResult.statePath,
+          state: openResult.state,
+        }, routeRegistry);
+      } catch (error) {
+        if (startedProjectGateway) {
+          await closeProjectGateway({
+            ...this.gateway,
+            state: openResult.state,
+          });
+          saveProjectState(openResult.statePath, openResult.state);
+        }
+
+        throw error;
+      }
 
       return result(openResult);
     } catch (error) {
@@ -546,19 +591,51 @@ export class PlexusProjectLifecycle {
         stateRoot: input.stateRoot,
         workspaceId: input.workspaceId,
       });
+      const projectRoot = path.resolve(input.projectPath);
+      const config =
+        !this.routeRegistry || !closeResult.state
+          ? loadProjectConfig(projectRoot)
+          : undefined;
+      const routeRegistry =
+        this.routeRegistry ??
+        (config ? this.routeRegistryForProject(config, closeResult.state) : undefined);
+      let unregisterError: unknown;
 
-      if (closeResult.state) {
-        await this.unregisterRoute({ targetId: closeResult.state.targetId });
-      } else {
-        const projectRoot = path.resolve(input.projectPath);
-        const config = loadProjectConfig(projectRoot);
-        const workspaceId = input.workspaceId
-          ? sanitizeRuntimeId(input.workspaceId)
-          : defaultWorkspaceId(projectRoot);
-        await this.unregisterRoute({
-          projectId: config.kanban.projectId,
-          workspaceId,
-        });
+      try {
+        if (closeResult.state) {
+          await this.unregisterRoute(
+            { targetId: closeResult.state.targetId },
+            routeRegistry,
+          );
+        } else {
+          const workspaceId = input.workspaceId
+            ? sanitizeRuntimeId(input.workspaceId)
+            : defaultWorkspaceId(projectRoot);
+          await this.unregisterRoute(
+            {
+              projectId: config?.kanban.projectId,
+              workspaceId,
+            },
+            routeRegistry,
+          );
+        }
+      } catch (error) {
+        unregisterError = error;
+      } finally {
+        if (closeResult.state?.gateway?.managedByProject) {
+          await closeProjectGateway({
+            ...this.gateway,
+            state: closeResult.state,
+          });
+          closeResult.state.updatedAt = (
+            this.gateway.now ?? (() => new Date())
+          )().toISOString();
+          saveProjectState(closeResult.statePath, closeResult.state);
+        }
+      }
+
+      if (unregisterError) {
+        throw unregisterError;
       }
 
       return result(closeResult);
@@ -631,11 +708,15 @@ export class PlexusProjectLifecycle {
 
       const rescueResult = await this.imageRescue(options);
       if (rescueResult.state) {
-        await this.registerRoute({
-          projectRoot: rescueResult.projectRoot,
-          statePath: rescueResult.statePath,
-          state: rescueResult.state,
-        });
+        const config = loadProjectConfig(rescueResult.projectRoot);
+        await this.registerRoute(
+          {
+            projectRoot: rescueResult.projectRoot,
+            statePath: rescueResult.statePath,
+            state: rescueResult.state,
+          },
+          this.routeRegistryForProject(config, rescueResult.state),
+        );
       }
 
       return result(rescueResult);
@@ -737,49 +818,80 @@ export class PlexusProjectLifecycle {
       stateRoot: input.stateRoot,
     });
     const state = loadProjectState(statePath);
+    const gateway = projectGatewayStatus(config, state);
+    const routeRegistry = this.routeRegistryForProject(config, state);
     const route = state
-      ? await this.getRouteStatus({
-          targetId: state.targetId,
-          refreshHealth: input.refreshHealth,
-        })
+      ? await this.getRouteStatus(
+          {
+            targetId: state.targetId,
+            refreshHealth: input.refreshHealth,
+          },
+          routeRegistry,
+        )
       : undefined;
 
     return {
       projectRoot,
       statePath,
       state,
+      gateway,
       ...(route ? { route } : {}),
     };
   }
 
   private async getRouteStatus(
     input: ProjectLifecycleRouteReference & { refreshHealth?: boolean },
+    routeRegistry = this.routeRegistry,
   ): Promise<unknown> {
-    if (!this.routeRegistry?.getRouteStatus) {
+    if (!routeRegistry?.getRouteStatus) {
       return undefined;
     }
 
-    return unwrapToolLikeResult(await this.routeRegistry.getRouteStatus(input));
+    return unwrapToolLikeResult(await routeRegistry.getRouteStatus(input));
   }
 
   private async registerRoute(
     input: ProjectLifecycleRouteRegistration,
+    routeRegistry = this.routeRegistry,
   ): Promise<void> {
-    if (!this.routeRegistry) {
+    if (!routeRegistry) {
       return;
     }
 
-    unwrapToolLikeResult(await this.routeRegistry.registerProjectRoute(input));
+    unwrapToolLikeResult(await routeRegistry.registerProjectRoute(input));
   }
 
   private async unregisterRoute(
     input: ProjectLifecycleRouteReference,
+    routeRegistry = this.routeRegistry,
   ): Promise<void> {
-    if (!this.routeRegistry) {
+    if (!routeRegistry) {
       return;
     }
 
-    unwrapToolLikeResult(await this.routeRegistry.unregisterProjectRoute(input));
+    unwrapToolLikeResult(await routeRegistry.unregisterProjectRoute(input));
+  }
+
+  private routeRegistryFromControlUrl(url: string): ProjectLifecycleRouteRegistry {
+    return new HttpGatewayRouteRegistry({
+      url,
+      timeoutMs: this.gateway.routeRegistryTimeoutMs,
+      fetch: this.gateway.fetch,
+    });
+  }
+
+  private routeRegistryForProject(
+    config: ReturnType<typeof loadProjectConfig>,
+    state?: ProjectState,
+  ): ProjectLifecycleRouteRegistry | undefined {
+    if (this.routeRegistry) {
+      return this.routeRegistry;
+    }
+
+    const gateway = state?.gateway ?? projectGatewayStatus(config, state);
+    return gateway.controlEndpoint
+      ? this.routeRegistryFromControlUrl(gateway.controlEndpoint)
+      : undefined;
   }
 }
 
@@ -806,7 +918,7 @@ export function createProjectLifecycleFromEnvironment(
         })
       : undefined;
 
-  return new PlexusProjectLifecycle({ routeRegistry });
+  return new PlexusProjectLifecycle({ routeRegistry, gateway: { env } });
 }
 
 function routeControlUrlFromLegacyGatewayUrl(

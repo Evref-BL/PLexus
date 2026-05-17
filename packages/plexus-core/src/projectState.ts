@@ -1,5 +1,10 @@
 import fs from "node:fs";
-import type { ProjectConfig } from "./projectConfig.js";
+import {
+  resolveProjectRuntimePolicy,
+  type ProjectConfig,
+  type ProjectGatewayMode,
+  type ProjectRuntimePortRange,
+} from "./projectConfig.js";
 import {
   basenamePathLike,
   dirnamePathLike,
@@ -17,6 +22,7 @@ export const defaultProjectPortRange = {
 } as const;
 
 export type ProjectImageStatus = "starting" | "running" | "stopped" | "failed";
+export type ProjectRuntimeStatus = "idle" | "starting" | "running" | "failed";
 export type PharoMcpContractStatus = "unknown" | "matching" | "mismatched";
 
 export interface PharoMcpContractReference {
@@ -77,11 +83,34 @@ export interface ProjectImageState {
   };
 }
 
+export interface ProjectGatewayClaimState {
+  claimsRoot: string;
+  claimId: string;
+  assignedPort: number;
+}
+
+export interface ProjectGatewayState {
+  mode: ProjectGatewayMode;
+  endpoint?: string;
+  controlEndpoint?: string;
+  host?: string;
+  port?: number;
+  portRange?: ProjectRuntimePortRange;
+  routePath?: string;
+  controlPath?: string;
+  owningProjectId?: string;
+  managedByProject: boolean;
+  pid?: number;
+  claim?: ProjectGatewayClaimState;
+}
+
 export interface ProjectState {
   projectId: string;
   projectName: string;
   workspaceId: string;
   targetId: string;
+  runtimeStatus?: ProjectRuntimeStatus;
+  gateway?: ProjectGatewayState;
   pharoMcpContract?: PharoMcpContractReference;
   images: ProjectImageState[];
   updatedAt: string;
@@ -104,7 +133,7 @@ export interface CreateProjectStateOptions {
 interface NormalizedCreateProjectStateOptions {
   updatedAt: string;
   previousState?: ProjectState;
-  portRange: ProjectPortRange;
+  portRange?: ProjectPortRange;
   reservedPorts: Set<number>;
   workspaceId: string;
   targetId?: string;
@@ -184,6 +213,20 @@ export function projectStatePath(options: ProjectStatePathOptions): string {
   return joinPathLike(projectStateDirectoryPath(options), projectStateFileName);
 }
 
+export function projectStateRootForConfig(
+  config: ProjectConfig,
+  stateRoot?: string,
+): string | undefined {
+  if (stateRoot) {
+    return stateRoot;
+  }
+
+  const runtime = resolveProjectRuntimePolicy(config);
+  return runtime.stateRoot.mode === "external"
+    ? runtime.stateRoot.path
+    : undefined;
+}
+
 export function projectStatePathForConfig(
   options: ProjectStatePathForConfigOptions,
 ): string {
@@ -191,7 +234,7 @@ export function projectStatePathForConfig(
     projectRoot: options.projectRoot,
     projectId: options.config.kanban.projectId,
     workspaceId: options.workspaceId,
-    stateRoot: options.stateRoot,
+    stateRoot: projectStateRootForConfig(options.config, options.stateRoot),
   });
 }
 
@@ -240,7 +283,7 @@ function normalizeCreateProjectStateOptions(
     return {
       updatedAt: optionsOrUpdatedAt,
       previousState: undefined,
-      portRange: defaultProjectPortRange,
+      portRange: undefined,
       reservedPorts: new Set(),
       workspaceId,
       targetId: undefined,
@@ -256,7 +299,7 @@ function normalizeCreateProjectStateOptions(
   return {
     updatedAt: optionsOrUpdatedAt?.updatedAt ?? new Date().toISOString(),
     previousState: optionsOrUpdatedAt?.previousState,
-    portRange: optionsOrUpdatedAt?.portRange ?? defaultProjectPortRange,
+    portRange: optionsOrUpdatedAt?.portRange,
     reservedPorts: new Set(optionsOrUpdatedAt?.reservedPorts ?? []),
     workspaceId,
     targetId:
@@ -364,12 +407,33 @@ export function renderProjectImageName(
   );
 }
 
+export function runtimeStatusForImages(
+  images: readonly ProjectImageState[],
+): ProjectRuntimeStatus {
+  if (images.length === 0) {
+    return "idle";
+  }
+  if (images.some((image) => image.status === "failed")) {
+    return "failed";
+  }
+  if (images.some((image) => image.status === "starting")) {
+    return "starting";
+  }
+  if (images.some((image) => image.status === "running")) {
+    return "running";
+  }
+
+  return "idle";
+}
+
 export function createProjectState(
   config: ProjectConfig,
   optionsOrUpdatedAt?: string | CreateProjectStateOptions,
 ): ProjectState {
   const options = normalizeCreateProjectStateOptions(optionsOrUpdatedAt);
-  validatePortRange(options.portRange);
+  const runtime = resolveProjectRuntimePolicy(config);
+  const portRange = options.portRange ?? runtime.imagePorts.range;
+  validatePortRange(portRange);
 
   const targetId =
     options.targetId ??
@@ -398,7 +462,7 @@ export function createProjectState(
       ) {
         assignedPort = previousPort;
       } else {
-        assignedPort = nextAvailablePort(options.portRange, unavailablePorts);
+        assignedPort = nextAvailablePort(portRange, unavailablePorts);
       }
     }
 
@@ -434,6 +498,10 @@ export function createProjectState(
     projectName: config.name,
     workspaceId: options.workspaceId,
     targetId,
+    runtimeStatus: runtimeStatusForImages(images),
+    ...(options.previousState?.gateway
+      ? { gateway: options.previousState.gateway }
+      : {}),
     updatedAt: options.updatedAt,
     images,
   };

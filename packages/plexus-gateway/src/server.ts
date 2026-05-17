@@ -210,6 +210,7 @@ export interface GatewayCliOptions {
   transport: "stdio" | "http";
   host: string;
   port: number;
+  mcpPath: string;
   routeControlMcpPath: string;
 }
 
@@ -593,6 +594,7 @@ export function parseGatewayServerCliOptions(
   let transport: GatewayCliOptions["transport"] = "stdio";
   let host = env.PLEXUS_HOST ?? "127.0.0.1";
   let portValue = env.PLEXUS_MCP_PORT ?? env.PORT ?? "7331";
+  let mcpPath = env.PLEXUS_GATEWAY_AGENT_MCP_PATH ?? "/mcp";
   let routeControlMcpPath =
     env.PLEXUS_GATEWAY_CONTROL_MCP_PATH ?? "/control-mcp";
 
@@ -631,6 +633,17 @@ export function parseGatewayServerCliOptions(
       continue;
     }
 
+    if (arg === "--mcp-path") {
+      const next = args[index + 1];
+      if (!next) {
+        throw new Error("--mcp-path requires a value");
+      }
+
+      mcpPath = next;
+      index += 1;
+      continue;
+    }
+
     if (arg === "--control-mcp-path") {
       const next = args[index + 1];
       if (!next) {
@@ -649,6 +662,7 @@ export function parseGatewayServerCliOptions(
     transport,
     host,
     port: parsePort(portValue, "PLexus gateway port"),
+    mcpPath: parseHttpPath(mcpPath, "PLexus gateway MCP path"),
     routeControlMcpPath: parseHttpPath(
       routeControlMcpPath,
       "PLexus gateway route-control MCP path",
@@ -667,6 +681,7 @@ export async function startGatewayServerFromCli(
   await startGatewayHttpServer({
     host: options.host,
     port: options.port,
+    mcpPath: options.mcpPath,
     routeControlMcpPath: options.routeControlMcpPath,
   });
 }

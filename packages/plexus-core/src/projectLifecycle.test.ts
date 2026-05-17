@@ -11,8 +11,18 @@ import {
   type ProjectLifecycleRouteRegistry,
 } from "./projectLifecycle.js";
 import type { ProjectCloseOptions, ProjectCloseResult } from "./projectClose.js";
+import type {
+  ProjectGatewayProcessManager,
+  ProjectGatewayProcessStartOptions,
+  ProjectGatewayProcessStopOptions,
+} from "./projectGateway.js";
+import { inspectPortClaim } from "./portClaims.js";
 import type { ProjectOpenOptions, ProjectOpenResult } from "./projectOpen.js";
-import { saveProjectState, type ProjectState } from "./projectState.js";
+import {
+  loadProjectState,
+  saveProjectState,
+  type ProjectState,
+} from "./projectState.js";
 
 const tempDirs: string[] = [];
 
@@ -67,13 +77,38 @@ class FakeRouteRegistry implements ProjectLifecycleRouteRegistry {
   }
 }
 
+class FakeGatewayProcessManager implements ProjectGatewayProcessManager {
+  readonly starts: ProjectGatewayProcessStartOptions[] = [];
+  readonly stops: ProjectGatewayProcessStopOptions[] = [];
+
+  constructor(
+    private readonly pid = 9010,
+    private readonly events: string[] = [],
+  ) {}
+
+  start(
+    options: ProjectGatewayProcessStartOptions,
+  ): { pid: number } {
+    this.events.push(`start:${options.port}`);
+    this.starts.push(options);
+    return { pid: this.pid };
+  }
+
+  stop(options: ProjectGatewayProcessStopOptions): void {
+    this.stops.push(options);
+  }
+}
+
 function makeTempDir(prefix: string): string {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
   tempDirs.push(tempDir);
   return tempDir;
 }
 
-function writeProjectConfig(projectRoot: string): void {
+function writeProjectConfig(
+  projectRoot: string,
+  overrides: Record<string, unknown> = {},
+): void {
   fs.writeFileSync(
     path.join(projectRoot, "plexus.project.json"),
     JSON.stringify(
@@ -94,6 +129,7 @@ function writeProjectConfig(projectRoot: string): void {
             },
           },
         ],
+        ...overrides,
       },
       null,
       2,
@@ -246,6 +282,265 @@ describe("project lifecycle tools", () => {
         },
       },
     });
+  });
+
+  it("starts a project-local gateway after claiming and validating its port", async () => {
+    const projectRoot = makeTempDir("plexus-project-");
+    const stateRoot = makeTempDir("plexus-state-");
+    const claimsRoot = makeTempDir("plexus-claims-");
+    const requests: CapturedGatewayRequest[] = [];
+    const events: string[] = [];
+    const processManager = new FakeGatewayProcessManager(9020, events);
+    writeProjectConfig(projectRoot, {
+      images: [],
+      runtime: {
+        gateway: {
+          mode: "project-local",
+          host: "127.0.0.1",
+          port: 8134,
+          agentMcpPath: "/gateway-mcp",
+          routeControlMcpPath: "/gateway-control",
+        },
+      },
+    });
+    const lifecycle = new PlexusProjectLifecycle({
+      gateway: {
+        claimsRoot,
+        processManager,
+        fetch: makeGatewayFetch(requests),
+        skipHealthCheck: true,
+        checks: {
+          isPortListening: async (port) => {
+            events.push(`check:${port}`);
+            return false;
+          },
+        },
+      },
+    });
+
+    const openResult = await lifecycle.handleTool("plexus_project_open", {
+      projectPath: projectRoot,
+      stateRoot,
+      workspaceId: "worktree-a",
+    });
+    const statusResult = await lifecycle.handleTool("plexus_project_status", {
+      projectPath: projectRoot,
+      stateRoot,
+      workspaceId: "worktree-a",
+    });
+
+    expect(openResult).toMatchObject({
+      ok: true,
+      data: {
+        state: {
+          gateway: {
+            mode: "project-local",
+            endpoint: "http://127.0.0.1:8134/gateway-mcp",
+            controlEndpoint: "http://127.0.0.1:8134/gateway-control",
+            owningProjectId: "project-123",
+            managedByProject: true,
+            pid: 9020,
+          },
+        },
+      },
+    });
+    expect(statusResult).toMatchObject({
+      ok: true,
+      data: {
+        gateway: {
+          mode: "project-local",
+          endpoint: "http://127.0.0.1:8134/gateway-mcp",
+          controlEndpoint: "http://127.0.0.1:8134/gateway-control",
+          owningProjectId: "project-123",
+          managedByProject: true,
+        },
+      },
+    });
+    expect(events).toEqual(["check:8134", "start:8134"]);
+    expect(processManager.starts).toHaveLength(1);
+    expect(processManager.starts[0]).toMatchObject({
+      host: "127.0.0.1",
+      port: 8134,
+      routePath: "/gateway-mcp",
+      controlPath: "/gateway-control",
+    });
+    expect(requests.map((request) => request.url)).toEqual([
+      "http://127.0.0.1:8134/gateway-control",
+      "http://127.0.0.1:8134/gateway-control",
+    ]);
+    await expect(inspectPortClaim({ claimsRoot, port: 8134 })).resolves.toMatchObject({
+      status: "claimed",
+      record: {
+        purpose: "gateway",
+        projectId: "project-123",
+        workspaceId: "worktree-a",
+        targetId: "project-123--worktree-a",
+        assignedPort: 8134,
+      },
+    });
+  });
+
+  it("registers routes with a configured shared gateway without starting a process", async () => {
+    const projectRoot = makeTempDir("plexus-project-");
+    const stateRoot = makeTempDir("plexus-state-");
+    const requests: CapturedGatewayRequest[] = [];
+    const processManager = new FakeGatewayProcessManager();
+    writeProjectConfig(projectRoot, {
+      images: [],
+      runtime: {
+        gateway: {
+          mode: "shared",
+          agentMcpUrl: "http://shared.gateway:8133/mcp",
+          routeControlMcpUrl: "http://shared.gateway:8133/control-mcp",
+        },
+      },
+    });
+    const lifecycle = new PlexusProjectLifecycle({
+      gateway: {
+        processManager,
+        fetch: makeGatewayFetch(requests),
+      },
+    });
+
+    const result = await lifecycle.handleTool("plexus_project_open", {
+      projectPath: projectRoot,
+      stateRoot,
+      workspaceId: "worktree-a",
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
+      data: {
+        state: {
+          gateway: {
+            mode: "shared",
+            endpoint: "http://shared.gateway:8133/mcp",
+            controlEndpoint: "http://shared.gateway:8133/control-mcp",
+            owningProjectId: "project-123",
+            managedByProject: false,
+          },
+        },
+      },
+    });
+    expect(processManager.starts).toEqual([]);
+    expect(requests.map((request) => request.url)).toEqual([
+      "http://shared.gateway:8133/control-mcp",
+    ]);
+  });
+
+  it("reports an occupied project-local gateway port before launching", async () => {
+    const projectRoot = makeTempDir("plexus-project-");
+    const stateRoot = makeTempDir("plexus-state-");
+    const claimsRoot = makeTempDir("plexus-claims-");
+    const processManager = new FakeGatewayProcessManager();
+    writeProjectConfig(projectRoot, {
+      images: [],
+      runtime: {
+        gateway: {
+          mode: "project-local",
+          host: "127.0.0.1",
+          port: 8135,
+          agentMcpPath: "/mcp",
+          routeControlMcpPath: "/control-mcp",
+        },
+      },
+    });
+    const lifecycle = new PlexusProjectLifecycle({
+      gateway: {
+        claimsRoot,
+        processManager,
+        checks: {
+          isPortListening: async () => true,
+        },
+      },
+    });
+
+    const result = await lifecycle.handleTool("plexus_project_open", {
+      projectPath: projectRoot,
+      stateRoot,
+      workspaceId: "worktree-a",
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: expect.stringContaining(
+        "Project-local gateway port 8135 is already claimed or unavailable",
+      ),
+    });
+    expect(processManager.starts).toEqual([]);
+  });
+
+  it("unregisters routes, stops the project-local gateway, and releases the port claim on close", async () => {
+    const projectRoot = makeTempDir("plexus-project-");
+    const stateRoot = makeTempDir("plexus-state-");
+    const claimsRoot = makeTempDir("plexus-claims-");
+    const requests: CapturedGatewayRequest[] = [];
+    const processManager = new FakeGatewayProcessManager(9030);
+    writeProjectConfig(projectRoot, {
+      images: [],
+      runtime: {
+        gateway: {
+          mode: "project-local",
+          host: "127.0.0.1",
+          port: 8136,
+          agentMcpPath: "/mcp",
+          routeControlMcpPath: "/control-mcp",
+        },
+      },
+    });
+    const lifecycle = new PlexusProjectLifecycle({
+      gateway: {
+        claimsRoot,
+        processManager,
+        fetch: makeGatewayFetch(requests),
+        now: () => new Date("2026-04-25T11:00:00.000Z"),
+        skipHealthCheck: true,
+        checks: {
+          isPortListening: async () => false,
+        },
+      },
+    });
+
+    await lifecycle.handleTool("plexus_project_open", {
+      projectPath: projectRoot,
+      stateRoot,
+      workspaceId: "worktree-a",
+    });
+    const closeResult = await lifecycle.handleTool("plexus_project_close", {
+      projectPath: projectRoot,
+      stateRoot,
+      workspaceId: "worktree-a",
+    });
+
+    expect(closeResult).toMatchObject({
+      ok: true,
+      data: {
+        state: {
+          updatedAt: "2026-04-25T11:00:00.000Z",
+        },
+      },
+    });
+    expect((closeResult.data as ProjectCloseResult).state).not.toHaveProperty(
+      "gateway",
+    );
+    expect(processManager.stops).toHaveLength(1);
+    expect(processManager.stops[0]).toMatchObject({
+      pid: 9030,
+      gateway: {
+        mode: "project-local",
+        port: 8136,
+        managedByProject: true,
+      },
+    });
+    expect(requests.map((request) => request.url)).toEqual([
+      "http://127.0.0.1:8136/control-mcp",
+      "http://127.0.0.1:8136/control-mcp",
+    ]);
+    await expect(inspectPortClaim({ claimsRoot, port: 8136 })).resolves.toEqual({
+      status: "available",
+      port: 8136,
+    });
+    expect(loadProjectState(statePath(stateRoot))?.gateway).toBeUndefined();
   });
 
   it("posts route registry calls to the route-control MCP path by default", async () => {

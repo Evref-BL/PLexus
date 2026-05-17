@@ -1,7 +1,7 @@
 #!/usr/bin/env node
-import { closeProject, ProjectCloseError } from "./projectClose.js";
+import { ProjectCloseError } from "./projectClose.js";
 import { PlexusProjectLifecycle } from "./projectLifecycle.js";
-import { openProject, ProjectOpenError } from "./projectOpen.js";
+import { ProjectOpenError } from "./projectOpen.js";
 import { startScopedPharoLauncherServer } from "./scopedPharoLauncherServer.js";
 import { startProjectLifecycleServer } from "./server.js";
 
@@ -117,18 +117,26 @@ async function main(argv: string[]): Promise<number> {
 
   try {
     if (parsed.command === "open") {
-      const result = await openProject({
-        projectRoot: parsed.projectPath,
+      const lifecycle = new PlexusProjectLifecycle();
+      const lifecycleResult = await lifecycle.open({
+        projectPath: parsed.projectPath,
         stateRoot,
         workspaceId,
         targetId: parsed.targetId ?? process.env.PLEXUS_TARGET_ID,
       });
+      if (!lifecycleResult.ok || !lifecycleResult.data) {
+        console.error(JSON.stringify(lifecycleResult, null, 2));
+        return 1;
+      }
+
+      const result = lifecycleResult.data;
 
       console.log(
         JSON.stringify(
           {
             ok: result.ok,
             statePath: result.statePath,
+            gateway: result.state.gateway,
             images: result.state.images,
           },
           null,
@@ -149,17 +157,25 @@ async function main(argv: string[]): Promise<number> {
       return status.ok ? 0 : 1;
     }
 
-    const result = await closeProject({
-      projectRoot: parsed.projectPath,
+    const lifecycle = new PlexusProjectLifecycle();
+    const lifecycleResult = await lifecycle.close({
+      projectPath: parsed.projectPath,
       stateRoot,
       workspaceId,
     });
+    if (!lifecycleResult.ok || !lifecycleResult.data) {
+      console.error(JSON.stringify(lifecycleResult, null, 2));
+      return 1;
+    }
+
+    const result = lifecycleResult.data;
 
     console.log(
       JSON.stringify(
         {
           ok: result.ok,
           statePath: result.statePath,
+          gateway: result.state?.gateway,
           images: result.state?.images ?? [],
           stoppedImages: result.stoppedImages,
         },

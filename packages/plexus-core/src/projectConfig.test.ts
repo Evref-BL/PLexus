@@ -48,6 +48,35 @@ function validProjectConfig() {
   };
 }
 
+function defaultRuntimePolicy() {
+  return {
+    scope: "project",
+    stateRoot: {
+      mode: "project-local",
+    },
+    gateway: {
+      mode: "project-local",
+      host: "127.0.0.1",
+      portRange: {
+        start: 8_133,
+        end: 8_199,
+      },
+      agentMcpPath: "/mcp",
+      routeControlMcpPath: "/control-mcp",
+    },
+    imagePorts: {
+      allocation: "configured-or-dynamic",
+      range: {
+        start: 7_100,
+        end: 7_199,
+      },
+      coordination: {
+        mode: "project-state",
+      },
+    },
+  };
+}
+
 afterEach(() => {
   for (const tempDir of tempDirs.splice(0)) {
     fs.rmSync(tempDir, { recursive: true, force: true });
@@ -55,8 +84,11 @@ afterEach(() => {
 });
 
 describe("project config", () => {
-  it("parses the prototype project config shape", () => {
-    expect(parseProjectConfig(validProjectConfig())).toEqual(validProjectConfig());
+  it("parses the prototype project config shape with runtime defaults", () => {
+    expect(parseProjectConfig(validProjectConfig())).toEqual({
+      ...validProjectConfig(),
+      runtime: defaultRuntimePolicy(),
+    });
   });
 
   it("loads plexus.project.json from the project root", () => {
@@ -71,14 +103,107 @@ describe("project config", () => {
     expect(projectConfigPath(projectRoot)).toBe(
       path.join(projectRoot, "plexus.project.json"),
     );
-    expect(loadProjectConfig(projectRoot)).toEqual(validProjectConfig());
+    expect(loadProjectConfig(projectRoot)).toEqual({
+      ...validProjectConfig(),
+      runtime: defaultRuntimePolicy(),
+    });
   });
 
   it("allows image MCP ports to be allocated later", () => {
     const config = validProjectConfig();
     delete config.images[1].mcp.port;
 
+    expect(parseProjectConfig(config)).toEqual({
+      ...config,
+      runtime: defaultRuntimePolicy(),
+    });
+  });
+
+  it("allows projects with no declared images", () => {
+    const config = {
+      ...validProjectConfig(),
+      images: [],
+    };
+
+    expect(parseProjectConfig(config)).toEqual({
+      ...config,
+      runtime: defaultRuntimePolicy(),
+    });
+  });
+
+  it("parses the explicit project runtime policy shape", () => {
+    const config: ReturnType<typeof validProjectConfig> & { runtime?: unknown } =
+      validProjectConfig();
+    config.runtime = {
+      scope: "project",
+      stateRoot: {
+        mode: "external",
+        path: "C:\\dev\\plexus-state",
+      },
+      gateway: {
+        mode: "shared",
+        agentMcpUrl: "http://gateway.local:8133/mcp",
+        routeControlMcpUrl: "http://gateway.local:8133/control-mcp",
+      },
+      imagePorts: {
+        allocation: "configured-or-dynamic",
+        range: {
+          start: 7_200,
+          end: 7_299,
+        },
+        coordination: {
+          mode: "host-local",
+          root: "C:\\dev\\plexus-port-claims",
+        },
+      },
+    };
+
     expect(parseProjectConfig(config)).toEqual(config);
+  });
+
+  it("records project-local gateway host, fixed port, route path, and control path", () => {
+    const config: ReturnType<typeof validProjectConfig> & { runtime?: unknown } =
+      validProjectConfig();
+    config.runtime = {
+      gateway: {
+        mode: "project-local",
+        host: "0.0.0.0",
+        port: 8_144,
+        agentMcpPath: "/agent-mcp",
+        routeControlMcpPath: "/route-control",
+      },
+    };
+
+    expect(parseProjectConfig(config).runtime?.gateway).toEqual({
+      mode: "project-local",
+      host: "0.0.0.0",
+      port: 8_144,
+      agentMcpPath: "/agent-mcp",
+      routeControlMcpPath: "/route-control",
+    });
+  });
+
+  it("rejects shared gateway runtime policy without endpoint details", () => {
+    const config: ReturnType<typeof validProjectConfig> & { runtime?: unknown } =
+      validProjectConfig();
+    config.runtime = {
+      gateway: {
+        mode: "shared",
+      },
+    };
+
+    expect(() => parseProjectConfig(config)).toThrow(ProjectConfigError);
+
+    try {
+      parseProjectConfig(config);
+    } catch (error) {
+      expect((error as ProjectConfigError).issues).toEqual(
+        expect.arrayContaining([
+          "runtime.gateway.agentMcpUrl must be a valid URL",
+          "runtime.gateway.routeControlMcpUrl must be a valid URL",
+        ]),
+      );
+    }
   });
 
   it("leaves image git configuration absent when not specified", () => {
