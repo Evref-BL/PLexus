@@ -49,7 +49,7 @@ describe("project startup scripts", () => {
         projectId: "project-123",
       }),
     ).toBe(
-      path.join(
+      path.win32.join(
         projectRoot,
         ".plexus",
         "projects",
@@ -66,7 +66,7 @@ describe("project startup scripts", () => {
         imageId: "dev",
       }),
     ).toBe(
-      path.join(
+      path.win32.join(
         projectRoot,
         ".plexus",
         "projects",

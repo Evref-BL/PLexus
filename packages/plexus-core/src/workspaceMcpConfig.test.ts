@@ -51,11 +51,11 @@ describe("workspace MCP config", () => {
         stateRoot: "C:\\dev\\code\\git\\.plexus-state",
       }),
     ).toEqual({
-      projectRoot: path.resolve("C:\\dev\\code\\git\\Project-worktree"),
+      projectRoot: path.win32.resolve("C:\\dev\\code\\git\\Project-worktree"),
       projectId: "project-123",
       workspaceId: "task-123",
       targetId: "project-123--task-123",
-      stateRoot: path.resolve("C:\\dev\\code\\git\\.plexus-state"),
+      stateRoot: path.win32.resolve("C:\\dev\\code\\git\\.plexus-state"),
     });
   });
 
@@ -119,12 +119,12 @@ describe("workspace MCP config", () => {
       args: ["mcp", "pharo-launcher"],
       env: {
         PLEXUS_AGENT_MCP_SURFACE: "pharo-launcher",
-        PLEXUS_PROJECT_ROOT: path.resolve("C:\\dev\\code\\git\\Project-worktree"),
+        PLEXUS_PROJECT_ROOT: path.win32.resolve("C:\\dev\\code\\git\\Project-worktree"),
         PLEXUS_PROJECT_ID: "project-123",
         PLEXUS_WORKSPACE_ID: "task-123",
         VIBE_KANBAN_WORKSPACE_ID: "task-123",
         PLEXUS_TARGET_ID: "target-123",
-        PLEXUS_STATE_ROOT: path.resolve("C:\\dev\\code\\git\\.plexus-state"),
+        PLEXUS_STATE_ROOT: path.win32.resolve("C:\\dev\\code\\git\\.plexus-state"),
       },
     });
   });
@@ -177,12 +177,12 @@ describe("workspace MCP config", () => {
       args: ["--stdio"],
       env: {
         PLEXUS_GATEWAY_SURFACE: "gateway",
-        PLEXUS_PROJECT_ROOT: path.resolve("C:\\dev\\code\\git\\Project-worktree"),
+        PLEXUS_PROJECT_ROOT: path.win32.resolve("C:\\dev\\code\\git\\Project-worktree"),
         PLEXUS_PROJECT_ID: "project-123",
         PLEXUS_WORKSPACE_ID: "task-123",
         VIBE_KANBAN_WORKSPACE_ID: "task-123",
         PLEXUS_TARGET_ID: "target-123",
-        PLEXUS_STATE_ROOT: path.resolve("C:\\dev\\code\\git\\.plexus-state"),
+        PLEXUS_STATE_ROOT: path.win32.resolve("C:\\dev\\code\\git\\.plexus-state"),
         PLEXUS_PHARO_MCP_CONTRACT_JSON: JSON.stringify({
           id: "project-contract",
           hash: "sha256:expected",

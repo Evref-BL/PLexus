@@ -50,7 +50,7 @@ describe("project state", () => {
     const projectRoot = path.join("C:", "dev", "code", "git", "my-project");
 
     expect(defaultPlexusStateRoot(projectRoot)).toBe(
-      path.join(projectRoot, ".plexus"),
+      path.win32.join(projectRoot, ".plexus"),
     );
     expect(
       projectStateDirectoryPath({
@@ -58,7 +58,7 @@ describe("project state", () => {
         projectId: "project-123",
       }),
     ).toBe(
-      path.join(
+      path.win32.join(
         projectRoot,
         ".plexus",
         "projects",
@@ -73,7 +73,7 @@ describe("project state", () => {
         projectId: "project-123",
       }),
     ).toBe(
-      path.join(
+      path.win32.join(
         projectRoot,
         ".plexus",
         "projects",
@@ -135,7 +135,7 @@ describe("project state", () => {
         stateRoot,
       }),
     ).toBe(
-      path.join(
+      path.win32.join(
         stateRoot,
         "projects",
         "project-123",
@@ -150,7 +150,7 @@ describe("project state", () => {
     const projectRoot = path.join("C:", "dev", "code", "git", "my-project");
 
     expect(projectStatePathForConfig({ projectRoot, config })).toBe(
-      path.join(
+      path.win32.join(
         projectRoot,
         ".plexus",
         "projects",
