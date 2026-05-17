@@ -221,6 +221,7 @@ describe("project open", () => {
       projectName: "my-project",
       workspaceId: "worktree-a",
       targetId: "project-123--worktree-a",
+      runtimeStatus: "running",
       updatedAt: "2026-04-25T10:00:00.000Z",
       images: [
         {
@@ -238,6 +239,36 @@ describe("project open", () => {
         },
       ],
     });
+  });
+
+  it("opens zero-image projects as an idle runtime setup", async () => {
+    const projectRoot = makeTempDir("plexus-project-");
+    const stateRoot = makeTempDir("plexus-state-");
+    writeProjectConfig(projectRoot, {
+      images: [],
+    });
+
+    const result = await openProject({
+      projectRoot,
+      stateRoot,
+      workspaceId: "worktree-a",
+      now: fixedNow,
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
+      failures: [],
+      state: {
+        projectId: "project-123",
+        projectName: "my-project",
+        workspaceId: "worktree-a",
+        targetId: "project-123--worktree-a",
+        runtimeStatus: "idle",
+        updatedAt: "2026-04-25T10:00:00.000Z",
+        images: [],
+      },
+    });
+    expect(loadProjectState(result.statePath)).toEqual(result.state);
   });
 
   it("records the launched image process instead of the launcher wrapper", async () => {
