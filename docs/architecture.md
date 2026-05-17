@@ -13,6 +13,8 @@ Codex in Vibe Kanban
       -> pharo-launcher-mcp
           -> PharoLauncher CLI
       -> PLexus Gateway (routing)
+          -> /control-mcp route-control
+          -> /mcp agent gateway
           -> Pharo image worker per worktree
 ```
 
@@ -45,6 +47,16 @@ Owns routing only:
 
 The gateway must not depend on PLexus or pharo-launcher-mcp, and it should not read project config or runtime state from disk. PLexus is responsible for orchestration/state and registers routes into the gateway.
 
+When served over HTTP, PLexus should run one gateway process with separate MCP
+paths over the same in-memory route table:
+
+- `/mcp` exposes the agent-facing `gateway` facade.
+- `/control-mcp` exposes trusted route-control operations used by PLexus core or
+  operators.
+
+This split keeps route registration/status/cleanup out of worker tool catalogs
+without creating two independent gateway route tables.
+
 ### pharo-launcher-mcp
 
 Owns the PharoLauncher boundary:
@@ -58,20 +70,25 @@ Owns the PharoLauncher boundary:
 ## Agent-Facing MCP Surfaces
 
 Kanban-spawned agents should not receive raw host-wide image access. PLexus
-exposes image access as two scoped MCP surfaces:
+exposes clean MCP surfaces with separate ownership:
 
+- `plexus_project`: PLexus project lifecycle tools such as
+  `plexus_project_open`, `plexus_project_close`, and `plexus_project_status`.
 - `pharo-launcher`: a PLexus-scoped facade over pharo-launcher-mcp for image lifecycle
   operations in the current project/workspace.
 - `gateway`: a stable project-wide Pharo MCP proxy that adds an explicit
   `imageId` routing argument to each typed image tool.
+- `route-control` or `gateway-control`: private/trusted route registration,
+  status, and cleanup for PLexus core or operators.
 
 The detailed contract for the scoped launcher facade is in
 `docs/kanban-agent-pharo-access.md`.
 
 Route registration, route status, stale-route cleanup, and raw
-`plexus_route_to_image` calls are internal/admin gateway plumbing. They are not
+`plexus_route_to_image` calls are route-control gateway plumbing. They are not
 normal agent-facing MCP surfaces; raw routing is hidden unless explicitly
-enabled for admin/debug migration work.
+enabled for route-control/debug migration work. `PLEXUS_GATEWAY_SURFACE=combined`
+is legacy/debug compatibility, not normal use.
 
 ### Pharo Image Worker
 

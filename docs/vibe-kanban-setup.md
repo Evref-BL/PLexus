@@ -95,6 +95,10 @@ PLexus-managed Kanban agents should see two Pharo-facing MCP surfaces:
 - `pharo-launcher` for workspace-scoped image lifecycle.
 - `gateway` for routed image-local code tools.
 
+PLexus/operator route-control is a separate trusted surface.
+It is for route registration, route status, and stale-route cleanup, and should
+not be added to normal Kanban worker MCP config.
+
 The agent workflow is:
 
 ```text
@@ -178,7 +182,13 @@ to those tools.
 During migration, older workspaces may still contain a managed `pharo` entry or
 `PLEXUS_GATEWAY_SURFACE=pharo`; both should be replaced by `gateway` in new
 generated config. Raw `plexus_route_to_image` is not part of this normal agent
-config and remains behind explicit raw-routing opt-in for admin/debug use.
+config and remains behind explicit raw-routing opt-in for route-control/debug
+use. `PLEXUS_GATEWAY_SURFACE=combined` is legacy/debug compatibility for older
+single-surface setups, not normal Kanban worker configuration.
+
+When the gateway is deployed as an HTTP service, use one gateway process with
+two MCP paths over the same route table: `/mcp` for the agent-facing `gateway`
+surface and `/control-mcp` for trusted route-control.
 
 ## Repository Scripts
 

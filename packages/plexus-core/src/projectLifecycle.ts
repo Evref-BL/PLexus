@@ -60,6 +60,8 @@ export interface HttpGatewayRouteRegistryOptions {
   fetch?: typeof fetch;
 }
 
+const defaultGatewayRouteControlMcpPath = "/control-mcp";
+
 export interface ProjectLifecycleOptions {
   routeRegistry?: ProjectLifecycleRouteRegistry;
   imageToolCaller?: ProjectLifecycleImageToolCaller;
@@ -428,7 +430,7 @@ export class HttpGatewayRouteRegistry implements ProjectLifecycleRouteRegistry {
   constructor(options: HttpGatewayRouteRegistryOptions = {}) {
     const host = options.host ?? "127.0.0.1";
     const port = options.port ?? 7331;
-    const mcpPath = options.path ?? "/mcp";
+    const mcpPath = options.path ?? defaultGatewayRouteControlMcpPath;
     this.url = options.url ?? `http://${host}:${port}${mcpPath}`;
     this.timeoutMs = options.timeoutMs ?? 10_000;
     this.fetchFn = options.fetch ?? fetch;
@@ -783,14 +785,22 @@ export class PlexusProjectLifecycle {
 export function createProjectLifecycleFromEnvironment(
   env: NodeJS.ProcessEnv = process.env,
 ): PlexusProjectLifecycle {
+  const routeControlUrl =
+    env.PLEXUS_GATEWAY_CONTROL_MCP_URL ?? env.PLEXUS_GATEWAY_MCP_URL;
+  const routeControlPath =
+    env.PLEXUS_GATEWAY_CONTROL_MCP_PATH ?? env.PLEXUS_GATEWAY_MCP_PATH;
   const routeRegistry =
-    env.PLEXUS_GATEWAY_MCP_URL || env.PLEXUS_GATEWAY_PORT
+    routeControlUrl ||
+    routeControlPath ||
+    env.PLEXUS_GATEWAY_HOST ||
+    env.PLEXUS_GATEWAY_PORT
       ? new HttpGatewayRouteRegistry({
-          url: env.PLEXUS_GATEWAY_MCP_URL,
+          url: routeControlUrl,
           host: env.PLEXUS_GATEWAY_HOST,
           port: env.PLEXUS_GATEWAY_PORT
             ? Number(env.PLEXUS_GATEWAY_PORT)
             : undefined,
+          path: routeControlPath,
         })
       : undefined;
 

@@ -96,6 +96,7 @@ const legacyGatewaySurface = "pharo";
 export type GatewaySurface =
   | "combined"
   | "admin"
+  | "route-control"
   | "gateway"
   | typeof legacyGatewaySurface;
 
@@ -119,11 +120,15 @@ function pharoToolsVisible(surface: GatewaySurface): boolean {
   return agentGatewaySurface(surface) || surface === "combined";
 }
 
-function adminToolsVisible(surface: GatewaySurface): boolean {
-  return surface === "admin" || surface === "combined";
+function routeControlToolsVisible(surface: GatewaySurface): boolean {
+  return (
+    surface === "route-control" ||
+    surface === "admin" ||
+    surface === "combined"
+  );
 }
 
-function visibleAdminTools(exposeRawRoutingTool: boolean): Tool[] {
+function visibleRouteControlTools(exposeRawRoutingTool: boolean): Tool[] {
   return [
     ...gatewayTools,
     ...(exposeRawRoutingTool ? [rawRoutingTool] : []),
@@ -140,10 +145,10 @@ function visibleTools(
   exposeRawRoutingTool: boolean,
 ): Tool[] {
   return [
-    ...(adminToolsVisible(surface)
-      ? visibleAdminTools(exposeRawRoutingTool)
+    ...(routeControlToolsVisible(surface)
+      ? visibleRouteControlTools(exposeRawRoutingTool)
       : []),
-    ...(!adminToolsVisible(surface) && exposeRawRoutingTool
+    ...(!routeControlToolsVisible(surface) && exposeRawRoutingTool
       ? visibleRawRoutingTools(exposeRawRoutingTool)
       : []),
     ...(pharoToolsVisible(surface) ? gateway.listPharoTools() : []),
@@ -175,12 +180,13 @@ export const legacyGatewayTools = [...gatewayTools, rawRoutingTool] as const;
  */
 function parseGatewaySurface(value: string | undefined): GatewaySurface {
   if (value === undefined || value.trim().length === 0) {
-    return "combined";
+    return "gateway";
   }
 
   if (
     value === "combined" ||
     value === "admin" ||
+    value === "route-control" ||
     value === "gateway" ||
     value === legacyGatewaySurface
   ) {
@@ -195,12 +201,16 @@ export interface GatewayHttpServerOptions {
   port: number;
   healthPath?: string;
   mcpPath?: string;
+  routeControlMcpPath?: string;
+  gateway?: PlexusGateway;
+  serverOptions?: GatewayServerOptions;
 }
 
 export interface GatewayCliOptions {
   transport: "stdio" | "http";
   host: string;
   port: number;
+  routeControlMcpPath: string;
 }
 
 type ToolResult = CallToolResult;
@@ -409,6 +419,19 @@ function parsePort(value: string | undefined, name: string): number {
   return port;
 }
 
+function parseHttpPath(value: string | undefined, name: string): string {
+  if (value === undefined || value.trim().length === 0) {
+    throw new Error(`${name} must be a non-empty HTTP path`);
+  }
+
+  const trimmed = value.trim();
+  if (!trimmed.startsWith("/")) {
+    throw new Error(`${name} must start with /`);
+  }
+
+  return trimmed;
+}
+
 function writeJsonResponse(
   response: http.ServerResponse,
   statusCode: number,
@@ -447,16 +470,43 @@ export async function startGatewayHttpServer(
   const host = options.host ?? "127.0.0.1";
   const healthPath = options.healthPath ?? "/health";
   const mcpPath = options.mcpPath ?? "/mcp";
-  const environment = createGatewayFromEnvironment();
+  const routeControlMcpPath = parseHttpPath(
+    options.routeControlMcpPath ?? "/control-mcp",
+    "routeControlMcpPath",
+  );
+  if (routeControlMcpPath === mcpPath) {
+    throw new Error("routeControlMcpPath must differ from mcpPath");
+  }
+  const environment = options.gateway
+    ? {
+        gateway: options.gateway,
+        serverOptions: options.serverOptions ?? {},
+      }
+    : createGatewayFromEnvironment();
+  const configuredSurface = environment.serverOptions.surface ?? "gateway";
+  const agentServerOptions: GatewayServerOptions = {
+    ...environment.serverOptions,
+    surface: agentGatewaySurface(configuredSurface)
+      ? configuredSurface
+      : "gateway",
+  };
+  const routeControlServerOptions: GatewayServerOptions = {
+    ...environment.serverOptions,
+    surface:
+      configuredSurface === "combined"
+        ? "combined"
+        : "route-control",
+  };
   const activeTransports = new Set<StreamableHTTPServerTransport>();
 
   async function handleMcpRequest(
     request: http.IncomingMessage,
     response: http.ServerResponse,
+    serverOptions: GatewayServerOptions,
   ): Promise<void> {
     const gatewayServer = createGatewayServerWithOptions(
       environment.gateway,
-      environment.serverOptions,
+      serverOptions,
     );
     const transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: undefined,
@@ -493,12 +543,18 @@ export async function startGatewayHttpServer(
           ok: true,
           service: "plexus-gateway",
           mcpPath,
+          routeControlMcpPath,
         });
         return;
       }
 
       if (url.pathname === mcpPath) {
-        await handleMcpRequest(request, response);
+        await handleMcpRequest(request, response, agentServerOptions);
+        return;
+      }
+
+      if (url.pathname === routeControlMcpPath) {
+        await handleMcpRequest(request, response, routeControlServerOptions);
         return;
       }
 
@@ -537,6 +593,8 @@ export function parseGatewayServerCliOptions(
   let transport: GatewayCliOptions["transport"] = "stdio";
   let host = env.PLEXUS_HOST ?? "127.0.0.1";
   let portValue = env.PLEXUS_MCP_PORT ?? env.PORT ?? "7331";
+  let routeControlMcpPath =
+    env.PLEXUS_GATEWAY_CONTROL_MCP_PATH ?? "/control-mcp";
 
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
@@ -573,6 +631,17 @@ export function parseGatewayServerCliOptions(
       continue;
     }
 
+    if (arg === "--control-mcp-path") {
+      const next = args[index + 1];
+      if (!next) {
+        throw new Error("--control-mcp-path requires a value");
+      }
+
+      routeControlMcpPath = next;
+      index += 1;
+      continue;
+    }
+
     throw new Error(`Unknown plexus-gateway argument: ${arg}`);
   }
 
@@ -580,6 +649,10 @@ export function parseGatewayServerCliOptions(
     transport,
     host,
     port: parsePort(portValue, "PLexus gateway port"),
+    routeControlMcpPath: parseHttpPath(
+      routeControlMcpPath,
+      "PLexus gateway route-control MCP path",
+    ),
   };
 }
 
@@ -594,5 +667,6 @@ export async function startGatewayServerFromCli(
   await startGatewayHttpServer({
     host: options.host,
     port: options.port,
+    routeControlMcpPath: options.routeControlMcpPath,
   });
 }

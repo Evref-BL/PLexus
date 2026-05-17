@@ -7,8 +7,8 @@ import {
   createGatewayServerWithOptions,
   createGatewayFromEnvironment,
   gatewayTools,
-  parseGatewayServerCliOptions,
   parseGatewayEnvironmentOptions,
+  parseGatewayServerCliOptions,
   startGatewayHttpServer,
 } from "./server.js";
 
@@ -108,6 +108,58 @@ async function postMcp(port: number, method: string): Promise<unknown> {
   return response.json();
 }
 
+async function postMcpPath(
+  port: number,
+  path: string,
+  method: string,
+  params?: Record<string, unknown>,
+): Promise<unknown> {
+  const response = await fetch(`http://127.0.0.1:${port}${path}`, {
+    method: "POST",
+    headers: {
+      accept: "application/json, text/event-stream",
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      id: 1,
+      method,
+      ...(params ? { params } : {}),
+      ...(method === "initialize"
+        ? {
+            params: {
+              protocolVersion: "2024-11-05",
+              capabilities: {},
+              clientInfo: {
+                name: "plexus-gateway-test",
+                version: "0.0.0",
+              },
+            },
+          }
+        : {}),
+    }),
+  });
+
+  expect(response.status).toBe(200);
+  return response.json();
+}
+
+const runningState = {
+  projectId: "project-123",
+  projectName: "Project 123",
+  workspaceId: "worktree-a",
+  targetId: "project-123--worktree-a",
+  updatedAt: "2026-05-17T00:00:00.000Z",
+  images: [
+    {
+      id: "dev",
+      imageName: "Project123-dev",
+      assignedPort: 7123,
+      status: "running",
+    },
+  ],
+};
+
 afterEach(async () => {
   for (const server of servers.splice(0)) {
     await closeServer(server);
@@ -185,7 +237,7 @@ describe("gateway server", () => {
 
   it("hides raw routing over MCP unless explicitly opted in", async () => {
     const server = createGatewayServerWithOptions(new DirectRouteGateway(), {
-      surface: "admin",
+      surface: "route-control",
     });
     const client = new Client(
       {
@@ -286,18 +338,23 @@ describe("gateway server", () => {
       transport: "stdio",
       host: "127.0.0.1",
       port: 7331,
+      routeControlMcpPath: "/control-mcp",
     });
   });
 
   it("parses explicit service mode from CLI and environment", () => {
     expect(
-      parseGatewayServerCliOptions(["serve", "--host", "0.0.0.0"], {
-        PLEXUS_MCP_PORT: "8123",
-      }),
+      parseGatewayServerCliOptions(
+        ["serve", "--host", "0.0.0.0", "--control-mcp-path", "/private-mcp"],
+        {
+          PLEXUS_MCP_PORT: "8123",
+        },
+      ),
     ).toEqual({
       transport: "http",
       host: "0.0.0.0",
       port: 8123,
+      routeControlMcpPath: "/private-mcp",
     });
   });
 
@@ -332,6 +389,14 @@ describe("gateway server", () => {
         workspaceId: "task-123",
         targetId: "project-123--task-123",
       },
+    });
+  });
+
+  it("defaults environment-created servers to the agent-facing gateway surface", () => {
+    expect(parseGatewayEnvironmentOptions({})).toMatchObject({
+      surface: "gateway",
+      exposeRawRoutingTool: false,
+      pharoTools: [],
     });
   });
 
@@ -383,10 +448,11 @@ describe("gateway server", () => {
       ok: true,
       service: "plexus-gateway",
       mcpPath: "/mcp",
+      routeControlMcpPath: "/control-mcp",
     });
   });
 
-  it("handles repeated stateless HTTP MCP requests", async () => {
+  it("keeps the default HTTP /mcp path agent-facing", async () => {
     const port = await freePort();
     const server = await startGatewayHttpServer({
       host: "127.0.0.1",
@@ -403,9 +469,7 @@ describe("gateway server", () => {
     });
     await expect(postMcp(port, "tools/list")).resolves.toMatchObject({
       result: {
-        tools: expect.arrayContaining([
-          expect.objectContaining({ name: "plexus_gateway_status" }),
-        ]),
+        tools: [],
       },
     });
     await expect(postMcp(port, "initialize")).resolves.toMatchObject({
@@ -413,6 +477,90 @@ describe("gateway server", () => {
         serverInfo: {
           name: "plexus-gateway",
         },
+      },
+    });
+  });
+
+  it("serves route-control tools on a separate HTTP MCP path with shared routes", async () => {
+    const port = await freePort();
+    const server = await startGatewayHttpServer({
+      host: "127.0.0.1",
+      port,
+      gateway: new PlexusGateway({
+        pharoTools: [
+          {
+            name: "pharo_eval",
+            inputSchema: {
+              type: "object",
+              properties: {
+                code: { type: "string" },
+              },
+              required: ["code"],
+            },
+          },
+        ],
+      }),
+    });
+    servers.push(server);
+
+    await expect(postMcpPath(port, "/mcp", "tools/list")).resolves.toMatchObject({
+      result: {
+        tools: [
+          expect.objectContaining({ name: "pharo_eval" }),
+        ],
+      },
+    });
+    await expect(
+      postMcpPath(port, "/control-mcp", "tools/list"),
+    ).resolves.toMatchObject({
+      result: {
+        tools: expect.arrayContaining([
+          expect.objectContaining({ name: "plexus_gateway_register_target" }),
+          expect.objectContaining({ name: "plexus_gateway_status" }),
+        ]),
+      },
+    });
+
+    const registerResult = await postMcpPath(port, "/control-mcp", "tools/call", {
+      name: "plexus_gateway_register_target",
+      arguments: {
+        projectRoot: "C:/dev/code/project-123",
+        statePath: "state.json",
+        state: runningState,
+      },
+    });
+    expect(registerResult).toMatchObject({
+      result: {
+        content: [
+          {
+            type: "text",
+            text: expect.stringContaining("\"targetId\": \"project-123--worktree-a\""),
+          },
+        ],
+      },
+    });
+
+    await expect(
+      postMcpPath(port, "/control-mcp", "tools/call", {
+        name: "plexus_gateway_status",
+        arguments: { targetId: "project-123--worktree-a" },
+      }),
+    ).resolves.toMatchObject({
+      result: {
+        content: [
+          {
+            type: "text",
+            text: expect.stringContaining("\"imageName\": \"Project123-dev\""),
+          },
+        ],
+      },
+    });
+
+    await expect(postMcpPath(port, "/mcp", "tools/list")).resolves.toMatchObject({
+      result: {
+        tools: [
+          expect.objectContaining({ name: "pharo_eval" }),
+        ],
       },
     });
   });

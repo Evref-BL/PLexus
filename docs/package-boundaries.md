@@ -39,7 +39,18 @@ Routing-only MCP server.
 - PLexus orchestration (`@evref-bl/plexus-core` / CLI)
 - pharo-launcher-mcp (`@evref-bl/pharo-launcher-mcp`)
 
-The gateway does not read `plexus.project.json` or workspace state from disk to discover projects. PLexus core owns orchestration/state and registers already-resolved target routes in the gateway.
+The gateway does not read `plexus.project.json` or workspace state from disk to discover projects. PLexus core owns orchestration/state and registers already-resolved target routes through the gateway route-control surface.
+
+In HTTP service mode, this should be one gateway process with two MCP paths that
+share the same in-memory route table:
+
+- `/mcp`: agent-facing `gateway` tools for typed Pharo MCP calls with
+  explicit `imageId`.
+- `/control-mcp`: trusted route-control tools for PLexus/operator route
+  registration, status, and cleanup.
+
+The path names may be configured by deployment, but the important boundary is
+one route table with separate agent-facing and route-control MCP surfaces.
 
 ### PLexus Orchestration (`@evref-bl/plexus-core` + CLI)
 
@@ -55,15 +66,15 @@ Project/workspace/image orchestration and lifecycle.
 - Port allocation, startup script generation, image health polling
 - Policy around targets/workspaces (how to map Kanban/worktrees/images)
 - Calling pharo-launcher-mcp for PharoLauncher operations
-- Registering and unregistering routes through the gateway route-management API
+- Registering and unregistering routes through the gateway route-control API
 - Exposing the scoped agent-facing `pharo-launcher` facade, because only PLexus has workspace state and image naming policy
 
 **Depends on**
 
 - pharo-launcher-mcp (`@evref-bl/pharo-launcher-mcp`)
-- The gateway route-management API at runtime
+- The gateway route-control API at runtime
 
-`@evref-bl/plexus-core` does not need an npm dependency on `@evref-bl/plexus-gateway` to own lifecycle. It can register routes through an in-process adapter in tests/smokes or through the gateway MCP API in deployed use.
+`@evref-bl/plexus-core` does not need an npm dependency on `@evref-bl/plexus-gateway` to own lifecycle. It can register routes through an in-process adapter in tests/smokes or through the gateway route-control MCP API in deployed use.
 
 ## Dependency Direction
 
@@ -75,7 +86,7 @@ Project/workspace/image orchestration and lifecycle.
 ```
 
 - PLexus core depends on pharo-launcher-mcp as a package.
-- PLexus core calls the gateway route-management API when route registration is configured.
+- PLexus core calls the gateway route-control API when route registration is configured.
 - pharo-launcher-mcp and the gateway are standalone and do not depend on PLexus or on each other.
 
 ## MCP Tool Ownership
@@ -87,17 +98,21 @@ PLexus orchestration tools:
 - `plexus_project_status`
 - `plexus_rescue_image`
 
-PLexus Gateway internal/admin route-management tools:
+PLexus Gateway route-control tools:
 
 - `plexus_gateway_register_target`
 - `plexus_gateway_unregister_target`
 - `plexus_gateway_status`
 - `plexus_gateway_cleanup_stale_routes`
 
+These are private/trusted tools for PLexus lifecycle code or operators. They
+belong on the route-control or gateway-control MCP surface, not in normal
+implementation-agent config.
+
 Raw gateway escape hatch:
 
 - `plexus_route_to_image`: hidden by default and exposed only when raw routing is
-  explicitly enabled for admin/debug use with
+  explicitly enabled for route-control/debug use with
   `PLEXUS_EXPOSE_RAW_ROUTING_TOOL=true`.
 
 Agent-facing Kanban MCP surfaces:
@@ -107,8 +122,12 @@ Agent-facing Kanban MCP surfaces:
   project-wide Pharo MCP contract and routes calls by explicit `imageId`.
 
 `pharo` remains only a temporary compatibility alias for older generated agent
-config. New configs should expose `gateway`, and route-management tools should
+config. New configs should expose `gateway`, and route-control tools should
 stay out of normal agent-facing MCP config.
+
+`PLEXUS_GATEWAY_SURFACE=combined` remains only for legacy/debug compatibility
+when an older single MCP surface is needed. Normal deployments should expose the
+agent-facing `gateway` surface separately from route-control.
 
 See `docs/kanban-agent-pharo-access.md` for the scoped launcher design.
 
@@ -118,4 +137,5 @@ Use these rules of thumb:
 
 - **Touches PharoLauncher or its CLI contract** -> pharo-launcher-mcp
 - **Scopes PharoLauncher operations to a PLexus project/workspace, opens/closes a project/workspace, manages state, allocates ports, writes scripts, polls health** -> PLexus core
-- **Registers routes, reports registered targets, prunes stale routes, forwards tool calls to an image MCP server** -> PLexus Gateway
+- **Registers routes, reports registered targets, prunes stale routes** -> PLexus Gateway route-control surface
+- **Forwards typed Pharo tool calls to an image MCP server by explicit `imageId`** -> PLexus Gateway agent-facing `gateway` surface

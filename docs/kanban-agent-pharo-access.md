@@ -22,6 +22,10 @@ image MCP server.
 alias for the same facade. New configs should use the `gateway` server name and
 `PLEXUS_GATEWAY_SURFACE=gateway`.
 
+Route registration, route status, and stale-route cleanup are not part of this
+agent-facing contract. They belong to the trusted route-control or
+gateway-control surface used by PLexus lifecycle code or operators.
+
 ## Agent Workflow
 
 When Vibe Kanban starts an agent for a PLexus-managed workspace, the agent should
@@ -227,6 +231,13 @@ compatibility.
 PLexus Gateway remains routing-only. Its agent-facing `gateway` surface routes
 typed Pharo MCP calls to image MCP servers, but it must not gain a dependency on
 pharo-launcher-mcp to implement image lifecycle operations.
+
+The gateway also has a trusted route-control surface for registering,
+unregistering, inspecting, and cleaning up routes. That control surface should
+share the same in-memory route table as the agent-facing `gateway` surface, for
+example through `/control-mcp` and `/mcp` paths in one HTTP gateway process.
+`PLEXUS_GATEWAY_SURFACE=combined` is legacy/debug compatibility and should not
+be used for normal Kanban worker config.
 
 ## Relationship To `gateway`
 

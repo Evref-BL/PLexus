@@ -27,7 +27,7 @@ The intended split is:
 
 - `@evref-bl/plexus-core` / CLI owns project config, workspace and image lifecycle,
   runtime state, port allocation, startup script generation, health checks,
-  lifecycle MCP tools, route registration through the gateway route-management
+  lifecycle MCP tools, route registration through the gateway route-control
   API, image rescue, and the scoped `pharo-launcher` facade.
 - `@evref-bl/plexus-gateway` owns route registration, route status, and forwarding
   project Pharo MCP calls to image-scoped MCP servers.
@@ -65,6 +65,22 @@ npm run typecheck -w @evref-bl/plexus-core
 Optional Linux verification through Docker is non-default. Run it only in an
 approved isolated runner with an explicit cleanup plan; it should perform static
 checks such as typecheck and tests, not live image startup.
+
+## MCP Surface Boundaries
+
+Use the clean MCP surfaces when adding docs, generated config, or examples:
+
+- `plexus_project` for PLexus project lifecycle.
+- `pharo-launcher` for scoped image lifecycle within one PLexus target.
+- `gateway` for agent-facing Pharo code tools routed by explicit `imageId`.
+- `route-control` or `gateway-control` for trusted route registration, route
+  status, and cleanup.
+
+Use route-control terminology for private/trusted gateway controls. In HTTP
+service mode, the normal shape is one `plexus-gateway` process with `/mcp`
+serving the agent-facing `gateway` surface and `/control-mcp` serving
+route-control. Both paths share the same in-memory route table.
+`PLEXUS_GATEWAY_SURFACE=combined` is legacy/debug compatibility only.
 
 ## pharo-launcher-mcp Resolution
 

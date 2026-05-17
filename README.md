@@ -14,6 +14,9 @@ selected image.
 - Exposes a scoped `pharo-launcher` MCP surface for image lifecycle.
 - Exposes `gateway` as the agent-facing Pharo MCP proxy, routing project tool
   calls to a selected image by `imageId`.
+- Keeps route-control operations separate from normal agent tools. Route
+  registration, status, and cleanup are trusted PLexus/operator controls, not a
+  default worker surface.
 - Preserves Pharo Launcher as the low-level profile and image provider.
 
 ## Requirements
@@ -115,6 +118,12 @@ Start the routing gateway:
 plexus-gateway
 ```
 
+In HTTP service mode, run one gateway process for a project or host boundary and
+expose two MCP paths from that process: `/mcp` for agent-facing `gateway` Pharo
+tools and `/control-mcp` for trusted route-control operations. Both paths share
+the same in-memory route table, so PLexus lifecycle registration and agent
+routing observe the same target state.
+
 The shared state root should be the same for sibling worktrees so PLexus can
 avoid image-name and port collisions.
 
@@ -125,11 +134,14 @@ through the current host path separator.
 
 ## Agent Workflow
 
-Kanban-spawned agents should use two MCP surfaces:
+Kanban-spawned agents should use the clean PLexus MCP surfaces:
 
+- `plexus_project`: open, close, and inspect PLexus project lifecycle state.
 - `pharo-launcher`: list, create, start, inspect, and stop images scoped to the
   current PLexus target.
 - `gateway`: run project Pharo tools against one image by passing `imageId`.
+- `route-control`: private/trusted PLexus or operator route registration,
+  status, and cleanup. Do not expose this to normal implementation workers.
 
 The agent chooses or starts an image through `pharo-launcher`, then passes the
 returned `imageId` to every `gateway` call. Tool names stay stable while image
@@ -138,7 +150,9 @@ availability is represented as runtime data.
 Older configs may still contain a `pharo` server name or `pharo` gateway surface
 as a temporary compatibility alias. New generated workspace MCP config should
 use `gateway`; raw `plexus_route_to_image` routing is hidden unless explicitly
-enabled for admin/debug work with `PLEXUS_EXPOSE_RAW_ROUTING_TOOL=true`.
+enabled for route-control/debug work with `PLEXUS_EXPOSE_RAW_ROUTING_TOOL=true`.
+`PLEXUS_GATEWAY_SURFACE=combined` is legacy/debug compatibility for older
+single-surface setups, not the normal configuration.
 
 ## More Documentation
 
