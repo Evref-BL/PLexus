@@ -14,6 +14,8 @@ import {
   defaultWorkspaceId,
   loadProjectState,
   projectStatePathForConfig,
+  projectStateRootForConfig,
+  runtimeStatusForImages,
   sanitizeRuntimeId,
   saveProjectState,
   type ProjectImageState,
@@ -301,12 +303,13 @@ export async function openProject(
     workspaceId,
     stateRoot: options.stateRoot,
   });
+  const resolvedStateRoot = projectStateRootForConfig(config, options.stateRoot);
   const previousState = loadProjectState(statePath);
   const now = options.now ?? (() => new Date());
   const reservedPorts = collectReservedProjectPorts({
     projectRoot,
     projectId: config.kanban.projectId,
-    stateRoot: options.stateRoot,
+    stateRoot: resolvedStateRoot,
     excludeWorkspaceId: workspaceId,
   });
   const state = createProjectState(config, {
@@ -318,6 +321,23 @@ export async function openProject(
     ...(options.portRange ? { portRange: options.portRange } : {}),
   });
   applyScopedImageSelection(state, previousState, options.imageIds);
+  const imagesToOpen = activeStateImages(state);
+  const failures: ProjectOpenFailure[] = [];
+
+  if (imagesToOpen.length === 0) {
+    state.runtimeStatus = runtimeStatusForImages(state.images);
+    state.updatedAt = now().toISOString();
+    saveProjectState(statePath, state);
+
+    return {
+      ok: true,
+      projectRoot,
+      statePath,
+      state,
+      failures,
+    };
+  }
+
   const client =
     options.pharoLauncherMcpClient ??
     (await createStdioPharoLauncherMcpClient());
@@ -330,10 +350,9 @@ export async function openProject(
     healthTimeoutMs: options.poll?.healthTimeoutMs ?? 5 * 60_000,
   };
   const sleep = options.sleep ?? defaultSleep;
-  const failures: ProjectOpenFailure[] = [];
 
   try {
-    for (const imageState of activeStateImages(state)) {
+    for (const imageState of imagesToOpen) {
       const imageConfig = config.images.find((image) => image.id === imageState.id);
       if (!imageConfig) {
         continue;
@@ -346,7 +365,7 @@ export async function openProject(
           imageId: imageState.id,
           imageState,
           workspaceId,
-          stateRoot: options.stateRoot,
+          stateRoot: resolvedStateRoot,
         });
 
         const launchClient = options.pharoLauncherMcpClient
@@ -394,6 +413,7 @@ export async function openProject(
       }
     }
 
+    state.runtimeStatus = runtimeStatusForImages(state.images);
     state.updatedAt = now().toISOString();
     saveProjectState(statePath, state);
 

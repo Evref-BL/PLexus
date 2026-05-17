@@ -2,7 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import type { ProjectConfig } from "./projectConfig.js";
+import type { ProjectConfig, ProjectRuntimePolicy } from "./projectConfig.js";
 import {
   createProjectState,
   defaultPlexusStateRoot,
@@ -44,6 +44,35 @@ const config: ProjectConfig = {
     },
   ],
 };
+
+function defaultRuntimePolicy(): ProjectRuntimePolicy {
+  return {
+    scope: "project",
+    stateRoot: {
+      mode: "project-local",
+    },
+    gateway: {
+      mode: "project-local",
+      host: "127.0.0.1",
+      portRange: {
+        start: 8_133,
+        end: 8_199,
+      },
+      agentMcpPath: "/mcp",
+      routeControlMcpPath: "/control-mcp",
+    },
+    imagePorts: {
+      allocation: "configured-or-dynamic",
+      range: {
+        start: 7_100,
+        end: 7_199,
+      },
+      coordination: {
+        mode: "project-state",
+      },
+    },
+  };
+}
 
 describe("project state", () => {
   it("resolves the default runtime state path under .plexus", () => {
@@ -162,12 +191,40 @@ describe("project state", () => {
     );
   });
 
+  it("uses external runtime state root policy from project config", () => {
+    const projectRoot = path.join("C:", "dev", "code", "git", "my-project");
+    const runtimeConfig: ProjectConfig = {
+      ...config,
+      runtime: {
+        ...defaultRuntimePolicy(),
+        stateRoot: {
+          mode: "external",
+          path: path.join("C:", "dev", "plexus-state"),
+        },
+      },
+    };
+
+    expect(projectStatePathForConfig({ projectRoot, config: runtimeConfig })).toBe(
+      path.win32.join(
+        "C:",
+        "dev",
+        "plexus-state",
+        "projects",
+        "project-123",
+        "workspaces",
+        "my-project",
+        "state.json",
+      ),
+    );
+  });
+
   it("creates runtime image state from active project images", () => {
     expect(createProjectState(config, "2026-04-25T10:00:00.000Z")).toEqual({
       projectId: "project-123",
       projectName: "my-project",
       workspaceId: "default",
       targetId: "project-123--default",
+      runtimeStatus: "starting",
       updatedAt: "2026-04-25T10:00:00.000Z",
       images: [
         {
@@ -183,6 +240,25 @@ describe("project state", () => {
           status: "stopped",
         },
       ],
+    });
+  });
+
+  it("creates idle runtime state for projects with no images", () => {
+    const zeroImageConfig: ProjectConfig = {
+      ...config,
+      images: [],
+    };
+
+    expect(
+      createProjectState(zeroImageConfig, "2026-04-25T10:00:00.000Z"),
+    ).toEqual({
+      projectId: "project-123",
+      projectName: "my-project",
+      workspaceId: "default",
+      targetId: "project-123--default",
+      runtimeStatus: "idle",
+      updatedAt: "2026-04-25T10:00:00.000Z",
+      images: [],
     });
   });
 
@@ -219,6 +295,43 @@ describe("project state", () => {
         status: "stopped",
       },
     ]);
+  });
+
+  it("allocates missing image ports from the runtime policy range", () => {
+    const dynamicConfig: ProjectConfig = {
+      ...config,
+      runtime: {
+        ...defaultRuntimePolicy(),
+        imagePorts: {
+          ...defaultRuntimePolicy().imagePorts,
+          range: {
+            start: 7_200,
+            end: 7_201,
+          },
+        },
+      },
+      images: [
+        {
+          ...config.images[0],
+          mcp: {
+            loadScript: "pharo/load-mcp.st",
+          },
+        },
+        {
+          ...config.images[1],
+          mcp: {
+            loadScript: "pharo/load-mcp.st",
+          },
+        },
+      ],
+    };
+
+    expect(
+      createProjectState(dynamicConfig, {
+        updatedAt: "2026-04-25T10:00:00.000Z",
+        workspaceId: "worktree-a",
+      }).images.map((image) => image.assignedPort),
+    ).toEqual([7_200, 7_201]);
   });
 
   it("reuses previous runtime allocations for unconfigured image ports", () => {

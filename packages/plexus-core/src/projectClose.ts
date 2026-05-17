@@ -8,6 +8,7 @@ import {
   defaultWorkspaceId,
   loadProjectState,
   projectStatePathForConfig,
+  runtimeStatusForImages,
   sanitizeRuntimeId,
   saveProjectState,
   type ProjectImageState,
@@ -105,6 +106,22 @@ export async function closeProject(
     };
   }
 
+  const images = imagesToClose(state, options.imageIds);
+  if (images.length === 0) {
+    state.updatedAt = now().toISOString();
+    state.runtimeStatus = runtimeStatusForImages(state.images);
+    saveProjectState(statePath, state);
+
+    return {
+      ok: true,
+      projectRoot,
+      statePath,
+      state,
+      stoppedImages: [],
+      failures: [],
+    };
+  }
+
   const client =
     options.pharoLauncherMcpClient ??
     (await createStdioPharoLauncherMcpClient());
@@ -113,7 +130,7 @@ export async function closeProject(
   const failures: ProjectCloseFailure[] = [];
 
   try {
-    for (const imageState of imagesToClose(state, options.imageIds)) {
+    for (const imageState of images) {
       try {
         const killResult = await client.callTool<LauncherCommandResult>(
           "pharo_launcher_process_kill",
@@ -137,6 +154,7 @@ export async function closeProject(
     }
 
     state.updatedAt = now().toISOString();
+    state.runtimeStatus = runtimeStatusForImages(state.images);
     saveProjectState(statePath, state);
 
     const result: ProjectCloseResult = {

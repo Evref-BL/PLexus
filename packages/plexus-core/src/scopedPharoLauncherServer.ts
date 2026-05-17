@@ -12,6 +12,7 @@ import {
   defaultWorkspaceId,
   loadProjectState,
   projectStatePathForConfig,
+  projectStateRootForConfig,
   type ProjectImageState,
 } from "./projectState.js";
 
@@ -93,12 +94,13 @@ function requireConfirm(input: Record<string, unknown>): void {
 function resolveScope(options: ScopedPharoLauncherOptions): ResolvedScope {
   const projectConfig = loadProjectConfig(options.projectRoot);
   const workspaceId = options.workspaceId ?? defaultWorkspaceId(options.projectRoot);
+  const stateRoot = projectStateRootForConfig(projectConfig, options.stateRoot);
   return {
     projectRoot: options.projectRoot,
     workspaceId,
     targetId:
       options.targetId ?? defaultTargetId(projectConfig.kanban.projectId, workspaceId),
-    ...(options.stateRoot ? { stateRoot: options.stateRoot } : {}),
+    ...(stateRoot ? { stateRoot } : {}),
   };
 }
 

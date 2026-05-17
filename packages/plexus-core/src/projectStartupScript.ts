@@ -8,6 +8,7 @@ import {
 } from "./pathStyle.js";
 import {
   projectStateDirectoryPath,
+  projectStateRootForConfig,
   type ProjectImageState,
   type ProjectStatePathOptions,
 } from "./projectState.js";
@@ -268,7 +269,7 @@ export function writeProjectImageStartupScript(
     imageConfig,
     imageState: options.imageState,
     workspaceId: options.workspaceId,
-    stateRoot: options.stateRoot,
+    stateRoot: projectStateRootForConfig(options.config, options.stateRoot),
     repository: options.repository,
   });
 }
