@@ -1,6 +1,10 @@
 import fs from "node:fs";
 import path from "node:path";
-import { loadProjectConfig, type ProjectImageConfig } from "./projectConfig.js";
+import {
+  loadProjectConfig,
+  resolveProjectRuntimePolicy,
+  type ProjectImageConfig,
+} from "./projectConfig.js";
 import {
   createStdioPharoLauncherMcpClient,
   type PharoLauncherMcpToolClient,
@@ -10,10 +14,11 @@ import {
   type PharoMcpHealthClient,
 } from "./pharoMcpHealth.js";
 import {
-  defaultProjectPortRange,
   defaultWorkspaceId,
   loadProjectState,
   projectStatePathForConfig,
+  projectStateRootForConfig,
+  runtimeStatusForImages,
   sanitizeRuntimeId,
   saveProjectState,
   type ProjectImageState,
@@ -904,6 +909,11 @@ function targetConfigFromSource(
   };
 }
 
+function saveImageRescueState(statePath: string, state: ProjectState): void {
+  state.runtimeStatus = runtimeStatusForImages(state.images);
+  saveProjectState(statePath, state);
+}
+
 async function createTargetImage(
   client: PharoLauncherMcpToolClient,
   targetImageName: string,
@@ -928,11 +938,12 @@ export async function rescueImage(
   const projectRoot = path.resolve(options.projectRoot);
   const config = loadProjectConfig(projectRoot);
   const workspaceId = resolveWorkspaceId(projectRoot, options.workspaceId);
+  const resolvedStateRoot = projectStateRootForConfig(config, options.stateRoot);
   const statePath = projectStatePathForConfig({
     projectRoot,
     config,
     workspaceId,
-    stateRoot: options.stateRoot,
+    stateRoot: resolvedStateRoot,
   });
   const state = loadProjectState(statePath);
   if (!state) {
@@ -1010,7 +1021,7 @@ export async function rescueImage(
     if (options.operation === "snapshotSource") {
       updateImageMetadata(sourceImage, sourceSnapshot);
       state.updatedAt = capturedAt;
-      saveProjectState(statePath, state);
+      saveImageRescueState(statePath, state);
 
       return {
         ok: true,
@@ -1054,7 +1065,8 @@ export async function rescueImage(
       const assignedPort = allocatePort(
         state,
         options.targetMcpPort,
-        options.portRange ?? defaultProjectPortRange,
+        options.portRange ??
+          resolveProjectRuntimePolicy(config).imagePorts.range,
       );
       targetImage = {
         id: targetImageId,
@@ -1065,7 +1077,7 @@ export async function rescueImage(
       state.images.push(targetImage);
       updateImageMetadata(sourceImage, sourceSnapshot);
       state.updatedAt = capturedAt;
-      saveProjectState(statePath, state);
+      saveImageRescueState(statePath, state);
 
       const targetConfig = targetConfigFromSource(
         sourceConfig,
@@ -1077,7 +1089,7 @@ export async function rescueImage(
         projectRoot,
         projectId: config.kanban.projectId,
         workspaceId,
-        stateRoot: options.stateRoot,
+        stateRoot: resolvedStateRoot,
         imageConfig: targetConfig,
         imageState: targetImage,
       });
@@ -1097,11 +1109,11 @@ export async function rescueImage(
         targetImage.pid = pid;
         targetImage.status = "running";
         state.updatedAt = now().toISOString();
-        saveProjectState(statePath, state);
+        saveImageRescueState(statePath, state);
       } catch (error) {
         targetImage.status = "failed";
         state.updatedAt = now().toISOString();
-        saveProjectState(statePath, state);
+        saveImageRescueState(statePath, state);
         throw error;
       }
     }

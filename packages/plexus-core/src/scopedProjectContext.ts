@@ -1,5 +1,6 @@
 import {
   loadProjectConfig,
+  resolveProjectRuntimePolicy,
   type ProjectConfig,
   type ProjectImageConfig,
 } from "./projectConfig.js";
@@ -335,14 +336,16 @@ export function buildScopedProjectContext(
   const targetId =
     options.targetId ??
     defaultTargetId(projectConfig.kanban.projectId, workspaceId);
-  const stateRoot = options.stateRoot
-    ? resolvePathLike(options.stateRoot)
-    : undefined;
+  const runtime = resolveProjectRuntimePolicy(projectConfig);
+  const configuredStateRoot =
+    runtime.stateRoot.mode === "external" ? runtime.stateRoot.path : undefined;
+  const stateRoot = options.stateRoot ?? configuredStateRoot;
+  const resolvedStateRoot = stateRoot ? resolvePathLike(stateRoot) : undefined;
   const statePath = projectStatePathForConfig({
     projectRoot,
     config: projectConfig,
     workspaceId,
-    stateRoot,
+    stateRoot: resolvedStateRoot,
   });
   const projectState = options.projectState ?? loadProjectState(statePath);
   const scope: ScopedProjectContextScope = {
@@ -351,7 +354,7 @@ export function buildScopedProjectContext(
     projectName: projectConfig.name,
     workspaceId,
     targetId,
-    ...(stateRoot ? { stateRoot } : {}),
+    ...(resolvedStateRoot ? { stateRoot: resolvedStateRoot } : {}),
     statePath,
   };
   const configuredImageIds = new Set(
