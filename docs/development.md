@@ -137,6 +137,17 @@ The script configures image-local Iceberg Git transport, loads the configured
 starts MCP on the assigned runtime port, and registers the server in
 `Smalltalk globals` as `#PLexusMCPServer`.
 
+Prepared image caches use a separate generated script:
+
+```text
+<state-root>/projects/<project-id>/prepared-images/prepare-<cache-id>.st
+```
+
+That script loads the configured MCP repository into the cache image and saves
+the image. Generating the script is source-only. Creating the cache image,
+copying it into a workspace runtime image, and deleting it remain live launcher
+mutations and require an approved runner.
+
 ## Prototype Open/Close Check
 
 Run one real-image lifecycle check after building:

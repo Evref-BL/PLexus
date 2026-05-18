@@ -308,6 +308,115 @@ describe("project config", () => {
     }
   });
 
+  it("parses prepared image cache specs and runtime copy policy", () => {
+    const baseConfig = validProjectConfig();
+    const config = {
+      ...baseConfig,
+      preparedImages: [
+        {
+          id: "pharo-13-mcp",
+          imageName: "MyProject-{projectId}-{cacheId}",
+          source: {
+            kind: "template",
+            profileId: "pharo-13-default",
+            templateName: "Pharo 13.0 - 64bit",
+            templateCategory: "Official",
+          },
+          mcp: {
+            loadScript: "pharo/load-mcp.st",
+            repository: {
+              githubUser: "Evref-BL",
+              project: "MCP",
+              commitish: "main",
+              path: "",
+              baseline: "MCP",
+            },
+          },
+        },
+      ],
+      images: [
+        {
+          ...baseConfig.images[0],
+          preparedImage: {
+            cacheId: "pharo-13-mcp",
+            copyMode: "copy-on-open",
+          },
+        },
+        baseConfig.images[1],
+      ],
+    };
+
+    expect(parseProjectConfig(config)).toEqual({
+      ...config,
+      runtime: defaultRuntimePolicy(),
+    });
+  });
+
+  it("rejects invalid prepared image cache specs", () => {
+    const baseConfig = validProjectConfig();
+    const config = {
+      ...baseConfig,
+      preparedImages: [
+        {
+          id: "cache",
+          imageName: "Cache",
+          source: {
+            kind: "copy",
+          },
+          mcp: {
+            loadScript: "",
+            repository: {
+              githubUser: "",
+              project: "MCP",
+            },
+          },
+        },
+        {
+          id: "cache",
+          imageName: "Cache",
+          source: {
+            templateName: "Pharo 13.0 - 64bit",
+          },
+          mcp: {
+            loadScript: "pharo/load-mcp.st",
+          },
+        },
+      ],
+      images: [
+        {
+          ...baseConfig.images[0],
+          preparedImage: {
+            cacheId: "missing-cache",
+            copyMode: "copy-now",
+          },
+        },
+        baseConfig.images[1],
+      ],
+    };
+
+    expect(() => parseProjectConfig(config)).toThrow(ProjectConfigError);
+
+    try {
+      parseProjectConfig(config);
+    } catch (error) {
+      expect((error as ProjectConfigError).issues).toEqual(
+        expect.arrayContaining([
+          "preparedImages[0].source.kind must be template",
+          "preparedImages[0].source.templateName must be a non-empty string",
+          "preparedImages[0].mcp.loadScript must be a non-empty string",
+          "preparedImages[0].mcp.repository.githubUser must be a non-empty string",
+          "preparedImages[0].mcp.repository.commitish must be a non-empty string",
+          "preparedImages[0].mcp.repository.path must be a string",
+          "preparedImages[0].mcp.repository.baseline must be a non-empty string",
+          "images[0].preparedImage.copyMode must be copy-on-open",
+          "images[0].preparedImage.cacheId must reference a preparedImages id: missing-cache",
+          "prepared image ids must be unique: cache",
+          "prepared image names must be unique: Cache",
+        ]),
+      );
+    }
+  });
+
   it("parses image git transport and credentials", () => {
     const config = validProjectConfig();
     config.images[0].git = {

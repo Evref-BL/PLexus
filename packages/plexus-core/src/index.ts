@@ -4,6 +4,7 @@ export * from "./imageRescue.js";
 export * from "./pharoLauncherMcpClient.js";
 export * from "./pharoMcpHealth.js";
 export * from "./portClaims.js";
+export * from "./preparedImageCache.js";
 export * from "./projectClose.js";
 export * from "./projectConfig.js";
 export * from "./projectGateway.js";

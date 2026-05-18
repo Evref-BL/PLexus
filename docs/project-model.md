@@ -133,6 +133,75 @@ and password/token. PLexus writes these settings into the generated Smalltalk
 startup script because the PharoLauncher CLI does not expose a protocol switch
 for image launch.
 
+### Prepared Image Cache
+
+A prepared image cache is a project-scoped PharoLauncher image that PLexus can
+prepare once and copy into workspace runtime images later. The cache is
+described in `plexus.project.json`; pharo-launcher-mcp still owns the low-level
+launcher calls.
+
+```json
+{
+  "preparedImages": [
+    {
+      "id": "pharo-13-mcp",
+      "imageName": "MyProject-{projectId}-{cacheId}",
+      "source": {
+        "kind": "template",
+        "profileId": "pharo-13-default",
+        "templateName": "Pharo 13.0 - 64bit",
+        "templateCategory": "Official"
+      },
+      "mcp": {
+        "loadScript": "pharo/load-mcp.st",
+        "repository": {
+          "githubUser": "Evref-BL",
+          "project": "MCP",
+          "commitish": "main",
+          "path": "",
+          "baseline": "MCP"
+        }
+      }
+    }
+  ],
+  "images": [
+    {
+      "id": "dev",
+      "imageName": "MyProject-{workspaceId}-dev",
+      "active": true,
+      "preparedImage": {
+        "cacheId": "pharo-13-mcp",
+        "copyMode": "copy-on-open"
+      },
+      "mcp": {
+        "loadScript": "pharo/load-mcp.st"
+      }
+    }
+  ]
+}
+```
+
+Prepared cache names are project-scoped. Supported cache-name template tokens
+are:
+
+```text
+{projectId}
+{projectName}
+{cacheId}
+```
+
+PLexus can statically validate these specs and generate the preparation script
+under:
+
+```text
+<state-root>/projects/<project-id>/prepared-images/prepare-<cache-id>.st
+```
+
+Creating the cache image from a launcher template, copying it into a workspace
+runtime image, and deleting it are live PharoLauncher mutations. Those operations
+require an approved runner boundary. Without that approval, `project open`
+fails before copying or launching an image that requests `copy-on-open`.
+
 ## Routing Rules
 
 Split routing into two layers:

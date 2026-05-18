@@ -15,6 +15,10 @@ import {
   createStdioPharoLauncherMcpClient,
   type PharoLauncherMcpToolClient,
 } from "./pharoLauncherMcpClient.js";
+import {
+  copyProjectImageFromPreparedCache,
+  type PreparedImageCacheMutationApproval,
+} from "./preparedImageCache.js";
 import { pharoLauncherMcpProfileEnvironment } from "./pharoLauncherProfile.js";
 import {
   HttpPharoMcpHealthClient,
@@ -68,6 +72,7 @@ export interface ProjectOpenOptions {
   poll?: ProjectOpenPollOptions;
   sleep?: (durationMs: number) => Promise<void>;
   portClaimChecks?: PortClaimChecks;
+  preparedImageCacheApproval?: PreparedImageCacheMutationApproval;
 }
 
 export interface ProjectOpenFailure {
@@ -404,6 +409,15 @@ export async function openProject(
       }
 
       try {
+        await copyProjectImageFromPreparedCache({
+          client,
+          projectRoot,
+          config,
+          imageConfig,
+          imageState,
+          approval: options.preparedImageCacheApproval,
+        });
+
         const startupScript = writeProjectImageStartupScript({
           projectRoot,
           config,

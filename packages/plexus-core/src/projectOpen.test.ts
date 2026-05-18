@@ -56,6 +56,10 @@ class FakePharoLauncherMcpClient implements PharoLauncherMcpToolClient {
       return { ok: true } as T;
     }
 
+    if (name === "pharo_launcher_image_copy") {
+      return { ok: true } as T;
+    }
+
     if (name === "pharo_launcher_process_list") {
       const result = {
         ok: true,
@@ -416,6 +420,152 @@ describe("project open", () => {
         status: "running",
       },
     ]);
+  });
+
+  it("blocks prepared image cache copies without approved runner input", async () => {
+    const projectRoot = makeTempDir("plexus-project-");
+    const stateRoot = makeTempDir("plexus-state-");
+    writeProjectConfig(projectRoot, {
+      preparedImages: [
+        {
+          id: "pharo-13-mcp",
+          imageName: "MyProject-{projectId}-{cacheId}",
+          source: {
+            kind: "template",
+            templateName: "Pharo 13.0 - 64bit",
+          },
+          mcp: {
+            loadScript: "pharo/load-mcp.st",
+          },
+        },
+      ],
+      images: [
+        {
+          id: "dev",
+          imageName: "MyProject-{workspaceId}-dev",
+          active: true,
+          preparedImage: {
+            cacheId: "pharo-13-mcp",
+            copyMode: "copy-on-open",
+          },
+          mcp: {
+            port: 7123,
+            loadScript: "pharo/load-mcp.st",
+          },
+        },
+      ],
+    });
+    const pharoLauncherMcpClient = new FakePharoLauncherMcpClient();
+
+    await expect(
+      openProject({
+        projectRoot,
+        stateRoot,
+        workspaceId: "worktree-a",
+        pharoLauncherMcpClient,
+        healthClient: new FakeHealthClient(true),
+        now: fixedNow,
+        sleep: async () => {},
+        poll: {
+          intervalMs: 0,
+        },
+      }),
+    ).rejects.toThrow(ProjectOpenError);
+    expect(pharoLauncherMcpClient.calls).toEqual([]);
+  });
+
+  it("copies prepared cache images before launching when runner approval is explicit", async () => {
+    const projectRoot = makeTempDir("plexus-project-");
+    const stateRoot = makeTempDir("plexus-state-");
+    writeProjectConfig(projectRoot, {
+      preparedImages: [
+        {
+          id: "pharo-13-mcp",
+          imageName: "MyProject-{projectId}-{cacheId}",
+          source: {
+            kind: "template",
+            templateName: "Pharo 13.0 - 64bit",
+          },
+          mcp: {
+            loadScript: "pharo/load-mcp.st",
+          },
+        },
+      ],
+      images: [
+        {
+          id: "dev",
+          imageName: "MyProject-{workspaceId}-dev",
+          active: true,
+          preparedImage: {
+            cacheId: "pharo-13-mcp",
+            copyMode: "copy-on-open",
+          },
+          mcp: {
+            port: 7123,
+            loadScript: "pharo/load-mcp.st",
+          },
+        },
+      ],
+    });
+    const pharoLauncherMcpClient = new FakePharoLauncherMcpClient([
+      {
+        pid: 1234,
+        imageName: "MyProject-worktree-a-dev",
+        commandLine: "PharoConsole.exe MyProject-worktree-a-dev.image",
+      },
+    ]);
+    const healthClient = new FakeHealthClient(true);
+
+    const result = await openProject({
+      projectRoot,
+      stateRoot,
+      workspaceId: "worktree-a",
+      pharoLauncherMcpClient,
+      healthClient,
+      preparedImageCacheApproval: {
+        approved: true,
+        runnerId: "isolated-runner-1",
+      },
+      now: fixedNow,
+      sleep: async () => {},
+      poll: {
+        intervalMs: 0,
+      },
+    });
+
+    const scriptPath = path.join(
+      stateRoot,
+      "projects",
+      "project-123",
+      "workspaces",
+      "worktree-a",
+      "scripts",
+      "start-dev.st",
+    );
+
+    expect(result.ok).toBe(true);
+    expect(pharoLauncherMcpClient.calls).toEqual([
+      {
+        name: "pharo_launcher_image_copy",
+        argumentsValue: {
+          imageName: "MyProject-project-123-pharo-13-mcp",
+          newImageName: "MyProject-worktree-a-dev",
+        },
+      },
+      {
+        name: "pharo_launcher_image_launch",
+        argumentsValue: {
+          imageName: "MyProject-worktree-a-dev",
+          detached: true,
+          script: scriptPath,
+        },
+      },
+      {
+        name: "pharo_launcher_process_list",
+        argumentsValue: {},
+      },
+    ]);
+    expect(healthClient.ports).toEqual([7123]);
   });
 
   it("keeps unselected scoped images in their previous runtime state", async () => {

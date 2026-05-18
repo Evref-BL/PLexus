@@ -13,6 +13,19 @@ export interface ProjectImageMcpConfig {
   loadScript: string;
 }
 
+export interface ProjectPharoMcpRepositoryConfig {
+  githubUser: string;
+  project: string;
+  commitish: string;
+  path: string;
+  baseline: string;
+}
+
+export interface ProjectPreparedImageMcpConfig {
+  loadScript: string;
+  repository?: ProjectPharoMcpRepositoryConfig;
+}
+
 export type ProjectImageGitTransport = "ssh" | "https" | "http";
 
 export interface ProjectImageSshConfig {
@@ -40,13 +53,38 @@ export interface ProjectImageTemplateCreateConfig {
 
 export type ProjectImageCreateConfig = ProjectImageTemplateCreateConfig;
 
+export type ProjectImagePreparedCopyMode = "copy-on-open";
+
+export interface ProjectImagePreparedImageConfig {
+  cacheId: string;
+  copyMode: ProjectImagePreparedCopyMode;
+}
+
 export interface ProjectImageConfig {
   id: string;
   imageName: string;
   active: boolean;
   mcp: ProjectImageMcpConfig;
   create?: ProjectImageCreateConfig;
+  preparedImage?: ProjectImagePreparedImageConfig;
   git?: ProjectImageGitConfig;
+}
+
+export interface ProjectPreparedImageTemplateSourceConfig {
+  kind: "template";
+  profileId?: string;
+  templateName: string;
+  templateCategory?: string;
+}
+
+export type ProjectPreparedImageSourceConfig =
+  ProjectPreparedImageTemplateSourceConfig;
+
+export interface ProjectPreparedImageConfig {
+  id: string;
+  imageName: string;
+  source: ProjectPreparedImageSourceConfig;
+  mcp: ProjectPreparedImageMcpConfig;
 }
 
 export interface ProjectRuntimePortRange {
@@ -121,6 +159,7 @@ export interface ProjectConfig {
   name: string;
   kanban: ProjectKanbanConfig;
   runtime?: ProjectRuntimePolicy;
+  preparedImages?: ProjectPreparedImageConfig[];
   images: ProjectImageConfig[];
 }
 
@@ -190,6 +229,21 @@ function stringField(
   }
 
   issues.push(`${pathPrefix}.${key} must be a non-empty string`);
+  return "";
+}
+
+function stringFieldAllowingEmpty(
+  object: Record<string, unknown>,
+  key: string,
+  issues: string[],
+  pathPrefix: string,
+): string {
+  const value = object[key];
+  if (typeof value === "string") {
+    return value;
+  }
+
+  issues.push(`${pathPrefix}.${key} must be a string`);
   return "";
 }
 
@@ -387,6 +441,50 @@ function parseImageMcp(
   };
 }
 
+function parsePharoMcpRepository(
+  value: unknown,
+  issues: string[],
+  pathPrefix: string,
+): ProjectPharoMcpRepositoryConfig | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (!isObject(value)) {
+    issues.push(`${pathPrefix}.repository must be an object`);
+    return undefined;
+  }
+
+  return {
+    githubUser: stringField(value, "githubUser", issues, `${pathPrefix}.repository`),
+    project: stringField(value, "project", issues, `${pathPrefix}.repository`),
+    commitish: stringField(value, "commitish", issues, `${pathPrefix}.repository`),
+    path: stringFieldAllowingEmpty(
+      value,
+      "path",
+      issues,
+      `${pathPrefix}.repository`,
+    ),
+    baseline: stringField(value, "baseline", issues, `${pathPrefix}.repository`),
+  };
+}
+
+function parsePreparedImageMcp(
+  value: unknown,
+  issues: string[],
+  pathPrefix: string,
+): ProjectPreparedImageMcpConfig {
+  if (!isObject(value)) {
+    issues.push(`${pathPrefix}.mcp must be an object`);
+    return { loadScript: "" };
+  }
+
+  return {
+    loadScript: stringField(value, "loadScript", issues, `${pathPrefix}.mcp`),
+    repository: parsePharoMcpRepository(value.repository, issues, `${pathPrefix}.mcp`),
+  };
+}
+
 function parseImageSshConfig(
   value: unknown,
   issues: string[],
@@ -517,6 +615,34 @@ function parseImageCreate(
   };
 }
 
+function parseImagePreparedImage(
+  value: unknown,
+  issues: string[],
+  pathPrefix: string,
+): ProjectImagePreparedImageConfig | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  const preparedPath = `${pathPrefix}.preparedImage`;
+  if (!isObject(value)) {
+    issues.push(`${preparedPath} must be an object`);
+    return undefined;
+  }
+
+  const copyModeValue = value.copyMode ?? "copy-on-open";
+  const copyMode =
+    copyModeValue === "copy-on-open" ? copyModeValue : "copy-on-open";
+  if (copyMode !== copyModeValue) {
+    issues.push(`${preparedPath}.copyMode must be copy-on-open`);
+  }
+
+  return {
+    cacheId: stringField(value, "cacheId", issues, preparedPath),
+    copyMode,
+  };
+}
+
 function parseImages(
   value: unknown,
   issues: string[],
@@ -544,7 +670,87 @@ function parseImages(
       active: booleanField(image, "active", issues, pathPrefix),
       mcp: parseImageMcp(image.mcp, issues, pathPrefix),
       create: parseImageCreate(image.create, issues, pathPrefix),
+      preparedImage: parseImagePreparedImage(
+        image.preparedImage,
+        issues,
+        pathPrefix,
+      ),
       git: parseImageGit(image.git, issues, pathPrefix),
+    };
+  });
+}
+
+function parsePreparedImageSource(
+  value: unknown,
+  issues: string[],
+  pathPrefix: string,
+): ProjectPreparedImageSourceConfig {
+  if (!isObject(value)) {
+    issues.push(`${pathPrefix}.source must be an object`);
+    return {
+      kind: "template",
+      templateName: "",
+    };
+  }
+
+  const kindValue = value.kind ?? "template";
+  const kind = kindValue === "template" ? kindValue : "template";
+  if (kind !== kindValue) {
+    issues.push(`${pathPrefix}.source.kind must be template`);
+  }
+
+  return {
+    kind,
+    profileId: optionalStringField(value, "profileId", issues, `${pathPrefix}.source`),
+    templateName: stringField(value, "templateName", issues, `${pathPrefix}.source`),
+    templateCategory: optionalStringField(
+      value,
+      "templateCategory",
+      issues,
+      `${pathPrefix}.source`,
+    ),
+  };
+}
+
+function parsePreparedImages(
+  value: unknown,
+  issues: string[],
+): ProjectPreparedImageConfig[] | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (!Array.isArray(value)) {
+    issues.push("preparedImages must be an array");
+    return undefined;
+  }
+
+  return value.map((preparedImage, index) => {
+    const pathPrefix = `preparedImages[${index}]`;
+    if (!isObject(preparedImage)) {
+      issues.push(`${pathPrefix} must be an object`);
+      return {
+        id: "",
+        imageName: "",
+        source: {
+          kind: "template",
+          templateName: "",
+        },
+        mcp: {
+          loadScript: "",
+        },
+      };
+    }
+
+    return {
+      id: stringField(preparedImage, "id", issues, pathPrefix),
+      imageName: stringField(preparedImage, "imageName", issues, pathPrefix),
+      source: parsePreparedImageSource(
+        preparedImage.source,
+        issues,
+        pathPrefix,
+      ),
+      mcp: parsePreparedImageMcp(preparedImage.mcp, issues, pathPrefix),
     };
   });
 }
@@ -906,6 +1112,24 @@ function validateImagePortPolicy(config: ProjectConfig, issues: string[]): void 
   });
 }
 
+function validatePreparedImageReferences(
+  config: ProjectConfig,
+  issues: string[],
+): void {
+  const preparedImageIds = new Set(
+    config.preparedImages?.map((preparedImage) => preparedImage.id) ?? [],
+  );
+
+  config.images.forEach((image, index) => {
+    const cacheId = image.preparedImage?.cacheId;
+    if (cacheId && !preparedImageIds.has(cacheId)) {
+      issues.push(
+        `images[${index}].preparedImage.cacheId must reference a preparedImages id: ${cacheId}`,
+      );
+    }
+  });
+}
+
 export function parseProjectConfig(value: unknown): ProjectConfig {
   const issues: string[] = [];
 
@@ -915,10 +1139,12 @@ export function parseProjectConfig(value: unknown): ProjectConfig {
     ]);
   }
 
+  const preparedImages = parsePreparedImages(value.preparedImages, issues);
   const config: ProjectConfig = {
     name: stringField(value, "name", issues, "config"),
     kanban: parseKanban(value.kanban, issues),
     runtime: parseRuntimePolicy(value.runtime, issues),
+    ...(preparedImages ? { preparedImages } : {}),
     images: parseImages(value.images, issues),
   };
 
@@ -932,8 +1158,19 @@ export function parseProjectConfig(value: unknown): ProjectConfig {
     "image names",
     issues,
   );
+  collectDuplicates(
+    config.preparedImages?.map((preparedImage) => preparedImage.id) ?? [],
+    "prepared image ids",
+    issues,
+  );
+  collectDuplicates(
+    config.preparedImages?.map((preparedImage) => preparedImage.imageName) ?? [],
+    "prepared image names",
+    issues,
+  );
   collectDuplicatePorts(config.images, issues);
   validateImagePortPolicy(config, issues);
+  validatePreparedImageReferences(config, issues);
 
   if (issues.length > 0) {
     throw new ProjectConfigError("Invalid Plexus project config", issues);
