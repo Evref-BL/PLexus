@@ -54,6 +54,21 @@ function makeTempDir(prefix: string): string {
   return tempDir;
 }
 
+function projectStateRuntime() {
+  return {
+    imagePorts: {
+      allocation: "configured-or-dynamic",
+      range: {
+        start: 7100,
+        end: 7199,
+      },
+      coordination: {
+        mode: "project-state",
+      },
+    },
+  };
+}
+
 function writeProjectConfig(projectRoot: string): void {
   fs.writeFileSync(
     path.join(projectRoot, "plexus.project.json"),
@@ -64,6 +79,7 @@ function writeProjectConfig(projectRoot: string): void {
           provider: "vibe-kanban",
           projectId: "project-123",
         },
+        runtime: projectStateRuntime(),
         images: [
           {
             id: "dev",

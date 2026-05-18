@@ -179,6 +179,18 @@ export interface ProjectLifecyclePortClaimsDiagnostics {
   conflicts: ProjectLifecyclePortClaimDiagnostic[];
 }
 
+export type ProjectLifecycleImagePortCoordinationBasis =
+  | "host-local-claims"
+  | "project-state-scanning";
+
+export interface ProjectLifecycleImagePortCoordinationDiagnostics {
+  mode: ProjectImagePortCoordinationMode;
+  basis: ProjectLifecycleImagePortCoordinationBasis;
+  message: string;
+  claimsRoot?: string;
+  stateRoot?: string;
+}
+
 export interface ProjectLifecyclePortListenerDiagnostic {
   port: number;
   purpose: "gateway" | "image-mcp";
@@ -271,6 +283,7 @@ export interface ProjectLifecycleDiagnostics {
     status: ProjectImageState["status"];
     pid?: number;
   }>;
+  imagePortCoordination: ProjectLifecycleImagePortCoordinationDiagnostics;
   portClaims: ProjectLifecyclePortClaimsDiagnostics;
   conflictingListeners: ProjectLifecyclePortListenerDiagnostic[];
   staleClaims: ProjectLifecyclePortClaimDiagnostic[];
@@ -732,6 +745,32 @@ function imagePortPolicyDiagnostics(
     ...(effectiveClaimsRoot ? { effectiveClaimsRoot } : {}),
     projectStateRoot: stateRoot,
     basis: effectiveClaimsRoot ? "host-local-claims" : "project-state",
+  };
+}
+
+function imagePortCoordinationDiagnostics(
+  projectRoot: string,
+  stateRoot: string,
+  config: ProjectConfig,
+): ProjectLifecycleImagePortCoordinationDiagnostics {
+  const coordination = resolveProjectRuntimePolicy(config).imagePorts.coordination;
+  if (coordination.mode === "host-local") {
+    const claimsRoot = imagePortClaimsRootForConfig(projectRoot, config);
+    return {
+      mode: "host-local",
+      basis: "host-local-claims",
+      message:
+        "Image MCP ports are coordinated by host-local port claims across PLexus projects on this host.",
+      ...(claimsRoot ? { claimsRoot } : {}),
+    };
+  }
+
+  return {
+    mode: "project-state",
+    basis: "project-state-scanning",
+    stateRoot,
+    message:
+      "Image MCP ports are coordinated by scanning PLexus project state; this only protects workspaces sharing this state root.",
   };
 }
 
@@ -1428,6 +1467,11 @@ export class PlexusProjectLifecycle {
       ),
       agentAccess: agentAccessDiagnostics(gateway),
       imageMcpPorts: imageMcpPorts(state),
+      imagePortCoordination: imagePortCoordinationDiagnostics(
+        projectRoot,
+        stateRoot,
+        config,
+      ),
       portClaims,
       conflictingListeners,
       staleClaims: portClaims.stale,

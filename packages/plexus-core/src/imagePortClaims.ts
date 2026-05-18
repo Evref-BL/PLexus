@@ -11,6 +11,7 @@ import {
   inspectPortClaim,
   PortClaimConflictError,
   releasePortClaim,
+  updatePortClaim,
   type PortClaimChecks,
   type PortClaimRecord,
   type PortClaimScope,
@@ -49,6 +50,13 @@ export interface ReleaseImagePortClaimOptions {
   image: ProjectImageState;
   claimsRoot: string;
   checks: PortClaimChecks;
+}
+
+export interface RecordImagePortClaimProcessOptions {
+  claimsRoot: string;
+  preparedClaim: PreparedImagePortClaim;
+  pid: number;
+  now?: () => Date;
 }
 
 interface ClaimImagePortOptions {
@@ -252,7 +260,7 @@ async function claimRequestedImagePort(
     now: options.now,
   });
   if (
-    (inspection.status === "claimed" || inspection.status === "stale") &&
+    inspection.status === "claimed" &&
     isCompatibleImageClaim(inspection.record, options.scope)
   ) {
     return {
@@ -499,5 +507,23 @@ export async function releaseImagePortClaimIfOwned(
       claimsRoot: options.claimsRoot,
       claim: inspection.record,
     });
+  }
+}
+
+export async function recordImagePortClaimProcess(
+  options: RecordImagePortClaimProcessOptions,
+): Promise<void> {
+  const updatedClaim = await updatePortClaim({
+    claimsRoot: options.claimsRoot,
+    claim: options.preparedClaim.claim,
+    update: (claim) => ({
+      ...claim,
+      pid: options.pid,
+      updatedAt: (options.now ?? (() => new Date()))().toISOString(),
+    }),
+  });
+
+  if (updatedClaim) {
+    options.preparedClaim.claim = updatedClaim;
   }
 }

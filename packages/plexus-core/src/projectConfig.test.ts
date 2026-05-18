@@ -71,7 +71,7 @@ function defaultRuntimePolicy() {
         end: 7_199,
       },
       coordination: {
-        mode: "project-state",
+        mode: "host-local",
       },
     },
   };
@@ -159,6 +159,22 @@ describe("project config", () => {
     };
 
     expect(parseProjectConfig(config)).toEqual(config);
+  });
+
+  it("keeps project-state image port coordination as an explicit opt-in", () => {
+    const config: ReturnType<typeof validProjectConfig> & { runtime?: unknown } =
+      validProjectConfig();
+    config.runtime = {
+      imagePorts: {
+        coordination: {
+          mode: "project-state",
+        },
+      },
+    };
+
+    expect(parseProjectConfig(config).runtime?.imagePorts.coordination).toEqual({
+      mode: "project-state",
+    });
   });
 
   it("records project-local gateway host, fixed port, route path, and control path", () => {
