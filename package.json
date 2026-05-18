@@ -17,6 +17,7 @@
     "node": ">=24"
   },
   "scripts": {
+    "check": "npm run typecheck && npm run build && npm test",
     "build": "npm run build -w @evref-bl/plexus-core && npm run build -w @evref-bl/plexus-gateway",
     "test": "npm run test --workspaces && npm run test:smoke-policy",
     "test:smoke-policy": "node --test scripts/*.test.mjs",
