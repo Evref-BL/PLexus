@@ -564,57 +564,6 @@ describe("project lifecycle tools", () => {
     });
   });
 
-  it("omits retired gateway compatibility diagnostics", async () => {
-    const projectRoot = makeTempDir("plexus-project-");
-    const stateRoot = makeTempDir("plexus-state-");
-    writeProjectConfig(projectRoot);
-    saveProjectState(statePath(stateRoot), {
-      ...runningState,
-      gateway: {
-        mode: "project-local",
-        endpoint: "http://127.0.0.1:8133/mcp",
-        controlEndpoint: "http://127.0.0.1:8133/control-mcp",
-        host: "127.0.0.1",
-        port: 8133,
-        routePath: "/mcp",
-        controlPath: "/control-mcp",
-        owningProjectId: "project-123",
-        managedByProject: true,
-      },
-    });
-    const lifecycle = new PlexusProjectLifecycle({
-      routeRegistry: new FakeRouteRegistry(),
-      gateway: {
-        env: {
-          PLEXUS_GATEWAY_MCP_URL: "http://gateway.local:8133/mcp",
-          PLEXUS_GATEWAY_MCP_PATH: "/mcp",
-          PLEXUS_GATEWAY_SURFACE: "combined",
-        } as NodeJS.ProcessEnv,
-        checks: {
-          isPortListening: async () => false,
-        },
-      },
-    });
-
-    const result = await lifecycle.handleTool("plexus_project_status", {
-      projectPath: projectRoot,
-      stateRoot,
-      workspaceId: "worktree-a",
-    });
-
-    expect(result.ok).toBe(true);
-    expect(result.data).toMatchObject({
-      diagnostics: {
-        runtime: {
-          status: "operational",
-        },
-      },
-    });
-    expect(result.data).not.toHaveProperty(
-      "diagnostics.legacyConfiguration",
-    );
-  });
-
   it("starts a project-local gateway after claiming and validating its port", async () => {
     const projectRoot = makeTempDir("plexus-project-");
     const stateRoot = makeTempDir("plexus-state-");
@@ -964,22 +913,4 @@ describe("project lifecycle tools", () => {
     expect(pathRequests[0]?.url).toBe("http://gateway.local:8133/private-control");
   });
 
-  it("ignores retired gateway MCP URL and path environment settings", async () => {
-    const requests: CapturedGatewayRequest[] = [];
-    vi.stubGlobal("fetch", makeGatewayFetch(requests));
-    const lifecycle = createProjectLifecycleFromEnvironment({
-      PLEXUS_GATEWAY_MCP_URL: "http://gateway.local:8133/mcp",
-      PLEXUS_GATEWAY_MCP_PATH: "/mcp",
-    } as NodeJS.ProcessEnv);
-
-    const result = await lifecycle.handleTool("plexus_project_status", {
-      targetId: runningState.targetId,
-    });
-
-    expect(result).toMatchObject({
-      ok: false,
-      error: "projectPath is required when no gateway route registry is configured",
-    });
-    expect(requests).toEqual([]);
-  });
 });
