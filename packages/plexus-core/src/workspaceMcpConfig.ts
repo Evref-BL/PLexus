@@ -2,6 +2,7 @@ import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import { resolvePathLike } from "./pathStyle.js";
 import {
   loadProjectConfig,
+  projectConfigId,
   resolveProjectRuntimePolicy,
   type ProjectConfig,
 } from "./projectConfig.js";
@@ -64,7 +65,7 @@ export function resolvePlexusWorkspaceMcpScope(
   const config = options.projectConfig ?? loadProjectConfig(projectRoot);
   const workspaceId = options.workspaceId ?? defaultWorkspaceId(projectRoot);
   const targetId =
-    options.targetId ?? defaultTargetId(config.kanban.projectId, workspaceId);
+    options.targetId ?? defaultTargetId(projectConfigId(config), workspaceId);
   const runtime = resolveProjectRuntimePolicy(config);
   const stateRoot =
     options.stateRoot ??
@@ -72,7 +73,7 @@ export function resolvePlexusWorkspaceMcpScope(
 
   return {
     projectRoot,
-    projectId: config.kanban.projectId,
+    projectId: projectConfigId(config),
     workspaceId,
     targetId,
     ...(stateRoot ? { stateRoot: resolvePathLike(stateRoot) } : {}),

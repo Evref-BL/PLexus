@@ -1,6 +1,7 @@
 import path from "node:path";
 import {
   loadProjectConfig,
+  projectConfigId,
   resolveProjectRuntimePolicy,
 } from "./projectConfig.js";
 import {
@@ -330,7 +331,7 @@ export async function openProject(
   const claimsRoot = imagePortClaimsRootForConfig(projectRoot, config);
   const projectReservedOwners = collectReservedProjectPortOwners({
     projectRoot,
-    projectId: config.kanban.projectId,
+    projectId: projectConfigId(config),
     stateRoot: resolvedStateRoot,
     excludeWorkspaceId: workspaceId,
   });

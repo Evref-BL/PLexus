@@ -113,7 +113,7 @@ PLexus stores runtime state outside Pharo images:
 <state-root>/projects/<project-id>/workspaces/<workspace-id>/state.json
 ```
 
-Use one shared `PLEXUS_STATE_ROOT` across parallel Vibe Kanban worktrees so
+Use one shared `PLEXUS_STATE_ROOT` across parallel agent worktrees so
 PLexus can reserve ports across sibling workspaces.
 
 The default `workspaceId` is the project root directory name. Callers can

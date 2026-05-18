@@ -6,6 +6,7 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import {
   loadProjectConfig,
+  projectConfigId,
   resolveProjectRuntimePolicy,
   type ProjectConfig,
   type ProjectImageConfig,
@@ -162,11 +163,11 @@ function resolveScope(options: ScopedPharoLauncherOptions): ResolvedScope {
   const stateRoot = projectStateRootForConfig(projectConfig, options.stateRoot);
   return {
     projectRoot: options.projectRoot,
-    projectId: projectConfig.kanban.projectId,
+    projectId: projectConfigId(projectConfig),
     projectName: projectConfig.name,
     workspaceId,
     targetId:
-      options.targetId ?? defaultTargetId(projectConfig.kanban.projectId, workspaceId),
+      options.targetId ?? defaultTargetId(projectConfigId(projectConfig), workspaceId),
     ...(stateRoot ? { stateRoot } : {}),
   };
 }
@@ -252,7 +253,7 @@ function stateWithCreatedImage(
   const runtime = resolveProjectRuntimePolicy(projectConfig);
   const reservedPorts = collectReservedProjectPortOwners({
     projectRoot: scope.projectRoot,
-    projectId: projectConfig.kanban.projectId,
+    projectId: projectConfigId(projectConfig),
     stateRoot: scope.stateRoot,
     excludeWorkspaceId: scope.workspaceId,
   }).map((owner) => owner.port);

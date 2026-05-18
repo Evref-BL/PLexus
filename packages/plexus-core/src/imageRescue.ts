@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import {
   loadProjectConfig,
+  projectConfigId,
   resolveProjectRuntimePolicy,
   type ProjectImageConfig,
 } from "./projectConfig.js";
@@ -1096,7 +1097,7 @@ export async function rescueImage(
       );
       const startupScript = writeImageStartupScript({
         projectRoot,
-        projectId: config.kanban.projectId,
+        projectId: projectConfigId(config),
         workspaceId,
         stateRoot: resolvedStateRoot,
         imageConfig: targetConfig,

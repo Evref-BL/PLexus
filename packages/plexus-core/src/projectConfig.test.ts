@@ -14,11 +14,8 @@ const tempDirs: string[] = [];
 
 function validProjectConfig() {
   return {
+    id: "project-123",
     name: "my-project",
-    kanban: {
-      provider: "vibe-kanban",
-      projectId: "project-123",
-    },
     images: [
       {
         id: "dev",
@@ -90,6 +87,24 @@ describe("project config", () => {
   it("parses the prototype project config shape with runtime defaults", () => {
     expect(parseProjectConfig(validProjectConfig())).toEqual({
       ...validProjectConfig(),
+      runtime: defaultRuntimePolicy(),
+    });
+  });
+
+  it("keeps legacy kanban project identity readable as compatibility input", () => {
+    const legacyConfig = {
+      ...validProjectConfig(),
+      id: undefined,
+      kanban: {
+        provider: "vibe-kanban",
+        projectId: "legacy-project",
+      },
+    };
+
+    expect(parseProjectConfig(legacyConfig)).toEqual({
+      ...validProjectConfig(),
+      id: "legacy-project",
+      kanban: legacyConfig.kanban,
       runtime: defaultRuntimePolicy(),
     });
   });
@@ -487,6 +502,7 @@ describe("project config", () => {
     expect(() =>
       parseProjectConfig({
         name: "",
+        id: "",
         kanban: {
           provider: "other",
         },
@@ -525,6 +541,7 @@ describe("project config", () => {
     try {
       parseProjectConfig({
         name: "",
+        id: "",
         kanban: {
           provider: "other",
         },
@@ -562,6 +579,7 @@ describe("project config", () => {
       expect(error).toBeInstanceOf(ProjectConfigError);
       expect((error as ProjectConfigError).issues).toEqual(
         expect.arrayContaining([
+          "config.id must be a non-empty string",
           "config.name must be a non-empty string",
           "kanban.provider must be \"vibe-kanban\"",
           "kanban.projectId must be a non-empty string",

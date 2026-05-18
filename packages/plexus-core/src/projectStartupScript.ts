@@ -1,5 +1,5 @@
 import fs from "node:fs";
-import type { ProjectConfig, ProjectImageConfig } from "./projectConfig.js";
+import { projectConfigId, type ProjectConfig, type ProjectImageConfig } from "./projectConfig.js";
 import {
   dirnamePathLike,
   isAbsolutePathLike,
@@ -265,7 +265,7 @@ export function writeProjectImageStartupScript(
 
   return writeImageStartupScript({
     projectRoot: options.projectRoot,
-    projectId: options.config.kanban.projectId,
+    projectId: projectConfigId(options.config),
     imageConfig,
     imageState: options.imageState,
     workspaceId: options.workspaceId,

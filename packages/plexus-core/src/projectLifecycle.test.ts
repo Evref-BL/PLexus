@@ -170,11 +170,8 @@ function writeProjectConfig(
     path.join(projectRoot, "plexus.project.json"),
     JSON.stringify(
       {
+        id: "project-123",
         name: "my-project",
-        kanban: {
-          provider: "vibe-kanban",
-          projectId: "project-123",
-        },
         runtime,
         images: [
           {

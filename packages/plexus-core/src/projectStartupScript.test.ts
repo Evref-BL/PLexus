@@ -14,11 +14,8 @@ import {
 } from "./projectStartupScript.js";
 
 const config: ProjectConfig = {
+  id: "project-123",
   name: "my-project",
-  kanban: {
-    provider: "vibe-kanban",
-    projectId: "project-123",
-  },
   images: [
     {
       id: "dev",

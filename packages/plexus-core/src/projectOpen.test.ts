@@ -141,11 +141,8 @@ function writeProjectConfig(
   overrides: Record<string, unknown> = {},
 ): void {
   const config = {
+    id: "project-123",
     name: "my-project",
-    kanban: {
-      provider: "vibe-kanban",
-      projectId: "project-123",
-    },
     runtime: projectStateRuntime(),
     images: [
       {
@@ -738,13 +735,13 @@ describe("project open", () => {
     const stateRootB = makeTempDir("plexus-state-b-");
     writeProjectConfig(projectRootA, {
       name: "project-a",
-      kanban: { provider: "vibe-kanban", projectId: "project-a" },
+      id: "project-a",
       runtime: hostLocalRuntime(claimsRoot, 7200, 7201),
       images: [dynamicImage("dev", "ProjectA-dev")],
     });
     writeProjectConfig(projectRootB, {
       name: "project-b",
-      kanban: { provider: "vibe-kanban", projectId: "project-b" },
+      id: "project-b",
       runtime: hostLocalRuntime(claimsRoot, 7200, 7201),
       images: [dynamicImage("dev", "ProjectB-dev")],
     });
@@ -800,7 +797,7 @@ describe("project open", () => {
     const stateRootB = makeTempDir("plexus-state-b-");
     writeProjectConfig(projectRootA, {
       name: "project-a",
-      kanban: { provider: "vibe-kanban", projectId: "project-a" },
+      id: "project-a",
       runtime: hostLocalRuntime(claimsRoot, 7200, 7209),
       images: [
         {
@@ -816,7 +813,7 @@ describe("project open", () => {
     });
     writeProjectConfig(projectRootB, {
       name: "project-b",
-      kanban: { provider: "vibe-kanban", projectId: "project-b" },
+      id: "project-b",
       runtime: hostLocalRuntime(claimsRoot, 7200, 7209),
       images: [
         {
@@ -1109,7 +1106,7 @@ describe("project open", () => {
     const stateRootB = makeTempDir("plexus-state-b-");
     writeProjectConfig(projectRootA, {
       name: "project-a",
-      kanban: { provider: "vibe-kanban", projectId: "project-a" },
+      id: "project-a",
       runtime: projectStateRuntime(7200, 7209),
       images: [
         {
@@ -1125,7 +1122,7 @@ describe("project open", () => {
     });
     writeProjectConfig(projectRootB, {
       name: "project-b",
-      kanban: { provider: "vibe-kanban", projectId: "project-b" },
+      id: "project-b",
       runtime: projectStateRuntime(7200, 7209),
       images: [
         {

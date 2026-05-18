@@ -1,4 +1,5 @@
 import {
+  projectConfigId,
   resolveProjectRuntimePolicy,
   type ProjectConfig,
 } from "./projectConfig.js";
@@ -56,7 +57,7 @@ const launcherProfileEnvironmentKeys = [
 ] as const;
 
 function profileName(config: ProjectConfig): string {
-  return ["plexus", sanitizeRuntimeId(config.kanban.projectId)].join("-");
+  return ["plexus", sanitizeRuntimeId(projectConfigId(config))].join("-");
 }
 
 function resolvedPlexusStateRoot(
@@ -83,7 +84,7 @@ function defaultProfileRoot(
     resolvedPlexusStateRoot(projectRoot, config, stateRoot),
     "profiles",
     "pharo-launcher-mcp",
-    sanitizeRuntimeId(config.kanban.projectId),
+    sanitizeRuntimeId(projectConfigId(config)),
   );
 }
 

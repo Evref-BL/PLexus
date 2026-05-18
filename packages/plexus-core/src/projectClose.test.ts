@@ -74,11 +74,8 @@ function writeProjectConfig(projectRoot: string): void {
     path.join(projectRoot, "plexus.project.json"),
     JSON.stringify(
       {
+        id: "project-123",
         name: "my-project",
-        kanban: {
-          provider: "vibe-kanban",
-          projectId: "project-123",
-        },
         runtime: projectStateRuntime(),
         images: [
           {
@@ -113,11 +110,8 @@ function writeHostLocalProjectConfig(projectRoot: string, claimsRoot: string): v
     path.join(projectRoot, "plexus.project.json"),
     JSON.stringify(
       {
+        id: "project-123",
         name: "my-project",
-        kanban: {
-          provider: "vibe-kanban",
-          projectId: "project-123",
-        },
         runtime: {
           imagePorts: {
             allocation: "configured-or-dynamic",
