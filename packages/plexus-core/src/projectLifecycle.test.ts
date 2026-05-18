@@ -386,6 +386,20 @@ describe("project lifecycle tools", () => {
             statePath: stateFilePath,
             targetId: "project-123--worktree-a",
           },
+          launcherProfile: {
+            ownership: "plexus-owned",
+            mode: "project-owned",
+            profileName:
+              "plexus-project-123-worktree-a-project-123--worktree-a",
+            stateRoot: path.join(
+              stateRoot,
+              "profiles",
+              "pharo-launcher-mcp",
+              "project-123",
+              "worktree-a",
+              "project-123--worktree-a",
+            ),
+          },
           imageMcpPorts: [],
           portClaims: {
             roots: [claimsRoot],

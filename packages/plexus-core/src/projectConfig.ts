@@ -91,11 +91,20 @@ export interface ProjectImagePortPolicy {
   coordination: ProjectImagePortCoordinationPolicy;
 }
 
+export type ProjectLauncherProfileMode = "project-owned" | "external";
+
+export interface ProjectLauncherProfilePolicy {
+  mode: ProjectLauncherProfileMode;
+  name?: string;
+  root?: string;
+}
+
 export interface ProjectRuntimePolicy {
   scope: ProjectRuntimeScope;
   stateRoot: ProjectRuntimeStateRootPolicy;
   gateway: ProjectGatewayPolicy;
   imagePorts: ProjectImagePortPolicy;
+  launcherProfile: ProjectLauncherProfilePolicy;
 }
 
 export interface ProjectConfig {
@@ -146,6 +155,9 @@ export function defaultProjectRuntimePolicy(): ProjectRuntimePolicy {
       coordination: {
         mode: "project-state",
       },
+    },
+    launcherProfile: {
+      mode: "project-owned",
     },
   };
 }
@@ -721,6 +733,50 @@ function parseImagePortPolicy(
   };
 }
 
+function parseLauncherProfilePolicy(
+  value: unknown,
+  issues: string[],
+): ProjectLauncherProfilePolicy {
+  if (value === undefined) {
+    return { ...defaultProjectRuntimePolicy().launcherProfile };
+  }
+
+  if (!isObject(value)) {
+    issues.push("runtime.launcherProfile must be an object");
+    return { ...defaultProjectRuntimePolicy().launcherProfile };
+  }
+
+  const modeValue = value.mode ?? "project-owned";
+  const mode =
+    modeValue === "project-owned" || modeValue === "external"
+      ? modeValue
+      : "project-owned";
+  if (mode !== modeValue) {
+    issues.push(
+      "runtime.launcherProfile.mode must be one of project-owned, external",
+    );
+  }
+
+  const name = optionalStringField(
+    value,
+    "name",
+    issues,
+    "runtime.launcherProfile",
+  );
+  const root = optionalStringField(
+    value,
+    "root",
+    issues,
+    "runtime.launcherProfile",
+  );
+
+  return {
+    mode,
+    ...(name ? { name } : {}),
+    ...(root ? { root } : {}),
+  };
+}
+
 function parseRuntimePolicy(
   value: unknown,
   issues: string[],
@@ -744,6 +800,10 @@ function parseRuntimePolicy(
     stateRoot: parseRuntimeStateRoot(value.stateRoot, issues),
     gateway: parseRuntimeGateway(value.gateway, issues),
     imagePorts: parseImagePortPolicy(value.imagePorts, issues),
+    launcherProfile: parseLauncherProfilePolicy(
+      value.launcherProfile,
+      issues,
+    ),
   };
 }
 

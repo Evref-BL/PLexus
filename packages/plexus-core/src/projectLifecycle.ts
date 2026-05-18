@@ -44,6 +44,10 @@ import {
   type ProjectGatewayState,
   type ProjectState,
 } from "./projectState.js";
+import {
+  describePharoLauncherMcpProfile,
+  type PharoLauncherMcpProfileDiagnostic,
+} from "./pharoLauncherProfile.js";
 
 export interface ProjectLifecycleRouteReference {
   projectId?: string;
@@ -223,6 +227,7 @@ export interface ProjectLifecycleDiagnostics {
     status: ProjectImageState["status"];
     pid?: number;
   }>;
+  launcherProfile: PharoLauncherMcpProfileDiagnostic;
   portClaims: ProjectLifecyclePortClaimsDiagnostics;
   conflictingListeners: ProjectLifecyclePortListenerDiagnostic[];
   staleClaims: ProjectLifecyclePortClaimDiagnostic[];
@@ -1272,6 +1277,14 @@ export class PlexusProjectLifecycle {
       },
       gateway: gatewayDiagnostic(gateway),
       imageMcpPorts: imageMcpPorts(state),
+      launcherProfile: describePharoLauncherMcpProfile({
+        projectRoot,
+        config,
+        workspaceId: scope.workspaceId,
+        targetId: scope.targetId,
+        stateRoot,
+        env: this.gateway.env,
+      }),
       portClaims,
       conflictingListeners,
       staleClaims: portClaims.stale,

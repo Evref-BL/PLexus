@@ -15,6 +15,10 @@ import {
   projectStateRootForConfig,
   type ProjectImageState,
 } from "./projectState.js";
+import {
+  describePharoLauncherMcpProfile,
+  type PharoLauncherMcpProfileDiagnostic,
+} from "./pharoLauncherProfile.js";
 
 const stringSchema = { type: "string", minLength: 1 } as const;
 
@@ -39,6 +43,7 @@ export interface ScopedPharoLauncherOptions {
 
 interface ResolvedScope {
   projectRoot: string;
+  projectId: string;
   workspaceId: string;
   targetId: string;
   stateRoot?: string;
@@ -97,6 +102,7 @@ function resolveScope(options: ScopedPharoLauncherOptions): ResolvedScope {
   const stateRoot = projectStateRootForConfig(projectConfig, options.stateRoot);
   return {
     projectRoot: options.projectRoot,
+    projectId: projectConfig.kanban.projectId,
     workspaceId,
     targetId:
       options.targetId ?? defaultTargetId(projectConfig.kanban.projectId, workspaceId),
@@ -126,6 +132,7 @@ export class ScopedPharoLauncher {
 
   listImages(): {
     scope: ResolvedScope;
+    launcherProfile: PharoLauncherMcpProfileDiagnostic;
     images: WorkspaceImageSummary[];
   } {
     const scope = resolveScope(this.options);
@@ -141,6 +148,13 @@ export class ScopedPharoLauncher {
 
     return {
       scope,
+      launcherProfile: describePharoLauncherMcpProfile({
+        projectRoot: scope.projectRoot,
+        config: projectConfig,
+        workspaceId: scope.workspaceId,
+        targetId: scope.targetId,
+        stateRoot: scope.stateRoot,
+      }),
       images: projectConfig.images.map((imageConfig) =>
         imageSummary(
           imageConfig,
@@ -152,6 +166,7 @@ export class ScopedPharoLauncher {
 
   imageInfo(imageId: string): {
     scope: ResolvedScope;
+    launcherProfile: PharoLauncherMcpProfileDiagnostic;
     image: WorkspaceImageSummary;
   } {
     const listed = this.listImages();
@@ -164,12 +179,14 @@ export class ScopedPharoLauncher {
 
     return {
       scope: listed.scope,
+      launcherProfile: listed.launcherProfile,
       image,
     };
   }
 
   async startImage(imageId: string): Promise<{
     scope: ResolvedScope;
+    launcherProfile: PharoLauncherMcpProfileDiagnostic;
     image: WorkspaceImageSummary;
   }> {
     const before = this.imageInfo(imageId);
@@ -192,6 +209,7 @@ export class ScopedPharoLauncher {
 
   async stopImage(imageId: string): Promise<{
     scope: ResolvedScope;
+    launcherProfile: PharoLauncherMcpProfileDiagnostic;
     image: WorkspaceImageSummary;
   }> {
     const before = this.imageInfo(imageId);

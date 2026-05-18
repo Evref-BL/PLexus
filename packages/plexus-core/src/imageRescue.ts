@@ -9,6 +9,7 @@ import {
   createStdioPharoLauncherMcpClient,
   type PharoLauncherMcpToolClient,
 } from "./pharoLauncherMcpClient.js";
+import { pharoLauncherMcpProfileEnvironment } from "./pharoLauncherProfile.js";
 import {
   HttpPharoMcpHealthClient,
   type PharoMcpHealthClient,
@@ -956,7 +957,15 @@ export async function rescueImage(
   const sourceConfig = findImageConfig(config.images, options.sourceImageId);
   const launcherClient =
     options.pharoLauncherMcpClient ??
-    (await createStdioPharoLauncherMcpClient());
+    (await createStdioPharoLauncherMcpClient(undefined, {
+      profileEnvironment: pharoLauncherMcpProfileEnvironment({
+        projectRoot,
+        config,
+        workspaceId,
+        targetId: state.targetId,
+        stateRoot: resolvedStateRoot,
+      }),
+    }));
   const ownsLauncherClient = !options.pharoLauncherMcpClient;
   const warnings: string[] = [];
 
