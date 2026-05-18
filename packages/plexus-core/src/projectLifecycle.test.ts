@@ -388,7 +388,17 @@ describe("project lifecycle tools", () => {
           workspaceId: "worktree-a",
           targetId: "project-123--worktree-a",
         },
-        diagnostics: {
+          diagnostics: {
+          toolRuntime: {
+            packageName: "@evref-bl/plexus-core",
+            packageVersion: expect.any(String),
+            modulePath: expect.any(String),
+            entrypointPath: expect.any(String),
+            projectConfigSchema: {
+              identityField: "id",
+              legacyIdentityField: "kanban.projectId",
+            },
+          },
           imageMcpPorts: [
             {
               imageId: "dev",
@@ -396,6 +406,50 @@ describe("project lifecycle tools", () => {
               pid: 1234,
             },
           ],
+        },
+      },
+    });
+  });
+
+  it("includes config schema and runtime identity diagnostics on config failures", async () => {
+    const projectRoot = makeTempDir("plexus-project-");
+    fs.writeFileSync(
+      path.join(projectRoot, "plexus.project.json"),
+      JSON.stringify(
+        {
+          name: "my-project",
+          images: [],
+        },
+        null,
+        2,
+      ),
+      "utf8",
+    );
+    const lifecycle = new PlexusProjectLifecycle({
+      routeRegistry: new FakeRouteRegistry(),
+    });
+
+    const result = await lifecycle.handleTool("plexus_project_status", {
+      projectPath: projectRoot,
+      includeDiagnostics: true,
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: "Invalid Plexus project config",
+      diagnostics: {
+        toolRuntime: {
+          packageName: "@evref-bl/plexus-core",
+          packageVersion: expect.any(String),
+          modulePath: expect.any(String),
+          entrypointPath: expect.any(String),
+          projectConfigSchema: {
+            identityField: "id",
+            legacyIdentityField: "kanban.projectId",
+          },
+        },
+        projectConfig: {
+          issues: ["config.id must be a non-empty string"],
         },
       },
     });

@@ -15,6 +15,7 @@ import {
   loadProjectConfig,
   plexusProjectConfigFileName,
   projectConfigId,
+  ProjectConfigError,
   resolveProjectRuntimePolicy,
   type ProjectConfig,
   type ProjectImagePortAllocationPolicy,
@@ -59,6 +60,10 @@ import {
   buildScopedProjectContext,
   type ScopedProjectContext,
 } from "./scopedProjectContext.js";
+import {
+  plexusRuntimeIdentity,
+  type PlexusRuntimeIdentityDiagnostic,
+} from "./runtimeIdentity.js";
 
 export interface ProjectLifecycleRouteReference {
   projectId?: string;
@@ -246,6 +251,7 @@ export interface ProjectLifecycleAgentAccessDiagnostics {
 }
 
 export interface ProjectLifecycleDiagnostics {
+  toolRuntime: PlexusRuntimeIdentityDiagnostic;
   runtime: {
     status: ProjectLifecycleRuntimeDiagnosticStatus;
     reason: string;
@@ -291,6 +297,14 @@ export interface ProjectLifecycleToolResult<T = unknown> {
   ok: boolean;
   data?: T;
   error?: string;
+  diagnostics?: ProjectLifecycleToolFailureDiagnostics;
+}
+
+export interface ProjectLifecycleToolFailureDiagnostics {
+  toolRuntime: PlexusRuntimeIdentityDiagnostic;
+  projectConfig?: {
+    issues: string[];
+  };
 }
 
 class ProjectLifecycleInputError extends Error {
@@ -521,9 +535,21 @@ function result<T>(data: T): ProjectLifecycleToolResult<T> {
 }
 
 function failure<T = unknown>(error: unknown): ProjectLifecycleToolResult<T> {
+  const diagnostics: ProjectLifecycleToolFailureDiagnostics = {
+    toolRuntime: plexusRuntimeIdentity(),
+    ...(error instanceof ProjectConfigError
+      ? {
+          projectConfig: {
+            issues: error.issues,
+          },
+        }
+      : {}),
+  };
+
   return {
     ok: false,
     error: error instanceof Error ? error.message : String(error),
+    diagnostics,
   };
 }
 
@@ -1418,6 +1444,7 @@ export class PlexusProjectLifecycle {
       checks,
     );
     const diagnostics: ProjectLifecycleDiagnostics = {
+      toolRuntime: plexusRuntimeIdentity(),
       runtime: runtimeDiagnostics(
         state,
         gateway,
