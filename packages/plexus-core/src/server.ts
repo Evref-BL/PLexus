@@ -97,6 +97,7 @@ export const projectLifecycleTools = [
     inputSchema: objectSchema({
       ...projectReferenceProperties,
       refreshHealth: { type: "boolean" },
+      includeDiagnostics: { type: "boolean" },
     }),
   },
   {

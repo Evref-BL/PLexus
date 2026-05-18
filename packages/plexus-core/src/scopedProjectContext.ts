@@ -22,11 +22,15 @@ export type ScopedImageStatus = ProjectImageStatus | "declared";
 export type ScopedImageCleanupPolicy = "workspace_cleanup_only";
 
 export interface ScopedProjectContextScope {
-  projectRoot: string;
   projectId: string;
   projectName: string;
   workspaceId: string;
   targetId: string;
+}
+
+export interface ScopedProjectContextDiagnosticScope
+  extends ScopedProjectContextScope {
+  projectRoot: string;
   stateRoot?: string;
   statePath: string;
 }
@@ -92,14 +96,10 @@ export interface ScopedImageGatewayRouteMetadata {
 
 export interface ScopedImageContext {
   imageId: string;
-  launcherImageName: string;
   active: boolean;
   status: ScopedImageStatus;
-  assignedPort?: number;
-  pid?: number;
   ownership: ScopedImageOwnership;
   affordances: ScopedImageAffordances;
-  cleanup: ScopedImageCleanupMetadata;
   route: ScopedImageGatewayRouteMetadata;
 }
 
@@ -107,6 +107,22 @@ export interface ScopedProjectContext {
   schemaVersion: ScopedProjectContextSchemaVersion;
   scope: ScopedProjectContextScope;
   images: ScopedImageContext[];
+}
+
+export interface ScopedImageDiagnosticContext {
+  imageId: string;
+  launcherImageName: string;
+  active: boolean;
+  status: ScopedImageStatus;
+  assignedPort?: number;
+  pid?: number;
+  cleanup: ScopedImageCleanupMetadata;
+}
+
+export interface ScopedProjectContextDiagnostics {
+  schemaVersion: ScopedProjectContextSchemaVersion;
+  scope: ScopedProjectContextDiagnosticScope;
+  images: ScopedImageDiagnosticContext[];
 }
 
 export interface BuildScopedProjectContextOptions {
@@ -240,7 +256,7 @@ function routeMetadata(
       targetId: scope.targetId,
     },
     imageIdSource:
-      "Read images[].imageId from this scoped context or pharo-launcher image list",
+      "Read images[].imageId from this scoped context",
     recordHint:
       "Store the selected imageId with the scoped project/workspace/target before calling gateway tools",
   };
@@ -282,12 +298,18 @@ function validateProjectState(
   }
 }
 
-function scopedImageContext(
+interface ResolvedScopedProjectContext {
+  projectConfig: ProjectConfig;
+  projectState?: ProjectState;
+  scope: ScopedProjectContextDiagnosticScope;
+}
+
+function renderedLauncherImageName(
   scope: ScopedProjectContextScope,
   imageConfig: ProjectImageConfig,
   imageState: ProjectImageState | undefined,
-): ScopedImageContext {
-  const launcherImageName =
+): string {
+  return (
     imageState?.imageName ??
     renderProjectImageName(imageConfig.imageName, {
       projectId: scope.projectId,
@@ -295,7 +317,41 @@ function scopedImageContext(
       workspaceId: scope.workspaceId,
       targetId: scope.targetId,
       imageId: imageConfig.id,
-    });
+    })
+  );
+}
+
+function scopedImageContext(
+  scope: ScopedProjectContextScope,
+  imageConfig: ProjectImageConfig,
+  imageState: ProjectImageState | undefined,
+): ScopedImageContext {
+  return {
+    imageId: imageConfig.id,
+    active: imageConfig.active,
+    status: imageStatus(imageState),
+    ownership: {
+      projectId: scope.projectId,
+      workspaceId: scope.workspaceId,
+      targetId: scope.targetId,
+      owned: true,
+      disposable: true,
+    },
+    affordances: lifecycleAffordances(imageConfig, imageState),
+    route: routeMetadata(scope, imageConfig.id),
+  };
+}
+
+function scopedImageDiagnostics(
+  scope: ScopedProjectContextDiagnosticScope,
+  imageConfig: ProjectImageConfig,
+  imageState: ProjectImageState | undefined,
+): ScopedImageDiagnosticContext {
+  const launcherImageName = renderedLauncherImageName(
+    scope,
+    imageConfig,
+    imageState,
+  );
 
   return {
     imageId: imageConfig.id,
@@ -306,14 +362,6 @@ function scopedImageContext(
       ? { assignedPort: imageState.assignedPort }
       : {}),
     ...(imageState?.pid ? { pid: imageState.pid } : {}),
-    ownership: {
-      projectId: scope.projectId,
-      workspaceId: scope.workspaceId,
-      targetId: scope.targetId,
-      owned: true,
-      disposable: true,
-    },
-    affordances: lifecycleAffordances(imageConfig, imageState),
     cleanup: {
       disposable: true,
       statePath: scope.statePath,
@@ -321,13 +369,12 @@ function scopedImageContext(
       policy: "workspace_cleanup_only",
       paths: cleanupPaths(imageState),
     },
-    route: routeMetadata(scope, imageConfig.id),
   };
 }
 
-export function buildScopedProjectContext(
+function resolveScopedProjectContext(
   options: BuildScopedProjectContextOptions,
-): ScopedProjectContext {
+): ResolvedScopedProjectContext {
   const projectRoot = resolvePathLike(options.projectRoot);
   const projectConfig = options.projectConfig ?? loadProjectConfig(projectRoot);
   const workspaceId = options.workspaceId
@@ -348,7 +395,7 @@ export function buildScopedProjectContext(
     stateRoot: resolvedStateRoot,
   });
   const projectState = options.projectState ?? loadProjectState(statePath);
-  const scope: ScopedProjectContextScope = {
+  const scope: ScopedProjectContextDiagnosticScope = {
     projectRoot,
     projectId: projectConfig.kanban.projectId,
     projectName: projectConfig.name,
@@ -364,10 +411,47 @@ export function buildScopedProjectContext(
   validateProjectState(scope, projectState, configuredImageIds);
 
   return {
+    projectConfig,
+    projectState,
+    scope,
+  };
+}
+
+export function buildScopedProjectContext(
+  options: BuildScopedProjectContextOptions,
+): ScopedProjectContext {
+  const { projectConfig, projectState, scope } =
+    resolveScopedProjectContext(options);
+
+  return {
+    schemaVersion: 1,
+    scope: {
+      projectId: scope.projectId,
+      projectName: scope.projectName,
+      workspaceId: scope.workspaceId,
+      targetId: scope.targetId,
+    },
+    images: projectConfig.images.map((imageConfig) =>
+      scopedImageContext(
+        scope,
+        imageConfig,
+        projectState?.images.find((image) => image.id === imageConfig.id),
+      ),
+    ),
+  };
+}
+
+export function buildScopedProjectContextDiagnostics(
+  options: BuildScopedProjectContextOptions,
+): ScopedProjectContextDiagnostics {
+  const { projectConfig, projectState, scope } =
+    resolveScopedProjectContext(options);
+
+  return {
     schemaVersion: 1,
     scope,
     images: projectConfig.images.map((imageConfig) =>
-      scopedImageContext(
+      scopedImageDiagnostics(
         scope,
         imageConfig,
         projectState?.images.find((image) => image.id === imageConfig.id),

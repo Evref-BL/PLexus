@@ -124,7 +124,8 @@ PLexus maps each handle to runtime state:
 The exact record can grow, but it should keep these properties:
 
 - `imageId` is stable inside one `projectId` plus `workspaceId`.
-- `launcherImageName` is diagnostic output, not a caller-controlled route key.
+- `launcherImageName` is trusted diagnostic output, not normal agent-facing
+  context and not a caller-controlled route key.
 - `pharoMcpContract.status` is explicit so agents can tell whether an image can
   be used through the `pharo` facade.
 

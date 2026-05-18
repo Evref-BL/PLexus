@@ -4,6 +4,7 @@ import type { ProjectConfig } from "./projectConfig.js";
 import type { ProjectState } from "./projectState.js";
 import {
   buildScopedProjectContext,
+  buildScopedProjectContextDiagnostics,
   ScopedProjectContextError,
 } from "./scopedProjectContext.js";
 
@@ -86,20 +87,15 @@ describe("scoped project context", () => {
     expect(context).toMatchObject({
       schemaVersion: 1,
       scope: {
-        projectRoot: path.win32.resolve(projectRoot),
         projectId: "project-123",
         projectName: "my-project",
         workspaceId: "task-123",
         targetId: "target-123",
-        stateRoot: path.win32.resolve(stateRoot),
-        statePath,
       },
       images: [
         {
           imageId: "dev",
-          launcherImageName: "MyProject-task-123-dev",
           status: "running",
-          assignedPort: 7123,
           ownership: {
             projectId: "project-123",
             workspaceId: "task-123",
@@ -110,7 +106,6 @@ describe("scoped project context", () => {
         },
         {
           imageId: "baseline",
-          launcherImageName: "MyProject-task-123-baseline",
           status: "stopped",
           ownership: {
             projectId: "project-123",
@@ -122,6 +117,16 @@ describe("scoped project context", () => {
         },
       ],
     });
+    expect(context.images[0]).not.toHaveProperty("launcherImageName");
+    expect(context.images[0]).not.toHaveProperty("assignedPort");
+    expect(context.images[0]).not.toHaveProperty("pid");
+    expect(context.images[0]).not.toHaveProperty("cleanup");
+
+    const contextJson = JSON.stringify(context);
+    expect(contextJson).not.toContain("MyProject-task-123-dev");
+    expect(contextJson).not.toContain("7123");
+    expect(contextJson).not.toContain("1234");
+    expect(contextJson).not.toContain("C:\\Users\\me\\Pharo\\images");
   });
 
   it("describes safe scoped lifecycle affordances without raw launcher mutation keys", () => {
@@ -167,8 +172,8 @@ describe("scoped project context", () => {
     );
   });
 
-  it("includes cleanup metadata for owned disposable images", () => {
-    const context = buildScopedProjectContext({
+  it("keeps raw launcher and cleanup metadata in diagnostics", () => {
+    const diagnostics = buildScopedProjectContextDiagnostics({
       projectRoot,
       projectConfig,
       workspaceId: "task-123",
@@ -177,7 +182,22 @@ describe("scoped project context", () => {
       projectState,
     });
 
-    expect(context.images[0].cleanup).toEqual({
+    expect(diagnostics.scope).toEqual({
+      projectRoot: path.win32.resolve(projectRoot),
+      projectId: "project-123",
+      projectName: "my-project",
+      workspaceId: "task-123",
+      targetId: "target-123",
+      stateRoot: path.win32.resolve(stateRoot),
+      statePath,
+    });
+    expect(diagnostics.images[0]).toMatchObject({
+      imageId: "dev",
+      launcherImageName: "MyProject-task-123-dev",
+      assignedPort: 7123,
+      pid: 1234,
+    });
+    expect(diagnostics.images[0].cleanup).toEqual({
       disposable: true,
       statePath,
       launcherImageName: "MyProject-task-123-dev",
@@ -212,7 +232,7 @@ describe("scoped project context", () => {
         targetId: "target-123",
       },
       imageIdSource:
-        "Read images[].imageId from this scoped context or pharo-launcher image list",
+        "Read images[].imageId from this scoped context",
       recordHint:
         "Store the selected imageId with the scoped project/workspace/target before calling gateway tools",
     });

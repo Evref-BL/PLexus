@@ -316,9 +316,8 @@ describe("project lifecycle tools", () => {
   it("reports lifecycle status from project runtime state without starting images", async () => {
     const projectRoot = makeTempDir("plexus-project-");
     const stateRoot = makeTempDir("plexus-state-");
-    const stateFilePath = statePath(stateRoot);
     writeProjectConfig(projectRoot);
-    saveProjectState(stateFilePath, runningState);
+    saveProjectState(statePath(stateRoot), runningState);
     const lifecycle = new PlexusProjectLifecycle({
       routeRegistry: new FakeRouteRegistry(),
     });
@@ -332,12 +331,109 @@ describe("project lifecycle tools", () => {
     expect(result).toMatchObject({
       ok: true,
       data: {
+        projectId: "project-123",
+        workspaceId: "worktree-a",
+        targetId: "project-123--worktree-a",
+        context: {
+          scope: {
+            projectId: "project-123",
+            workspaceId: "worktree-a",
+            targetId: "project-123--worktree-a",
+          },
+          images: [
+            {
+              imageId: "dev",
+              status: "running",
+              route: {
+                serverName: "gateway",
+                requiredArgument: "imageId",
+                imageId: "dev",
+              },
+            },
+          ],
+        },
+      },
+    });
+    expect(result.data).not.toHaveProperty("state");
+    expect(result.data).not.toHaveProperty("gateway");
+    expect(result.data).not.toHaveProperty("route");
+    expect(result.data).not.toHaveProperty("diagnostics");
+    expect(JSON.stringify(result.data)).not.toContain("MyProject-dev");
+    expect(JSON.stringify(result.data)).not.toContain("7123");
+    expect(JSON.stringify(result.data)).not.toContain("1234");
+  });
+
+  it("returns raw lifecycle state only when diagnostics are requested", async () => {
+    const projectRoot = makeTempDir("plexus-project-");
+    const stateRoot = makeTempDir("plexus-state-");
+    const stateFilePath = statePath(stateRoot);
+    writeProjectConfig(projectRoot);
+    saveProjectState(stateFilePath, runningState);
+    const lifecycle = new PlexusProjectLifecycle({
+      routeRegistry: new FakeRouteRegistry(),
+    });
+
+    const result = await lifecycle.handleTool("plexus_project_status", {
+      projectPath: projectRoot,
+      stateRoot,
+      workspaceId: "worktree-a",
+      includeDiagnostics: true,
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
+      data: {
         projectRoot: path.resolve(projectRoot),
         statePath: stateFilePath,
         state: runningState,
         route: {
           projectId: "project-123",
           workspaceId: "worktree-a",
+          targetId: "project-123--worktree-a",
+        },
+        diagnostics: {
+          imageMcpPorts: [
+            {
+              imageId: "dev",
+              port: 7123,
+              pid: 1234,
+            },
+          ],
+        },
+      },
+    });
+  });
+
+  it("hides route registry state unless diagnostics are requested", async () => {
+    const lifecycle = new PlexusProjectLifecycle({
+      routeRegistry: new FakeRouteRegistry(),
+    });
+
+    const result = await lifecycle.handleTool("plexus_project_status", {
+      targetId: runningState.targetId,
+    });
+    const diagnosticResult = await lifecycle.handleTool("plexus_project_status", {
+      targetId: runningState.targetId,
+      includeDiagnostics: true,
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
+      data: {
+        projectId: "project-123",
+        workspaceId: "worktree-a",
+        targetId: "project-123--worktree-a",
+      },
+    });
+    expect(result.data).not.toHaveProperty("projectRoot");
+    expect(result.data).not.toHaveProperty("statePath");
+    expect(result.data).not.toHaveProperty("route");
+    expect(diagnosticResult).toMatchObject({
+      ok: true,
+      data: {
+        projectRoot: "project-root",
+        statePath: "state.json",
+        route: {
           targetId: "project-123--worktree-a",
         },
       },
@@ -371,6 +467,7 @@ describe("project lifecycle tools", () => {
       projectPath: projectRoot,
       stateRoot,
       workspaceId: "worktree-a",
+      includeDiagnostics: true,
     });
 
     expect(result).toMatchObject({
@@ -410,6 +507,7 @@ describe("project lifecycle tools", () => {
       projectPath: projectRoot,
       stateRoot,
       workspaceId: "worktree-a",
+      includeDiagnostics: true,
     });
 
     expect(result).toMatchObject({
@@ -503,6 +601,7 @@ describe("project lifecycle tools", () => {
       projectPath: projectRoot,
       stateRoot,
       workspaceId: "worktree-a",
+      includeDiagnostics: true,
     });
 
     expect(result).toMatchObject({
@@ -682,6 +781,7 @@ describe("project lifecycle tools", () => {
       projectPath: projectRoot,
       stateRoot,
       workspaceId: "worktree-a",
+      includeDiagnostics: true,
     });
 
     expect(result).toMatchObject({
@@ -761,6 +861,7 @@ describe("project lifecycle tools", () => {
       projectPath: projectRoot,
       stateRoot,
       workspaceId: "worktree-a",
+      includeDiagnostics: true,
     });
 
     expect(result).toMatchObject({
@@ -823,6 +924,7 @@ describe("project lifecycle tools", () => {
       projectPath: projectRoot,
       stateRoot,
       workspaceId: "worktree-a",
+      includeDiagnostics: true,
     });
 
     expect(openResult).toMatchObject({

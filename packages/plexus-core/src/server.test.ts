@@ -26,6 +26,18 @@ describe("project lifecycle server", () => {
     );
   });
 
+  it("requires an explicit status diagnostics opt-in", () => {
+    expect(
+      projectLifecycleTools.find((tool) => tool.name === "plexus_project_status"),
+    ).toMatchObject({
+      inputSchema: {
+        properties: {
+          includeDiagnostics: { type: "boolean" },
+        },
+      },
+    });
+  });
+
   it("returns lifecycle tool results over MCP", async () => {
     const lifecycle = new PlexusProjectLifecycle();
     const server = createProjectLifecycleServer(lifecycle);

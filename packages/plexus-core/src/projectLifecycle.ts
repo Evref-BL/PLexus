@@ -54,6 +54,10 @@ import {
   describePharoLauncherMcpProfile,
   type PharoLauncherMcpProfileDiagnostic,
 } from "./pharoLauncherProfile.js";
+import {
+  buildScopedProjectContext,
+  type ScopedProjectContext,
+} from "./scopedProjectContext.js";
 
 export interface ProjectLifecycleRouteReference {
   projectId?: string;
@@ -127,6 +131,7 @@ export interface ProjectStatusToolInput extends ProjectLifecycleRouteReference {
   projectPath?: string;
   stateRoot?: string;
   refreshHealth?: boolean;
+  includeDiagnostics?: boolean;
 }
 
 export interface RescueImageToolInput extends ProjectStatusToolInput {
@@ -155,6 +160,7 @@ export interface ProjectLifecycleStatus {
   projectId?: string;
   workspaceId?: string;
   targetId?: string;
+  context?: ScopedProjectContext;
   state?: ProjectState;
   gateway?: ProjectGatewayState;
   route?: unknown;
@@ -571,15 +577,34 @@ function lifecycleReferenceFromInput(
   };
 }
 
-function lifecycleStatusFromRoute(route: unknown): ProjectLifecycleStatus {
+function lifecycleStatusFromRoute(
+  route: unknown,
+  includeDiagnostics = false,
+): ProjectLifecycleStatus {
   if (!isObject(route)) {
-    return { route };
+    return includeDiagnostics ? { route } : {};
   }
 
   const statePath =
     typeof route.statePath === "string" ? route.statePath : undefined;
   const state = statePath ? loadProjectState(statePath) : undefined;
+  const status: ProjectLifecycleStatus = {
+    projectId:
+      typeof route.projectId === "string" ? route.projectId : state?.projectId,
+    workspaceId:
+      typeof route.workspaceId === "string"
+        ? route.workspaceId
+        : state?.workspaceId,
+    targetId:
+      typeof route.targetId === "string" ? route.targetId : state?.targetId,
+  };
+
+  if (!includeDiagnostics) {
+    return status;
+  }
+
   return {
+    ...status,
     projectRoot:
       typeof route.projectRoot === "string" ? route.projectRoot : undefined,
     statePath,
@@ -1183,7 +1208,9 @@ export class PlexusProjectLifecycle {
         }),
       );
       const routes = Array.isArray(routeStatus) ? routeStatus : [routeStatus];
-      const statuses = routes.map(lifecycleStatusFromRoute);
+      const statuses = routes.map((route) =>
+        lifecycleStatusFromRoute(route, input.includeDiagnostics),
+      );
 
       return result(Array.isArray(routeStatus) ? statuses : statuses[0]);
     } catch (error) {
@@ -1267,6 +1294,7 @@ export class PlexusProjectLifecycle {
             targetId: optionalString(input, "targetId"),
             stateRoot: optionalString(input, "stateRoot"),
             refreshHealth: optionalBoolean(input, "refreshHealth"),
+            includeDiagnostics: optionalBoolean(input, "includeDiagnostics"),
           });
 
         case "plexus_rescue_image":
@@ -1366,6 +1394,14 @@ export class PlexusProjectLifecycle {
       workspaceId: state?.workspaceId ?? workspaceId,
       targetId,
     };
+    const context = buildScopedProjectContext({
+      projectRoot,
+      projectConfig: config,
+      workspaceId: scope.workspaceId,
+      targetId: scope.targetId,
+      stateRoot,
+      projectState: state,
+    });
     const checks = mergePortClaimChecks(this.gateway);
     const imageClaimsRoot = imagePortClaimsRootForConfig(projectRoot, config);
     const portClaims = await inspectClaimRoots(
@@ -1425,13 +1461,22 @@ export class PlexusProjectLifecycle {
       routeTable,
     };
 
-    return {
-      projectRoot,
-      stateRoot,
-      statePath,
+    const safeStatus: ProjectLifecycleStatus = {
       projectId: scope.projectId,
       workspaceId: scope.workspaceId,
       targetId: scope.targetId,
+      context,
+    };
+
+    if (!input.includeDiagnostics) {
+      return safeStatus;
+    }
+
+    return {
+      ...safeStatus,
+      projectRoot,
+      stateRoot,
+      statePath,
       state,
       gateway,
       ...(route ? { route } : {}),
