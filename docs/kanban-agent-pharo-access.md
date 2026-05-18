@@ -105,7 +105,12 @@ PLexus maps each handle to runtime state:
   "targetId": "project-123--task-456",
   "imageId": "dev",
   "launcherImageName": "MyProject-task-456-dev",
-  "port": 7100,
+  "mcpEndpoint": {
+    "transport": "http",
+    "host": "127.0.0.1",
+    "port": 7100,
+    "path": "/"
+  },
   "pid": 12345,
   "status": "running",
   "health": {
@@ -138,7 +143,7 @@ The initial `pharo-launcher` surface should be deliberately small.
 | List workspace images | `pharo_launcher_image_list` | Return only images declared in, created by, or registered to the current PLexus workspace. Do not list all host images. |
 | Inspect one workspace image | `pharo_launcher_image_info({ imageId })` | Resolve `imageId` through PLexus state, then call pharo-launcher-mcp only with the mapped launcher image name if needed. |
 | Create a workspace image | `pharo_launcher_image_create({ imageId, profileId? })` | Create only from a project-approved image spec/profile. PLexus renders the launcher image name and records the handle before exposing it. |
-| Start a workspace image | `pharo_launcher_image_start({ imageId })` | Start only a scoped image. PLexus supplies the generated startup script and assigned MCP port. |
+| Start a workspace image | `pharo_launcher_image_start({ imageId })` | Start only a scoped image. PLexus supplies the generated startup script and records the image MCP endpoint. |
 | Stop a workspace image | `pharo_launcher_image_stop({ imageId, confirm: true })` | Stop only a scoped image. PLexus resolves the process; callers cannot kill by arbitrary pid. |
 
 Do not expose these through the scoped surface by default:

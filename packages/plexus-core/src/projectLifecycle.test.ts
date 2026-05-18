@@ -654,15 +654,13 @@ describe("project lifecycle tools", () => {
           launcherProfile: {
             ownership: "plexus-owned",
             mode: "project-owned",
-            profileName:
-              "plexus-project-123-worktree-a-project-123--worktree-a",
+            profileScope: "project",
+            profileName: "plexus-project-123",
             stateRoot: path.join(
               stateRoot,
               "profiles",
               "pharo-launcher-mcp",
               "project-123",
-              "worktree-a",
-              "project-123--worktree-a",
             ),
           },
           agentAccess: {

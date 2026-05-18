@@ -29,6 +29,7 @@ export interface PharoLauncherMcpProfileDiagnostic
   extends PharoLauncherMcpProfilePaths {
   ownership: PharoLauncherMcpProfileOwnership;
   mode: "project-owned" | "external";
+  profileScope: "project" | "explicit-override" | "external" | "unknown";
   environmentKeys: string[];
   reason: string;
 }
@@ -54,17 +55,8 @@ const launcherProfileEnvironmentKeys = [
   "PHARO_LAUNCHER_MCP_LAUNCHER_CONFIGURATION",
 ] as const;
 
-function profileName(
-  config: ProjectConfig,
-  workspaceId: string,
-  targetId: string,
-): string {
-  return [
-    "plexus",
-    sanitizeRuntimeId(config.kanban.projectId),
-    sanitizeRuntimeId(workspaceId),
-    sanitizeRuntimeId(targetId),
-  ].join("-");
+function profileName(config: ProjectConfig): string {
+  return ["plexus", sanitizeRuntimeId(config.kanban.projectId)].join("-");
 }
 
 function resolvedPlexusStateRoot(
@@ -85,8 +77,6 @@ function resolvedPlexusStateRoot(
 function defaultProfileRoot(
   projectRoot: string,
   config: ProjectConfig,
-  workspaceId: string,
-  targetId: string,
   stateRoot: string | undefined,
 ): string {
   return joinPathLike(
@@ -94,8 +84,6 @@ function defaultProfileRoot(
     "profiles",
     "pharo-launcher-mcp",
     sanitizeRuntimeId(config.kanban.projectId),
-    sanitizeRuntimeId(workspaceId),
-    sanitizeRuntimeId(targetId),
   );
 }
 
@@ -109,15 +97,11 @@ function projectOwnedPaths(
     : defaultProfileRoot(
         options.projectRoot,
         options.config,
-        options.workspaceId,
-        options.targetId,
         options.stateRoot,
       );
 
   return {
-    profileName:
-      policy.name ??
-      profileName(options.config, options.workspaceId, options.targetId),
+    profileName: policy.name ?? profileName(options.config),
     stateRoot,
     launcherImage: joinPathLike(stateRoot, "launcher", "PharoLauncher.image"),
     imagesDir: joinPathLike(stateRoot, "images"),
@@ -187,13 +171,20 @@ export function describePharoLauncherMcpProfile(
   const runtime = resolveProjectRuntimePolicy(options.config);
   if (runtime.launcherProfile.mode === "project-owned") {
     const paths = projectOwnedPaths(options);
+    const profileScope =
+      runtime.launcherProfile.name || runtime.launcherProfile.root
+        ? "explicit-override"
+        : "project";
     return {
       ownership: "plexus-owned",
       mode: "project-owned",
+      profileScope,
       ...paths,
       environmentKeys: Object.keys(environmentFromPaths(paths)).sort(),
       reason:
-        "PLexus derives and passes a project-owned pharo-launcher-mcp profile.",
+        profileScope === "project"
+          ? "PLexus derives and passes a project-scoped pharo-launcher-mcp profile."
+          : "PLexus passes an explicitly configured project-owned pharo-launcher-mcp profile override.",
     };
   }
 
@@ -203,6 +194,7 @@ export function describePharoLauncherMcpProfile(
     return {
       ownership: "unknown",
       mode: "external",
+      profileScope: "unknown",
       environmentKeys,
       reason:
         "runtime.launcherProfile.mode is external, but no pharo-launcher-mcp profile environment is visible.",
@@ -212,6 +204,7 @@ export function describePharoLauncherMcpProfile(
   return {
     ownership: "external",
     mode: "external",
+    profileScope: "external",
     ...externallySuppliedPaths(env),
     environmentKeys,
     reason:

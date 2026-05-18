@@ -1,12 +1,22 @@
 import http from "node:http";
 
+export type ImageMcpEndpointTransport = "http";
+
+export interface ImageMcpEndpoint {
+  transport: ImageMcpEndpointTransport;
+  host: string;
+  port: number;
+  path: string;
+}
+
 export interface ImageMcpRoute {
   projectId: string;
   workspaceId: string;
   targetId: string;
   imageId: string;
   imageName: string;
-  port: number;
+  port?: number;
+  mcpEndpoint?: ImageMcpEndpoint;
 }
 
 export interface ImageMcpToolRouter {
@@ -39,7 +49,7 @@ export class StreamableHttpImageMcpToolRouter implements ImageMcpToolRouter {
     toolName: string,
     argumentsValue: Record<string, unknown>,
   ): Promise<unknown> {
-    const response = await this.postJsonRpc(route.port, {
+    const response = await this.postJsonRpc(this.endpointForRoute(route), {
       jsonrpc: "2.0",
       id: `plexus-${route.targetId}-${route.imageId}-${Date.now()}`,
       method: "tools/call",
@@ -60,18 +70,41 @@ export class StreamableHttpImageMcpToolRouter implements ImageMcpToolRouter {
     return response.result;
   }
 
+  private endpointForRoute(route: ImageMcpRoute): ImageMcpEndpoint {
+    if (route.mcpEndpoint) {
+      return route.mcpEndpoint;
+    }
+
+    if (route.port === undefined) {
+      throw new Error(
+        `Image route ${route.imageId} has no registered MCP endpoint`,
+      );
+    }
+
+    return {
+      transport: "http",
+      host: this.host,
+      port: route.port,
+      path: this.path,
+    };
+  }
+
   private async postJsonRpc(
-    port: number,
+    endpoint: ImageMcpEndpoint,
     payload: Record<string, unknown>,
   ): Promise<Record<string, unknown>> {
+    if (endpoint.transport !== "http") {
+      throw new Error(`Unsupported image MCP endpoint: ${endpoint.transport}`);
+    }
+
     const body = JSON.stringify(payload);
 
     return new Promise((resolve, reject) => {
       const request = http.request(
         {
-          hostname: this.host,
-          port,
-          path: this.path,
+          hostname: endpoint.host,
+          port: endpoint.port,
+          path: endpoint.path,
           method: "POST",
           headers: {
             accept: "application/json, text/event-stream",

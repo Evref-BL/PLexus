@@ -9,6 +9,7 @@ import {
 } from "./pharoFacade.js";
 import {
   PlexusRoutingTable,
+  type GatewayImageMcpEndpoint,
   type GatewayImageRoute,
   type GatewayProjectRoute,
   type GatewayProjectState,
@@ -168,7 +169,8 @@ export interface RouteToImageRoute {
   targetId: string;
   imageId: string;
   imageName: string;
-  port: number;
+  port?: number;
+  mcpEndpoint?: GatewayImageMcpEndpoint;
 }
 
 export interface GatewayToolResult<T = unknown> {
@@ -264,6 +266,53 @@ function objectInput(input: unknown): Record<string, unknown> {
   return input;
 }
 
+function endpointInput(
+  image: Record<string, unknown>,
+  index: number,
+): GatewayImageMcpEndpoint | undefined {
+  const value = image.mcpEndpoint;
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (!isObject(value)) {
+    throw new GatewayInputError(
+      `state.images[${index}].mcpEndpoint must be an object`,
+    );
+  }
+
+  if (value.transport !== "http") {
+    throw new GatewayInputError(
+      `state.images[${index}].mcpEndpoint.transport must be http`,
+    );
+  }
+
+  if (typeof value.host !== "string" || value.host.length === 0) {
+    throw new GatewayInputError(
+      `state.images[${index}].mcpEndpoint.host must be a non-empty string`,
+    );
+  }
+
+  if (typeof value.port !== "number" || !Number.isInteger(value.port)) {
+    throw new GatewayInputError(
+      `state.images[${index}].mcpEndpoint.port must be an integer`,
+    );
+  }
+
+  if (typeof value.path !== "string" || value.path.length === 0) {
+    throw new GatewayInputError(
+      `state.images[${index}].mcpEndpoint.path must be a non-empty string`,
+    );
+  }
+
+  return {
+    transport: "http",
+    host: value.host,
+    port: value.port,
+    path: value.path,
+  };
+}
+
 function stateInput(input: Record<string, unknown>): GatewayProjectState {
   const value = input.state;
   if (!isObject(value)) {
@@ -290,10 +339,19 @@ function stateInput(input: Record<string, unknown>): GatewayProjectState {
       }
 
       const assignedPort = image.assignedPort;
+      const mcpEndpoint = endpointInput(image, index);
       const pid = image.pid;
-      if (typeof assignedPort !== "number" || !Number.isInteger(assignedPort)) {
+      if (
+        assignedPort !== undefined &&
+        (typeof assignedPort !== "number" || !Number.isInteger(assignedPort))
+      ) {
         throw new GatewayInputError(
           `state.images[${index}].assignedPort must be an integer`,
+        );
+      }
+      if (assignedPort === undefined && !mcpEndpoint) {
+        throw new GatewayInputError(
+          `state.images[${index}] must include assignedPort or mcpEndpoint`,
         );
       }
       if (pid !== undefined && (typeof pid !== "number" || !Number.isInteger(pid))) {
@@ -317,7 +375,8 @@ function stateInput(input: Record<string, unknown>): GatewayProjectState {
       return {
         id: requireString(image, "id"),
         imageName: requireString(image, "imageName"),
-        assignedPort,
+        ...(assignedPort !== undefined ? { assignedPort } : {}),
+        ...(mcpEndpoint ? { mcpEndpoint } : {}),
         ...(pid ? { pid } : {}),
         status,
         ...(isObject(image.pharoMcpContract)
@@ -679,7 +738,8 @@ export class PlexusGateway {
       targetId: project.targetId,
       imageId: image.id,
       imageName: image.imageName,
-      port: image.port,
+      ...(image.port !== undefined ? { port: image.port } : {}),
+      ...(image.mcpEndpoint ? { mcpEndpoint: image.mcpEndpoint } : {}),
     };
 
     const toolResult = await this.imageRouter.callTool(
@@ -721,6 +781,15 @@ export class PlexusGateway {
     for (const image of route.images) {
       if (image.status !== "running") {
         this.routingTable.updateImageHealth(route.targetId, image.id, "unknown");
+        continue;
+      }
+
+      if (image.port === undefined) {
+        this.routingTable.updateImageHealth(
+          route.targetId,
+          image.id,
+          "unhealthy",
+        );
         continue;
       }
 

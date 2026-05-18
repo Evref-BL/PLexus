@@ -145,6 +145,94 @@ describe("StreamableHttpImageMcpToolRouter", () => {
     });
   });
 
+  it("uses a registered image MCP endpoint path when one is present", async () => {
+    const port = await freePort();
+    let rootRequests = 0;
+    let mcpRequests = 0;
+
+    const httpServer = http.createServer((request, response) => {
+      void (async () => {
+        const url = new URL(
+          request.url ?? "/",
+          `http://${request.headers.host ?? `127.0.0.1:${port}`}`,
+        );
+
+        if (url.pathname === "/") {
+          rootRequests += 1;
+        }
+
+        if (url.pathname === "/mcp") {
+          mcpRequests += 1;
+          response.writeHead(200, {
+            "content-type": "application/json; charset=utf-8",
+          });
+          response.end(
+            `${JSON.stringify({
+              jsonrpc: "2.0",
+              id: "test-response",
+              result: {
+                content: [{ type: "text", text: "endpoint routed" }],
+              },
+            })}\n`,
+          );
+          return;
+        }
+
+        response.writeHead(404, {
+          "content-type": "application/json; charset=utf-8",
+        });
+        response.end('{"ok":false,"error":"not_found"}\n');
+      })().catch((error: unknown) => {
+        response.writeHead(500, {
+          "content-type": "application/json; charset=utf-8",
+        });
+        response.end(
+          `${JSON.stringify({
+            ok: false,
+            error: error instanceof Error ? error.message : String(error),
+          })}\n`,
+        );
+      });
+    });
+
+    await new Promise<void>((resolve) => {
+      httpServer.listen(port, "127.0.0.1", () => resolve());
+    });
+    servers.push(httpServer);
+
+    const router = new StreamableHttpImageMcpToolRouter({
+      host: "127.0.0.1",
+      path: "/",
+    });
+
+    await expect(
+      router.callTool(
+        {
+          projectId: "project-123",
+          workspaceId: "worktree-a",
+          targetId: "project-123--worktree-a",
+          imageId: "dev",
+          imageName: "MyProject-dev",
+          mcpEndpoint: {
+            transport: "http",
+            host: "127.0.0.1",
+            port,
+            path: "/mcp",
+          },
+        },
+        "pharo_eval",
+        {
+          code: "1 + 1",
+        },
+      ),
+    ).resolves.toMatchObject({
+      content: [{ type: "text", text: "endpoint routed" }],
+    });
+
+    expect(rootRequests).toBe(0);
+    expect(mcpRequests).toBe(1);
+  });
+
   it("reports JSON-RPC errors from routed image MCP calls", async () => {
     const port = await freePort();
     const httpServer = http.createServer((_request, response) => {

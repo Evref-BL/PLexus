@@ -184,6 +184,42 @@ describe("prepared image cache", () => {
     });
   });
 
+  it("plans one project cache image for distinct workspace runtime image copies", () => {
+    const stateA: ProjectImageState = {
+      ...imageState,
+      imageName: "MyProject-worktree-a-dev",
+      assignedPort: 7123,
+    };
+    const stateB: ProjectImageState = {
+      ...imageState,
+      imageName: "MyProject-worktree-b-dev",
+      assignedPort: 7124,
+    };
+    const planA = buildPreparedImageCachePlan({
+      projectRoot: "/repo/my-project",
+      config,
+      cacheId: "pharo-13-mcp",
+      imageConfig,
+      imageState: stateA,
+    });
+    const planB = buildPreparedImageCachePlan({
+      projectRoot: "/repo/my-project",
+      config,
+      cacheId: "pharo-13-mcp",
+      imageConfig,
+      imageState: stateB,
+    });
+
+    expect(planA.imageName).toBe("MyProject-project-123-pharo-13-mcp");
+    expect(planB.imageName).toBe(planA.imageName);
+    expect(planA.runtimeCopy.argumentsValue.newImageName).toBe(
+      "MyProject-worktree-a-dev",
+    );
+    expect(planB.runtimeCopy.argumentsValue.newImageName).toBe(
+      "MyProject-worktree-b-dev",
+    );
+  });
+
   it("requires explicit runner approval before copying a prepared cache image", async () => {
     const client = new FakeLauncherClient();
 

@@ -28,7 +28,8 @@ Routing-only MCP server.
 - Route registration and in-memory route table keyed by `targetId`
 - Route status for registered targets/images
 - Explicit stale-route cleanup for routes whose runtime state file is gone
-- Forwarding MCP calls to image-scoped MCP servers (HTTP to `http://127.0.0.1:<port>/mcp`)
+- Forwarding MCP calls to image-scoped MCP servers through registered image
+  endpoints, with fixed ports retained only as compatibility fallback
 - The stable project-wide `gateway` facade that routes typed Pharo MCP calls by
   explicit `imageId`
 - Route metadata that tells subagents where the scoped `imageId` comes from and

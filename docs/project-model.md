@@ -79,7 +79,8 @@ Each image has:
 ```text
 image id
 rendered image name
-assigned MCP port
+registered MCP endpoint
+optional assigned MCP port fallback
 optional process pid
 status
 ```
@@ -139,6 +140,11 @@ A prepared image cache is a project-scoped PharoLauncher image that PLexus can
 prepare once and copy into workspace runtime images later. The cache is
 described in `plexus.project.json`; pharo-launcher-mcp still owns the low-level
 launcher calls.
+
+By default, PLexus passes one project-scoped pharo-launcher-mcp profile for all
+workspaces in the project. Workspace isolation comes from PLexus state, rendered
+runtime image names, scoped `imageId` handles, and cleanup policy, while cache
+images remain reusable inside that project-owned launcher profile.
 
 ```json
 {
@@ -237,9 +243,9 @@ share the in-memory registrations keyed by `targetId`.
 
 ## Port And Image Isolation
 
-Parallel worktrees must not share image names or MCP ports.
+Parallel worktrees must not share image names or image MCP endpoints.
 
-PLexus handles dynamic ports by scanning sibling workspace state under the shared state root and reserving ports used by non-stopped images.
+For the fixed-port fallback, PLexus handles dynamic ports by scanning sibling workspace state under the shared state root and reserving ports used by non-stopped images.
 
 Fixed `mcp.port` values are allowed, but they are not parallel-friendly. If another active workspace for the same project already reserves the configured port, `project open` fails instead of starting two workers on the same port.
 
@@ -279,9 +285,9 @@ names, image MCP ports, or filesystem paths.
 
 Operators can request the trusted diagnostic surface when debugging lifecycle
 failures. For `plexus_project_status`, pass `includeDiagnostics: true` to include
-raw runtime state, gateway endpoints, route status, port claims, process ids,
-launcher profile paths, and cleanup paths. Those details are diagnostic data,
-not agent mutation handles.
+raw runtime state, gateway endpoints, registered image MCP endpoints, route
+status, port claims, process ids, launcher profile paths, and cleanup paths.
+Those details are diagnostic data, not agent mutation handles.
 
 ## Example
 
@@ -291,11 +297,11 @@ Vibe Kanban project: Pharo MCP Orchestration
     workspaceId: task-123
       targetId: pharo-mcp-orchestration--task-123
       images:
-        dev -> Pharo-MCP-task-123-dev on port 7100
-        baseline -> Pharo-MCP-task-123-baseline on port 7101
+        dev -> Pharo-MCP-task-123-dev via registered endpoint
+        baseline -> Pharo-MCP-task-123-baseline via registered endpoint
     workspaceId: task-456
       targetId: pharo-mcp-orchestration--task-456
       images:
-        dev -> Pharo-MCP-task-456-dev on port 7102
-        baseline -> Pharo-MCP-task-456-baseline on port 7103
+        dev -> Pharo-MCP-task-456-dev via registered endpoint
+        baseline -> Pharo-MCP-task-456-baseline via registered endpoint
 ```

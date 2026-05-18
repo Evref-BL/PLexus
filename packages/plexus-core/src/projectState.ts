@@ -24,6 +24,14 @@ export const defaultProjectPortRange = {
 export type ProjectImageStatus = "starting" | "running" | "stopped" | "failed";
 export type ProjectRuntimeStatus = "idle" | "starting" | "running" | "failed";
 export type PharoMcpContractStatus = "unknown" | "matching" | "mismatched";
+export type ProjectImageMcpEndpointTransport = "http";
+
+export interface ProjectImageMcpEndpoint {
+  transport: ProjectImageMcpEndpointTransport;
+  host: string;
+  port: number;
+  path: string;
+}
 
 export interface PharoMcpContractReference {
   id?: string;
@@ -41,6 +49,7 @@ export interface ProjectImageState {
   id: string;
   imageName: string;
   assignedPort: number;
+  mcpEndpoint?: ProjectImageMcpEndpoint;
   pid?: number;
   status: ProjectImageStatus;
   pharoMcpContract?: ProjectImagePharoMcpContractState;

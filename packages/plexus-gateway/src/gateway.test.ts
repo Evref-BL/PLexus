@@ -281,6 +281,98 @@ describe("PlexusGateway", () => {
     });
   });
 
+  it("routes Pharo MCP calls through a registered endpoint without requiring an assigned port", async () => {
+    const imageRouter = new FakeImageRouter();
+    const endpointState: GatewayProjectState = {
+      ...runningState,
+      images: [
+        {
+          id: "dev",
+          imageName: "MyProject-dev",
+          mcpEndpoint: {
+            transport: "http",
+            host: "127.0.0.1",
+            port: 9123,
+            path: "/mcp",
+          },
+          pid: 1234,
+          status: "running",
+        },
+      ],
+    };
+    const gateway = new PlexusGateway({ imageRouter });
+
+    await registerTarget(gateway, endpointState);
+    const status = data(
+      await gateway.handleTool("plexus_gateway_status", {
+        projectId: "project-123",
+        workspaceId: "worktree-a",
+      }),
+    );
+    const routeResult = await gateway.handleTool("plexus_route_to_image", {
+      projectId: "project-123",
+      workspaceId: "worktree-a",
+      imageId: "dev",
+      toolName: "pharo_eval",
+      arguments: {
+        code: "Smalltalk version",
+      },
+    });
+
+    expect(status).toMatchObject({
+      images: [
+        {
+          id: "dev",
+          port: 9123,
+          mcpEndpoint: {
+            transport: "http",
+            host: "127.0.0.1",
+            port: 9123,
+            path: "/mcp",
+          },
+        },
+      ],
+    });
+    expect(routeResult).toMatchObject({
+      route: {
+        projectId: "project-123",
+        workspaceId: "worktree-a",
+        targetId: "project-123--worktree-a",
+        imageId: "dev",
+        imageName: "MyProject-dev",
+        port: 9123,
+        mcpEndpoint: {
+          transport: "http",
+          host: "127.0.0.1",
+          port: 9123,
+          path: "/mcp",
+        },
+      },
+    });
+    expect(imageRouter.calls).toEqual([
+      {
+        route: {
+          projectId: "project-123",
+          workspaceId: "worktree-a",
+          targetId: "project-123--worktree-a",
+          imageId: "dev",
+          imageName: "MyProject-dev",
+          port: 9123,
+          mcpEndpoint: {
+            transport: "http",
+            host: "127.0.0.1",
+            port: 9123,
+            path: "/mcp",
+          },
+        },
+        toolName: "pharo_eval",
+        argumentsValue: {
+          code: "Smalltalk version",
+        },
+      },
+    ]);
+  });
+
   it("exposes stable Pharo facade tools with a required imageId route field", () => {
     const gateway = new PlexusGateway({
       pharoTools: [pharoEvalTool],

@@ -10,6 +10,14 @@ export type GatewayPharoMcpContractStatus =
   | "unknown"
   | "matching"
   | "mismatched";
+export type GatewayImageMcpEndpointTransport = "http";
+
+export interface GatewayImageMcpEndpoint {
+  transport: GatewayImageMcpEndpointTransport;
+  host: string;
+  port: number;
+  path: string;
+}
 
 export interface GatewayPharoMcpContractReference {
   id?: string;
@@ -26,7 +34,8 @@ export interface GatewayProjectImagePharoMcpContractState
 export interface GatewayProjectImageState {
   id: string;
   imageName: string;
-  assignedPort: number;
+  assignedPort?: number;
+  mcpEndpoint?: GatewayImageMcpEndpoint;
   pid?: number;
   status: GatewayProjectImageStatus;
   pharoMcpContract?: GatewayProjectImagePharoMcpContractState;
@@ -71,7 +80,8 @@ export interface GatewayImageRouteMetadata {
 export interface GatewayImageRoute {
   id: string;
   imageName: string;
-  port: number;
+  port?: number;
+  mcpEndpoint?: GatewayImageMcpEndpoint;
   pid?: number;
   status: GatewayProjectImageStatus;
   health: GatewayImageHealth;
@@ -172,6 +182,14 @@ function imageRoutability(
   projectContract: GatewayPharoMcpContractReference | undefined,
   image: GatewayProjectImageState,
 ): GatewayImageRoutability {
+  if (!image.mcpEndpoint && image.assignedPort === undefined) {
+    return {
+      ok: false,
+      code: "image_unavailable",
+      message: `Image ${image.id} has no registered MCP endpoint`,
+    };
+  }
+
   if (image.status !== "running") {
     return {
       ok: false,
@@ -185,6 +203,12 @@ function imageRoutability(
     image.pharoMcpContract,
     image.id,
   );
+}
+
+function imageRoutePort(
+  image: GatewayProjectImageState,
+): number | undefined {
+  return image.mcpEndpoint?.port ?? image.assignedPort;
 }
 
 function imageRouteMetadata(
@@ -230,20 +254,24 @@ export class PlexusRoutingTable {
         ? { pharoMcpContract: state.pharoMcpContract }
         : {}),
       updatedAt: state.updatedAt,
-      images: state.images.map((image) => ({
-        id: image.id,
-        imageName: image.imageName,
-        port: image.assignedPort,
-        ...(image.pid ? { pid: image.pid } : {}),
-        status: image.status,
-        health: existingHealth.get(image.id) ?? "unknown",
-        routable: imageRoutability(state.pharoMcpContract, image),
-        routeMetadata: imageRouteMetadata(state, image.id),
-        ...(image.pharoMcpContract
-          ? { pharoMcpContract: image.pharoMcpContract }
-          : {}),
-        updatedAt: state.updatedAt,
-      })),
+      images: state.images.map((image) => {
+        const port = imageRoutePort(image);
+        return {
+          id: image.id,
+          imageName: image.imageName,
+          ...(port !== undefined ? { port } : {}),
+          ...(image.mcpEndpoint ? { mcpEndpoint: image.mcpEndpoint } : {}),
+          ...(image.pid ? { pid: image.pid } : {}),
+          status: image.status,
+          health: existingHealth.get(image.id) ?? "unknown",
+          routable: imageRoutability(state.pharoMcpContract, image),
+          routeMetadata: imageRouteMetadata(state, image.id),
+          ...(image.pharoMcpContract
+            ? { pharoMcpContract: image.pharoMcpContract }
+            : {}),
+          updatedAt: state.updatedAt,
+        };
+      }),
     };
 
     this.targets.set(route.targetId, route);

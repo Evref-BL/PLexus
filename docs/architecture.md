@@ -43,7 +43,8 @@ Owns routing only:
 
 - register/unregister targets and keep an in-memory route table keyed by `targetId`
 - report routing status for registered targets/images
-- forward MCP tool calls to the selected image MCP server
+- forward MCP tool calls to the selected image MCP server through the registered
+  image endpoint, with fixed ports retained as compatibility fallback
 
 The gateway must not depend on PLexus or pharo-launcher-mcp, and it should not read project config or runtime state from disk. PLexus is responsible for orchestration/state and registers routes into the gateway.
 
@@ -130,7 +131,8 @@ worktreePath
 branch
 commit
 pid
-port
+registered endpoint
+fallback port
 token
 status
 lastHealthCheck

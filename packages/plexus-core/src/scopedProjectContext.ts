@@ -115,6 +115,7 @@ export interface ScopedImageDiagnosticContext {
   active: boolean;
   status: ScopedImageStatus;
   assignedPort?: number;
+  mcpEndpoint?: ProjectImageState["mcpEndpoint"];
   pid?: number;
   cleanup: ScopedImageCleanupMetadata;
 }
@@ -370,6 +371,7 @@ function scopedImageDiagnostics(
     ...(imageState?.assignedPort
       ? { assignedPort: imageState.assignedPort }
       : {}),
+    ...(imageState?.mcpEndpoint ? { mcpEndpoint: imageState.mcpEndpoint } : {}),
     ...(imageState?.pid ? { pid: imageState.pid } : {}),
     cleanup: {
       disposable: true,
