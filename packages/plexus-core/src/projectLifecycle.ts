@@ -50,6 +50,10 @@ import {
   type ProjectGatewayState,
   type ProjectState,
 } from "./projectState.js";
+import {
+  describePharoLauncherMcpProfile,
+  type PharoLauncherMcpProfileDiagnostic,
+} from "./pharoLauncherProfile.js";
 
 export interface ProjectLifecycleRouteReference {
   projectId?: string;
@@ -227,20 +231,6 @@ export interface ProjectLifecycleImagePortPolicyDiagnostics {
   basis: "host-local-claims" | "project-state";
 }
 
-export interface ProjectLifecycleLauncherProfileDiagnostics {
-  status: "configured" | "not-configured";
-  source: "environment";
-  profileName?: string;
-  stateRoot?: string;
-  launcherImage?: string;
-  imagesDir?: string;
-  vmsDir?: string;
-  templateSourcesDir?: string;
-  initScriptsDir?: string;
-  logsDir?: string;
-  reason: string;
-}
-
 export interface ProjectLifecycleAgentAccessDiagnostics {
   expectedSurface: "gateway";
   gatewayRouted: boolean;
@@ -274,7 +264,7 @@ export interface ProjectLifecycleDiagnostics {
   };
   runtimePolicy: ProjectRuntimePolicy;
   imagePortPolicy: ProjectLifecycleImagePortPolicyDiagnostics;
-  launcherProfile: ProjectLifecycleLauncherProfileDiagnostics;
+  launcherProfile: PharoLauncherMcpProfileDiagnostic;
   agentAccess: ProjectLifecycleAgentAccessDiagnostics;
   imageMcpPorts: Array<{
     imageId: string;
@@ -771,54 +761,6 @@ function imagePortCoordinationDiagnostics(
     stateRoot,
     message:
       "Image MCP ports are coordinated by scanning PLexus project state; this only protects workspaces sharing this state root.",
-  };
-}
-
-function launcherProfileDiagnostics(
-  env: NodeJS.ProcessEnv,
-): ProjectLifecycleLauncherProfileDiagnostics {
-  const profileName = env.PHARO_LAUNCHER_MCP_PROFILE;
-  const stateRoot = env.PHARO_LAUNCHER_MCP_STATE_ROOT;
-  const launcherImage = env.PHARO_LAUNCHER_MCP_LAUNCHER_IMAGE;
-  const imagesDir = env.PHARO_LAUNCHER_MCP_IMAGES_DIR;
-  const vmsDir = env.PHARO_LAUNCHER_MCP_VMS_DIR;
-  const templateSourcesDir = env.PHARO_LAUNCHER_MCP_TEMPLATE_SOURCES_DIR;
-  const initScriptsDir = env.PHARO_LAUNCHER_MCP_INIT_SCRIPTS_DIR;
-  const logsDir = env.PHARO_LAUNCHER_MCP_LOGS_DIR;
-  const hasProfileEnvironment = Boolean(
-    profileName ??
-      stateRoot ??
-      launcherImage ??
-      imagesDir ??
-      vmsDir ??
-      templateSourcesDir ??
-      initScriptsDir ??
-      logsDir,
-  );
-
-  if (!hasProfileEnvironment) {
-    return {
-      status: "not-configured",
-      source: "environment",
-      reason:
-        "No PHARO_LAUNCHER_MCP_* profile environment is visible to PLexus status.",
-    };
-  }
-
-  return {
-    status: "configured",
-    source: "environment",
-    ...(profileName ? { profileName } : {}),
-    ...(stateRoot ? { stateRoot } : {}),
-    ...(launcherImage ? { launcherImage } : {}),
-    ...(imagesDir ? { imagesDir } : {}),
-    ...(vmsDir ? { vmsDir } : {}),
-    ...(templateSourcesDir ? { templateSourcesDir } : {}),
-    ...(initScriptsDir ? { initScriptsDir } : {}),
-    ...(logsDir ? { logsDir } : {}),
-    reason: stateRoot
-      ? "Launcher profile environment is visible to PLexus status."
-      : "Launcher profile environment is visible, but no PHARO_LAUNCHER_MCP_STATE_ROOT was provided.",
   };
 }
 
@@ -1462,9 +1404,14 @@ export class PlexusProjectLifecycle {
         stateRoot,
         imageClaimsRoot,
       ),
-      launcherProfile: launcherProfileDiagnostics(
-        this.gateway.env ?? process.env,
-      ),
+      launcherProfile: describePharoLauncherMcpProfile({
+        projectRoot,
+        config,
+        workspaceId: scope.workspaceId,
+        targetId: scope.targetId,
+        stateRoot,
+        env: this.gateway.env,
+      }),
       agentAccess: agentAccessDiagnostics(gateway),
       imageMcpPorts: imageMcpPorts(state),
       imagePortCoordination: imagePortCoordinationDiagnostics(

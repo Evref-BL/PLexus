@@ -74,6 +74,9 @@ function defaultRuntimePolicy() {
         mode: "host-local",
       },
     },
+    launcherProfile: {
+      mode: "project-owned",
+    },
   };
 }
 
@@ -156,6 +159,11 @@ describe("project config", () => {
           root: "C:\\dev\\plexus-port-claims",
         },
       },
+      launcherProfile: {
+        mode: "project-owned",
+        name: "my-project-isolated",
+        root: "C:\\dev\\plexus-state\\profiles\\pharo-launcher",
+      },
     };
 
     expect(parseProjectConfig(config)).toEqual(config);
@@ -174,6 +182,20 @@ describe("project config", () => {
 
     expect(parseProjectConfig(config).runtime?.imagePorts.coordination).toEqual({
       mode: "project-state",
+    });
+  });
+
+  it("allows external launcher profile policy as an explicit opt-out", () => {
+    const config: ReturnType<typeof validProjectConfig> & { runtime?: unknown } =
+      validProjectConfig();
+    config.runtime = {
+      launcherProfile: {
+        mode: "external",
+      },
+    };
+
+    expect(parseProjectConfig(config).runtime?.launcherProfile).toEqual({
+      mode: "external",
     });
   });
 

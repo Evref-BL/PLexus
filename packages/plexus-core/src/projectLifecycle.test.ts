@@ -553,20 +553,28 @@ describe("project lifecycle tools", () => {
             basis: "project-state",
           },
           launcherProfile: {
-            status: "configured",
-            source: "environment",
-            profileName: "isolated",
-            stateRoot: "/profiles/isolated",
-            imagesDir: "/profiles/isolated/images",
-            vmsDir: "/profiles/isolated/vms",
-            templateSourcesDir: "/profiles/isolated/templates",
-            initScriptsDir: "/profiles/isolated/init-scripts",
-            logsDir: "/profiles/isolated/logs",
+            ownership: "plexus-owned",
+            mode: "project-owned",
+            profileName:
+              "plexus-project-123-worktree-a-project-123--worktree-a",
+            stateRoot: path.join(
+              stateRoot,
+              "profiles",
+              "pharo-launcher-mcp",
+              "project-123",
+              "worktree-a",
+              "project-123--worktree-a",
+            ),
           },
           agentAccess: {
             expectedSurface: "gateway",
             gatewayRouted: true,
             portsHiddenFromAgents: true,
+          },
+          imagePortCoordination: {
+            mode: "project-state",
+            basis: "project-state-scanning",
+            stateRoot,
           },
           imageMcpPorts: [],
           portClaims: {

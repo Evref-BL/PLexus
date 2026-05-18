@@ -15,6 +15,7 @@ import {
   createStdioPharoLauncherMcpClient,
   type PharoLauncherMcpToolClient,
 } from "./pharoLauncherMcpClient.js";
+import { pharoLauncherMcpProfileEnvironment } from "./pharoLauncherProfile.js";
 import {
   HttpPharoMcpHealthClient,
   type PharoMcpHealthClient,
@@ -358,6 +359,13 @@ export async function openProject(
 
   const portClaimChecks =
     options.portClaimChecks ?? defaultImagePortClaimChecks();
+  const launcherProfileEnvironment = pharoLauncherMcpProfileEnvironment({
+    projectRoot,
+    config,
+    workspaceId,
+    targetId: state.targetId,
+    stateRoot: resolvedStateRoot,
+  });
   let preparedPortClaims: PreparedImagePortClaim[] = [];
   if (claimsRoot) {
     preparedPortClaims = await prepareImagePortClaims({
@@ -375,7 +383,9 @@ export async function openProject(
 
   const client =
     options.pharoLauncherMcpClient ??
-    (await createStdioPharoLauncherMcpClient());
+    (await createStdioPharoLauncherMcpClient(undefined, {
+      profileEnvironment: launcherProfileEnvironment,
+    }));
   const ownsClient = !options.pharoLauncherMcpClient;
   const healthClient =
     options.healthClient ?? new HttpPharoMcpHealthClient();
@@ -405,7 +415,9 @@ export async function openProject(
 
         const launchClient = options.pharoLauncherMcpClient
           ? client
-          : await createStdioPharoLauncherMcpClient();
+          : await createStdioPharoLauncherMcpClient(undefined, {
+              profileEnvironment: launcherProfileEnvironment,
+            });
         const ownsLaunchClient = !options.pharoLauncherMcpClient;
         try {
           const process = await launchImageAndPollProcess(

@@ -24,14 +24,23 @@ export class PharoLauncherMcpToolError extends Error {
   }
 }
 
-function launcherEnvironment(): Record<string, string> {
+export interface CreateStdioPharoLauncherMcpClientOptions {
+  env?: NodeJS.ProcessEnv;
+  profileEnvironment?: Record<string, string> | undefined;
+}
+
+export function pharoLauncherMcpChildEnvironment(
+  options: CreateStdioPharoLauncherMcpClientOptions = {},
+): Record<string, string> {
   const env: Record<string, string> = {};
 
-  for (const [key, value] of Object.entries(process.env)) {
+  for (const [key, value] of Object.entries(options.env ?? process.env)) {
     if (key.startsWith("PHARO_LAUNCHER_") && value !== undefined) {
       env[key] = value;
     }
   }
+
+  Object.assign(env, options.profileEnvironment);
 
   return env;
 }
@@ -79,6 +88,7 @@ function parseToolTextResult(toolName: string, result: unknown): unknown {
 
 export async function createStdioPharoLauncherMcpClient(
   config: PharoLauncherMcpConfig = loadPharoLauncherMcpConfig(),
+  options: CreateStdioPharoLauncherMcpClientOptions = {},
 ): Promise<PharoLauncherMcpToolClient> {
   const client = new Client(
     {
@@ -93,7 +103,7 @@ export async function createStdioPharoLauncherMcpClient(
     command: config.command,
     args: config.args,
     ...(config.repoDir ? { cwd: config.repoDir } : {}),
-    env: launcherEnvironment(),
+    env: pharoLauncherMcpChildEnvironment(options),
     stderr: "pipe",
   });
 

@@ -9,9 +9,11 @@ import {
   createStdioPharoLauncherMcpClient,
   type PharoLauncherMcpToolClient,
 } from "./pharoLauncherMcpClient.js";
+import { pharoLauncherMcpProfileEnvironment } from "./pharoLauncherProfile.js";
 import {
   defaultWorkspaceId,
   loadProjectState,
+  projectStateRootForConfig,
   projectStatePathForConfig,
   runtimeStatusForImages,
   sanitizeRuntimeId,
@@ -171,7 +173,15 @@ export async function closeProject(
 
   const client =
     options.pharoLauncherMcpClient ??
-    (await createStdioPharoLauncherMcpClient());
+    (await createStdioPharoLauncherMcpClient(undefined, {
+      profileEnvironment: pharoLauncherMcpProfileEnvironment({
+        projectRoot,
+        config,
+        workspaceId,
+        targetId: state.targetId,
+        stateRoot: projectStateRootForConfig(config, options.stateRoot),
+      }),
+    }));
   const ownsClient = !options.pharoLauncherMcpClient;
 
   try {
