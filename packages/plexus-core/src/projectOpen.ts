@@ -7,6 +7,7 @@ import {
   defaultImagePortClaimChecks,
   imagePortClaimsRootForConfig,
   prepareImagePortClaims,
+  recordImagePortClaimProcess,
   releasePreparedImagePortClaims,
   type PreparedImagePortClaim,
 } from "./imagePortClaims.js";
@@ -417,6 +418,19 @@ export async function openProject(
             sleep,
           );
           imageState.pid = process.pid;
+          if (claimsRoot) {
+            const preparedClaim = preparedPortClaims.find(
+              (candidate) => candidate.imageId === imageState.id,
+            );
+            if (preparedClaim) {
+              await recordImagePortClaimProcess({
+                claimsRoot,
+                preparedClaim,
+                pid: process.pid,
+                now,
+              });
+            }
+          }
 
           const healthy = await pollHealth(
             healthClient,

@@ -122,10 +122,50 @@ function makeTempDir(prefix: string): string {
   return tempDir;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function projectStateRuntime() {
+  return {
+    imagePorts: {
+      allocation: "configured-or-dynamic",
+      range: {
+        start: 7100,
+        end: 7199,
+      },
+      coordination: {
+        mode: "project-state",
+      },
+    },
+  };
+}
+
+function runtimeWithProjectStateImagePorts(
+  runtime: unknown,
+): Record<string, unknown> {
+  const defaults = projectStateRuntime();
+  if (!isRecord(runtime)) {
+    return defaults;
+  }
+
+  return {
+    ...defaults,
+    ...runtime,
+    imagePorts: isRecord(runtime.imagePorts)
+      ? {
+          ...defaults.imagePorts,
+          ...runtime.imagePorts,
+        }
+      : defaults.imagePorts,
+  };
+}
+
 function writeProjectConfig(
   projectRoot: string,
   overrides: Record<string, unknown> = {},
 ): void {
+  const runtime = runtimeWithProjectStateImagePorts(overrides.runtime);
   fs.writeFileSync(
     path.join(projectRoot, "plexus.project.json"),
     JSON.stringify(
@@ -135,6 +175,7 @@ function writeProjectConfig(
           provider: "vibe-kanban",
           projectId: "project-123",
         },
+        runtime,
         images: [
           {
             id: "dev",
@@ -146,7 +187,9 @@ function writeProjectConfig(
             },
           },
         ],
-        ...overrides,
+        ...Object.fromEntries(
+          Object.entries(overrides).filter(([key]) => key !== "runtime"),
+        ),
       },
       null,
       2,
@@ -296,6 +339,93 @@ describe("project lifecycle tools", () => {
           projectId: "project-123",
           workspaceId: "worktree-a",
           targetId: "project-123--worktree-a",
+        },
+      },
+    });
+  });
+
+  it("reports host-local image port coordination diagnostics when no mode is configured", async () => {
+    const projectRoot = makeTempDir("plexus-project-");
+    const stateRoot = makeTempDir("plexus-state-");
+    const claimsRoot = makeTempDir("plexus-claims-");
+    writeProjectConfig(projectRoot, {
+      runtime: {
+        imagePorts: {
+          coordination: {
+            root: claimsRoot,
+          },
+        },
+      },
+    });
+    saveProjectState(statePath(stateRoot), runningState);
+    const lifecycle = new PlexusProjectLifecycle({
+      routeRegistry: new FakeRouteRegistry(),
+      gateway: {
+        checks: {
+          isPortListening: async () => false,
+        },
+      },
+    });
+
+    const result = await lifecycle.handleTool("plexus_project_status", {
+      projectPath: projectRoot,
+      stateRoot,
+      workspaceId: "worktree-a",
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
+      data: {
+        diagnostics: {
+          imagePortCoordination: {
+            mode: "host-local",
+            basis: "host-local-claims",
+            claimsRoot,
+            message:
+              "Image MCP ports are coordinated by host-local port claims across PLexus projects on this host.",
+          },
+          portClaims: {
+            roots: [claimsRoot],
+          },
+        },
+      },
+    });
+  });
+
+  it("reports explicit project-state image port coordination diagnostics", async () => {
+    const projectRoot = makeTempDir("plexus-project-");
+    const stateRoot = makeTempDir("plexus-state-");
+    writeProjectConfig(projectRoot);
+    saveProjectState(statePath(stateRoot), runningState);
+    const lifecycle = new PlexusProjectLifecycle({
+      routeRegistry: new FakeRouteRegistry(),
+      gateway: {
+        checks: {
+          isPortListening: async () => false,
+        },
+      },
+    });
+
+    const result = await lifecycle.handleTool("plexus_project_status", {
+      projectPath: projectRoot,
+      stateRoot,
+      workspaceId: "worktree-a",
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
+      data: {
+        diagnostics: {
+          imagePortCoordination: {
+            mode: "project-state",
+            basis: "project-state-scanning",
+            stateRoot,
+            message:
+              "Image MCP ports are coordinated by scanning PLexus project state; this only protects workspaces sharing this state root.",
+          },
+          portClaims: {
+            roots: [],
+          },
         },
       },
     });

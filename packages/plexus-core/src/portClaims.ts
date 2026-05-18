@@ -38,6 +38,7 @@ export interface PortClaimRecord extends PortClaimScope {
   assignedPort: number;
   pid?: number;
   claimedAt: string;
+  updatedAt?: string;
 }
 
 export interface ClaimPortOptions extends PortClaimScope {
@@ -66,6 +67,12 @@ export interface PortClaimReleaseResult {
   port: number;
   reason?: "not-found" | "claim-mismatch";
   currentClaim?: PortClaimRecord;
+}
+
+export interface UpdatePortClaimOptions {
+  claimsRoot: string;
+  claim: PortClaimReference;
+  update: (claim: PortClaimRecord) => PortClaimRecord;
 }
 
 export type PortClaimInspection =
@@ -505,6 +512,32 @@ export async function releasePortClaim(
     released: true,
     port: options.claim.assignedPort,
   };
+}
+
+export async function updatePortClaim(
+  options: UpdatePortClaimOptions,
+): Promise<PortClaimRecord | undefined> {
+  validatePort(options.claim.assignedPort, "claim.assignedPort");
+  const currentClaim = await readClaimRecord(
+    options.claimsRoot,
+    options.claim.assignedPort,
+  );
+  if (!currentClaim || currentClaim.claimId !== options.claim.claimId) {
+    return undefined;
+  }
+
+  const updatedClaim = options.update(currentClaim);
+  if (
+    updatedClaim.claimId !== currentClaim.claimId ||
+    updatedClaim.assignedPort !== currentClaim.assignedPort
+  ) {
+    throw new PortClaimAllocationError(
+      "Updated port claims must keep the same claimId and assignedPort",
+    );
+  }
+
+  await writeClaimRecord(options.claimsRoot, updatedClaim);
+  return updatedClaim;
 }
 
 export async function inspectPortClaim(

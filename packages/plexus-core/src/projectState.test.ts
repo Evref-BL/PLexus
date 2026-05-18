@@ -68,7 +68,7 @@ function defaultRuntimePolicy(): ProjectRuntimePolicy {
         end: 7_199,
       },
       coordination: {
-        mode: "project-state",
+        mode: "host-local",
       },
     },
   };

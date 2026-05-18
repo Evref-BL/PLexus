@@ -4,6 +4,13 @@ import {
   imagePortClaimsRootForConfig,
 } from "./imagePortClaims.js";
 import {
+  loadProjectConfig,
+  resolveProjectRuntimePolicy,
+  type ProjectConfig,
+  type ProjectImagePortCoordinationMode,
+} from "./projectConfig.js";
+import { closeProject, type ProjectCloseResult } from "./projectClose.js";
+import {
   rescueImage,
   type ImageRescueEntrySelection,
   type ImageRescueOperation,
@@ -11,8 +18,6 @@ import {
   type ImageRescueRepositoryAction,
   type ImageRescueResult,
 } from "./imageRescue.js";
-import { loadProjectConfig } from "./projectConfig.js";
-import { closeProject, type ProjectCloseResult } from "./projectClose.js";
 import {
   closeProjectGateway,
   ensureProjectGateway,
@@ -26,9 +31,6 @@ import {
   type PortClaimInspection,
   type PortClaimRecord,
 } from "./portClaims.js";
-import {
-  type ProjectConfig,
-} from "./projectConfig.js";
 import { openProject, type ProjectOpenResult } from "./projectOpen.js";
 import {
   defaultPlexusStateRoot,
@@ -173,6 +175,18 @@ export interface ProjectLifecyclePortClaimsDiagnostics {
   conflicts: ProjectLifecyclePortClaimDiagnostic[];
 }
 
+export type ProjectLifecycleImagePortCoordinationBasis =
+  | "host-local-claims"
+  | "project-state-scanning";
+
+export interface ProjectLifecycleImagePortCoordinationDiagnostics {
+  mode: ProjectImagePortCoordinationMode;
+  basis: ProjectLifecycleImagePortCoordinationBasis;
+  message: string;
+  claimsRoot?: string;
+  stateRoot?: string;
+}
+
 export interface ProjectLifecyclePortListenerDiagnostic {
   port: number;
   purpose: "gateway" | "image-mcp";
@@ -223,6 +237,7 @@ export interface ProjectLifecycleDiagnostics {
     status: ProjectImageState["status"];
     pid?: number;
   }>;
+  imagePortCoordination: ProjectLifecycleImagePortCoordinationDiagnostics;
   portClaims: ProjectLifecyclePortClaimsDiagnostics;
   conflictingListeners: ProjectLifecyclePortListenerDiagnostic[];
   staleClaims: ProjectLifecyclePortClaimDiagnostic[];
@@ -657,6 +672,32 @@ function configuredClaimRoots(
   ].filter((value, index, values): value is string =>
     typeof value === "string" && values.indexOf(value) === index,
   );
+}
+
+function imagePortCoordinationDiagnostics(
+  projectRoot: string,
+  stateRoot: string,
+  config: ProjectConfig,
+): ProjectLifecycleImagePortCoordinationDiagnostics {
+  const coordination = resolveProjectRuntimePolicy(config).imagePorts.coordination;
+  if (coordination.mode === "host-local") {
+    const claimsRoot = imagePortClaimsRootForConfig(projectRoot, config);
+    return {
+      mode: "host-local",
+      basis: "host-local-claims",
+      message:
+        "Image MCP ports are coordinated by host-local port claims across PLexus projects on this host.",
+      ...(claimsRoot ? { claimsRoot } : {}),
+    };
+  }
+
+  return {
+    mode: "project-state",
+    basis: "project-state-scanning",
+    stateRoot,
+    message:
+      "Image MCP ports are coordinated by scanning PLexus project state; this only protects workspaces sharing this state root.",
+  };
 }
 
 function imageMcpPorts(
@@ -1272,6 +1313,11 @@ export class PlexusProjectLifecycle {
       },
       gateway: gatewayDiagnostic(gateway),
       imageMcpPorts: imageMcpPorts(state),
+      imagePortCoordination: imagePortCoordinationDiagnostics(
+        projectRoot,
+        stateRoot,
+        config,
+      ),
       portClaims,
       conflictingListeners,
       staleClaims: portClaims.stale,

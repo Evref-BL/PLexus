@@ -144,7 +144,7 @@ export function defaultProjectRuntimePolicy(): ProjectRuntimePolicy {
         end: 7_199,
       },
       coordination: {
-        mode: "project-state",
+        mode: "host-local",
       },
     },
   };
@@ -641,11 +641,12 @@ function parseImagePortCoordination(
     return { ...defaultProjectRuntimePolicy().imagePorts.coordination };
   }
 
-  const modeValue = value.mode ?? "project-state";
+  const defaultMode = defaultProjectRuntimePolicy().imagePorts.coordination.mode;
+  const modeValue = value.mode ?? defaultMode;
   const mode =
     modeValue === "project-state" || modeValue === "host-local"
       ? modeValue
-      : "project-state";
+      : defaultMode;
   if (mode !== modeValue) {
     issues.push(
       "runtime.imagePorts.coordination.mode must be one of project-state, host-local",
