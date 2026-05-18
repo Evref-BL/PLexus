@@ -1,4 +1,9 @@
+import fs from "node:fs";
 import path from "node:path";
+import {
+  defaultImagePortClaimChecks,
+  imagePortClaimsRootForConfig,
+} from "./imagePortClaims.js";
 import {
   rescueImage,
   type ImageRescueEntrySelection,
@@ -15,13 +20,29 @@ import {
   projectGatewayStatus,
   type ProjectGatewayRuntimeOptions,
 } from "./projectGateway.js";
+import {
+  inspectPortClaim,
+  listPortClaims,
+  type PortClaimChecks,
+  type PortClaimInspection,
+  type PortClaimRecord,
+} from "./portClaims.js";
+import {
+  projectConfigPath,
+  type ProjectConfig,
+} from "./projectConfig.js";
 import { openProject, type ProjectOpenResult } from "./projectOpen.js";
 import {
+  defaultPlexusStateRoot,
+  defaultTargetId,
   defaultWorkspaceId,
   loadProjectState,
+  projectStateRootForConfig,
   projectStatePathForConfig,
+  runtimeStatusForImages,
   sanitizeRuntimeId,
   saveProjectState,
+  type ProjectImageState,
   type ProjectGatewayState,
   type ProjectState,
 } from "./projectState.js";
@@ -122,10 +143,105 @@ export interface RescueImageToolInput extends ProjectStatusToolInput {
 
 export interface ProjectLifecycleStatus {
   projectRoot?: string;
+  stateRoot?: string;
   statePath?: string;
+  projectId?: string;
+  workspaceId?: string;
+  targetId?: string;
   state?: ProjectState;
   gateway?: ProjectGatewayState;
   route?: unknown;
+  diagnostics?: ProjectLifecycleDiagnostics;
+}
+
+export type ProjectLifecycleRuntimeDiagnosticStatus =
+  | "operational"
+  | "operational-but-idle"
+  | "degraded"
+  | "not-opened";
+
+export interface ProjectLifecyclePortClaimDiagnostic {
+  claimsRoot: string;
+  port: number;
+  status: "claimed" | "stale" | "unreadable";
+  record?: PortClaimRecord;
+  reason?: string;
+  ownedByCurrentScope?: boolean;
+}
+
+export interface ProjectLifecyclePortClaimsDiagnostics {
+  roots: string[];
+  active: ProjectLifecyclePortClaimDiagnostic[];
+  stale: ProjectLifecyclePortClaimDiagnostic[];
+  conflicts: ProjectLifecyclePortClaimDiagnostic[];
+}
+
+export interface ProjectLifecyclePortListenerDiagnostic {
+  port: number;
+  purpose: "gateway" | "image-mcp";
+  imageId?: string;
+  expectedOwner: string;
+  message: string;
+}
+
+export interface ProjectLifecycleRouteTableDiagnostics {
+  targetId?: string;
+  status: "registered" | "missing" | "unavailable" | "not-configured";
+  routableImages: Array<{
+    imageId: string;
+    port: number;
+    status?: string;
+    routable?: unknown;
+  }>;
+  error?: string;
+}
+
+export interface ProjectLifecycleLegacyDiagnostic {
+  kind:
+    | "legacy-env"
+    | "legacy-gateway-surface"
+    | "implicit-runtime-config";
+  key?: string;
+  value?: string;
+  message: string;
+  migration: string;
+}
+
+export interface ProjectLifecycleDiagnostics {
+  runtime: {
+    status: ProjectLifecycleRuntimeDiagnosticStatus;
+    reason: string;
+  };
+  scope: {
+    projectRoot: string;
+    stateRoot: string;
+    statePath: string;
+    projectId: string;
+    workspaceId: string;
+    targetId: string;
+  };
+  gateway: {
+    mode: ProjectGatewayState["mode"];
+    endpoint?: string;
+    controlEndpoint?: string;
+    host?: string;
+    port?: number;
+    portRange?: ProjectGatewayState["portRange"];
+    managedByProject: boolean;
+    pid?: number;
+  };
+  imageMcpPorts: Array<{
+    imageId: string;
+    imageName: string;
+    port: number;
+    status: ProjectImageState["status"];
+    pid?: number;
+  }>;
+  portClaims: ProjectLifecyclePortClaimsDiagnostics;
+  conflictingListeners: ProjectLifecyclePortListenerDiagnostic[];
+  staleClaims: ProjectLifecyclePortClaimDiagnostic[];
+  routeTable: ProjectLifecycleRouteTableDiagnostics;
+  legacyConfiguration: ProjectLifecycleLegacyDiagnostic[];
 }
 
 export interface ProjectLifecycleToolResult<T = unknown> {
@@ -434,6 +550,370 @@ function lifecycleStatusFromRoute(route: unknown): ProjectLifecycleStatus {
     state,
     ...(state?.gateway ? { gateway: state.gateway } : {}),
     route,
+  };
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function mergePortClaimChecks(
+  options: ProjectGatewayRuntimeOptions,
+): PortClaimChecks {
+  const defaults = defaultImagePortClaimChecks();
+  return {
+    isProcessAlive: options.checks?.isProcessAlive ?? defaults.isProcessAlive,
+    isPortListening: options.checks?.isPortListening ?? defaults.isPortListening,
+  };
+}
+
+function currentScopeMatchesClaim(
+  claim: PortClaimRecord,
+  scope: {
+    projectId: string;
+    workspaceId: string;
+    targetId: string;
+  },
+): boolean {
+  return (
+    claim.projectId === scope.projectId &&
+    claim.workspaceId === scope.workspaceId &&
+    claim.targetId === scope.targetId
+  );
+}
+
+function portClaimDiagnostic(
+  claimsRoot: string,
+  inspection: Extract<
+    PortClaimInspection,
+    { status: "claimed" | "stale" | "unreadable" }
+  >,
+  scope: {
+    projectId: string;
+    workspaceId: string;
+    targetId: string;
+  },
+): ProjectLifecyclePortClaimDiagnostic {
+  if (inspection.status === "unreadable") {
+    return {
+      claimsRoot,
+      port: inspection.port,
+      status: "unreadable",
+      reason: inspection.reason,
+    };
+  }
+
+  return {
+    claimsRoot,
+    port: inspection.port,
+    status: inspection.status,
+    record: inspection.record,
+    ...(inspection.reason ? { reason: inspection.reason } : {}),
+    ownedByCurrentScope: currentScopeMatchesClaim(inspection.record, scope),
+  };
+}
+
+async function inspectClaimRoots(
+  claimsRoots: string[],
+  checks: PortClaimChecks,
+  scope: {
+    projectId: string;
+    workspaceId: string;
+    targetId: string;
+  },
+): Promise<ProjectLifecyclePortClaimsDiagnostics> {
+  const active: ProjectLifecyclePortClaimDiagnostic[] = [];
+  const stale: ProjectLifecyclePortClaimDiagnostic[] = [];
+  const conflicts: ProjectLifecyclePortClaimDiagnostic[] = [];
+
+  for (const claimsRoot of claimsRoots) {
+    const claims = await listPortClaims({ claimsRoot });
+    for (const claim of claims) {
+      const inspection = await inspectPortClaim({
+        claimsRoot,
+        port: claim.assignedPort,
+        checks,
+      });
+      if (inspection.status === "available") {
+        continue;
+      }
+
+      const diagnostic = portClaimDiagnostic(claimsRoot, inspection, scope);
+      if (diagnostic.status === "stale") {
+        stale.push(diagnostic);
+        continue;
+      }
+
+      if (!diagnostic.ownedByCurrentScope) {
+        conflicts.push(diagnostic);
+        continue;
+      }
+
+      active.push(diagnostic);
+    }
+  }
+
+  return {
+    roots: claimsRoots,
+    active,
+    stale,
+    conflicts,
+  };
+}
+
+function configuredClaimRoots(
+  projectRoot: string,
+  config: ProjectConfig,
+  state: ProjectState | undefined,
+): string[] {
+  return [
+    imagePortClaimsRootForConfig(projectRoot, config),
+    state?.gateway?.claim?.claimsRoot,
+  ].filter((value, index, values): value is string =>
+    typeof value === "string" && values.indexOf(value) === index,
+  );
+}
+
+function imageMcpPorts(
+  state: ProjectState | undefined,
+): ProjectLifecycleDiagnostics["imageMcpPorts"] {
+  return (state?.images ?? []).map((image) => ({
+    imageId: image.id,
+    imageName: image.imageName,
+    port: image.assignedPort,
+    status: image.status,
+    ...(image.pid !== undefined ? { pid: image.pid } : {}),
+  }));
+}
+
+function routeTableDiagnostics(
+  targetId: string | undefined,
+  route: unknown,
+  routeError: unknown,
+): ProjectLifecycleRouteTableDiagnostics {
+  if (!targetId) {
+    return {
+      status: "not-configured",
+      routableImages: [],
+    };
+  }
+
+  if (routeError) {
+    const message = errorMessage(routeError);
+    return {
+      targetId,
+      status: message.includes("No route is registered")
+        ? "missing"
+        : "unavailable",
+      routableImages: [],
+      error: message,
+    };
+  }
+
+  if (!isObject(route)) {
+    return {
+      targetId,
+      status: "not-configured",
+      routableImages: [],
+    };
+  }
+
+  const images = Array.isArray(route.images) ? route.images : [];
+  return {
+    targetId,
+    status: "registered",
+    routableImages: images
+      .filter(isObject)
+      .map((image) => ({
+        imageId: typeof image.id === "string" ? image.id : "",
+        port: typeof image.port === "number" ? image.port : 0,
+        ...(typeof image.status === "string" ? { status: image.status } : {}),
+        ...("routable" in image ? { routable: image.routable } : {}),
+      })),
+  };
+}
+
+function gatewayDiagnostic(
+  gateway: ProjectGatewayState,
+): ProjectLifecycleDiagnostics["gateway"] {
+  return {
+    mode: gateway.mode,
+    endpoint: gateway.endpoint,
+    controlEndpoint: gateway.controlEndpoint,
+    host: gateway.host,
+    port: gateway.port,
+    portRange: gateway.portRange,
+    managedByProject: gateway.managedByProject,
+    pid: gateway.pid,
+  };
+}
+
+function legacyEnvironmentDiagnostics(
+  env: NodeJS.ProcessEnv,
+): ProjectLifecycleLegacyDiagnostic[] {
+  const diagnostics: ProjectLifecycleLegacyDiagnostic[] = [];
+
+  if (env.PLEXUS_GATEWAY_MCP_URL) {
+    diagnostics.push({
+      kind: "legacy-env",
+      key: "PLEXUS_GATEWAY_MCP_URL",
+      value: env.PLEXUS_GATEWAY_MCP_URL,
+      message:
+        "Legacy gateway MCP URL is configured for lifecycle route-control calls.",
+      migration:
+        "Use PLEXUS_GATEWAY_CONTROL_MCP_URL for route-control and keep normal agents on the gateway MCP endpoint.",
+    });
+  }
+
+  if (env.PLEXUS_GATEWAY_MCP_PATH) {
+    diagnostics.push({
+      kind: "legacy-env",
+      key: "PLEXUS_GATEWAY_MCP_PATH",
+      value: env.PLEXUS_GATEWAY_MCP_PATH,
+      message:
+        "Legacy gateway MCP path is configured for lifecycle route-control calls.",
+      migration:
+        "Use PLEXUS_GATEWAY_CONTROL_MCP_PATH for route-control; agent-facing gateway traffic should use runtime.gateway.agentMcpPath.",
+    });
+  }
+
+  if (
+    env.PLEXUS_GATEWAY_SURFACE === "pharo" ||
+    env.PLEXUS_GATEWAY_SURFACE === "combined"
+  ) {
+    diagnostics.push({
+      kind: "legacy-gateway-surface",
+      key: "PLEXUS_GATEWAY_SURFACE",
+      value: env.PLEXUS_GATEWAY_SURFACE,
+      message: "Legacy gateway surface is enabled.",
+      migration:
+        "Use PLEXUS_GATEWAY_SURFACE=gateway with a separate route-control MCP path.",
+    });
+  }
+
+  return diagnostics;
+}
+
+function implicitRuntimeConfigDiagnostic(
+  projectRoot: string,
+): ProjectLifecycleLegacyDiagnostic[] {
+  try {
+    const raw = JSON.parse(
+      fs.readFileSync(projectConfigPath(projectRoot), "utf8"),
+    ) as unknown;
+    if (isObject(raw) && raw.runtime === undefined) {
+      return [
+        {
+          kind: "implicit-runtime-config",
+          message:
+            "Project config relies on implicit legacy runtime defaults.",
+          migration:
+            "Add runtime.stateRoot, runtime.gateway, and runtime.imagePorts with explicit gateway and route-control MCP settings.",
+        },
+      ];
+    }
+  } catch {
+    return [];
+  }
+
+  return [];
+}
+
+function expectedPortClaims(
+  portClaims: ProjectLifecyclePortClaimsDiagnostics,
+): Set<number> {
+  return new Set(portClaims.active.map((claim) => claim.port));
+}
+
+async function conflictingListenerDiagnostics(
+  state: ProjectState | undefined,
+  gateway: ProjectGatewayState,
+  portClaims: ProjectLifecyclePortClaimsDiagnostics,
+  checks: PortClaimChecks,
+): Promise<ProjectLifecyclePortListenerDiagnostic[]> {
+  const ownedClaimPorts = expectedPortClaims(portClaims);
+  const diagnostics: ProjectLifecyclePortListenerDiagnostic[] = [];
+
+  for (const image of state?.images ?? []) {
+    const listening = Boolean(await checks.isPortListening?.(image.assignedPort));
+    if (
+      listening &&
+      image.status !== "running" &&
+      !ownedClaimPorts.has(image.assignedPort)
+    ) {
+      diagnostics.push({
+        port: image.assignedPort,
+        purpose: "image-mcp",
+        imageId: image.id,
+        expectedOwner: `image ${image.id}`,
+        message:
+          `Image MCP port ${image.assignedPort} has a listener but the ` +
+          `project image ${image.id} is ${image.status} and has no active owned claim.`,
+      });
+    }
+  }
+
+  if (gateway.port !== undefined) {
+    const listening = Boolean(await checks.isPortListening?.(gateway.port));
+    if (
+      listening &&
+      gateway.managedByProject &&
+      !ownedClaimPorts.has(gateway.port)
+    ) {
+      diagnostics.push({
+        port: gateway.port,
+        purpose: "gateway",
+        expectedOwner: "project-local gateway",
+        message:
+          `Gateway port ${gateway.port} has a listener but no active owned claim.`,
+      });
+    }
+  }
+
+  return diagnostics;
+}
+
+function runtimeDiagnostics(
+  state: ProjectState | undefined,
+  gateway: ProjectGatewayState,
+  portClaims: ProjectLifecyclePortClaimsDiagnostics,
+  conflictingListeners: ProjectLifecyclePortListenerDiagnostic[],
+  routeTable: ProjectLifecycleRouteTableDiagnostics,
+): ProjectLifecycleDiagnostics["runtime"] {
+  if (!state) {
+    return {
+      status: "not-opened",
+      reason: "No project runtime state exists for this workspace yet.",
+    };
+  }
+
+  if (
+    portClaims.stale.length > 0 ||
+    portClaims.conflicts.length > 0 ||
+    conflictingListeners.length > 0 ||
+    routeTable.status === "missing" ||
+    routeTable.status === "unavailable" ||
+    !gateway.endpoint ||
+    !gateway.controlEndpoint
+  ) {
+    return {
+      status: "degraded",
+      reason:
+        "Runtime state exists, but diagnostics found stale claims, conflicts, route-table gaps, or incomplete gateway endpoints.",
+    };
+  }
+
+  if (state.images.length === 0 && runtimeStatusForImages(state.images) === "idle") {
+    return {
+      status: "operational-but-idle",
+      reason:
+        "Runtime scope, gateway endpoints, and route table are valid; no images are declared for this project.",
+    };
+  }
+
+  return {
+    status: "operational",
+    reason: "Runtime scope has valid gateway and route diagnostics.",
   };
 }
 
@@ -811,6 +1291,9 @@ export class PlexusProjectLifecycle {
     const workspaceId = input.workspaceId
       ? sanitizeRuntimeId(input.workspaceId)
       : defaultWorkspaceId(projectRoot);
+    const stateRoot =
+      projectStateRootForConfig(config, input.stateRoot) ??
+      defaultPlexusStateRoot(projectRoot);
     const statePath = projectStatePathForConfig({
       projectRoot,
       config,
@@ -820,22 +1303,82 @@ export class PlexusProjectLifecycle {
     const state = loadProjectState(statePath);
     const gateway = projectGatewayStatus(config, state);
     const routeRegistry = this.routeRegistryForProject(config, state);
-    const route = state
-      ? await this.getRouteStatus(
+    let route: unknown;
+    let routeError: unknown;
+    if (state) {
+      try {
+        route = await this.getRouteStatus(
           {
             targetId: state.targetId,
             refreshHealth: input.refreshHealth,
           },
           routeRegistry,
-        )
-      : undefined;
+        );
+      } catch (error) {
+        routeError = error;
+      }
+    }
+    const targetId =
+      state?.targetId ??
+      input.targetId ??
+      defaultTargetId(config.kanban.projectId, workspaceId);
+    const scope = {
+      projectId: state?.projectId ?? config.kanban.projectId,
+      workspaceId: state?.workspaceId ?? workspaceId,
+      targetId,
+    };
+    const checks = mergePortClaimChecks(this.gateway);
+    const portClaims = await inspectClaimRoots(
+      configuredClaimRoots(projectRoot, config, state),
+      checks,
+      scope,
+    );
+    const routeTable = routeTableDiagnostics(state?.targetId, route, routeError);
+    const conflictingListeners = await conflictingListenerDiagnostics(
+      state,
+      gateway,
+      portClaims,
+      checks,
+    );
+    const diagnostics: ProjectLifecycleDiagnostics = {
+      runtime: runtimeDiagnostics(
+        state,
+        gateway,
+        portClaims,
+        conflictingListeners,
+        routeTable,
+      ),
+      scope: {
+        projectRoot,
+        stateRoot,
+        statePath,
+        projectId: scope.projectId,
+        workspaceId: scope.workspaceId,
+        targetId: scope.targetId,
+      },
+      gateway: gatewayDiagnostic(gateway),
+      imageMcpPorts: imageMcpPorts(state),
+      portClaims,
+      conflictingListeners,
+      staleClaims: portClaims.stale,
+      routeTable,
+      legacyConfiguration: [
+        ...legacyEnvironmentDiagnostics(this.gateway.env ?? process.env),
+        ...implicitRuntimeConfigDiagnostic(projectRoot),
+      ],
+    };
 
     return {
       projectRoot,
+      stateRoot,
       statePath,
+      projectId: scope.projectId,
+      workspaceId: scope.workspaceId,
+      targetId: scope.targetId,
       state,
       gateway,
       ...(route ? { route } : {}),
+      diagnostics,
     };
   }
 
