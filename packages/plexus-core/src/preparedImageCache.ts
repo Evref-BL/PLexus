@@ -6,6 +6,7 @@ import type {
   ProjectPharoMcpRepositoryConfig,
   ProjectPreparedImageConfig,
 } from "./projectConfig.js";
+import { projectConfigId } from "./projectConfig.js";
 import {
   defaultPlexusStateRoot,
   projectStateRootForConfig,
@@ -132,7 +133,7 @@ export function preparedImageCacheName(
   preparedImage: ProjectPreparedImageConfig,
 ): string {
   return renderPreparedImageCacheName(preparedImage.imageName, {
-    projectId: config.kanban.projectId,
+    projectId: projectConfigId(config),
     projectName: config.name,
     cacheId: preparedImage.id,
   });
@@ -236,7 +237,7 @@ export function writePreparedImageCacheScript(
   const preparedImage = findPreparedImageConfig(options.config, options.cacheId);
   const filePath = preparedImageScriptPath({
     projectRoot: options.projectRoot,
-    projectId: options.config.kanban.projectId,
+    projectId: projectConfigId(options.config),
     cacheId: preparedImage.id,
     stateRoot: projectStateRootForConfig(options.config, options.stateRoot),
   });
@@ -264,7 +265,7 @@ export function buildPreparedImageCachePlan(options: {
   const prepareScript = {
     filePath: preparedImageScriptPath({
       projectRoot: options.projectRoot,
-      projectId: options.config.kanban.projectId,
+      projectId: projectConfigId(options.config),
       cacheId: preparedImage.id,
       stateRoot: projectStateRootForConfig(options.config, options.stateRoot),
     }),

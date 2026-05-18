@@ -24,7 +24,7 @@ selected image.
 - Node.js `>=24` with `npm` and `npx`.
 - Pharo Launcher.
 - A project with a `plexus.project.json`.
-- Vibe Kanban and Codex when using PLexus for agent-driven work.
+- Codex or another agent/worktree runner when using PLexus for agent-driven work.
 
 `npm install` installs `pharo-launcher-mcp` as a package dependency. Local
 source-checkout overrides are only needed for PLexus development; see
@@ -36,11 +36,8 @@ Add `plexus.project.json` to the project root you want PLexus to manage:
 
 ```json
 {
+  "id": "project-123",
   "name": "my-project",
-  "kanban": {
-    "provider": "vibe-kanban",
-    "projectId": "project-123"
-  },
   "images": [
     {
       "id": "dev",
@@ -157,7 +154,7 @@ for trusted route-control.
 
 - `docs/kanban-agent-pharo-access.md`: agent-facing Pharo workflow and routing
   errors.
-- `docs/vibe-kanban-setup.md`: Vibe Kanban workspace setup.
+- `docs/vibe-kanban-setup.md`: optional Vibe Kanban workspace setup.
 - `docs/project-model.md`: project, workspace, target, and image vocabulary.
 - `docs/development.md`: repository layout, build/test workflow, dependency
   overrides, and prototype checks.

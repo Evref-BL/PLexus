@@ -9,11 +9,8 @@ import { createProjectState } from "./projectState.js";
 
 function projectConfig(runtime: Record<string, unknown> = {}) {
   return parseProjectConfig({
+    id: "project-123",
     name: "my-project",
-    kanban: {
-      provider: "vibe-kanban",
-      projectId: "project-123",
-    },
     runtime,
     images: [],
   });
@@ -68,11 +65,8 @@ describe("pharo-launcher-mcp profile derivation", () => {
     const projectRoot = path.join(path.sep, "tmp", "my-project");
     const stateRoot = path.join(path.sep, "tmp", "plexus-state");
     const config = parseProjectConfig({
+      id: "project-123",
       name: "my-project",
-      kanban: {
-        provider: "vibe-kanban",
-        projectId: "project-123",
-      },
       runtime: {},
       images: [
         {

@@ -1,5 +1,6 @@
 import {
   loadProjectConfig,
+  projectConfigId,
   resolveProjectRuntimePolicy,
   type ProjectConfig,
   type ProjectImageConfig,
@@ -393,7 +394,7 @@ function resolveScopedProjectContext(
     : defaultWorkspaceId(projectRoot);
   const targetId =
     options.targetId ??
-    defaultTargetId(projectConfig.kanban.projectId, workspaceId);
+    defaultTargetId(projectConfigId(projectConfig), workspaceId);
   const runtime = resolveProjectRuntimePolicy(projectConfig);
   const configuredStateRoot =
     runtime.stateRoot.mode === "external" ? runtime.stateRoot.path : undefined;
@@ -408,7 +409,7 @@ function resolveScopedProjectContext(
   const projectState = options.projectState ?? loadProjectState(statePath);
   const scope: ScopedProjectContextDiagnosticScope = {
     projectRoot,
-    projectId: projectConfig.kanban.projectId,
+    projectId: projectConfigId(projectConfig),
     projectName: projectConfig.name,
     workspaceId,
     targetId,

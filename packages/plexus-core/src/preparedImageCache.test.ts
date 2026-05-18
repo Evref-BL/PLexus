@@ -18,11 +18,8 @@ import {
 const tempDirs: string[] = [];
 
 const config: ProjectConfig = {
+  id: "project-123",
   name: "my-project",
-  kanban: {
-    provider: "vibe-kanban",
-    projectId: "project-123",
-  },
   preparedImages: [
     {
       id: "pharo-13-mcp",

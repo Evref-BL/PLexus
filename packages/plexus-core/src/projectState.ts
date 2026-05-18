@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import {
+  projectConfigId,
   resolveProjectRuntimePolicy,
   type ProjectConfig,
   type ProjectGatewayMode,
@@ -241,7 +242,7 @@ export function projectStatePathForConfig(
 ): string {
   return projectStatePath({
     projectRoot: options.projectRoot,
-    projectId: options.config.kanban.projectId,
+    projectId: projectConfigId(options.config),
     workspaceId: options.workspaceId,
     stateRoot: projectStateRootForConfig(options.config, options.stateRoot),
   });
@@ -446,7 +447,7 @@ export function createProjectState(
 
   const targetId =
     options.targetId ??
-    defaultTargetId(config.kanban.projectId, options.workspaceId);
+    defaultTargetId(projectConfigId(config), options.workspaceId);
   const configuredPorts = new Set(
     config.images
       .map((image) => image.mcp.port)
@@ -480,7 +481,7 @@ export function createProjectState(
     return {
       id: image.id,
       imageName: renderProjectImageName(image.imageName, {
-        projectId: config.kanban.projectId,
+        projectId: projectConfigId(config),
         projectName: config.name,
         workspaceId: options.workspaceId,
         targetId,
@@ -503,7 +504,7 @@ export function createProjectState(
   }
 
   return {
-    projectId: config.kanban.projectId,
+    projectId: projectConfigId(config),
     projectName: config.name,
     workspaceId: options.workspaceId,
     targetId,

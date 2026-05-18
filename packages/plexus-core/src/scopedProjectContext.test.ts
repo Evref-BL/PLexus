@@ -9,11 +9,8 @@ import {
 } from "./scopedProjectContext.js";
 
 const projectConfig: ProjectConfig = {
+  id: "project-123",
   name: "my-project",
-  kanban: {
-    provider: "vibe-kanban",
-    projectId: "project-123",
-  },
   images: [
     {
       id: "dev",

@@ -156,8 +156,9 @@ export interface ProjectRuntimePolicy {
 }
 
 export interface ProjectConfig {
+  id: string;
   name: string;
-  kanban: ProjectKanbanConfig;
+  kanban?: ProjectKanbanConfig;
   runtime?: ProjectRuntimePolicy;
   preparedImages?: ProjectPreparedImageConfig[];
   images: ProjectImageConfig[];
@@ -215,6 +216,10 @@ export function resolveProjectRuntimePolicy(
   config: Pick<ProjectConfig, "runtime">,
 ): ProjectRuntimePolicy {
   return config.runtime ?? defaultProjectRuntimePolicy();
+}
+
+export function projectConfigId(config: Pick<ProjectConfig, "id">): string {
+  return config.id;
 }
 
 function stringField(
@@ -408,10 +413,14 @@ function parseRuntimePortRange(
 function parseKanban(
   value: unknown,
   issues: string[],
-): ProjectKanbanConfig {
+): ProjectKanbanConfig | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
   if (!isObject(value)) {
     issues.push("kanban must be an object");
-    return { provider: "vibe-kanban", projectId: "" };
+    return undefined;
   }
 
   const provider = value.provider;
@@ -423,6 +432,23 @@ function parseKanban(
     provider: "vibe-kanban",
     projectId: stringField(value, "projectId", issues, "kanban"),
   };
+}
+
+function parseProjectIdentity(
+  value: Record<string, unknown>,
+  legacyKanban: ProjectKanbanConfig | undefined,
+  issues: string[],
+): string {
+  if (typeof value.id === "string" && value.id.trim().length > 0) {
+    return value.id;
+  }
+
+  if (value.id === undefined && legacyKanban?.projectId) {
+    return legacyKanban.projectId;
+  }
+
+  issues.push("config.id must be a non-empty string");
+  return "";
 }
 
 function parseImageMcp(
@@ -1139,10 +1165,12 @@ export function parseProjectConfig(value: unknown): ProjectConfig {
     ]);
   }
 
+  const legacyKanban = parseKanban(value.kanban, issues);
   const preparedImages = parsePreparedImages(value.preparedImages, issues);
   const config: ProjectConfig = {
+    id: parseProjectIdentity(value, legacyKanban, issues),
     name: stringField(value, "name", issues, "config"),
-    kanban: parseKanban(value.kanban, issues),
+    ...(legacyKanban ? { kanban: legacyKanban } : {}),
     runtime: parseRuntimePolicy(value.runtime, issues),
     ...(preparedImages ? { preparedImages } : {}),
     images: parseImages(value.images, issues),

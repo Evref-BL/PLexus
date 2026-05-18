@@ -14,6 +14,7 @@ import {
 import {
   loadProjectConfig,
   plexusProjectConfigFileName,
+  projectConfigId,
   resolveProjectRuntimePolicy,
   type ProjectConfig,
   type ProjectImagePortAllocationPolicy,
@@ -1149,7 +1150,7 @@ export class PlexusProjectLifecycle {
             : defaultWorkspaceId(projectRoot);
           await this.unregisterRoute(
             {
-              projectId: config?.kanban.projectId,
+              projectId: config ? projectConfigId(config) : undefined,
               workspaceId,
             },
             routeRegistry,
@@ -1388,9 +1389,9 @@ export class PlexusProjectLifecycle {
     const targetId =
       state?.targetId ??
       input.targetId ??
-      defaultTargetId(config.kanban.projectId, workspaceId);
+      defaultTargetId(projectConfigId(config), workspaceId);
     const scope = {
-      projectId: state?.projectId ?? config.kanban.projectId,
+      projectId: state?.projectId ?? projectConfigId(config),
       workspaceId: state?.workspaceId ?? workspaceId,
       targetId,
     };

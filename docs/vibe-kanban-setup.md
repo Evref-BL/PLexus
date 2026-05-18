@@ -58,7 +58,7 @@ POSIX example:
 PLEXUS_STATE_ROOT=/srv/git/.plexus-state
 ```
 
-PLexus stores state under `projects/<project-id>/workspaces/<workspace-id>/state.json`. The default workspace id is the worktree directory name; override it with `PLEXUS_WORKSPACE_ID` only when the launcher or agent environment already has a stable task id to use.
+PLexus stores state under `projects/<project-id>/workspaces/<workspace-id>/state.json`, where `<project-id>` comes from top-level `id` in `plexus.project.json`. The default workspace id is the worktree directory name; override it with `PLEXUS_WORKSPACE_ID` only when the launcher or agent environment already has a stable task id to use.
 
 For project configs used by parallel worktrees, omit fixed `mcp.port` values and use image-name templates such as `MyProject-{workspaceId}-dev`. Fixed ports and fixed image names are useful for a single local workspace, but they intentionally collide when two task worktrees are opened at once.
 

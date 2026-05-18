@@ -5,19 +5,12 @@ This document defines the PLexus runtime vocabulary and arity. It is developer d
 ## Arity
 
 ```text
-Vibe Kanban project  1:1  PLexus project
 PLexus project       1:N  PLexus workspaces
 PLexus workspace     1:1  runtime target
 runtime target       1:N  Pharo images
 ```
 
 ## Concepts
-
-### Vibe Kanban Project
-
-A Vibe Kanban project is the human-facing project where tickets, workspaces, branches, agent sessions, reviews, and diffs are managed.
-
-For now, one Vibe Kanban project maps to one PLexus project.
 
 ### PLexus Project
 
@@ -27,20 +20,18 @@ The project id comes from:
 
 ```json
 {
-  "kanban": {
-    "provider": "vibe-kanban",
-    "projectId": "project-123"
-  }
+  "id": "project-123",
+  "name": "my-project"
 }
 ```
 
-That `projectId` identifies the logical project. It must not be used alone as a unique runtime route once parallel worktrees are open.
+That `id` identifies the logical project. It must not be used alone as a unique runtime route once parallel worktrees are open. Legacy configs with `kanban.provider: "vibe-kanban"` and `kanban.projectId` are still readable as compatibility input, but `kanban` is not part of normal PLexus project identity.
 
 ### PLexus Workspace
 
 A PLexus workspace is one isolated runtime instance of a PLexus project, usually backed by one Git worktree.
 
-The `workspaceId` separates sibling worktrees for the same project. The default is the project root directory name, which works well for Vibe Kanban worktree directories. Callers can override it with:
+The `workspaceId` separates sibling worktrees for the same project. The default is the project root directory name, which works well for agent worktree directories. Callers can override it with:
 
 ```text
 --workspace-id
@@ -292,8 +283,8 @@ Those details are diagnostic data, not agent mutation handles.
 ## Example
 
 ```text
-Vibe Kanban project: Pharo MCP Orchestration
-  PLexus projectId: pharo-mcp-orchestration
+PLexus project: Pharo MCP Orchestration
+  projectId: pharo-mcp-orchestration
     workspaceId: task-123
       targetId: pharo-mcp-orchestration--task-123
       images:

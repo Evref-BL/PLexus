@@ -24,11 +24,8 @@ function makeTempDir(prefix: string): string {
 
 function projectConfig(overrides: Record<string, unknown> = {}) {
   return {
+    id: "project-123",
     name: "my-project",
-    kanban: {
-      provider: "vibe-kanban",
-      projectId: "project-123",
-    },
     images: [
       {
         id: "dev",

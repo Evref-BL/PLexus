@@ -11,6 +11,7 @@ import {
   type PortClaimRecord,
 } from "./portClaims.js";
 import {
+  projectConfigId,
   resolveProjectRuntimePolicy,
   type ProjectConfig,
   type ProjectLocalGatewayPolicy,
@@ -259,7 +260,7 @@ export function projectGatewayStatus(
 ): ProjectGatewayState {
   const policy = resolveProjectRuntimePolicy(config).gateway;
   if (policy.mode === "shared") {
-    return sharedGatewayState(policy, state?.projectId ?? config.kanban.projectId);
+    return sharedGatewayState(policy, state?.projectId ?? projectConfigId(config));
   }
 
   const stateGateway =
@@ -271,7 +272,7 @@ export function projectGatewayStatus(
     ...localGatewayState(
       policy,
       state ?? {
-        projectId: config.kanban.projectId,
+        projectId: projectConfigId(config),
         projectName: config.name,
         workspaceId: "",
         targetId: "",
