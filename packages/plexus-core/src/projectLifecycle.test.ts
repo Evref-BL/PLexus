@@ -354,6 +354,15 @@ describe("project lifecycle tools", () => {
     const lifecycle = new PlexusProjectLifecycle({
       routeRegistry: new FakeRouteRegistry(),
       gateway: {
+        env: {
+          PHARO_LAUNCHER_MCP_PROFILE: "isolated",
+          PHARO_LAUNCHER_MCP_STATE_ROOT: "/profiles/isolated",
+          PHARO_LAUNCHER_MCP_IMAGES_DIR: "/profiles/isolated/images",
+          PHARO_LAUNCHER_MCP_VMS_DIR: "/profiles/isolated/vms",
+          PHARO_LAUNCHER_MCP_TEMPLATE_SOURCES_DIR: "/profiles/isolated/templates",
+          PHARO_LAUNCHER_MCP_INIT_SCRIPTS_DIR: "/profiles/isolated/init-scripts",
+          PHARO_LAUNCHER_MCP_LOGS_DIR: "/profiles/isolated/logs",
+        } as NodeJS.ProcessEnv,
         checks: {
           isPortListening: async () => false,
         },
@@ -381,10 +390,53 @@ describe("project lifecycle tools", () => {
           runtime: {
             status: "operational-but-idle",
           },
+          project: {
+            declaredImageCount: 0,
+            activeImageCount: 0,
+            runtimeImageCount: 0,
+          },
           scope: {
             stateRoot,
             statePath: stateFilePath,
             targetId: "project-123--worktree-a",
+          },
+          runtimePolicy: {
+            imagePorts: {
+              allocation: "configured-or-dynamic",
+              range: {
+                start: 7100,
+                end: 7199,
+              },
+              coordination: {
+                mode: "project-state",
+              },
+            },
+          },
+          imagePortPolicy: {
+            allocation: "configured-or-dynamic",
+            range: {
+              start: 7100,
+              end: 7199,
+            },
+            coordinationMode: "project-state",
+            projectStateRoot: stateRoot,
+            basis: "project-state",
+          },
+          launcherProfile: {
+            status: "configured",
+            source: "environment",
+            profileName: "isolated",
+            stateRoot: "/profiles/isolated",
+            imagesDir: "/profiles/isolated/images",
+            vmsDir: "/profiles/isolated/vms",
+            templateSourcesDir: "/profiles/isolated/templates",
+            initScriptsDir: "/profiles/isolated/init-scripts",
+            logsDir: "/profiles/isolated/logs",
+          },
+          agentAccess: {
+            expectedSurface: "gateway",
+            gatewayRouted: true,
+            portsHiddenFromAgents: true,
           },
           imageMcpPorts: [],
           portClaims: {
@@ -407,6 +459,24 @@ describe("project lifecycle tools", () => {
         },
       },
     });
+  });
+
+  it("returns a helpful diagnostic when projectPath points at the config file", async () => {
+    const projectRoot = makeTempDir("plexus-project-");
+    writeProjectConfig(projectRoot);
+    const lifecycle = new PlexusProjectLifecycle();
+
+    const result = await lifecycle.handleTool("plexus_project_status", {
+      projectPath: path.join(projectRoot, "plexus.project.json"),
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: expect.stringContaining(
+        "projectPath must point to the PLexus project directory",
+      ),
+    });
+    expect(result.error).toContain(projectRoot);
   });
 
   it("separates stale claims from host listener conflicts in status diagnostics", async () => {
@@ -482,6 +552,14 @@ describe("project lifecycle tools", () => {
         diagnostics: {
           runtime: {
             status: "degraded",
+          },
+          imagePortPolicy: {
+            allocation: "configured-or-dynamic",
+            coordinationMode: "host-local",
+            configuredRoot: claimsRoot,
+            effectiveClaimsRoot: claimsRoot,
+            projectStateRoot: stateRoot,
+            basis: "host-local-claims",
           },
           imageMcpPorts: [
             {
