@@ -47,8 +47,7 @@ export interface BuildPlexusWorkspaceMcpConfigOptions {
   pharoServerName?: string;
 }
 
-const legacyPharoGatewayServerName = "pharo";
-const legacyGatewaySurfaces = new Set(["pharo", "combined"]);
+const retiredPharoGatewayServerName = "pharo";
 
 function optionalJsonEnv(value: unknown): string | undefined {
   if (value === undefined) {
@@ -130,7 +129,7 @@ export function mergeWorkspaceMcpServers(
 ): Record<string, WorkspaceMcpServerConfig> {
   const retainedExistingServers = Object.fromEntries(
     Object.entries(existingServers).filter(
-      ([name, server]) => !isManagedLegacyGatewayServer(name, server),
+      ([name, server]) => !isRetiredGatewayServer(name, server),
     ),
   );
 
@@ -140,17 +139,12 @@ export function mergeWorkspaceMcpServers(
   };
 }
 
-function isManagedLegacyGatewayServer(
+function isRetiredGatewayServer(
   name: string,
   server: WorkspaceMcpServerConfig,
 ): boolean {
-  if (name !== legacyPharoGatewayServerName) {
+  if (name !== retiredPharoGatewayServerName) {
     return false;
-  }
-
-  const surface = server.env?.PLEXUS_GATEWAY_SURFACE;
-  if (surface && legacyGatewaySurfaces.has(surface)) {
-    return true;
   }
 
   return isPlexusGatewayCommand(server.command);
@@ -170,8 +164,8 @@ function isPlexusGatewayCommand(value: string): boolean {
 }
 
 function normalizedPharoServerName(name: string | undefined): string {
-  if (name === legacyPharoGatewayServerName) {
-    return defaultPharoMcpServerName;
+  if (name === retiredPharoGatewayServerName) {
+    throw new Error("pharoServerName=pharo has been removed; use gateway");
   }
 
   return name ?? defaultPharoMcpServerName;

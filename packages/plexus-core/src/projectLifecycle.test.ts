@@ -564,7 +564,7 @@ describe("project lifecycle tools", () => {
     });
   });
 
-  it("calls out legacy gateway environment settings with migration guidance", async () => {
+  it("omits retired gateway compatibility diagnostics", async () => {
     const projectRoot = makeTempDir("plexus-project-");
     const stateRoot = makeTempDir("plexus-state-");
     writeProjectConfig(projectRoot);
@@ -602,40 +602,17 @@ describe("project lifecycle tools", () => {
       workspaceId: "worktree-a",
     });
 
-    expect(result).toMatchObject({
-      ok: true,
-      data: {
-        diagnostics: {
-          legacyConfiguration: expect.arrayContaining([
-            expect.objectContaining({
-              kind: "legacy-env",
-              key: "PLEXUS_GATEWAY_MCP_URL",
-              migration: expect.stringContaining(
-                "PLEXUS_GATEWAY_CONTROL_MCP_URL",
-              ),
-            }),
-            expect.objectContaining({
-              kind: "legacy-env",
-              key: "PLEXUS_GATEWAY_MCP_PATH",
-              migration: expect.stringContaining(
-                "PLEXUS_GATEWAY_CONTROL_MCP_PATH",
-              ),
-            }),
-            expect.objectContaining({
-              kind: "legacy-gateway-surface",
-              key: "PLEXUS_GATEWAY_SURFACE",
-              migration: expect.stringContaining(
-                "PLEXUS_GATEWAY_SURFACE=gateway",
-              ),
-            }),
-            expect.objectContaining({
-              kind: "implicit-runtime-config",
-              migration: expect.stringContaining("runtime.gateway"),
-            }),
-          ]),
+    expect(result.ok).toBe(true);
+    expect(result.data).toMatchObject({
+      diagnostics: {
+        runtime: {
+          status: "operational",
         },
       },
     });
+    expect(result.data).not.toHaveProperty(
+      "diagnostics.legacyConfiguration",
+    );
   });
 
   it("starts a project-local gateway after claiming and validating its port", async () => {
@@ -926,7 +903,7 @@ describe("project lifecycle tools", () => {
     });
   });
 
-  it("preserves an explicit gateway MCP URL for compatibility", async () => {
+  it("preserves an explicit route registry URL", async () => {
     const requests: CapturedGatewayRequest[] = [];
     const registry = new HttpGatewayRouteRegistry({
       url: "http://gateway.local:8133/mcp",
@@ -987,59 +964,22 @@ describe("project lifecycle tools", () => {
     expect(pathRequests[0]?.url).toBe("http://gateway.local:8133/private-control");
   });
 
-  it("routes legacy default gateway MCP URL environment to route-control MCP", async () => {
-    const requests: CapturedGatewayRequest[] = [];
-    vi.stubGlobal("fetch", makeGatewayFetch(requests));
-    const lifecycle = createProjectLifecycleFromEnvironment({
-      PLEXUS_GATEWAY_MCP_URL: "http://gateway.local:8133/mcp",
-    } as NodeJS.ProcessEnv);
-
-    await lifecycle.handleTool("plexus_project_status", {
-      targetId: runningState.targetId,
-    });
-
-    expect(requests[0]?.url).toBe("http://gateway.local:8133/control-mcp");
-  });
-
-  it("keeps legacy gateway environment compatibility in explicit warning mode", async () => {
+  it("ignores retired gateway MCP URL and path environment settings", async () => {
     const requests: CapturedGatewayRequest[] = [];
     vi.stubGlobal("fetch", makeGatewayFetch(requests));
     const lifecycle = createProjectLifecycleFromEnvironment({
       PLEXUS_GATEWAY_MCP_URL: "http://gateway.local:8133/mcp",
       PLEXUS_GATEWAY_MCP_PATH: "/mcp",
-      PLEXUS_LEGACY_GATEWAY_COMPATIBILITY: "warn",
     } as NodeJS.ProcessEnv);
 
-    await lifecycle.handleTool("plexus_project_status", {
+    const result = await lifecycle.handleTool("plexus_project_status", {
       targetId: runningState.targetId,
     });
 
-    expect(requests[0]?.url).toBe("http://gateway.local:8133/control-mcp");
-  });
-
-  it("rejects legacy gateway environment when compatibility removal is enabled", () => {
-    expect(() =>
-      createProjectLifecycleFromEnvironment({
-        PLEXUS_GATEWAY_MCP_URL: "http://gateway.local:8133/mcp",
-        PLEXUS_GATEWAY_MCP_PATH: "/mcp",
-        PLEXUS_LEGACY_GATEWAY_COMPATIBILITY: "reject",
-      } as NodeJS.ProcessEnv),
-    ).toThrow(
-      /PLEXUS_GATEWAY_CONTROL_MCP_URL.*PLEXUS_GATEWAY_CONTROL_MCP_PATH.*\/control-mcp/s,
-    );
-  });
-
-  it("keeps custom legacy gateway MCP URL environment compatibility", async () => {
-    const requests: CapturedGatewayRequest[] = [];
-    vi.stubGlobal("fetch", makeGatewayFetch(requests));
-    const lifecycle = createProjectLifecycleFromEnvironment({
-      PLEXUS_GATEWAY_MCP_URL: "http://gateway.local:8133/private-mcp",
-    } as NodeJS.ProcessEnv);
-
-    await lifecycle.handleTool("plexus_project_status", {
-      targetId: runningState.targetId,
+    expect(result).toMatchObject({
+      ok: false,
+      error: "projectPath is required when no gateway route registry is configured",
     });
-
-    expect(requests[0]?.url).toBe("http://gateway.local:8133/private-mcp");
+    expect(requests).toEqual([]);
   });
 });

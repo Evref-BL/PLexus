@@ -18,10 +18,6 @@ passes the returned `imageId` to `gateway` tool calls. The gateway facade strips
 routing-only fields such as `imageId` before forwarding the call to the selected
 image MCP server.
 
-`pharo` may appear in older generated MCP config as a temporary compatibility
-alias for the same facade. New configs should use the `gateway` server name and
-`PLEXUS_GATEWAY_SURFACE=gateway`.
-
 Route registration, route status, and stale-route cleanup are not part of this
 agent-facing contract. They belong to the trusted route-control or
 gateway-control surface used by PLexus lifecycle code or operators.
@@ -236,8 +232,6 @@ The gateway also has a trusted route-control surface for registering,
 unregistering, inspecting, and cleaning up routes. That control surface should
 share the same in-memory route table as the agent-facing `gateway` surface, for
 example through `/control-mcp` and `/mcp` paths in one HTTP gateway process.
-`PLEXUS_GATEWAY_SURFACE=combined` is legacy/debug compatibility and should not
-be used for normal Kanban worker config.
 
 ## Relationship To `gateway`
 

@@ -228,7 +228,7 @@ describe("workspace MCP config", () => {
     });
   });
 
-  it("drops managed legacy pharo gateway entries when regenerating MCP config", () => {
+  it("drops managed retired pharo gateway entries when regenerating MCP config", () => {
     const config = buildPlexusWorkspaceMcpConfig({
       projectRoot: "C:\\dev\\code\\git\\Project-worktree",
       projectConfig,
@@ -262,21 +262,16 @@ describe("workspace MCP config", () => {
     });
   });
 
-  it("normalizes requested legacy pharo server names to gateway", () => {
-    const config = buildPlexusWorkspaceMcpConfig({
-      projectRoot: "C:\\dev\\code\\git\\Project-worktree",
-      projectConfig,
-      workspaceId: "task-123",
-      pharoTools: [pharoEvalTool],
-      pharoServerName: "pharo",
-    });
-
-    expect(config.servers).not.toHaveProperty("pharo");
-    expect(config.servers.gateway).toMatchObject({
-      env: {
-        PLEXUS_GATEWAY_SURFACE: "gateway",
-      },
-    });
+  it("rejects retired pharo server names", () => {
+    expect(() =>
+      buildPlexusWorkspaceMcpConfig({
+        projectRoot: "C:\\dev\\code\\git\\Project-worktree",
+        projectConfig,
+        workspaceId: "task-123",
+        pharoTools: [pharoEvalTool],
+        pharoServerName: "pharo",
+      }),
+    ).toThrow("pharoServerName=pharo has been removed");
   });
 
   it("lets generated servers replace only their managed names", () => {

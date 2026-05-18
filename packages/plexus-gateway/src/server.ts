@@ -91,18 +91,7 @@ export const rawRoutingTool = {
   ),
 } as const;
 
-const legacyGatewaySurface = "pharo";
-const legacyGatewayCompatibilityEnvVar =
-  "PLEXUS_LEGACY_GATEWAY_COMPATIBILITY";
-
-export type GatewaySurface =
-  | "combined"
-  | "admin"
-  | "route-control"
-  | "gateway"
-  | typeof legacyGatewaySurface;
-
-type LegacyGatewayCompatibilityMode = "warn" | "reject";
+export type GatewaySurface = "route-control" | "gateway";
 
 export interface GatewayServerOptions {
   surface?: GatewaySurface;
@@ -117,19 +106,15 @@ export interface GatewayEnvironmentOptions {
 }
 
 function agentGatewaySurface(surface: GatewaySurface): boolean {
-  return surface === "gateway" || surface === legacyGatewaySurface;
+  return surface === "gateway";
 }
 
 function pharoToolsVisible(surface: GatewaySurface): boolean {
-  return agentGatewaySurface(surface) || surface === "combined";
+  return agentGatewaySurface(surface);
 }
 
 function routeControlToolsVisible(surface: GatewaySurface): boolean {
-  return (
-    surface === "route-control" ||
-    surface === "admin" ||
-    surface === "combined"
-  );
+  return surface === "route-control";
 }
 
 function visibleRouteControlTools(exposeRawRoutingTool: boolean): Tool[] {
@@ -176,60 +161,20 @@ function parseBooleanEnv(value: string | undefined, name: string): boolean {
   throw new Error(`${name} must be true or false`);
 }
 
-export const legacyGatewayTools = [...gatewayTools, rawRoutingTool] as const;
-
-/*
- * `pharo` is retained as a temporary compatibility alias for the agent-facing
- * gateway proxy. New generated config should use `gateway`.
- */
-function parseGatewaySurface(
-  value: string | undefined,
-  compatibilityMode: LegacyGatewayCompatibilityMode,
-): GatewaySurface {
+function parseGatewaySurface(value: string | undefined): GatewaySurface {
   if (value === undefined || value.trim().length === 0) {
     return "gateway";
   }
 
-  if (
-    value === "combined" ||
-    value === "admin" ||
-    value === "route-control" ||
-    value === "gateway" ||
-    value === legacyGatewaySurface
-  ) {
-    if (compatibilityMode === "reject" && isLegacyGatewaySurface(value)) {
-      throw new Error(
-        "Legacy PLexus gateway surfaces are disabled by " +
-          `${legacyGatewayCompatibilityEnvVar}=reject. ` +
-          "Use PLEXUS_GATEWAY_SURFACE=gateway for agent-facing /mcp and " +
-          "route-control on /control-mcp.",
-      );
-    }
-
+  if (value === "route-control" || value === "gateway") {
     return value;
   }
 
-  throw new Error(`Unsupported PLexus gateway surface: ${value}`);
-}
-
-function isLegacyGatewaySurface(value: string): boolean {
-  return value === legacyGatewaySurface || value === "combined";
-}
-
-function parseLegacyGatewayCompatibilityMode(
-  env: NodeJS.ProcessEnv,
-): LegacyGatewayCompatibilityMode {
-  const value = env[legacyGatewayCompatibilityEnvVar];
-  if (value === undefined || value.trim().length === 0) {
-    return "warn";
-  }
-
-  const normalized = value.trim().toLowerCase();
-  if (normalized === "warn" || normalized === "reject") {
-    return normalized;
-  }
-
-  throw new Error(`${legacyGatewayCompatibilityEnvVar} must be warn or reject`);
+  throw new Error(
+    `Unsupported PLexus gateway surface: ${value}. ` +
+      "Use PLEXUS_GATEWAY_SURFACE=gateway for agent-facing /mcp or " +
+      "PLEXUS_GATEWAY_SURFACE=route-control for trusted route-control tooling.",
+  );
 }
 
 export interface GatewayHttpServerOptions {
@@ -303,7 +248,7 @@ export function createGatewayServerWithOptions(
   gateway = new PlexusGateway(),
   options: GatewayServerOptions = {},
 ): Server {
-  const surface = options.surface ?? "combined";
+  const surface = options.surface ?? "gateway";
   const exposeRawRoutingTool = options.exposeRawRoutingTool ?? false;
   const server = new Server(
     {
@@ -403,10 +348,8 @@ function parseJsonArrayEnv(value: string | undefined, name: string): unknown[] {
 export function parseGatewayEnvironmentOptions(
   env: NodeJS.ProcessEnv = process.env,
 ): GatewayEnvironmentOptions {
-  const compatibilityMode = parseLegacyGatewayCompatibilityMode(env);
-
   return {
-    surface: parseGatewaySurface(env.PLEXUS_GATEWAY_SURFACE, compatibilityMode),
+    surface: parseGatewaySurface(env.PLEXUS_GATEWAY_SURFACE),
     exposeRawRoutingTool: parseBooleanEnv(
       env.PLEXUS_EXPOSE_RAW_ROUTING_TOOL,
       "PLEXUS_EXPOSE_RAW_ROUTING_TOOL",
@@ -531,10 +474,7 @@ export async function startGatewayHttpServer(
   };
   const routeControlServerOptions: GatewayServerOptions = {
     ...environment.serverOptions,
-    surface:
-      configuredSurface === "combined"
-        ? "combined"
-        : "route-control",
+    surface: "route-control",
   };
   const activeTransports = new Set<StreamableHTTPServerTransport>();
 

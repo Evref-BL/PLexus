@@ -87,8 +87,7 @@ The detailed contract for the scoped launcher facade is in
 Route registration, route status, stale-route cleanup, and raw
 `plexus_route_to_image` calls are route-control gateway plumbing. They are not
 normal agent-facing MCP surfaces; raw routing is hidden unless explicitly
-enabled for route-control/debug migration work. `PLEXUS_GATEWAY_SURFACE=combined`
-is legacy/debug compatibility, not normal use.
+enabled for route-control/debug work.
 
 ### Pharo Image Worker
 

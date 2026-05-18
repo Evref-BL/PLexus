@@ -1,4 +1,3 @@
-import fs from "node:fs";
 import path from "node:path";
 import {
   defaultImagePortClaimChecks,
@@ -28,7 +27,6 @@ import {
   type PortClaimRecord,
 } from "./portClaims.js";
 import {
-  projectConfigPath,
   type ProjectConfig,
 } from "./projectConfig.js";
 import { openProject, type ProjectOpenResult } from "./projectOpen.js";
@@ -89,12 +87,7 @@ export interface HttpGatewayRouteRegistryOptions {
   fetch?: typeof fetch;
 }
 
-const defaultGatewayAgentMcpPath = "/mcp";
 const defaultGatewayRouteControlMcpPath = "/control-mcp";
-const legacyGatewayCompatibilityEnvVar =
-  "PLEXUS_LEGACY_GATEWAY_COMPATIBILITY";
-
-type LegacyGatewayCompatibilityMode = "warn" | "reject";
 
 export interface ProjectLifecycleOptions {
   routeRegistry?: ProjectLifecycleRouteRegistry;
@@ -200,17 +193,6 @@ export interface ProjectLifecycleRouteTableDiagnostics {
   error?: string;
 }
 
-export interface ProjectLifecycleLegacyDiagnostic {
-  kind:
-    | "legacy-env"
-    | "legacy-gateway-surface"
-    | "implicit-runtime-config";
-  key?: string;
-  value?: string;
-  message: string;
-  migration: string;
-}
-
 export interface ProjectLifecycleDiagnostics {
   runtime: {
     status: ProjectLifecycleRuntimeDiagnosticStatus;
@@ -245,7 +227,6 @@ export interface ProjectLifecycleDiagnostics {
   conflictingListeners: ProjectLifecyclePortListenerDiagnostic[];
   staleClaims: ProjectLifecyclePortClaimDiagnostic[];
   routeTable: ProjectLifecycleRouteTableDiagnostics;
-  legacyConfiguration: ProjectLifecycleLegacyDiagnostic[];
 }
 
 export interface ProjectLifecycleToolResult<T = unknown> {
@@ -750,122 +731,6 @@ function gatewayDiagnostic(
     managedByProject: gateway.managedByProject,
     pid: gateway.pid,
   };
-}
-
-function legacyEnvironmentDiagnostics(
-  env: NodeJS.ProcessEnv,
-): ProjectLifecycleLegacyDiagnostic[] {
-  const diagnostics: ProjectLifecycleLegacyDiagnostic[] = [];
-
-  if (env.PLEXUS_GATEWAY_MCP_URL) {
-    diagnostics.push({
-      kind: "legacy-env",
-      key: "PLEXUS_GATEWAY_MCP_URL",
-      value: env.PLEXUS_GATEWAY_MCP_URL,
-      message:
-        "Legacy gateway MCP URL is configured for lifecycle route-control calls.",
-      migration:
-        "Use PLEXUS_GATEWAY_CONTROL_MCP_URL with /control-mcp for route-control and keep normal agents on the gateway MCP endpoint /mcp.",
-    });
-  }
-
-  if (env.PLEXUS_GATEWAY_MCP_PATH) {
-    diagnostics.push({
-      kind: "legacy-env",
-      key: "PLEXUS_GATEWAY_MCP_PATH",
-      value: env.PLEXUS_GATEWAY_MCP_PATH,
-      message:
-        "Legacy gateway MCP path is configured for lifecycle route-control calls.",
-      migration:
-        "Use PLEXUS_GATEWAY_CONTROL_MCP_PATH=/control-mcp for route-control; agent-facing gateway traffic should use runtime.gateway.agentMcpPath=/mcp.",
-    });
-  }
-
-  if (
-    env.PLEXUS_GATEWAY_SURFACE === "pharo" ||
-    env.PLEXUS_GATEWAY_SURFACE === "combined"
-  ) {
-    diagnostics.push({
-      kind: "legacy-gateway-surface",
-      key: "PLEXUS_GATEWAY_SURFACE",
-      value: env.PLEXUS_GATEWAY_SURFACE,
-      message: "Legacy gateway surface is enabled.",
-      migration:
-        "Use PLEXUS_GATEWAY_SURFACE=gateway for agent-facing /mcp with a separate route-control /control-mcp path.",
-    });
-  }
-
-  return diagnostics;
-}
-
-function legacyGatewayCompatibilityMode(
-  env: NodeJS.ProcessEnv,
-): LegacyGatewayCompatibilityMode {
-  const value = env[legacyGatewayCompatibilityEnvVar];
-  if (value === undefined || value.trim().length === 0) {
-    return "warn";
-  }
-
-  const normalized = value.trim().toLowerCase();
-  if (normalized === "warn" || normalized === "reject") {
-    return normalized;
-  }
-
-  throw new ProjectLifecycleInputError(
-    `${legacyGatewayCompatibilityEnvVar} must be warn or reject`,
-  );
-}
-
-function rejectLegacyGatewayEnvironmentIfRequested(
-  env: NodeJS.ProcessEnv,
-): void {
-  if (legacyGatewayCompatibilityMode(env) !== "reject") {
-    return;
-  }
-
-  const diagnostics = legacyEnvironmentDiagnostics(env);
-  if (diagnostics.length === 0) {
-    return;
-  }
-
-  const keys = diagnostics
-    .map((diagnostic) => diagnostic.key)
-    .filter((key): key is string => Boolean(key))
-    .join(", ");
-  throw new ProjectLifecycleInputError(
-    "Legacy PLexus gateway configuration is disabled by " +
-      `${legacyGatewayCompatibilityEnvVar}=reject. ` +
-      `Rejected legacy settings: ${keys}. ` +
-      "Use PLEXUS_GATEWAY_CONTROL_MCP_URL for route-control URLs, " +
-      `PLEXUS_GATEWAY_CONTROL_MCP_PATH=${defaultGatewayRouteControlMcpPath} ` +
-      "for route-control paths, and PLEXUS_GATEWAY_SURFACE=gateway for " +
-      `agent-facing ${defaultGatewayAgentMcpPath}.`,
-  );
-}
-
-function implicitRuntimeConfigDiagnostic(
-  projectRoot: string,
-): ProjectLifecycleLegacyDiagnostic[] {
-  try {
-    const raw = JSON.parse(
-      fs.readFileSync(projectConfigPath(projectRoot), "utf8"),
-    ) as unknown;
-    if (isObject(raw) && raw.runtime === undefined) {
-      return [
-        {
-          kind: "implicit-runtime-config",
-          message:
-            "Project config relies on implicit legacy runtime defaults.",
-          migration:
-            "Add runtime.stateRoot, runtime.gateway, and runtime.imagePorts with explicit gateway and route-control MCP settings.",
-        },
-      ];
-    }
-  } catch {
-    return [];
-  }
-
-  return [];
 }
 
 function expectedPortClaims(
@@ -1411,10 +1276,6 @@ export class PlexusProjectLifecycle {
       conflictingListeners,
       staleClaims: portClaims.stale,
       routeTable,
-      legacyConfiguration: [
-        ...legacyEnvironmentDiagnostics(this.gateway.env ?? process.env),
-        ...implicitRuntimeConfigDiagnostic(projectRoot),
-      ],
     };
 
     return {
@@ -1490,13 +1351,8 @@ export class PlexusProjectLifecycle {
 export function createProjectLifecycleFromEnvironment(
   env: NodeJS.ProcessEnv = process.env,
 ): PlexusProjectLifecycle {
-  rejectLegacyGatewayEnvironmentIfRequested(env);
-
-  const routeControlUrl =
-    env.PLEXUS_GATEWAY_CONTROL_MCP_URL ??
-    routeControlUrlFromLegacyGatewayUrl(env.PLEXUS_GATEWAY_MCP_URL);
-  const routeControlPath =
-    env.PLEXUS_GATEWAY_CONTROL_MCP_PATH ?? env.PLEXUS_GATEWAY_MCP_PATH;
+  const routeControlUrl = env.PLEXUS_GATEWAY_CONTROL_MCP_URL;
+  const routeControlPath = env.PLEXUS_GATEWAY_CONTROL_MCP_PATH;
   const routeRegistry =
     routeControlUrl ||
     routeControlPath ||
@@ -1513,24 +1369,4 @@ export function createProjectLifecycleFromEnvironment(
       : undefined;
 
   return new PlexusProjectLifecycle({ routeRegistry, gateway: { env } });
-}
-
-function routeControlUrlFromLegacyGatewayUrl(
-  gatewayUrl: string | undefined,
-): string | undefined {
-  if (!gatewayUrl) {
-    return undefined;
-  }
-
-  try {
-    const url = new URL(gatewayUrl);
-    if (url.pathname === defaultGatewayAgentMcpPath) {
-      url.pathname = defaultGatewayRouteControlMcpPath;
-      return url.toString();
-    }
-  } catch {
-    return gatewayUrl;
-  }
-
-  return gatewayUrl;
 }

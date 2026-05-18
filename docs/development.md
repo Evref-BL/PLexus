@@ -80,11 +80,8 @@ Use route-control terminology for private/trusted gateway controls. In HTTP
 service mode, the normal shape is one `plexus-gateway` process with `/mcp`
 serving the agent-facing `gateway` surface and `/control-mcp` serving
 route-control. Both paths share the same in-memory route table.
-`PLEXUS_GATEWAY_SURFACE=combined` is legacy/debug compatibility only.
-Generated workspace MCP config normalizes legacy `pharo` gateway entries to
-`gateway`. Runtime compatibility stays in warning mode by default; use
-`PLEXUS_LEGACY_GATEWAY_COMPATIBILITY=reject` only during an approved removal
-phase to reject legacy gateway env/config with migration guidance.
+Generated workspace MCP config writes `gateway` for the agent-facing Pharo MCP
+proxy and keeps route-control separate.
 
 ## pharo-launcher-mcp Resolution
 

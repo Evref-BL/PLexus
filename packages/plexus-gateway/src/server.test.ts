@@ -235,6 +235,47 @@ describe("gateway server", () => {
     }
   });
 
+  it("defaults direct server creation to the agent-facing gateway surface", async () => {
+    const server = createGatewayServerWithOptions(
+      new PlexusGateway({
+        pharoTools: [
+          {
+            name: "pharo_eval",
+            inputSchema: {
+              type: "object",
+              properties: {
+                code: { type: "string" },
+              },
+              required: ["code"],
+            },
+          },
+        ],
+      }),
+    );
+    const client = new Client(
+      {
+        name: "plexus-gateway-test",
+        version: "0.0.0",
+      },
+      {
+        capabilities: {},
+      },
+    );
+    const [clientTransport, serverTransport] =
+      InMemoryTransport.createLinkedPair();
+
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+
+    try {
+      const toolList = await client.listTools();
+      expect(toolList.tools.map((tool) => tool.name)).toEqual(["pharo_eval"]);
+    } finally {
+      await client.close();
+      await server.close();
+    }
+  });
+
   it("hides raw routing over MCP unless explicitly opted in", async () => {
     const server = createGatewayServerWithOptions(new DirectRouteGateway(), {
       surface: "route-control",
@@ -410,24 +451,14 @@ describe("gateway server", () => {
     });
   });
 
-  it("keeps legacy gateway surfaces in explicit warning mode", () => {
-    expect(
-      parseGatewayEnvironmentOptions({
-        PLEXUS_GATEWAY_SURFACE: "pharo",
-        PLEXUS_LEGACY_GATEWAY_COMPATIBILITY: "warn",
-      }),
-    ).toMatchObject({
-      surface: "pharo",
-    });
-  });
-
-  it("rejects legacy gateway surfaces when compatibility removal is enabled", () => {
-    expect(() =>
-      parseGatewayEnvironmentOptions({
-        PLEXUS_GATEWAY_SURFACE: "combined",
-        PLEXUS_LEGACY_GATEWAY_COMPATIBILITY: "reject",
-      }),
-    ).toThrow(/PLEXUS_GATEWAY_SURFACE=gateway.*\/mcp.*\/control-mcp/s);
+  it("rejects removed gateway surface names", () => {
+    for (const surface of ["pharo", "combined", "admin"]) {
+      expect(() =>
+        parseGatewayEnvironmentOptions({
+          PLEXUS_GATEWAY_SURFACE: surface,
+        }),
+      ).toThrow(/Unsupported PLexus gateway surface/);
+    }
   });
 
   it("creates an agent-facing Pharo proxy gateway from environment", () => {

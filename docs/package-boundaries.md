@@ -121,16 +121,10 @@ Agent-facing Kanban MCP surfaces:
 - `gateway`: belongs to the routing layer. It is a stable facade over the
   project-wide Pharo MCP contract and routes calls by explicit `imageId`.
 
-`pharo` remains only a temporary compatibility alias for older generated agent
-config. New configs should expose `gateway`, and route-control tools should
-stay out of normal agent-facing MCP config.
-
-`PLEXUS_GATEWAY_SURFACE=combined` remains only for legacy/debug compatibility
-when an older single MCP surface is needed. Normal deployments should expose the
-agent-facing `gateway` surface separately from route-control.
-The compatibility gate is explicit: warning mode is the default, and
-`PLEXUS_LEGACY_GATEWAY_COMPATIBILITY=reject` is reserved for an approved
-removal phase that rejects legacy gateway env/config with migration guidance.
+Generated agent config exposes `gateway`; route-control tools stay out of
+normal agent-facing MCP config. Normal HTTP deployments expose the agent-facing
+`gateway` surface at `/mcp` and the trusted route-control surface at
+`/control-mcp`.
 
 See `docs/kanban-agent-pharo-access.md` for the scoped launcher design.
 

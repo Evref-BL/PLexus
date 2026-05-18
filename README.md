@@ -147,17 +147,11 @@ The agent chooses or starts an image through `pharo-launcher`, then passes the
 returned `imageId` to every `gateway` call. Tool names stay stable while image
 availability is represented as runtime data.
 
-Older configs may still contain a `pharo` server name or `pharo` gateway surface
-as a temporary compatibility alias. New generated workspace MCP config should
-use `gateway`; raw `plexus_route_to_image` routing is hidden unless explicitly
-enabled for route-control/debug work with `PLEXUS_EXPOSE_RAW_ROUTING_TOOL=true`.
-`PLEXUS_GATEWAY_SURFACE=combined` is legacy/debug compatibility for older
-single-surface setups, not the normal configuration.
-Compatibility defaults to warning mode. Set
-`PLEXUS_LEGACY_GATEWAY_COMPATIBILITY=reject` only after an explicit migration
-decision; it rejects legacy gateway env/config such as `pharo`, `combined`,
-`PLEXUS_GATEWAY_MCP_URL`, and `PLEXUS_GATEWAY_MCP_PATH` with replacement
-guidance for `gateway`, `/mcp`, and `/control-mcp`.
+Generated workspace MCP config uses `gateway` for Pharo MCP calls. Raw
+`plexus_route_to_image` routing is hidden unless explicitly enabled for
+route-control/debug work with `PLEXUS_EXPOSE_RAW_ROUTING_TOOL=true`. HTTP
+deployments use one gateway process with `/mcp` for agents and `/control-mcp`
+for trusted route-control.
 
 ## More Documentation
 
