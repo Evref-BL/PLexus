@@ -4,6 +4,7 @@ import type { PharoLauncherMcpConfig } from "./config.js";
 import { loadPharoLauncherMcpConfig } from "./config.js";
 
 const defaultLauncherToolTimeoutMs = 5 * 60_000;
+const inheritedExecutionEnvironmentKeys = new Set(["PATH", "Path"]);
 
 export interface PharoLauncherMcpToolClient {
   callTool<T = unknown>(
@@ -35,7 +36,11 @@ export function pharoLauncherMcpChildEnvironment(
   const env: Record<string, string> = {};
 
   for (const [key, value] of Object.entries(options.env ?? process.env)) {
-    if (key.startsWith("PHARO_LAUNCHER_") && value !== undefined) {
+    if (
+      value !== undefined &&
+      (key.startsWith("PHARO_LAUNCHER_") ||
+        inheritedExecutionEnvironmentKeys.has(key))
+    ) {
       env[key] = value;
     }
   }
