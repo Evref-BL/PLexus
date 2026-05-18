@@ -11,7 +11,16 @@ import {
   type ImageRescueRepositoryAction,
   type ImageRescueResult,
 } from "./imageRescue.js";
-import { loadProjectConfig } from "./projectConfig.js";
+import {
+  loadProjectConfig,
+  plexusProjectConfigFileName,
+  resolveProjectRuntimePolicy,
+  type ProjectConfig,
+  type ProjectImagePortAllocationPolicy,
+  type ProjectImagePortCoordinationMode,
+  type ProjectRuntimePortRange,
+  type ProjectRuntimePolicy,
+} from "./projectConfig.js";
 import { closeProject, type ProjectCloseResult } from "./projectClose.js";
 import {
   closeProjectGateway,
@@ -26,9 +35,6 @@ import {
   type PortClaimInspection,
   type PortClaimRecord,
 } from "./portClaims.js";
-import {
-  type ProjectConfig,
-} from "./projectConfig.js";
 import { openProject, type ProjectOpenResult } from "./projectOpen.js";
 import {
   defaultPlexusStateRoot,
@@ -193,11 +199,49 @@ export interface ProjectLifecycleRouteTableDiagnostics {
   error?: string;
 }
 
+export interface ProjectLifecycleProjectDiagnostics {
+  declaredImageCount: number;
+  activeImageCount: number;
+  runtimeImageCount: number;
+}
+
+export interface ProjectLifecycleImagePortPolicyDiagnostics {
+  allocation: ProjectImagePortAllocationPolicy;
+  range: ProjectRuntimePortRange;
+  coordinationMode: ProjectImagePortCoordinationMode;
+  configuredRoot?: string;
+  effectiveClaimsRoot?: string;
+  projectStateRoot: string;
+  basis: "host-local-claims" | "project-state";
+}
+
+export interface ProjectLifecycleLauncherProfileDiagnostics {
+  status: "configured" | "not-configured";
+  source: "environment";
+  profileName?: string;
+  stateRoot?: string;
+  launcherImage?: string;
+  imagesDir?: string;
+  vmsDir?: string;
+  templateSourcesDir?: string;
+  initScriptsDir?: string;
+  logsDir?: string;
+  reason: string;
+}
+
+export interface ProjectLifecycleAgentAccessDiagnostics {
+  expectedSurface: "gateway";
+  gatewayRouted: boolean;
+  portsHiddenFromAgents: boolean;
+  reason: string;
+}
+
 export interface ProjectLifecycleDiagnostics {
   runtime: {
     status: ProjectLifecycleRuntimeDiagnosticStatus;
     reason: string;
   };
+  project: ProjectLifecycleProjectDiagnostics;
   scope: {
     projectRoot: string;
     stateRoot: string;
@@ -216,6 +260,10 @@ export interface ProjectLifecycleDiagnostics {
     managedByProject: boolean;
     pid?: number;
   };
+  runtimePolicy: ProjectRuntimePolicy;
+  imagePortPolicy: ProjectLifecycleImagePortPolicyDiagnostics;
+  launcherProfile: ProjectLifecycleLauncherProfileDiagnostics;
+  agentAccess: ProjectLifecycleAgentAccessDiagnostics;
   imageMcpPorts: Array<{
     imageId: string;
     imageName: string;
@@ -657,6 +705,94 @@ function configuredClaimRoots(
   ].filter((value, index, values): value is string =>
     typeof value === "string" && values.indexOf(value) === index,
   );
+}
+
+function projectDiagnostics(
+  config: ProjectConfig,
+  state: ProjectState | undefined,
+): ProjectLifecycleProjectDiagnostics {
+  return {
+    declaredImageCount: config.images.length,
+    activeImageCount: config.images.filter((image) => image.active).length,
+    runtimeImageCount: state?.images.length ?? 0,
+  };
+}
+
+function imagePortPolicyDiagnostics(
+  runtime: ProjectRuntimePolicy,
+  stateRoot: string,
+  effectiveClaimsRoot: string | undefined,
+): ProjectLifecycleImagePortPolicyDiagnostics {
+  const coordination = runtime.imagePorts.coordination;
+  return {
+    allocation: runtime.imagePorts.allocation,
+    range: runtime.imagePorts.range,
+    coordinationMode: coordination.mode,
+    ...(coordination.root ? { configuredRoot: coordination.root } : {}),
+    ...(effectiveClaimsRoot ? { effectiveClaimsRoot } : {}),
+    projectStateRoot: stateRoot,
+    basis: effectiveClaimsRoot ? "host-local-claims" : "project-state",
+  };
+}
+
+function launcherProfileDiagnostics(
+  env: NodeJS.ProcessEnv,
+): ProjectLifecycleLauncherProfileDiagnostics {
+  const profileName = env.PHARO_LAUNCHER_MCP_PROFILE;
+  const stateRoot = env.PHARO_LAUNCHER_MCP_STATE_ROOT;
+  const launcherImage = env.PHARO_LAUNCHER_MCP_LAUNCHER_IMAGE;
+  const imagesDir = env.PHARO_LAUNCHER_MCP_IMAGES_DIR;
+  const vmsDir = env.PHARO_LAUNCHER_MCP_VMS_DIR;
+  const templateSourcesDir = env.PHARO_LAUNCHER_MCP_TEMPLATE_SOURCES_DIR;
+  const initScriptsDir = env.PHARO_LAUNCHER_MCP_INIT_SCRIPTS_DIR;
+  const logsDir = env.PHARO_LAUNCHER_MCP_LOGS_DIR;
+  const hasProfileEnvironment = Boolean(
+    profileName ??
+      stateRoot ??
+      launcherImage ??
+      imagesDir ??
+      vmsDir ??
+      templateSourcesDir ??
+      initScriptsDir ??
+      logsDir,
+  );
+
+  if (!hasProfileEnvironment) {
+    return {
+      status: "not-configured",
+      source: "environment",
+      reason:
+        "No PHARO_LAUNCHER_MCP_* profile environment is visible to PLexus status.",
+    };
+  }
+
+  return {
+    status: "configured",
+    source: "environment",
+    ...(profileName ? { profileName } : {}),
+    ...(stateRoot ? { stateRoot } : {}),
+    ...(launcherImage ? { launcherImage } : {}),
+    ...(imagesDir ? { imagesDir } : {}),
+    ...(vmsDir ? { vmsDir } : {}),
+    ...(templateSourcesDir ? { templateSourcesDir } : {}),
+    ...(initScriptsDir ? { initScriptsDir } : {}),
+    ...(logsDir ? { logsDir } : {}),
+    reason: stateRoot
+      ? "Launcher profile environment is visible to PLexus status."
+      : "Launcher profile environment is visible, but no PHARO_LAUNCHER_MCP_STATE_ROOT was provided.",
+  };
+}
+
+function agentAccessDiagnostics(
+  gateway: ProjectGatewayState,
+): ProjectLifecycleAgentAccessDiagnostics {
+  return {
+    expectedSurface: "gateway",
+    gatewayRouted: Boolean(gateway.endpoint),
+    portsHiddenFromAgents: true,
+    reason:
+      "Normal agent Pharo MCP calls should use gateway imageId routing; image MCP ports are diagnostics only.",
+  };
 }
 
 function imageMcpPorts(
@@ -1201,7 +1337,15 @@ export class PlexusProjectLifecycle {
     input: ProjectStatusToolInput & { projectPath: string },
   ): Promise<ProjectLifecycleStatus> {
     const projectRoot = path.resolve(input.projectPath);
+    if (path.basename(projectRoot) === plexusProjectConfigFileName) {
+      throw new ProjectLifecycleInputError(
+        `projectPath must point to the PLexus project directory, not ${plexusProjectConfigFileName}: ` +
+          `${projectRoot}. Pass ${path.dirname(projectRoot)} instead.`,
+      );
+    }
+
     const config = loadProjectConfig(projectRoot);
+    const runtime = resolveProjectRuntimePolicy(config);
     const workspaceId = input.workspaceId
       ? sanitizeRuntimeId(input.workspaceId)
       : defaultWorkspaceId(projectRoot);
@@ -1242,12 +1386,13 @@ export class PlexusProjectLifecycle {
       targetId,
     };
     const checks = mergePortClaimChecks(this.gateway);
+    const imageClaimsRoot = imagePortClaimsRootForConfig(projectRoot, config);
     const portClaims = await inspectClaimRoots(
       configuredClaimRoots(projectRoot, config, state),
       checks,
       scope,
     );
-    const routeTable = routeTableDiagnostics(state?.targetId, route, routeError);
+    const routeTable = routeTableDiagnostics(targetId, route, routeError);
     const conflictingListeners = await conflictingListenerDiagnostics(
       state,
       gateway,
@@ -1262,6 +1407,7 @@ export class PlexusProjectLifecycle {
         conflictingListeners,
         routeTable,
       ),
+      project: projectDiagnostics(config, state),
       scope: {
         projectRoot,
         stateRoot,
@@ -1271,6 +1417,16 @@ export class PlexusProjectLifecycle {
         targetId: scope.targetId,
       },
       gateway: gatewayDiagnostic(gateway),
+      runtimePolicy: runtime,
+      imagePortPolicy: imagePortPolicyDiagnostics(
+        runtime,
+        stateRoot,
+        imageClaimsRoot,
+      ),
+      launcherProfile: launcherProfileDiagnostics(
+        this.gateway.env ?? process.env,
+      ),
+      agentAccess: agentAccessDiagnostics(gateway),
       imageMcpPorts: imageMcpPorts(state),
       portClaims,
       conflictingListeners,
