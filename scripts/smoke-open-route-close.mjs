@@ -7,11 +7,16 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   createStdioPharoLauncherMcpClient,
+  loadPharoLauncherMcpConfig,
   loadProjectState,
   PlexusProjectLifecycle,
 } from "@evref-bl/plexus-core";
 import { PlexusGateway } from "@evref-bl/plexus-gateway";
-import { buildLiveSmokeRunPlan } from "./live-smoke-runner-policy.mjs";
+import {
+  assertFreshPharoLauncherMcpHealth,
+  buildLiveSmokeRunPlan,
+  isPathInside,
+} from "./live-smoke-runner-policy.mjs";
 
 const scriptPath = fileURLToPath(import.meta.url);
 const repoRoot = path.dirname(path.dirname(scriptPath));
@@ -68,6 +73,9 @@ function parseArgs(argv) {
         break;
       case "--launcherProfileRoot":
         options.launcherProfileRoot = next();
+        break;
+      case "--pharoLauncherMcpRepoDir":
+        options.pharoLauncherMcpRepoDir = next();
         break;
       case "--artifactRoot":
         options.artifactRoot = next();
@@ -160,6 +168,8 @@ function parseArgs(argv) {
   options.launcherProfileRoot ??=
     process.env.PLEXUS_SMOKE_LAUNCHER_PROFILE_ROOT ??
     process.env.PHARO_LAUNCHER_MCP_STATE_ROOT;
+  options.pharoLauncherMcpRepoDir ??=
+    process.env.PLEXUS_SMOKE_PHARO_LAUNCHER_MCP_REPO_DIR;
   options.artifactRoot ??= process.env.PLEXUS_SMOKE_ARTIFACT_ROOT;
   options.runId ??= process.env.PLEXUS_SMOKE_RUN_ID;
   options.timeoutBudgetJson ??= process.env.PLEXUS_SMOKE_TIMEOUT_BUDGET_JSON;
@@ -218,6 +228,7 @@ function usage() {
     "  --approvalProfile <id>       Required approval/profile id for live execution",
     "  --launcherProfile <id>       pharo-launcher-mcp profile id; defaults to approval profile",
     "  --launcherProfileRoot <path> Required isolated pharo-launcher-mcp profile root",
+    "  --pharoLauncherMcpRepoDir <path> Use current pharo-launcher-mcp component source for the smoke",
     "  --artifactRoot <path>        Required artifact retention root",
     "  --runId <id>                 Defaults to a unique smoke id",
     "  --timeoutBudgetJson <json>   Overrides setup/open/routing/close/cleanup timeout ms",
@@ -607,6 +618,100 @@ function applyLauncherProfileEnvironment(options) {
     profile: options.launcherProfile,
     stateRoot: root,
   });
+}
+
+function applyPharoLauncherMcpRepoEnvironment(options) {
+  if (!options.pharoLauncherMcpRepoDir) {
+    return;
+  }
+
+  const repoDir = path.resolve(options.pharoLauncherMcpRepoDir);
+  const entry = path.join(repoDir, "dist", "index.js");
+  const packageJsonPath = path.join(repoDir, "package.json");
+  if (!fs.existsSync(packageJsonPath)) {
+    throw new Error(
+      `--pharoLauncherMcpRepoDir does not contain package.json: ${repoDir}`,
+    );
+  }
+  if (!fs.existsSync(entry)) {
+    throw new Error(
+      `--pharoLauncherMcpRepoDir does not contain a built dist/index.js: ${entry}`,
+    );
+  }
+
+  const configuredEntry = process.env.PHARO_LAUNCHER_MCP_ENTRY;
+  if (configuredEntry && !isPathInside(repoDir, configuredEntry)) {
+    throw new Error(
+      `PHARO_LAUNCHER_MCP_ENTRY is outside --pharoLauncherMcpRepoDir: ${configuredEntry}`,
+    );
+  }
+  if (process.env.PHARO_LAUNCHER_MCP_ARGS) {
+    throw new Error(
+      "PHARO_LAUNCHER_MCP_ARGS conflicts with --pharoLauncherMcpRepoDir; unset it so PLexus can derive the component entry from the repo root.",
+    );
+  }
+
+  process.env.PHARO_LAUNCHER_MCP_REPO_DIR = repoDir;
+  process.env.PHARO_LAUNCHER_MCP_COMMAND ??= process.execPath;
+  recordEvent(options, "pharo-launcher-mcp-repo-applied", {
+    repoDir,
+    entry,
+  });
+}
+
+function runPharoLauncherMcpHealth(config) {
+  const result = spawnSync(config.command, [...config.args, "--health"], {
+    cwd: config.repoDir,
+    encoding: "utf8",
+    env: process.env,
+  });
+
+  if (result.error) {
+    throw new Error(
+      `pharo-launcher-mcp health preflight failed: ${result.error.message}`,
+    );
+  }
+  if (result.status !== 0) {
+    throw new Error(
+      `pharo-launcher-mcp health preflight exited ${result.status}: ${
+        result.stderr || result.stdout
+      }`,
+    );
+  }
+
+  try {
+    return JSON.parse(result.stdout);
+  } catch (error) {
+    throw new Error(
+      `pharo-launcher-mcp health preflight returned non-JSON output: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+  }
+}
+
+function preflightPharoLauncherMcpRuntime(options) {
+  const config = loadPharoLauncherMcpConfig();
+  const health = runPharoLauncherMcpHealth(config);
+  const freshness = assertFreshPharoLauncherMcpHealth(health, config);
+  snapshotJsonArtifact(options, "pharo-launcher-mcp-preflight.json", {
+    config,
+    health,
+    freshness,
+  });
+  recordEvent(options, "pharo-launcher-mcp-preflight-ok", {
+    source: config.source,
+    discoverySource: freshness.discoverySource,
+    ...(config.repoDir ? { repoDir: config.repoDir } : {}),
+    ...(config.packageDir ? { packageDir: config.packageDir } : {}),
+    ...(config.entry ? { entry: config.entry } : {}),
+  });
+  textResult(
+    "pharo-launcher-mcp",
+    `${config.source} discovery=${freshness.discoverySource}`,
+  );
+
+  return config;
 }
 
 function recordEvent(options, event, details = {}) {
@@ -1480,7 +1585,9 @@ async function main() {
   textResult("artifactDirectory", options.artifactDirectory);
   recordEvent(options, "run-started");
   applyLauncherProfileEnvironment(options);
-  const client = await createStdioPharoLauncherMcpClient();
+  applyPharoLauncherMcpRepoEnvironment(options);
+  const launcherMcpConfig = preflightPharoLauncherMcpRuntime(options);
+  const client = await createStdioPharoLauncherMcpClient(launcherMcpConfig);
   const gateway = new PlexusGateway();
   const lifecycle = new PlexusProjectLifecycle({
     routeRegistry: gateway,

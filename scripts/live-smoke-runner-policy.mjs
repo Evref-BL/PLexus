@@ -130,6 +130,36 @@ export function buildLiveSmokeRunPlan(options, context = {}) {
   };
 }
 
+export function assertFreshPharoLauncherMcpHealth(healthResult, runtime = {}) {
+  const runtimeLabel = pharoLauncherMcpRuntimeLabel(runtime);
+  const remediation =
+    "Use --pharoLauncherMcpRepoDir, PLEXUS_SMOKE_PHARO_LAUNCHER_MCP_REPO_DIR, or PHARO_LAUNCHER_MCP_REPO_DIR to run the smoke against the current pharo-launcher-mcp component source or packed artifact.";
+
+  if (!healthResult || typeof healthResult !== "object") {
+    throw new Error(
+      `pharo-launcher-mcp preflight failed before image mutation: --health did not return a JSON object for ${runtimeLabel}. ${remediation}`,
+    );
+  }
+
+  const health = healthResult.health;
+  if (healthResult.ok !== true || !health || health.ok !== true) {
+    throw new Error(
+      `pharo-launcher-mcp preflight failed before image mutation for ${runtimeLabel}. ${remediation} Health: ${JSON.stringify(healthResult)}`,
+    );
+  }
+
+  const discovery = health.config?.discovery;
+  if (!discovery || typeof discovery.source !== "string") {
+    throw new Error(
+      `pharo-launcher-mcp preflight failed before image mutation: ${runtimeLabel} does not report launcher discovery metadata. This usually means PLexus is resolving a stale installed @evref-bl/pharo-launcher-mcp package instead of the current component source. ${remediation}`,
+    );
+  }
+
+  return {
+    discoverySource: discovery.source,
+  };
+}
+
 function requiredString(value, label) {
   if (typeof value !== "string" || value.trim().length === 0) {
     throw new Error(`${label} is required for live smoke runs`);
@@ -139,6 +169,19 @@ function requiredString(value, label) {
 
 function requiredPath(value, label) {
   return path.resolve(requiredString(value, label));
+}
+
+function pharoLauncherMcpRuntimeLabel(runtime) {
+  const source = typeof runtime.source === "string" ? runtime.source : "unknown";
+  const pathValue =
+    typeof runtime.repoDir === "string"
+      ? runtime.repoDir
+      : typeof runtime.packageDir === "string"
+        ? runtime.packageDir
+        : typeof runtime.entry === "string"
+          ? runtime.entry
+          : runtime.command;
+  return `${source}${pathValue ? ` runtime at ${pathValue}` : " runtime"}`;
 }
 
 function comparablePath(value) {

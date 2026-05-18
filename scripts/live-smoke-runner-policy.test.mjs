@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import path from "node:path";
 import test from "node:test";
 import {
+  assertFreshPharoLauncherMcpHealth,
   buildLiveSmokeRunPlan,
   defaultRunId,
   isPathInside,
@@ -156,6 +157,61 @@ test("parses timeout budget overrides", () => {
   assert.throws(
     () => parseTimeoutBudget('{"unknownMs":1}'),
     /Unknown timeout budget key/,
+  );
+});
+
+test("accepts fresh pharo-launcher-mcp health with discovery metadata", () => {
+  const preflight = assertFreshPharoLauncherMcpHealth(
+    {
+      ok: true,
+      health: {
+        ok: true,
+        config: {
+          discovery: {
+            source: "macos-system-app",
+          },
+        },
+      },
+    },
+    { source: "env", repoDir: "C:/work/pharo-launcher-mcp" },
+  );
+
+  assert.equal(preflight.discoverySource, "macos-system-app");
+});
+
+test("rejects unhealthy pharo-launcher-mcp preflight before image mutation", () => {
+  assert.throws(
+    () =>
+      assertFreshPharoLauncherMcpHealth(
+        {
+          ok: true,
+          health: {
+            ok: false,
+            config: {},
+          },
+        },
+        { source: "package", packageDir: "C:/work/plexus/node_modules/pharo" },
+      ),
+    /preflight failed before image mutation/,
+  );
+});
+
+test("rejects pharo-launcher-mcp runtimes without discovery metadata", () => {
+  assert.throws(
+    () =>
+      assertFreshPharoLauncherMcpHealth(
+        {
+          ok: true,
+          health: {
+            ok: true,
+            config: {
+              launcherDir: { path: "C:/PharoLauncher", exists: true },
+            },
+          },
+        },
+        { source: "package", packageDir: "C:/work/plexus/node_modules/pharo" },
+      ),
+    /does not report launcher discovery metadata/,
   );
 });
 
