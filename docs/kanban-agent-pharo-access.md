@@ -168,11 +168,25 @@ Valid creation inputs are policy-driven:
 }
 ```
 
-The profile resolves to one approved source, for example:
+The profile resolves to an approved source declared in `plexus.project.json`.
+The initial supported create policy is a template:
 
-- a configured Pharo template and optional category
-- a configured base image to copy
-- a prepared project image cache entry
+```json
+{
+  "images": [
+    {
+      "id": "dev",
+      "imageName": "MyProject-{workspaceId}-dev",
+      "create": {
+        "kind": "template",
+        "profileId": "pharo-13-default",
+        "templateName": "Pharo 13.0 - 64bit",
+        "templateCategory": "Official"
+      }
+    }
+  ]
+}
+```
 
 The facade may call different pharo-launcher-mcp tools underneath, such as
 `pharo_launcher_image_create` or `pharo_launcher_image_copy`, but those raw

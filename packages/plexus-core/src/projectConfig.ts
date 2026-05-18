@@ -31,11 +31,21 @@ export interface ProjectImageGitConfig {
   plainCredentials?: ProjectImagePlainCredentialsConfig;
 }
 
+export interface ProjectImageTemplateCreateConfig {
+  kind: "template";
+  profileId?: string;
+  templateName: string;
+  templateCategory?: string;
+}
+
+export type ProjectImageCreateConfig = ProjectImageTemplateCreateConfig;
+
 export interface ProjectImageConfig {
   id: string;
   imageName: string;
   active: boolean;
   mcp: ProjectImageMcpConfig;
+  create?: ProjectImageCreateConfig;
   git?: ProjectImageGitConfig;
 }
 
@@ -473,6 +483,40 @@ function parseImageGit(
   };
 }
 
+function parseImageCreate(
+  value: unknown,
+  issues: string[],
+  pathPrefix: string,
+): ProjectImageCreateConfig | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  const createPath = `${pathPrefix}.create`;
+  if (!isObject(value)) {
+    issues.push(`${createPath} must be an object`);
+    return undefined;
+  }
+
+  const kindValue = value.kind ?? "template";
+  const kind = kindValue === "template" ? kindValue : "template";
+  if (kind !== kindValue) {
+    issues.push(`${createPath}.kind must be template`);
+  }
+
+  return {
+    kind,
+    profileId: optionalStringField(value, "profileId", issues, createPath),
+    templateName: stringField(value, "templateName", issues, createPath),
+    templateCategory: optionalStringField(
+      value,
+      "templateCategory",
+      issues,
+      createPath,
+    ),
+  };
+}
+
 function parseImages(
   value: unknown,
   issues: string[],
@@ -499,6 +543,7 @@ function parseImages(
       imageName: stringField(image, "imageName", issues, pathPrefix),
       active: booleanField(image, "active", issues, pathPrefix),
       mcp: parseImageMcp(image.mcp, issues, pathPrefix),
+      create: parseImageCreate(image.create, issues, pathPrefix),
       git: parseImageGit(image.git, issues, pathPrefix),
     };
   });

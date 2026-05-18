@@ -184,14 +184,23 @@ function imageStatus(
 }
 
 function createAffordance(
-  imageId: string,
+  imageConfig: ProjectImageConfig,
   imageState: ProjectImageState | undefined,
 ): ScopedImageAffordance {
   if (imageState) {
     return denied("Image already has runtime state");
   }
 
-  return allowed("pharo_launcher_image_create", { imageId });
+  if (!imageConfig.create) {
+    return denied("Image has no approved create policy");
+  }
+
+  return allowed("pharo_launcher_image_create", {
+    imageId: imageConfig.id,
+    ...(imageConfig.create.profileId
+      ? { profileId: imageConfig.create.profileId }
+      : {}),
+  });
 }
 
 function startAffordance(
@@ -233,7 +242,7 @@ function lifecycleAffordances(
 ): ScopedImageAffordances {
   const status = imageStatus(imageState);
   return {
-    create: createAffordance(imageConfig.id, imageState),
+    create: createAffordance(imageConfig, imageState),
     start: startAffordance(imageConfig, status),
     stop: stopAffordance(imageConfig.id, status),
     delete: denied(

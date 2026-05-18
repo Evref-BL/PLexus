@@ -251,6 +251,63 @@ describe("project config", () => {
     expect(parseProjectConfig(config).images[0].git).toBeUndefined();
   });
 
+  it("parses image template create policy", () => {
+    const baseConfig = validProjectConfig();
+    const config = {
+      ...baseConfig,
+      images: [
+        {
+          ...baseConfig.images[0],
+          create: {
+            kind: "template",
+            profileId: "pharo-13-default",
+            templateName: "Pharo 13.0 - 64bit",
+            templateCategory: "Official",
+          },
+        },
+        baseConfig.images[1],
+      ],
+    };
+
+    expect(parseProjectConfig(config).images[0].create).toEqual({
+      kind: "template",
+      profileId: "pharo-13-default",
+      templateName: "Pharo 13.0 - 64bit",
+      templateCategory: "Official",
+    });
+  });
+
+  it("rejects invalid image create policy", () => {
+    const baseConfig = validProjectConfig();
+    const config = {
+      ...baseConfig,
+      images: [
+        {
+          ...baseConfig.images[0],
+          create: {
+            kind: "copy",
+            profileId: "",
+          },
+        },
+        baseConfig.images[1],
+      ],
+    };
+
+    expect(() => parseProjectConfig(config)).toThrow(ProjectConfigError);
+
+    try {
+      parseProjectConfig(config);
+    } catch (error) {
+      expect((error as ProjectConfigError).issues).toEqual(
+        expect.arrayContaining([
+          "images[0].create.kind must be template",
+          "images[0].create.profileId must be a non-empty string",
+          "images[0].create.templateName must be a non-empty string",
+        ]),
+      );
+    }
+  });
+
   it("parses image git transport and credentials", () => {
     const config = validProjectConfig();
     config.images[0].git = {
