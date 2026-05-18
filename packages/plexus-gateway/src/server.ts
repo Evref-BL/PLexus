@@ -92,6 +92,8 @@ export const rawRoutingTool = {
 } as const;
 
 const legacyGatewaySurface = "pharo";
+const legacyGatewayCompatibilityEnvVar =
+  "PLEXUS_LEGACY_GATEWAY_COMPATIBILITY";
 
 export type GatewaySurface =
   | "combined"
@@ -99,6 +101,8 @@ export type GatewaySurface =
   | "route-control"
   | "gateway"
   | typeof legacyGatewaySurface;
+
+type LegacyGatewayCompatibilityMode = "warn" | "reject";
 
 export interface GatewayServerOptions {
   surface?: GatewaySurface;
@@ -178,7 +182,10 @@ export const legacyGatewayTools = [...gatewayTools, rawRoutingTool] as const;
  * `pharo` is retained as a temporary compatibility alias for the agent-facing
  * gateway proxy. New generated config should use `gateway`.
  */
-function parseGatewaySurface(value: string | undefined): GatewaySurface {
+function parseGatewaySurface(
+  value: string | undefined,
+  compatibilityMode: LegacyGatewayCompatibilityMode,
+): GatewaySurface {
   if (value === undefined || value.trim().length === 0) {
     return "gateway";
   }
@@ -190,10 +197,39 @@ function parseGatewaySurface(value: string | undefined): GatewaySurface {
     value === "gateway" ||
     value === legacyGatewaySurface
   ) {
+    if (compatibilityMode === "reject" && isLegacyGatewaySurface(value)) {
+      throw new Error(
+        "Legacy PLexus gateway surfaces are disabled by " +
+          `${legacyGatewayCompatibilityEnvVar}=reject. ` +
+          "Use PLEXUS_GATEWAY_SURFACE=gateway for agent-facing /mcp and " +
+          "route-control on /control-mcp.",
+      );
+    }
+
     return value;
   }
 
   throw new Error(`Unsupported PLexus gateway surface: ${value}`);
+}
+
+function isLegacyGatewaySurface(value: string): boolean {
+  return value === legacyGatewaySurface || value === "combined";
+}
+
+function parseLegacyGatewayCompatibilityMode(
+  env: NodeJS.ProcessEnv,
+): LegacyGatewayCompatibilityMode {
+  const value = env[legacyGatewayCompatibilityEnvVar];
+  if (value === undefined || value.trim().length === 0) {
+    return "warn";
+  }
+
+  const normalized = value.trim().toLowerCase();
+  if (normalized === "warn" || normalized === "reject") {
+    return normalized;
+  }
+
+  throw new Error(`${legacyGatewayCompatibilityEnvVar} must be warn or reject`);
 }
 
 export interface GatewayHttpServerOptions {
@@ -367,8 +403,10 @@ function parseJsonArrayEnv(value: string | undefined, name: string): unknown[] {
 export function parseGatewayEnvironmentOptions(
   env: NodeJS.ProcessEnv = process.env,
 ): GatewayEnvironmentOptions {
+  const compatibilityMode = parseLegacyGatewayCompatibilityMode(env);
+
   return {
-    surface: parseGatewaySurface(env.PLEXUS_GATEWAY_SURFACE),
+    surface: parseGatewaySurface(env.PLEXUS_GATEWAY_SURFACE, compatibilityMode),
     exposeRawRoutingTool: parseBooleanEnv(
       env.PLEXUS_EXPOSE_RAW_ROUTING_TOOL,
       "PLEXUS_EXPOSE_RAW_ROUTING_TOOL",

@@ -185,6 +185,11 @@ generated config. Raw `plexus_route_to_image` is not part of this normal agent
 config and remains behind explicit raw-routing opt-in for route-control/debug
 use. `PLEXUS_GATEWAY_SURFACE=combined` is legacy/debug compatibility for older
 single-surface setups, not normal Kanban worker configuration.
+Leave `PLEXUS_LEGACY_GATEWAY_COMPATIBILITY` unset or set to `warn` during this
+phase. Set it to `reject` only after migration is approved; rejection points
+legacy `pharo`/`combined` surface and legacy route-control env users to
+`gateway`, `/mcp`, `/control-mcp`, `PLEXUS_GATEWAY_CONTROL_MCP_URL`, and
+`PLEXUS_GATEWAY_CONTROL_MCP_PATH`.
 
 When the gateway is deployed as an HTTP service, use one gateway process with
 two MCP paths over the same route table: `/mcp` for the agent-facing `gateway`

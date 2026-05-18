@@ -128,6 +128,9 @@ stay out of normal agent-facing MCP config.
 `PLEXUS_GATEWAY_SURFACE=combined` remains only for legacy/debug compatibility
 when an older single MCP surface is needed. Normal deployments should expose the
 agent-facing `gateway` surface separately from route-control.
+The compatibility gate is explicit: warning mode is the default, and
+`PLEXUS_LEGACY_GATEWAY_COMPATIBILITY=reject` is reserved for an approved
+removal phase that rejects legacy gateway env/config with migration guidance.
 
 See `docs/kanban-agent-pharo-access.md` for the scoped launcher design.
 

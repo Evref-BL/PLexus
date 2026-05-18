@@ -410,6 +410,26 @@ describe("gateway server", () => {
     });
   });
 
+  it("keeps legacy gateway surfaces in explicit warning mode", () => {
+    expect(
+      parseGatewayEnvironmentOptions({
+        PLEXUS_GATEWAY_SURFACE: "pharo",
+        PLEXUS_LEGACY_GATEWAY_COMPATIBILITY: "warn",
+      }),
+    ).toMatchObject({
+      surface: "pharo",
+    });
+  });
+
+  it("rejects legacy gateway surfaces when compatibility removal is enabled", () => {
+    expect(() =>
+      parseGatewayEnvironmentOptions({
+        PLEXUS_GATEWAY_SURFACE: "combined",
+        PLEXUS_LEGACY_GATEWAY_COMPATIBILITY: "reject",
+      }),
+    ).toThrow(/PLEXUS_GATEWAY_SURFACE=gateway.*\/mcp.*\/control-mcp/s);
+  });
+
   it("creates an agent-facing Pharo proxy gateway from environment", () => {
     const { gateway, serverOptions } = createGatewayFromEnvironment({
       PLEXUS_GATEWAY_SURFACE: "gateway",

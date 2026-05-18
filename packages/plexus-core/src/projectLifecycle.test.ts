@@ -1001,6 +1001,34 @@ describe("project lifecycle tools", () => {
     expect(requests[0]?.url).toBe("http://gateway.local:8133/control-mcp");
   });
 
+  it("keeps legacy gateway environment compatibility in explicit warning mode", async () => {
+    const requests: CapturedGatewayRequest[] = [];
+    vi.stubGlobal("fetch", makeGatewayFetch(requests));
+    const lifecycle = createProjectLifecycleFromEnvironment({
+      PLEXUS_GATEWAY_MCP_URL: "http://gateway.local:8133/mcp",
+      PLEXUS_GATEWAY_MCP_PATH: "/mcp",
+      PLEXUS_LEGACY_GATEWAY_COMPATIBILITY: "warn",
+    } as NodeJS.ProcessEnv);
+
+    await lifecycle.handleTool("plexus_project_status", {
+      targetId: runningState.targetId,
+    });
+
+    expect(requests[0]?.url).toBe("http://gateway.local:8133/control-mcp");
+  });
+
+  it("rejects legacy gateway environment when compatibility removal is enabled", () => {
+    expect(() =>
+      createProjectLifecycleFromEnvironment({
+        PLEXUS_GATEWAY_MCP_URL: "http://gateway.local:8133/mcp",
+        PLEXUS_GATEWAY_MCP_PATH: "/mcp",
+        PLEXUS_LEGACY_GATEWAY_COMPATIBILITY: "reject",
+      } as NodeJS.ProcessEnv),
+    ).toThrow(
+      /PLEXUS_GATEWAY_CONTROL_MCP_URL.*PLEXUS_GATEWAY_CONTROL_MCP_PATH.*\/control-mcp/s,
+    );
+  });
+
   it("keeps custom legacy gateway MCP URL environment compatibility", async () => {
     const requests: CapturedGatewayRequest[] = [];
     vi.stubGlobal("fetch", makeGatewayFetch(requests));

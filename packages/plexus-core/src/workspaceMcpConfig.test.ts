@@ -228,6 +228,57 @@ describe("workspace MCP config", () => {
     });
   });
 
+  it("drops managed legacy pharo gateway entries when regenerating MCP config", () => {
+    const config = buildPlexusWorkspaceMcpConfig({
+      projectRoot: "C:\\dev\\code\\git\\Project-worktree",
+      projectConfig,
+      workspaceId: "task-123",
+      pharoTools: [pharoEvalTool],
+      existingServers: {
+        pharo: {
+          command: "plexus-gateway",
+          args: ["--stdio"],
+          env: {
+            PLEXUS_GATEWAY_SURFACE: "pharo",
+            PLEXUS_WORKSPACE_ID: "old-task",
+          },
+        },
+        "custom-pharo": {
+          command: "custom-tool",
+          args: ["serve"],
+        },
+      },
+    });
+
+    expect(config.servers).not.toHaveProperty("pharo");
+    expect(config.servers).toHaveProperty("gateway");
+    expect(config.servers["custom-pharo"]).toEqual({
+      command: "custom-tool",
+      args: ["serve"],
+    });
+    expect(config.servers.gateway.env).toMatchObject({
+      PLEXUS_GATEWAY_SURFACE: "gateway",
+      PLEXUS_WORKSPACE_ID: "task-123",
+    });
+  });
+
+  it("normalizes requested legacy pharo server names to gateway", () => {
+    const config = buildPlexusWorkspaceMcpConfig({
+      projectRoot: "C:\\dev\\code\\git\\Project-worktree",
+      projectConfig,
+      workspaceId: "task-123",
+      pharoTools: [pharoEvalTool],
+      pharoServerName: "pharo",
+    });
+
+    expect(config.servers).not.toHaveProperty("pharo");
+    expect(config.servers.gateway).toMatchObject({
+      env: {
+        PLEXUS_GATEWAY_SURFACE: "gateway",
+      },
+    });
+  });
+
   it("lets generated servers replace only their managed names", () => {
     expect(
       mergeWorkspaceMcpServers(

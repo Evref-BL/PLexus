@@ -91,6 +91,10 @@ export interface HttpGatewayRouteRegistryOptions {
 
 const defaultGatewayAgentMcpPath = "/mcp";
 const defaultGatewayRouteControlMcpPath = "/control-mcp";
+const legacyGatewayCompatibilityEnvVar =
+  "PLEXUS_LEGACY_GATEWAY_COMPATIBILITY";
+
+type LegacyGatewayCompatibilityMode = "warn" | "reject";
 
 export interface ProjectLifecycleOptions {
   routeRegistry?: ProjectLifecycleRouteRegistry;
@@ -761,7 +765,7 @@ function legacyEnvironmentDiagnostics(
       message:
         "Legacy gateway MCP URL is configured for lifecycle route-control calls.",
       migration:
-        "Use PLEXUS_GATEWAY_CONTROL_MCP_URL for route-control and keep normal agents on the gateway MCP endpoint.",
+        "Use PLEXUS_GATEWAY_CONTROL_MCP_URL with /control-mcp for route-control and keep normal agents on the gateway MCP endpoint /mcp.",
     });
   }
 
@@ -773,7 +777,7 @@ function legacyEnvironmentDiagnostics(
       message:
         "Legacy gateway MCP path is configured for lifecycle route-control calls.",
       migration:
-        "Use PLEXUS_GATEWAY_CONTROL_MCP_PATH for route-control; agent-facing gateway traffic should use runtime.gateway.agentMcpPath.",
+        "Use PLEXUS_GATEWAY_CONTROL_MCP_PATH=/control-mcp for route-control; agent-facing gateway traffic should use runtime.gateway.agentMcpPath=/mcp.",
     });
   }
 
@@ -787,11 +791,56 @@ function legacyEnvironmentDiagnostics(
       value: env.PLEXUS_GATEWAY_SURFACE,
       message: "Legacy gateway surface is enabled.",
       migration:
-        "Use PLEXUS_GATEWAY_SURFACE=gateway with a separate route-control MCP path.",
+        "Use PLEXUS_GATEWAY_SURFACE=gateway for agent-facing /mcp with a separate route-control /control-mcp path.",
     });
   }
 
   return diagnostics;
+}
+
+function legacyGatewayCompatibilityMode(
+  env: NodeJS.ProcessEnv,
+): LegacyGatewayCompatibilityMode {
+  const value = env[legacyGatewayCompatibilityEnvVar];
+  if (value === undefined || value.trim().length === 0) {
+    return "warn";
+  }
+
+  const normalized = value.trim().toLowerCase();
+  if (normalized === "warn" || normalized === "reject") {
+    return normalized;
+  }
+
+  throw new ProjectLifecycleInputError(
+    `${legacyGatewayCompatibilityEnvVar} must be warn or reject`,
+  );
+}
+
+function rejectLegacyGatewayEnvironmentIfRequested(
+  env: NodeJS.ProcessEnv,
+): void {
+  if (legacyGatewayCompatibilityMode(env) !== "reject") {
+    return;
+  }
+
+  const diagnostics = legacyEnvironmentDiagnostics(env);
+  if (diagnostics.length === 0) {
+    return;
+  }
+
+  const keys = diagnostics
+    .map((diagnostic) => diagnostic.key)
+    .filter((key): key is string => Boolean(key))
+    .join(", ");
+  throw new ProjectLifecycleInputError(
+    "Legacy PLexus gateway configuration is disabled by " +
+      `${legacyGatewayCompatibilityEnvVar}=reject. ` +
+      `Rejected legacy settings: ${keys}. ` +
+      "Use PLEXUS_GATEWAY_CONTROL_MCP_URL for route-control URLs, " +
+      `PLEXUS_GATEWAY_CONTROL_MCP_PATH=${defaultGatewayRouteControlMcpPath} ` +
+      "for route-control paths, and PLEXUS_GATEWAY_SURFACE=gateway for " +
+      `agent-facing ${defaultGatewayAgentMcpPath}.`,
+  );
 }
 
 function implicitRuntimeConfigDiagnostic(
@@ -1441,6 +1490,8 @@ export class PlexusProjectLifecycle {
 export function createProjectLifecycleFromEnvironment(
   env: NodeJS.ProcessEnv = process.env,
 ): PlexusProjectLifecycle {
+  rejectLegacyGatewayEnvironmentIfRequested(env);
+
   const routeControlUrl =
     env.PLEXUS_GATEWAY_CONTROL_MCP_URL ??
     routeControlUrlFromLegacyGatewayUrl(env.PLEXUS_GATEWAY_MCP_URL);

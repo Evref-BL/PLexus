@@ -153,6 +153,11 @@ use `gateway`; raw `plexus_route_to_image` routing is hidden unless explicitly
 enabled for route-control/debug work with `PLEXUS_EXPOSE_RAW_ROUTING_TOOL=true`.
 `PLEXUS_GATEWAY_SURFACE=combined` is legacy/debug compatibility for older
 single-surface setups, not the normal configuration.
+Compatibility defaults to warning mode. Set
+`PLEXUS_LEGACY_GATEWAY_COMPATIBILITY=reject` only after an explicit migration
+decision; it rejects legacy gateway env/config such as `pharo`, `combined`,
+`PLEXUS_GATEWAY_MCP_URL`, and `PLEXUS_GATEWAY_MCP_PATH` with replacement
+guidance for `gateway`, `/mcp`, and `/control-mcp`.
 
 ## More Documentation
 
