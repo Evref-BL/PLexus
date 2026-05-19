@@ -238,9 +238,14 @@ export interface ProjectLifecycleStatus {
 
 export type ProjectLifecycleRuntimeDiagnosticStatus =
   | "operational"
-  | "operational-but-idle"
+  | "idle"
   | "degraded"
   | "not-opened";
+
+export type ProjectLifecycleRuntimeDiagnosticHealth =
+  | "operational"
+  | "degraded"
+  | "unknown";
 
 export interface ProjectLifecyclePortClaimDiagnostic {
   claimsRoot: string;
@@ -320,6 +325,7 @@ export interface ProjectLifecycleDiagnostics {
   toolRuntime: PlexusRuntimeIdentityDiagnostic;
   runtime: {
     status: ProjectLifecycleRuntimeDiagnosticStatus;
+    health: ProjectLifecycleRuntimeDiagnosticHealth;
     reason: string;
   };
   project: ProjectLifecycleProjectDiagnostics;
@@ -1153,6 +1159,7 @@ function runtimeDiagnostics(
   if (!state) {
     return {
       status: "not-opened",
+      health: "unknown",
       reason: "No project runtime state exists for this workspace yet.",
     };
   }
@@ -1168,6 +1175,7 @@ function runtimeDiagnostics(
   ) {
     return {
       status: "degraded",
+      health: "degraded",
       reason:
         "Runtime state exists, but diagnostics found stale claims, conflicts, route-table gaps, or incomplete gateway endpoints.",
     };
@@ -1175,7 +1183,8 @@ function runtimeDiagnostics(
 
   if (state.images.length === 0 && runtimeStatusForImages(state.images) === "idle") {
     return {
-      status: "operational-but-idle",
+      status: "idle",
+      health: "operational",
       reason:
         "Runtime scope, gateway endpoints, and route table are valid; no images are declared for this project.",
     };
@@ -1183,6 +1192,7 @@ function runtimeDiagnostics(
 
   return {
     status: "operational",
+    health: "operational",
     reason: "Runtime scope has valid gateway and route diagnostics.",
   };
 }

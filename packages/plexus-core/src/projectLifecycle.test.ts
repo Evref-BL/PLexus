@@ -886,7 +886,7 @@ describe("project lifecycle tools", () => {
     });
   });
 
-  it("reports zero-image projects as operational-but-idle with runtime scope diagnostics", async () => {
+  it("reports zero-image projects as idle with operational runtime health diagnostics", async () => {
     const projectRoot = makeTempDir("plexus-project-");
     const stateRoot = makeTempDir("plexus-state-");
     const claimsRoot = makeTempDir("plexus-claims-");
@@ -974,7 +974,8 @@ describe("project lifecycle tools", () => {
         },
         diagnostics: {
           runtime: {
-            status: "operational-but-idle",
+            status: "idle",
+            health: "operational",
           },
           project: {
             declaredImageCount: 0,
@@ -1153,7 +1154,8 @@ describe("project lifecycle tools", () => {
       data: {
         diagnostics: {
           runtime: {
-            status: "operational-but-idle",
+            status: "idle",
+            health: "operational",
           },
           portClaims: {
             active: [
