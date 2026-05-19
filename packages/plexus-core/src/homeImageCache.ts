@@ -88,8 +88,6 @@ export interface HomeImageCacheKeyMaterial {
   templateMetadata?: HomeImageCacheTemplateMetadata;
   pharoMcp: {
     support: HomeImageCachePharoMcpSupport;
-    loadScript: string;
-    repository: PharoMcpMetacelloRepository;
   };
   git?: {
     transport: ProjectImageGitConfig["transport"];
@@ -191,6 +189,7 @@ export interface HomeImageCachePlan {
   lockPath: string;
   cacheImageName: string;
   source: HomeImageCacheSource;
+  mcp: ProjectPreparedImageMcpConfig | ProjectImageMcpConfig;
   support: HomeImageCachePharoMcpSupport;
   manifest: HomeImageCacheManifestReadResult;
   lock: HomeImageCacheLockReadResult;
@@ -586,10 +585,6 @@ export function homeImageCacheKeyMaterial(options: {
     ...(options.templateMetadata ? { templateMetadata: options.templateMetadata } : {}),
     pharoMcp: {
       support,
-      loadScript: options.mcp.loadScript,
-      repository: toMetacelloRepository(
-        "repository" in options.mcp ? options.mcp.repository : undefined,
-      ),
     },
     ...(options.git ? { git: { transport: options.git.transport } } : {}),
   };
@@ -983,6 +978,7 @@ export function buildHomeImageCachePlan(
     lockPath,
     cacheImageName,
     source,
+    mcp,
     support: keyMaterial.pharoMcp.support,
     manifest,
     lock,
@@ -1005,10 +1001,7 @@ export function writeHomeImageCachePreparationScript(plan: HomeImageCachePlan): 
     cacheId: plan.key,
     projectRoot: plan.projectRoot,
     source: plan.source,
-    mcp: {
-      loadScript: plan.keyMaterial.pharoMcp.loadScript,
-      repository: plan.keyMaterial.pharoMcp.repository,
-    },
+    mcp: plan.mcp,
   });
   fs.mkdirSync(dirnamePathLike(plan.expectedManifest.paths.preparationScriptPath), {
     recursive: true,

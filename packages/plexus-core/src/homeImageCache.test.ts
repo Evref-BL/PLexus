@@ -123,8 +123,28 @@ describe("home image cache", () => {
     ).toBe(path.join(path.sep, "env", "plexus-home"));
   });
 
-  it("derives stable cache keys from template, MCP, Git, and launcher metadata", () => {
+  it("derives stable cache keys from template, MCP support, Git, and launcher metadata", () => {
     const projectConfig = config();
+    const alternateLoadScriptConfig = config({
+      images: [
+        {
+          id: "dev",
+          imageName: "MyProject-{workspaceId}-dev",
+          active: true,
+          create: {
+            kind: "template",
+            templateName: "Moose 13 64bit",
+            templateCategory: "Moose",
+          },
+          mcp: {
+            loadScript: "/tmp/generated/load-mcp.st",
+          },
+          git: {
+            transport: "ssh",
+          },
+        },
+      ],
+    });
     const source = {
       kind: "template" as const,
       templateName: "Moose 13 64bit",
@@ -158,12 +178,26 @@ describe("home image cache", () => {
       }),
     );
     expect(
+      deriveHomeImageCacheKey(homeImageCacheKeyMaterial({
+        config: alternateLoadScriptConfig,
+        source,
+        mcp: alternateLoadScriptConfig.images[0]!.mcp,
+        git: alternateLoadScriptConfig.images[0]!.git,
+        templateMetadata: {
+          identity: {
+            source: "template-file",
+            name: "Moose 13 64bit",
+            pharoVersion: "130",
+          },
+          architecture: "64",
+          pharoVersion: "130",
+        },
+      })),
+    ).toBe(deriveHomeImageCacheKey(material));
+    expect(
       deriveHomeImageCacheKey({
         ...material,
-        pharoMcp: {
-          ...material.pharoMcp,
-          loadScript: "pharo/other-load.st",
-        },
+        git: { transport: "https" },
       }),
     ).not.toBe(deriveHomeImageCacheKey(material));
   });
