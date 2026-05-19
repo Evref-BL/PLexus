@@ -13,6 +13,7 @@ import {
 } from "@evref-bl/plexus-core";
 import { PlexusGateway } from "@evref-bl/plexus-gateway";
 import {
+  assertPharoLauncherMcpDiscoveryMetadata,
   assertFreshPharoLauncherMcpHealth,
   buildLiveSmokeRunPlan,
   isPathInside,
@@ -226,8 +227,8 @@ function usage() {
     "",
     "Optional:",
     "  --approvalProfile <id>       Required approval/profile id for live execution",
-    "  --launcherProfile <id>       pharo-launcher-mcp profile id; defaults to approval profile",
-    "  --launcherProfileRoot <path> Required isolated pharo-launcher-mcp profile root",
+    "  --launcherProfile <id>       pharo-launcher-mcp profile id; defaults to project-owned profile",
+    "  --launcherProfileRoot <path> Optional isolated pharo-launcher-mcp profile root; defaults to the project-owned root",
     "  --pharoLauncherMcpRepoDir <path> Use current pharo-launcher-mcp component source for the smoke",
     "  --artifactRoot <path>        Required artifact retention root",
     "  --runId <id>                 Defaults to a unique smoke id",
@@ -345,6 +346,7 @@ function assertValidOptions(options) {
   options.approvalProfile = runPlan.approvalProfile;
   options.launcherProfile = runPlan.launcherProfile;
   options.launcherProfileRoot = runPlan.launcherProfileRoot;
+  options.launcherProfileEnvironment = runPlan.launcherProfileEnvironment;
   options.runId = runPlan.runId;
   options.workspaceId = runPlan.workspaceId;
   options.targetId = runPlan.targetId;
@@ -519,11 +521,8 @@ function writeSmokeProjectConfig(options) {
   fs.mkdirSync(fixtureRoot, { recursive: true });
 
   const config = {
+    id: options.projectId,
     name: "plexus-smoke-open-route-close",
-    kanban: {
-      provider: "vibe-kanban",
-      projectId: options.projectId,
-    },
     images: options.images.map((image) => ({
       id: image.id,
       imageName: image.imageName,
@@ -570,6 +569,7 @@ function initializeArtifacts(options) {
     approvalProfile: options.approvalProfile,
     launcherProfile: options.launcherProfile,
     launcherProfileRoot: options.launcherProfileRoot,
+    launcherProfileEnvironment: options.launcherProfileEnvironment,
     artifactDirectory: options.artifactDirectory,
     workspaceId: options.workspaceId,
     targetId: options.targetId,
@@ -595,28 +595,16 @@ function initializeArtifacts(options) {
 }
 
 function applyLauncherProfileEnvironment(options) {
-  const root = options.launcherProfileRoot;
-  process.env.PHARO_LAUNCHER_MCP_PROFILE = options.launcherProfile;
-  process.env.PHARO_LAUNCHER_MCP_STATE_ROOT = root;
-  process.env.PHARO_LAUNCHER_MCP_LAUNCHER_IMAGE = path.join(
-    root,
-    "launcher",
-    "PharoLauncher.image",
-  );
-  process.env.PHARO_LAUNCHER_MCP_IMAGES_DIR = path.join(root, "images");
-  process.env.PHARO_LAUNCHER_MCP_VMS_DIR = path.join(root, "vms");
-  process.env.PHARO_LAUNCHER_MCP_TEMPLATE_SOURCES_DIR = path.join(
-    root,
-    "templates",
-  );
-  process.env.PHARO_LAUNCHER_MCP_INIT_SCRIPTS_DIR = path.join(
-    root,
-    "init-scripts",
-  );
-  process.env.PHARO_LAUNCHER_MCP_LOGS_DIR = path.join(root, "logs");
+  const environment = options.launcherProfileEnvironment ?? {};
+  for (const [key, value] of Object.entries(environment)) {
+    process.env[key] = value;
+  }
   recordEvent(options, "launcher-profile-environment-applied", {
     profile: options.launcherProfile,
-    stateRoot: root,
+    stateRoot: environment.PHARO_LAUNCHER_MCP_STATE_ROOT,
+    launcherImage: environment.PHARO_LAUNCHER_MCP_LAUNCHER_IMAGE,
+    launcherConfiguration:
+      environment.PHARO_LAUNCHER_MCP_LAUNCHER_CONFIGURATION,
   });
 }
 
@@ -690,18 +678,26 @@ function runPharoLauncherMcpHealth(config) {
   }
 }
 
-function preflightPharoLauncherMcpRuntime(options) {
+function preflightPharoLauncherMcpRuntime(options, preflightOptions = {}) {
+  const {
+    requireHealthy = true,
+    artifactName = "pharo-launcher-mcp-preflight.json",
+    eventName = "pharo-launcher-mcp-preflight-ok",
+  } = preflightOptions;
   const config = loadPharoLauncherMcpConfig();
   const health = runPharoLauncherMcpHealth(config);
-  const freshness = assertFreshPharoLauncherMcpHealth(health, config);
-  snapshotJsonArtifact(options, "pharo-launcher-mcp-preflight.json", {
+  const freshness = requireHealthy
+    ? assertFreshPharoLauncherMcpHealth(health, config)
+    : assertPharoLauncherMcpDiscoveryMetadata(health, config);
+  snapshotJsonArtifact(options, artifactName, {
     config,
     health,
     freshness,
   });
-  recordEvent(options, "pharo-launcher-mcp-preflight-ok", {
+  recordEvent(options, eventName, {
     source: config.source,
     discoverySource: freshness.discoverySource,
+    healthOk: health?.health?.ok === true,
     ...(config.repoDir ? { repoDir: config.repoDir } : {}),
     ...(config.packageDir ? { packageDir: config.packageDir } : {}),
     ...(config.entry ? { entry: config.entry } : {}),
@@ -711,7 +707,104 @@ function preflightPharoLauncherMcpRuntime(options) {
     `${config.source} discovery=${freshness.discoverySource}`,
   );
 
-  return config;
+  return {
+    config,
+    health,
+    freshness,
+  };
+}
+
+function profileHealthPath(healthResult, key) {
+  const value = healthResult?.health?.config?.[key]?.path;
+  if (typeof value !== "string" || value.length === 0) {
+    throw new Error(
+      `pharo-launcher-mcp health did not report config.${key}.path for launcher profile staging`,
+    );
+  }
+  return value;
+}
+
+function copyLauncherProfileFile(sourcePath, targetPath, copiedFiles) {
+  if (!fs.existsSync(sourcePath)) {
+    return false;
+  }
+
+  fs.mkdirSync(path.dirname(targetPath), { recursive: true });
+  const existing = fs.existsSync(targetPath) ? fs.statSync(targetPath) : undefined;
+  if (existing?.isFile() && existing.size > 0) {
+    copiedFiles.push({
+      sourcePath,
+      targetPath,
+      action: "already-present",
+      bytes: existing.size,
+    });
+    return true;
+  }
+
+  fs.copyFileSync(sourcePath, targetPath);
+  copiedFiles.push({
+    sourcePath,
+    targetPath,
+    action: "copied",
+    bytes: fs.statSync(targetPath).size,
+  });
+  return true;
+}
+
+function stageLauncherProfileImage(options, healthResult) {
+  const sourceImage = path.resolve(
+    profileHealthPath(healthResult, "installationLauncherImage"),
+  );
+  const targetImage = path.resolve(
+    options.launcherProfileEnvironment.PHARO_LAUNCHER_MCP_LAUNCHER_IMAGE,
+  );
+  const profileRoot = path.resolve(options.launcherProfileRoot);
+  if (!isPathInside(profileRoot, targetImage)) {
+    throw new Error(
+      `Refusing to stage launcher image outside --launcherProfileRoot: ${targetImage}`,
+    );
+  }
+  if (!fs.existsSync(sourceImage)) {
+    throw new Error(
+      `Cannot stage launcher profile image; source PharoLauncher.image does not exist: ${sourceImage}`,
+    );
+  }
+
+  const copiedFiles = [];
+  copyLauncherProfileFile(sourceImage, targetImage, copiedFiles);
+
+  const sourceDirectory = path.dirname(sourceImage);
+  const sourceBase = path.join(
+    sourceDirectory,
+    `${path.basename(sourceImage, path.extname(sourceImage))}.changes`,
+  );
+  copyLauncherProfileFile(
+    sourceBase,
+    path.join(path.dirname(targetImage), path.basename(sourceBase)),
+    copiedFiles,
+  );
+
+  for (const entry of fs.readdirSync(sourceDirectory, { withFileTypes: true })) {
+    if (entry.isFile() && entry.name.endsWith(".sources")) {
+      copyLauncherProfileFile(
+        path.join(sourceDirectory, entry.name),
+        path.join(path.dirname(targetImage), entry.name),
+        copiedFiles,
+      );
+    }
+  }
+
+  recordEvent(options, "launcher-profile-image-staged", {
+    sourceImage,
+    targetImage,
+    copiedFiles,
+  });
+  snapshotJsonArtifact(options, "launcher-profile-staging.json", {
+    sourceImage,
+    targetImage,
+    copiedFiles,
+  });
+  textResult("launcher profile image", targetImage);
 }
 
 function recordEvent(options, event, details = {}) {
@@ -1383,6 +1476,43 @@ async function chooseSourceTemplate(client, options) {
   };
 }
 
+async function bootstrapTemplateSources(client, options) {
+  textResult("template update", "start");
+  const updateResult = await callLauncherTool(
+    client,
+    "pharo_launcher_template_update",
+    {},
+  );
+  snapshotJsonArtifact(options, "template-update.json", updateResult);
+  launcherData(updateResult);
+  textResult("template update", "ok");
+
+  try {
+    const inventoryResult = await callLauncherTool(
+      client,
+      "pharo_launcher_inventory",
+      {},
+    );
+    snapshotJsonArtifact(
+      options,
+      "launcher-inventory-after-template-update.json",
+      inventoryResult,
+    );
+    return launcherData(inventoryResult);
+  } catch (error) {
+    const result =
+      error && typeof error === "object" && "result" in error
+        ? error.result
+        : { error: error instanceof Error ? error.message : String(error) };
+    snapshotJsonArtifact(
+      options,
+      "launcher-inventory-after-template-update.json",
+      result,
+    );
+    throw error;
+  }
+}
+
 async function prepareTemplateSourceImage(client, options) {
   if (!options.createSourceFromTemplate) {
     return;
@@ -1395,6 +1525,7 @@ async function prepareTemplateSourceImage(client, options) {
     );
   }
 
+  await bootstrapTemplateSources(client, options);
   const template = await chooseSourceTemplate(client, options);
   textResult(
     "source template",
@@ -1584,10 +1715,18 @@ async function main() {
   options.artifactEventsPath = artifactFiles.eventsPath;
   textResult("artifactDirectory", options.artifactDirectory);
   recordEvent(options, "run-started");
-  applyLauncherProfileEnvironment(options);
   applyPharoLauncherMcpRepoEnvironment(options);
-  const launcherMcpConfig = preflightPharoLauncherMcpRuntime(options);
-  const client = await createStdioPharoLauncherMcpClient(launcherMcpConfig);
+  applyLauncherProfileEnvironment(options);
+  const discoveryPreflight = preflightPharoLauncherMcpRuntime(options, {
+    requireHealthy: false,
+    artifactName: "pharo-launcher-mcp-preflight-before-profile-stage.json",
+    eventName: "pharo-launcher-mcp-discovery-preflight-ok",
+  });
+  stageLauncherProfileImage(options, discoveryPreflight.health);
+  const launcherMcpPreflight = preflightPharoLauncherMcpRuntime(options);
+  const client = await createStdioPharoLauncherMcpClient(
+    launcherMcpPreflight.config,
+  );
   const gateway = new PlexusGateway();
   const lifecycle = new PlexusProjectLifecycle({
     routeRegistry: gateway,

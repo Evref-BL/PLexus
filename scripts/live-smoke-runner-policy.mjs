@@ -20,6 +20,56 @@ export function sanitizeRuntimeId(value) {
   return sanitized || "default";
 }
 
+export function defaultProjectOwnedLauncherProfileName(projectId) {
+  return ["plexus", sanitizeRuntimeId(projectId)].join("-");
+}
+
+export function defaultProjectOwnedLauncherProfileRoot({ stateRoot, projectId }) {
+  return path.join(
+    path.resolve(requiredString(stateRoot, "stateRoot")),
+    "profiles",
+    "pharo-launcher-mcp",
+    sanitizeRuntimeId(requiredString(projectId, "projectId")),
+  );
+}
+
+export function projectOwnedLauncherProfileEnvironment({
+  stateRoot,
+  projectId,
+  launcherProfile,
+  launcherProfileRoot,
+}) {
+  const root = path.resolve(
+    launcherProfileRoot === undefined
+      ? defaultProjectOwnedLauncherProfileRoot({ stateRoot, projectId })
+      : requiredString(launcherProfileRoot, "--launcherProfileRoot"),
+  );
+  const profile =
+    launcherProfile === undefined
+      ? defaultProjectOwnedLauncherProfileName(projectId)
+      : requiredString(launcherProfile, "--launcherProfile");
+
+  return {
+    PHARO_LAUNCHER_MCP_PROFILE: profile,
+    PHARO_LAUNCHER_MCP_STATE_ROOT: root,
+    PHARO_LAUNCHER_MCP_LAUNCHER_IMAGE: path.join(
+      root,
+      "launcher",
+      "PharoLauncher.image",
+    ),
+    PHARO_LAUNCHER_MCP_IMAGES_DIR: path.join(root, "images"),
+    PHARO_LAUNCHER_MCP_VMS_DIR: path.join(root, "vms"),
+    PHARO_LAUNCHER_MCP_TEMPLATE_SOURCES_DIR: path.join(root, "templates"),
+    PHARO_LAUNCHER_MCP_INIT_SCRIPTS_DIR: path.join(root, "init-scripts"),
+    PHARO_LAUNCHER_MCP_LOGS_DIR: path.join(root, "logs"),
+    PHARO_LAUNCHER_MCP_LAUNCHER_CONFIGURATION: path.join(
+      root,
+      "launcher",
+      "pharo-launcher-cli-config.ston",
+    ),
+  };
+}
+
 export function defaultRunId(now = new Date(), pid = process.pid) {
   return sanitizeRuntimeId(
     `smoke-${now.toISOString().replaceAll(/[^0-9A-Za-z]+/g, "-")}-${pid}`,
@@ -78,17 +128,23 @@ export function buildLiveSmokeRunPlan(options, context = {}) {
   );
   const artifactRoot = requiredPath(options.artifactRoot, "--artifactRoot");
   const stateRoot = requiredPath(options.stateRoot, "--stateRoot");
-  const launcherProfileRoot = requiredPath(
-    options.launcherProfileRoot,
-    "--launcherProfileRoot",
-  );
-  const launcherProfile = options.launcherProfile ?? approvalProfile;
+  const projectId = requiredString(options.projectId, "--projectId");
+  const launcherProfileEnvironment = projectOwnedLauncherProfileEnvironment({
+    stateRoot,
+    projectId,
+    launcherProfile: options.launcherProfile,
+    launcherProfileRoot: options.launcherProfileRoot,
+  });
+  const launcherProfileRoot =
+    launcherProfileEnvironment.PHARO_LAUNCHER_MCP_STATE_ROOT;
+  const launcherProfile =
+    launcherProfileEnvironment.PHARO_LAUNCHER_MCP_PROFILE;
   const runId = sanitizeRuntimeId(
     options.runId ?? defaultRunId(context.now ?? new Date(), context.pid ?? process.pid),
   );
   const workspaceId = sanitizeRuntimeId(options.workspaceId ?? runId);
   const targetId = sanitizeRuntimeId(
-    options.targetId ?? `${options.projectId}--${workspaceId}`,
+    options.targetId ?? `${projectId}--${workspaceId}`,
   );
 
   validatePrefix(
@@ -121,6 +177,7 @@ export function buildLiveSmokeRunPlan(options, context = {}) {
     approvalProfile,
     launcherProfile,
     launcherProfileRoot,
+    launcherProfileEnvironment,
     runId,
     workspaceId,
     targetId,
@@ -135,6 +192,29 @@ export function assertFreshPharoLauncherMcpHealth(healthResult, runtime = {}) {
   const remediation =
     "Use --pharoLauncherMcpRepoDir, PLEXUS_SMOKE_PHARO_LAUNCHER_MCP_REPO_DIR, or PHARO_LAUNCHER_MCP_REPO_DIR to run the smoke against the current pharo-launcher-mcp component source or packed artifact.";
 
+  const discovery = assertPharoLauncherMcpDiscoveryMetadata(
+    healthResult,
+    runtime,
+  );
+
+  const health = healthResult.health;
+  if (healthResult.ok !== true || health.ok !== true) {
+    throw new Error(
+      `pharo-launcher-mcp preflight failed before image mutation for ${runtimeLabel}. ${remediation} Health: ${JSON.stringify(healthResult)}`,
+    );
+  }
+
+  return discovery;
+}
+
+export function assertPharoLauncherMcpDiscoveryMetadata(
+  healthResult,
+  runtime = {},
+) {
+  const runtimeLabel = pharoLauncherMcpRuntimeLabel(runtime);
+  const remediation =
+    "Use --pharoLauncherMcpRepoDir, PLEXUS_SMOKE_PHARO_LAUNCHER_MCP_REPO_DIR, or PHARO_LAUNCHER_MCP_REPO_DIR to run the smoke against the current pharo-launcher-mcp component source or packed artifact.";
+
   if (!healthResult || typeof healthResult !== "object") {
     throw new Error(
       `pharo-launcher-mcp preflight failed before image mutation: --health did not return a JSON object for ${runtimeLabel}. ${remediation}`,
@@ -142,9 +222,9 @@ export function assertFreshPharoLauncherMcpHealth(healthResult, runtime = {}) {
   }
 
   const health = healthResult.health;
-  if (healthResult.ok !== true || !health || health.ok !== true) {
+  if (!health || typeof health !== "object") {
     throw new Error(
-      `pharo-launcher-mcp preflight failed before image mutation for ${runtimeLabel}. ${remediation} Health: ${JSON.stringify(healthResult)}`,
+      `pharo-launcher-mcp preflight failed before image mutation: --health did not return health details for ${runtimeLabel}. ${remediation}`,
     );
   }
 

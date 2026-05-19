@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import path from "node:path";
 import test from "node:test";
 import {
+  assertPharoLauncherMcpDiscoveryMetadata,
   assertFreshPharoLauncherMcpHealth,
   buildLiveSmokeRunPlan,
   defaultRunId,
@@ -59,16 +60,6 @@ test("requires approval, artifact, and state inputs", () => {
       ),
     /--stateRoot is required/,
   );
-  assert.throws(
-    () =>
-      buildLiveSmokeRunPlan(
-        baseOptions({
-          launcherProfileRoot: undefined,
-        }),
-        { repoRoot },
-      ),
-    /--launcherProfileRoot is required/,
-  );
 });
 
 test("rejects shared PLexus source paths", () => {
@@ -100,6 +91,34 @@ test("allocates stable run, workspace, target, and artifact ids", () => {
   assert.equal(
     plan.artifactDirectory,
     path.join(path.resolve("C:/work/artifacts"), plan.runId),
+  );
+});
+
+test("defaults launcher profile to the project-owned root used by project-open", () => {
+  const plan = buildLiveSmokeRunPlan(
+    baseOptions({
+      launcherProfile: undefined,
+      launcherProfileRoot: undefined,
+      projectId: "Project A",
+    }),
+    { repoRoot },
+  );
+  const profileRoot = path.join(
+    path.resolve("C:/work/state"),
+    "profiles",
+    "pharo-launcher-mcp",
+    "Project-A",
+  );
+
+  assert.equal(plan.launcherProfile, "plexus-Project-A");
+  assert.equal(plan.launcherProfileRoot, profileRoot);
+  assert.equal(
+    plan.launcherProfileEnvironment.PHARO_LAUNCHER_MCP_LAUNCHER_IMAGE,
+    path.join(profileRoot, "launcher", "PharoLauncher.image"),
+  );
+  assert.equal(
+    plan.launcherProfileEnvironment.PHARO_LAUNCHER_MCP_LAUNCHER_CONFIGURATION,
+    path.join(profileRoot, "launcher", "pharo-launcher-cli-config.ston"),
   );
 });
 
@@ -169,6 +188,29 @@ test("accepts fresh pharo-launcher-mcp health with discovery metadata", () => {
         config: {
           discovery: {
             source: "macos-system-app",
+          },
+        },
+      },
+    },
+    { source: "env", repoDir: "C:/work/pharo-launcher-mcp" },
+  );
+
+  assert.equal(preflight.discoverySource, "macos-system-app");
+});
+
+test("accepts discovery metadata before profile launcher image staging", () => {
+  const preflight = assertPharoLauncherMcpDiscoveryMetadata(
+    {
+      ok: true,
+      health: {
+        ok: false,
+        config: {
+          discovery: {
+            source: "macos-system-app",
+          },
+          launcherImage: {
+            path: "C:/work/state/profiles/pharo-launcher-mcp/project/launcher/PharoLauncher.image",
+            exists: false,
           },
         },
       },
