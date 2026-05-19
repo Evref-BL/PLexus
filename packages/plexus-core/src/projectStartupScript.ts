@@ -1,5 +1,11 @@
 import fs from "node:fs";
-import { projectConfigId, type ProjectConfig, type ProjectImageConfig } from "./projectConfig.js";
+import {
+  projectConfigId,
+  type ProjectConfig,
+  type ProjectImageConfig,
+  type ProjectImageGitTransport,
+  type ProjectImageSshConfig,
+} from "./projectConfig.js";
 import {
   dirnamePathLike,
   isAbsolutePathLike,
@@ -115,18 +121,79 @@ function smalltalkPath(value: string): string {
   return smalltalkString(value.replace(/\\/g, "/"));
 }
 
+function icebergRemoteTypeSelector(
+  transport: ProjectImageGitTransport,
+): string {
+  switch (transport) {
+    case "http":
+      return "#httpUrl";
+    case "https":
+      return "#httpsUrl";
+    case "ssh":
+      return "#scpUrl";
+  }
+}
+
+function sshUsername(ssh: ProjectImageSshConfig | undefined): string {
+  return ssh?.username ?? "git";
+}
+
+function sshHasCustomKeys(ssh: ProjectImageSshConfig | undefined): boolean {
+  return Boolean(ssh?.publicKey && ssh.privateKey);
+}
+
+function sshRemoteUrlPrefix(
+  ssh: ProjectImageSshConfig | undefined,
+): string | undefined {
+  if (!ssh?.host) {
+    return undefined;
+  }
+
+  return `ssh://${sshUsername(ssh)}@${ssh.host}${ssh.port ? `:${ssh.port}` : ""}/`;
+}
+
+function generateGitHubSshRemoteScript(
+  ssh: ProjectImageSshConfig | undefined,
+): string[] {
+  const remoteUrlPrefix = sshRemoteUrlPrefix(ssh);
+  if (!remoteUrlPrefix) {
+    return [];
+  }
+
+  const remoteTemplate = `${remoteUrlPrefix}{projectPath}.git`;
+  const methodSource = [
+    "scpUrl",
+    `\t^ ${smalltalkString(remoteUrlPrefix)}, projectPath, '.git'`,
+  ].join("\n");
+
+  return [
+    `Smalltalk globals at: #PLexusGitSshRemoteTemplate put: ${smalltalkString(remoteTemplate)}.`,
+    `(Smalltalk globals includesKey: #MCGitHubRepository)`,
+    `  ifTrue: [`,
+    `    (Smalltalk globals at: #MCGitHubRepository)`,
+    `      compile: ${smalltalkString(methodSource)}`,
+    `      classified: 'accessing' ]`,
+    `  ifFalse: [ Error signal: 'MCGitHubRepository class is not available for explicit SSH GitHub remote configuration.' ].`,
+  ];
+}
+
 function generateGitConfigurationScript(imageConfig: ProjectImageConfig): string {
   if (!imageConfig.git) {
     return "";
   }
 
   const git = imageConfig.git;
+  const hasCustomSshKeys = sshHasCustomKeys(git.ssh);
   const requiresCredentialsProvider = Boolean(
-    git.ssh || git.plainCredentials,
+    hasCustomSshKeys || git.plainCredentials,
   );
   const lines = [
     `"Configure image-local Git transport and credentials."`,
     `Smalltalk globals at: #PLexusGitTransport put: ${smalltalkString(git.transport)}.`,
+    `(Smalltalk globals includesKey: #Iceberg)`,
+    `  ifTrue: [ (Smalltalk globals at: #Iceberg) remoteTypeSelector: ${icebergRemoteTypeSelector(git.transport)}. ]`,
+    `  ifFalse: [ nil ].`,
+    ...generateGitHubSshRemoteScript(git.transport === "ssh" ? git.ssh : undefined),
     `(Smalltalk globals includesKey: #IceCredentialsProvider)`,
     `  ifTrue: [`,
     `  | credentialsProvider |`,
@@ -134,13 +201,13 @@ function generateGitConfigurationScript(imageConfig: ProjectImageConfig): string
   ];
 
   if (git.transport === "ssh") {
-    if (git.ssh) {
+    if (hasCustomSshKeys) {
       lines.push(
         `  credentialsProvider useCustomSsh: true.`,
         `  credentialsProvider sshCredentials`,
-        `    username: 'git';`,
-        `    publicKey: ${smalltalkPath(git.ssh.publicKey)};`,
-        `    privateKey: ${smalltalkPath(git.ssh.privateKey)}.`,
+        `    username: ${smalltalkString(sshUsername(git.ssh))};`,
+        `    publicKey: ${smalltalkPath(git.ssh!.publicKey!)};`,
+        `    privateKey: ${smalltalkPath(git.ssh!.privateKey!)}.`,
       );
     } else {
       lines.push(

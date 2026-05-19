@@ -22,6 +22,7 @@ import {
   formatToolFailure,
   isPathInside,
   mcpPharoTonelLoadScriptSource,
+  smokeProjectConfig,
 } from "./live-smoke-runner-policy.mjs";
 
 const scriptPath = fileURLToPath(import.meta.url);
@@ -273,7 +274,7 @@ function usage() {
     "  --keepTemp                   Keep generated temp project/state/fixture dirs",
     "",
     "Image spec JSON fields:",
-    "  id, imageName, copyFromImageName, port, loadScript, active",
+    "  id, imageName, copyFromImageName, port, loadScript, active, git",
     "",
     "Step JSON fields:",
     "  imageId, forEachImage, toolName, arguments, expectedText",
@@ -430,6 +431,7 @@ function normalizeImageSpecs(options) {
       port,
       loadScript: stringProperty(rawImage, "loadScript") ?? options.loadScript,
       usesDefaultLoadScript: stringProperty(rawImage, "loadScript") === undefined,
+      git: objectProperty(rawImage, "git"),
       active,
       copied: false,
       index,
@@ -505,6 +507,17 @@ function booleanProperty(value, key) {
   return property;
 }
 
+function objectProperty(value, key) {
+  const property = value[key];
+  if (property === undefined) {
+    return undefined;
+  }
+  if (!property || typeof property !== "object" || Array.isArray(property)) {
+    throw new Error(`${key} must be a JSON object`);
+  }
+  return property;
+}
+
 function ownedTempDirectory(prefix) {
   return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
 }
@@ -538,19 +551,7 @@ function writeSmokeProjectConfig(options) {
   fs.mkdirSync(stateRoot, { recursive: true });
   fs.mkdirSync(fixtureRoot, { recursive: true });
 
-  const config = {
-    id: options.projectId,
-    name: "plexus-smoke-open-route-close",
-    images: options.images.map((image) => ({
-      id: image.id,
-      imageName: image.imageName,
-      active: image.active,
-      mcp: {
-        loadScript: image.loadScript,
-        ...(image.port ? { port: image.port } : {}),
-      },
-    })),
-  };
+  const config = smokeProjectConfig(options);
 
   fs.writeFileSync(
     path.join(projectRoot, "plexus.project.json"),

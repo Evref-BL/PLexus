@@ -14,6 +14,7 @@ import {
   isPathInside,
   mcpPharoTonelLoadScriptSource,
   parseTimeoutBudget,
+  smokeProjectConfig,
 } from "./live-smoke-runner-policy.mjs";
 
 const repoRoot = path.resolve("C:/work/PLexus");
@@ -230,6 +231,61 @@ test("allows explicit remote MCP fallback while recording missing load scripts",
   } finally {
     fs.rmSync(projectRoot, { recursive: true, force: true });
   }
+});
+
+test("records Git transport for explicit remote MCP fallback", () => {
+  const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), "plexus-smoke-project-"));
+  try {
+    const checked = assertSmokeLoadScriptsReady({
+      projectRoot,
+      allowRemoteMcpFallback: true,
+      images: [
+        {
+          id: "dev",
+          loadScript: "pharo/missing-load-mcp.st",
+          git: {
+            transport: "https",
+          },
+        },
+      ],
+    });
+
+    assert.equal(checked[0].exists, false);
+    assert.equal(checked[0].gitTransport, "https");
+  } finally {
+    fs.rmSync(projectRoot, { recursive: true, force: true });
+  }
+});
+
+test("renders image Git transport into smoke project config", () => {
+  const config = smokeProjectConfig({
+    projectId: "smoke-transport",
+    images: [
+      {
+        id: "dev",
+        imageName: "PlexusSmokeDev",
+        active: true,
+        loadScript: "/tmp/load-mcp.st",
+        git: {
+          transport: "ssh",
+          ssh: {
+            username: "git",
+            host: "ssh.github.com",
+            port: 443,
+          },
+        },
+      },
+    ],
+  });
+
+  assert.deepEqual(config.images[0].git, {
+    transport: "ssh",
+    ssh: {
+      username: "git",
+      host: "ssh.github.com",
+      port: 443,
+    },
+  });
 });
 
 test("renders local MCP-Pharo Tonel load script source", () => {

@@ -245,6 +245,7 @@ export function assertSmokeLoadScriptsReady(options, context = {}) {
       loadScript: image.loadScript,
       resolvedPath,
       exists,
+      gitTransport: image.git?.transport,
     });
 
     if (!exists && !options.allowRemoteMcpFallback) {
@@ -258,6 +259,23 @@ export function assertSmokeLoadScriptsReady(options, context = {}) {
   }
 
   return checked;
+}
+
+export function smokeProjectConfig(options) {
+  return {
+    id: requiredString(options.projectId, "projectId"),
+    name: "plexus-smoke-open-route-close",
+    images: (options.images ?? []).map((image) => ({
+      id: image.id,
+      imageName: image.imageName,
+      active: image.active,
+      mcp: {
+        loadScript: image.loadScript,
+        ...(image.port ? { port: image.port } : {}),
+      },
+      ...(image.git ? { git: image.git } : {}),
+    })),
+  };
 }
 
 export function collectLauncherLogFiles({ logsDir, imageNames = [] }) {

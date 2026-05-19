@@ -468,6 +468,9 @@ describe("project config", () => {
     config.images[1].git = {
       transport: "ssh",
       ssh: {
+        username: "git",
+        host: "ssh.github.com",
+        port: 443,
         publicKey: "C:\\Users\\me\\.ssh\\id_rsa.pub",
         privateKey: "C:\\Users\\me\\.ssh\\id_rsa",
       },
@@ -484,6 +487,9 @@ describe("project config", () => {
       {
         transport: "ssh",
         ssh: {
+          username: "git",
+          host: "ssh.github.com",
+          port: 443,
           publicKey: "C:\\Users\\me\\.ssh\\id_rsa.pub",
           privateKey: "C:\\Users\\me\\.ssh\\id_rsa",
         },
@@ -517,6 +523,28 @@ describe("project config", () => {
         expect.arrayContaining([
           "images[0].git.plainCredentials can only be used with https or http",
           "images[1].git.ssh can only be used with ssh",
+        ]),
+      );
+    }
+  });
+
+  it("rejects SSH port configuration without an SSH host", () => {
+    const config = validProjectConfig();
+    config.images[0].git = {
+      transport: "ssh",
+      ssh: {
+        port: 443,
+      },
+    };
+
+    expect(() => parseProjectConfig(config)).toThrow(ProjectConfigError);
+
+    try {
+      parseProjectConfig(config);
+    } catch (error) {
+      expect((error as ProjectConfigError).issues).toEqual(
+        expect.arrayContaining([
+          "images[0].git.ssh.host must be set when images[0].git.ssh.port is set",
         ]),
       );
     }

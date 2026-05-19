@@ -174,10 +174,40 @@ describe("project startup scripts", () => {
     });
 
     expect(source).toContain("credentialsProvider useCustomSsh: true.");
+    expect(source).toContain("remoteTypeSelector: #scpUrl.");
     expect(source).toContain("credentialsProvider sshCredentials");
     expect(source).toContain("username: 'git';");
     expect(source).toContain("publicKey: 'C:/Users/me/.ssh/id_rsa.pub';");
     expect(source).toContain("privateKey: 'C:/Users/me/.ssh/id_rsa'.");
+  });
+
+  it("generates image Git configuration for explicit SSH host and port", () => {
+    const projectRoot = path.join("C:", "dev", "code", "git", "my-project");
+    const source = generateImageStartupScript({
+      projectRoot,
+      imageConfig: {
+        ...config.images[0],
+        git: {
+          transport: "ssh",
+          ssh: {
+            username: "git",
+            host: "ssh.github.com",
+            port: 443,
+          },
+        },
+      },
+      imageState,
+    });
+
+    expect(source).toContain("remoteTypeSelector: #scpUrl.");
+    expect(source).toContain(
+      "Smalltalk globals at: #PLexusGitSshRemoteTemplate put: 'ssh://git@ssh.github.com:443/{projectPath}.git'.",
+    );
+    expect(source).toContain("scpUrl");
+    expect(source).toContain(
+      "^ ''ssh://git@ssh.github.com:443/'', projectPath, ''.git''",
+    );
+    expect(source).toContain("credentialsProvider useCustomSsh: false.");
   });
 
   it("generates image Git configuration for HTTPS credentials", () => {
@@ -200,10 +230,31 @@ describe("project startup scripts", () => {
     expect(source).toContain(
       "Smalltalk globals at: #PLexusGitTransport put: 'https'.",
     );
+    expect(source).toContain("remoteTypeSelector: #httpsUrl.");
     expect(source).toContain("credentialsProvider useCustomSsh: false.");
     expect(source).toContain("Smalltalk globals includesKey: #IcePlaintextCredentials");
     expect(source).toContain("username: 'git-user';");
     expect(source).toContain("password: 'token''s';");
+  });
+
+  it("generates image Git configuration for HTTP transport", () => {
+    const projectRoot = path.join("C:", "dev", "code", "git", "my-project");
+    const source = generateImageStartupScript({
+      projectRoot,
+      imageConfig: {
+        ...config.images[0],
+        git: {
+          transport: "http",
+        },
+      },
+      imageState,
+    });
+
+    expect(source).toContain(
+      "Smalltalk globals at: #PLexusGitTransport put: 'http'.",
+    );
+    expect(source).toContain("remoteTypeSelector: #httpUrl.");
+    expect(source).toContain("credentialsProvider useCustomSsh: false.");
   });
 
   it("escapes single quotes in generated Smalltalk strings", () => {

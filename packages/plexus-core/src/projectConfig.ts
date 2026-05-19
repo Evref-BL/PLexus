@@ -29,8 +29,11 @@ export interface ProjectPreparedImageMcpConfig {
 export type ProjectImageGitTransport = "ssh" | "https" | "http";
 
 export interface ProjectImageSshConfig {
-  publicKey: string;
-  privateKey: string;
+  username?: string;
+  host?: string;
+  port?: number;
+  publicKey?: string;
+  privateKey?: string;
 }
 
 export interface ProjectImagePlainCredentialsConfig {
@@ -560,9 +563,29 @@ function parseImageSshConfig(
     return undefined;
   }
 
+  const username = optionalStringField(value, "username", issues, `${pathPrefix}.ssh`);
+  const host = optionalStringField(value, "host", issues, `${pathPrefix}.ssh`);
+  const port = optionalPortField(value, "port", issues, `${pathPrefix}.ssh`);
+  if (port !== undefined && host === undefined) {
+    issues.push(`${pathPrefix}.ssh.host must be set when ${pathPrefix}.ssh.port is set`);
+  }
+
+  const hasPublicKey = value.publicKey !== undefined;
+  const hasPrivateKey = value.privateKey !== undefined;
+  const hasCustomKeys = hasPublicKey || hasPrivateKey;
+  const publicKey = hasCustomKeys
+    ? stringField(value, "publicKey", issues, `${pathPrefix}.ssh`)
+    : undefined;
+  const privateKey = hasCustomKeys
+    ? stringField(value, "privateKey", issues, `${pathPrefix}.ssh`)
+    : undefined;
+
   return {
-    publicKey: stringField(value, "publicKey", issues, `${pathPrefix}.ssh`),
-    privateKey: stringField(value, "privateKey", issues, `${pathPrefix}.ssh`),
+    ...(username ? { username } : {}),
+    ...(host ? { host } : {}),
+    ...(port ? { port } : {}),
+    ...(publicKey !== undefined ? { publicKey } : {}),
+    ...(privateKey !== undefined ? { privateKey } : {}),
   };
 }
 
