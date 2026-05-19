@@ -14,6 +14,10 @@ import {
 import { closeProject } from "./projectClose.js";
 import { openProject } from "./projectOpen.js";
 import {
+  materializeProjectImageFromHomeCache,
+  type HomeImageCacheMutationApproval,
+} from "./homeImageCache.js";
+import {
   createStdioPharoLauncherMcpClient,
   type PharoLauncherMcpToolClient,
 } from "./pharoLauncherMcpClient.js";
@@ -57,6 +61,8 @@ export interface ScopedPharoLauncherOptions {
   targetId?: string;
   stateRoot?: string;
   pharoLauncherMcpClient?: PharoLauncherMcpToolClient;
+  homeImageCacheClient?: PharoLauncherMcpToolClient;
+  homeImageCacheApproval?: HomeImageCacheMutationApproval;
   projectOpen?: typeof openProject;
   projectClose?: typeof closeProject;
   now?: () => Date;
@@ -155,6 +161,13 @@ function assertLauncherOk(
   if (result && result.ok === false) {
     throw new ScopedPharoLauncherError(`${toolName} returned ok: false`);
   }
+}
+
+function scopedMutationApproval(
+  approval: HomeImageCacheMutationApproval | undefined,
+  operation: string,
+): HomeImageCacheMutationApproval {
+  return approval ?? { approved: true, runnerId: operation };
 }
 
 function resolveScope(options: ScopedPharoLauncherOptions): ResolvedScope {
@@ -379,32 +392,59 @@ export class ScopedPharoLauncher {
     const ownsClient = !this.options.pharoLauncherMcpClient;
 
     try {
-      const result = await client.callTool<LauncherCommandResult>(
-        "pharo_launcher_image_create",
-        {
-          newImageName: renderedImageName(scope, imageConfig),
-          templateName: imageConfig.create.templateName,
-          ...(imageConfig.create.templateCategory
-            ? { templateCategory: imageConfig.create.templateCategory }
-            : {}),
-          noLaunch: true,
-        },
+      const state = stateWithCreatedImage(
+        projectConfig,
+        scope,
+        previousState,
+        imageId,
+        this.options.now?.() ?? new Date(),
       );
-      assertLauncherOk(result, "pharo_launcher_image_create");
+      const imageState = state.images.find((image) => image.id === imageId);
+      if (!imageState) {
+        throw new ScopedPharoLauncherError(
+          `Image ${imageId} is not declared in this PLexus workspace`,
+        );
+      }
+
+      const homeMaterialization = await materializeProjectImageFromHomeCache({
+        runtimeClient: client,
+        homeClient: this.options.homeImageCacheClient ??
+          (this.options.pharoLauncherMcpClient ? client : undefined),
+        projectRoot: scope.projectRoot,
+        config: projectConfig,
+        imageConfig,
+        imageState,
+        workspaceId: scope.workspaceId,
+        targetId: scope.targetId,
+        stateRoot: scope.stateRoot,
+        approval: scopedMutationApproval(
+          this.options.homeImageCacheApproval,
+          "scoped-pharo-launcher-create",
+        ),
+        now: this.options.now,
+      });
+
+      if (!homeMaterialization) {
+        const result = await client.callTool<LauncherCommandResult>(
+          "pharo_launcher_image_create",
+          {
+            newImageName: renderedImageName(scope, imageConfig),
+            templateName: imageConfig.create.templateName,
+            ...(imageConfig.create.templateCategory
+              ? { templateCategory: imageConfig.create.templateCategory }
+              : {}),
+            noLaunch: true,
+          },
+        );
+        assertLauncherOk(result, "pharo_launcher_image_create");
+      }
+
+      saveProjectState(statePath, state);
     } finally {
       if (ownsClient) {
         await client.close?.();
       }
     }
-
-    const state = stateWithCreatedImage(
-      projectConfig,
-      scope,
-      previousState,
-      imageId,
-      this.options.now?.() ?? new Date(),
-    );
-    saveProjectState(statePath, state);
 
     return this.imageInfo(imageId);
   }
@@ -428,6 +468,12 @@ export class ScopedPharoLauncher {
       targetId: scope.targetId,
       stateRoot: scope.stateRoot,
       imageIds: [imageId],
+      homeImageCacheApproval: scopedMutationApproval(
+        this.options.homeImageCacheApproval,
+        "scoped-pharo-launcher-start",
+      ),
+      homeImageCacheClient: this.options.homeImageCacheClient ??
+        this.options.pharoLauncherMcpClient,
     });
 
     return this.imageInfo(imageId);

@@ -115,6 +115,10 @@ function parseArgs(argv) {
       case "--fixtureRoot":
         options.fixtureRoot = next();
         break;
+      case "--homePath":
+        options.homePath = next();
+        options.homePathExplicit = true;
+        break;
       case "--workspaceId":
         options.workspaceId = next();
         break;
@@ -205,6 +209,8 @@ function parseArgs(argv) {
     process.env.PLEXUS_SMOKE_REQUIRED_TARGET_PREFIX;
   options.stateRoot ??= process.env.PLEXUS_SMOKE_STATE_ROOT;
   options.fixtureRoot ??= process.env.PLEXUS_SMOKE_FIXTURE_ROOT;
+  options.homePath ??= process.env.PLEXUS_SMOKE_HOME_PATH;
+  options.homePathExplicit ||= process.env.PLEXUS_SMOKE_HOME_PATH !== undefined;
   options.createSourceFromTemplate ||= booleanEnv(
     process.env.PLEXUS_SMOKE_CREATE_SOURCE_FROM_TEMPLATE,
   );
@@ -273,6 +279,7 @@ function usage() {
     "  --projectRoot <path>          Defaults to an owned temp project",
     "  --stateRoot <path>            Required disposable state root",
     "  --fixtureRoot <path>          Defaults to an owned temp root for scenario repos",
+    "  --homePath <path>             PLexus home used for home image cache smoke runs",
     "  --workspaceId <id>            Defaults to a unique smoke id",
     "  --targetId <id>               Overrides the runtime target id",
     "  --projectId <id>              Defaults to smoke-open-route-close",
@@ -293,7 +300,7 @@ function usage() {
     "  --keepTemp                   Keep generated temp project/state/fixture dirs",
     "",
     "Image spec JSON fields:",
-    "  id, imageName, copyFromImageName, port, loadScript, active, git",
+    "  id, imageName, copyFromImageName, create, port, loadScript, active, git",
     "",
     "Step JSON fields:",
     "  imageId, forEachImage, toolName, arguments, expectedText",
@@ -439,11 +446,13 @@ function normalizeImageSpecs(options) {
       throw new Error(`Image ${id} must be active for this smoke`);
     }
     const imageLoadScript = stringProperty(rawImage, "loadScript");
+    const create = objectProperty(rawImage, "create");
 
     return {
       id,
       imageName,
       copyFromImageName,
+      create,
       port,
       loadScript: imageLoadScript ?? options.loadScript,
       usesDefaultLoadScript: usesDefaultSmokeLoadScript({
@@ -843,6 +852,71 @@ function stageLauncherProfileImage(options, healthResult) {
     copiedFiles,
   });
   textResult("launcher profile image", targetImage);
+}
+
+function stageHomeLauncherProfileImage(options, healthResult) {
+  if (!options.homePath) {
+    return;
+  }
+
+  const sourceImage = path.resolve(
+    profileHealthPath(healthResult, "installationLauncherImage"),
+  );
+  const profileRoot = path.join(
+    path.resolve(options.homePath),
+    "profiles",
+    "pharo-launcher-mcp",
+    "image-cache",
+  );
+  const targetImage = path.join(profileRoot, "launcher", "PharoLauncher.image");
+  if (!isPathInside(path.resolve(options.homePath), profileRoot)) {
+    throw new Error(
+      `Refusing to stage home launcher profile outside --homePath: ${profileRoot}`,
+    );
+  }
+  if (!fs.existsSync(sourceImage)) {
+    throw new Error(
+      `Cannot stage home launcher profile image; source PharoLauncher.image does not exist: ${sourceImage}`,
+    );
+  }
+
+  const copiedFiles = [];
+  copyLauncherProfileFile(sourceImage, targetImage, copiedFiles);
+
+  const sourceDirectory = path.dirname(sourceImage);
+  const sourceBase = path.join(
+    sourceDirectory,
+    `${path.basename(sourceImage, path.extname(sourceImage))}.changes`,
+  );
+  copyLauncherProfileFile(
+    sourceBase,
+    path.join(path.dirname(targetImage), path.basename(sourceBase)),
+    copiedFiles,
+  );
+
+  for (const entry of fs.readdirSync(sourceDirectory, { withFileTypes: true })) {
+    if (entry.isFile() && entry.name.endsWith(".sources")) {
+      copyLauncherProfileFile(
+        path.join(sourceDirectory, entry.name),
+        path.join(path.dirname(targetImage), entry.name),
+        copiedFiles,
+      );
+    }
+  }
+
+  recordEvent(options, "home-launcher-profile-image-staged", {
+    sourceImage,
+    targetImage,
+    profileRoot,
+    copiedFiles,
+  });
+  snapshotJsonArtifact(options, "home-launcher-profile-staging.json", {
+    sourceImage,
+    targetImage,
+    profileRoot,
+    copiedFiles,
+  });
+  textResult("home launcher profile image", targetImage);
 }
 
 function recordEvent(options, event, details = {}) {
@@ -1717,7 +1791,14 @@ async function prepareImages(client, options) {
       }
     }
 
-    if (!(await imageExists(client, image.imageName))) {
+    if (image.create && !image.copyFromImageName) {
+      textResult("template-created target image", `${image.id}=${image.imageName}`);
+      if (await imageExists(client, image.imageName)) {
+        throw new Error(
+          `Target smoke image already exists in PharoLauncher: ${image.imageName}`,
+        );
+      }
+    } else if (!(await imageExists(client, image.imageName))) {
       throw new Error(`Image does not exist in PharoLauncher: ${image.imageName}`);
     }
 
@@ -1848,6 +1929,7 @@ async function main() {
     eventName: "pharo-launcher-mcp-discovery-preflight-ok",
   });
   stageLauncherProfileImage(options, discoveryPreflight.health);
+  stageHomeLauncherProfileImage(options, discoveryPreflight.health);
   const launcherMcpPreflight = preflightPharoLauncherMcpRuntime(options);
   const client = await createStdioPharoLauncherMcpClient(
     launcherMcpPreflight.config,
@@ -2065,6 +2147,17 @@ async function main() {
           if (image.copied) {
             console.error(`cleanup: deleting copied image ${image.imageName}`);
             recordEvent(options, "copied-image-delete", {
+              imageId: image.id,
+              imageName: image.imageName,
+            });
+            await callLauncherTool(client, "pharo_launcher_image_delete", {
+              imageName: image.imageName,
+              force: true,
+              confirm: true,
+            });
+          } else if (image.create) {
+            console.error(`cleanup: deleting created runtime image ${image.imageName}`);
+            recordEvent(options, "created-runtime-image-delete", {
               imageId: image.id,
               imageName: image.imageName,
             });

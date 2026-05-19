@@ -3,6 +3,7 @@ import {
   loadProjectConfig,
   projectConfigId,
   resolveProjectRuntimePolicy,
+  type ProjectImageConfig,
 } from "./projectConfig.js";
 import {
   defaultImagePortClaimChecks,
@@ -20,6 +21,11 @@ import {
   copyProjectImageFromPreparedCache,
   type PreparedImageCacheMutationApproval,
 } from "./preparedImageCache.js";
+import {
+  materializeProjectImageFromHomeCache,
+  projectImageCanUseHomeImageCache,
+  type HomeImageCacheMutationApproval,
+} from "./homeImageCache.js";
 import { pharoLauncherMcpProfileEnvironment } from "./pharoLauncherProfile.js";
 import {
   HttpPharoMcpHealthClient,
@@ -74,6 +80,8 @@ export interface ProjectOpenOptions {
   sleep?: (durationMs: number) => Promise<void>;
   portClaimChecks?: PortClaimChecks;
   preparedImageCacheApproval?: PreparedImageCacheMutationApproval;
+  homeImageCacheApproval?: HomeImageCacheMutationApproval;
+  homeImageCacheClient?: PharoLauncherMcpToolClient;
 }
 
 export interface ProjectOpenFailure {
@@ -313,6 +321,26 @@ function applyScopedImageSelection(
   }
 }
 
+function previousImageState(
+  previousState: ProjectState | undefined,
+  imageId: string,
+): ProjectImageState | undefined {
+  return previousState?.images.find((image) => image.id === imageId);
+}
+
+function shouldMaterializeImageFromHomeCache(options: {
+  previousState: ProjectState | undefined;
+  imageConfig: ProjectImageConfig;
+  imageState: ProjectImageState;
+  approval: HomeImageCacheMutationApproval | undefined;
+}): boolean {
+  return Boolean(
+    options.approval &&
+      projectImageCanUseHomeImageCache(options.imageConfig) &&
+      !previousImageState(options.previousState, options.imageState.id),
+  );
+}
+
 export async function openProject(
   options: ProjectOpenOptions,
 ): Promise<ProjectOpenResult> {
@@ -414,14 +442,39 @@ export async function openProject(
       }
 
       try {
-        await copyProjectImageFromPreparedCache({
-          client,
-          projectRoot,
-          config,
-          imageConfig,
-          imageState,
-          approval: options.preparedImageCacheApproval,
-        });
+        const homeMaterialization =
+          shouldMaterializeImageFromHomeCache({
+            previousState,
+            imageConfig,
+            imageState,
+            approval: options.homeImageCacheApproval,
+          })
+            ? await materializeProjectImageFromHomeCache({
+                runtimeClient: client,
+                homeClient: options.homeImageCacheClient ??
+                  (options.pharoLauncherMcpClient ? client : undefined),
+                projectRoot,
+                config,
+                imageConfig,
+                imageState,
+                workspaceId,
+                targetId: state.targetId,
+                stateRoot: resolvedStateRoot,
+                approval: options.homeImageCacheApproval,
+                now,
+              })
+            : undefined;
+
+        if (!homeMaterialization) {
+          await copyProjectImageFromPreparedCache({
+            client,
+            projectRoot,
+            config,
+            imageConfig,
+            imageState,
+            approval: options.preparedImageCacheApproval,
+          });
+        }
 
         const startupScript = writeProjectImageStartupScript({
           projectRoot,

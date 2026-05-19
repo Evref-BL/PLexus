@@ -12,6 +12,7 @@ import {
   homeImageCacheProfile,
   inferPharoMajorVersionFromTemplateText,
   listHomeImageCacheManifests,
+  materializeProjectImageFromHomeCache,
   planHomeImageCacheFlush,
   readHomeImageCacheManifest,
   releaseHomeImageCacheLock,
@@ -20,6 +21,7 @@ import {
   writeHomeImageCacheManifest,
   writeHomeImageCachePreparationScript,
 } from "./homeImageCache.js";
+import type { PharoLauncherMcpToolClient } from "./pharoLauncherMcpClient.js";
 import { parseProjectConfig, type ProjectConfig } from "./projectConfig.js";
 import type { ProjectImageState } from "./projectState.js";
 
@@ -63,6 +65,19 @@ const imageState: ProjectImageState = {
   assignedPort: 7123,
   status: "starting",
 };
+
+function fakeLauncherClient() {
+  const calls: Array<{ name: string; argumentsValue: Record<string, unknown> }> =
+    [];
+  const client: PharoLauncherMcpToolClient = {
+    async callTool(name, argumentsValue = {}) {
+      calls.push({ name, argumentsValue });
+      return { ok: true };
+    },
+  };
+
+  return { client, calls };
+}
 
 afterEach(() => {
   for (const tempDir of tempDirs.splice(0)) {
@@ -207,6 +222,11 @@ describe("home image cache", () => {
 
     expect(plan.status).toBe("miss");
     expect(plan.homePath).toBe(path.join(homeDirectory, ".plexus"));
+    expect(plan.refreshTemplateCatalog).toMatchObject({
+      toolName: "pharo_launcher_template_update",
+      argumentsValue: {},
+      requiresApproval: true,
+    });
     expect(plan.createCacheImage).toMatchObject({
       toolName: "pharo_launcher_image_create",
       argumentsValue: {
@@ -424,5 +444,108 @@ describe("home image cache", () => {
     flushHomeImageCache(flushPlan);
     expect(fs.existsSync(enabled.entryDirectory)).toBe(false);
     expect(fs.existsSync(enabled.lockPath)).toBe(false);
+  });
+
+  it("executes a cache miss by creating, preparing, manifesting, and copying the runtime image", async () => {
+    const projectRoot = makeTempDir("plexus-project-");
+    const homeDirectory = makeTempDir("plexus-user-home-");
+    const projectConfig = config();
+    const home = fakeLauncherClient();
+    const runtime = fakeLauncherClient();
+
+    const result = await materializeProjectImageFromHomeCache({
+      runtimeClient: runtime.client,
+      homeClient: home.client,
+      projectRoot,
+      config: projectConfig,
+      imageConfig: projectConfig.images[0]!,
+      imageState,
+      workspaceId: "worktree-a",
+      targetId: "project-123--worktree-a",
+      homeDirectory,
+      approval: {
+        approved: true,
+        runnerId: "runner-1",
+      },
+      now: () => new Date("2026-05-19T10:00:00.000Z"),
+    });
+
+    expect(result?.plan.status).toBe("miss");
+    expect(result?.operations.map((operation) => operation.toolName)).toEqual([
+      "pharo_launcher_template_update",
+      "pharo_launcher_image_create",
+      "pharo_launcher_image_launch",
+      "pharo_launcher_image_copy_between_profiles",
+    ]);
+    expect(home.calls.map((call) => call.name)).toEqual([
+      "pharo_launcher_template_update",
+      "pharo_launcher_image_create",
+      "pharo_launcher_image_launch",
+    ]);
+    expect(runtime.calls).toEqual([
+      {
+        name: "pharo_launcher_image_copy_between_profiles",
+        argumentsValue: expect.objectContaining({
+          sourceImageName: result!.plan.cacheImageName,
+          destinationImageName: "MyProject-worktree-a-dev",
+        }),
+      },
+    ]);
+    expect(readHomeImageCacheManifest(result!.plan.manifestPath)).toMatchObject({
+      status: "ok",
+      manifest: {
+        key: result!.plan.key,
+        pharoMcp: {
+          preparationStatus: "prepared",
+        },
+      },
+    });
+    expect(fs.existsSync(result!.plan.lockPath)).toBe(false);
+  });
+
+  it("executes a cache hit by copying from the existing home cache image", async () => {
+    const projectRoot = makeTempDir("plexus-project-");
+    const homeDirectory = makeTempDir("plexus-user-home-");
+    const projectConfig = config();
+    const initial = buildHomeImageCachePlan({
+      projectRoot,
+      config: projectConfig,
+      imageConfig: projectConfig.images[0]!,
+      imageState,
+      workspaceId: "worktree-a",
+      targetId: "project-123--worktree-a",
+      homeDirectory,
+    });
+    writeHomeImageCacheManifest({
+      ...initial.expectedManifest,
+      pharoMcp: {
+        ...initial.expectedManifest.pharoMcp,
+        preparationStatus: "prepared",
+      },
+    });
+    const home = fakeLauncherClient();
+    const runtime = fakeLauncherClient();
+
+    const result = await materializeProjectImageFromHomeCache({
+      runtimeClient: runtime.client,
+      homeClient: home.client,
+      projectRoot,
+      config: projectConfig,
+      imageConfig: projectConfig.images[0]!,
+      imageState,
+      workspaceId: "worktree-a",
+      targetId: "project-123--worktree-a",
+      homeDirectory,
+      approval: {
+        approved: true,
+        runnerId: "runner-1",
+      },
+    });
+
+    expect(result?.plan.status).toBe("hit");
+    expect(home.calls).toEqual([]);
+    expect(runtime.calls.map((call) => call.name)).toEqual([
+      "pharo_launcher_image_copy_between_profiles",
+    ]);
   });
 });

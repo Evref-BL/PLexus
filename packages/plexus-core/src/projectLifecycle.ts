@@ -38,6 +38,24 @@ import {
   type PortClaimRecord,
 } from "./portClaims.js";
 import {
+  flushHomeImageCache,
+  homeImageCacheManifestPath,
+  homeImageCacheProfile,
+  homeImageCacheRootPath,
+  listHomeImageCacheManifests,
+  planHomeImageCacheFlush,
+  profileEnvironmentFromPaths,
+  readHomeImageCacheManifest,
+  resolvePlexusHomePath,
+  type HomeImageCacheFlushPlan,
+  type HomeImageCacheManifest,
+  type HomeImageCacheManifestReadResult,
+} from "./homeImageCache.js";
+import {
+  createStdioPharoLauncherMcpClient,
+  type PharoLauncherMcpToolClient,
+} from "./pharoLauncherMcpClient.js";
+import {
   openProject,
   ProjectOpenError,
   type ProjectOpenResult,
@@ -116,6 +134,7 @@ const defaultGatewayRouteControlMcpPath = "/control-mcp";
 export interface ProjectLifecycleOptions {
   routeRegistry?: ProjectLifecycleRouteRegistry;
   imageToolCaller?: ProjectLifecycleImageToolCaller;
+  homeImageCacheClient?: PharoLauncherMcpToolClient;
   projectOpen?: typeof openProject;
   projectClose?: typeof closeProject;
   imageRescue?: typeof rescueImage;
@@ -161,6 +180,45 @@ export interface RescueImageToolInput extends ProjectStatusToolInput {
   loadRepositories?: boolean;
   repositoryActions?: ImageRescueRepositoryAction[];
   confirm?: boolean;
+}
+
+export interface ProjectHomeImageCacheToolInput {
+  projectPath: string;
+  key?: string;
+}
+
+export interface ProjectHomeImageCacheFlushToolInput
+  extends ProjectHomeImageCacheToolInput {
+  confirm?: boolean;
+}
+
+export interface ProjectHomeImageCacheEntryStatus {
+  key: string;
+  status: HomeImageCacheManifestReadResult["status"];
+  manifestPath: string;
+  cacheImageName?: string;
+  preparationStatus?: string;
+  supportStatus?: string;
+  createdAt?: string;
+  updatedAt?: string;
+  error?: string;
+}
+
+export interface ProjectHomeImageCacheStatus {
+  projectRoot: string;
+  homePath: string;
+  cacheRoot: string;
+  entries: ProjectHomeImageCacheEntryStatus[];
+}
+
+export interface ProjectHomeImageCacheFlushResult
+  extends ProjectHomeImageCacheStatus {
+  deletedImages: string[];
+  flushedEntries: HomeImageCacheFlushPlan["entries"];
+}
+
+interface LauncherCommandResult {
+  ok: boolean;
 }
 
 export interface ProjectLifecycleStatus {
@@ -568,6 +626,40 @@ function failure<T = unknown>(error: unknown): ProjectLifecycleToolResult<T> {
     ok: false,
     error: error instanceof Error ? error.message : String(error),
     diagnostics,
+  };
+}
+
+function assertLauncherOk(
+  result: LauncherCommandResult | undefined,
+  toolName: string,
+): void {
+  if (result && result.ok === false) {
+    throw new Error(`${toolName} returned ok: false`);
+  }
+}
+
+function cacheEntryStatusFromReadResult(
+  readResult: HomeImageCacheManifestReadResult,
+): ProjectHomeImageCacheEntryStatus {
+  const key = path.basename(path.dirname(readResult.manifestPath));
+  if (readResult.status === "ok") {
+    return {
+      key: readResult.manifest.key,
+      status: "ok",
+      manifestPath: readResult.manifestPath,
+      cacheImageName: readResult.manifest.cacheImageName,
+      preparationStatus: readResult.manifest.pharoMcp.preparationStatus,
+      supportStatus: readResult.manifest.pharoMcp.support.status,
+      createdAt: readResult.manifest.createdAt,
+      updatedAt: readResult.manifest.updatedAt,
+    };
+  }
+
+  return {
+    key,
+    status: readResult.status,
+    manifestPath: readResult.manifestPath,
+    ...(readResult.status === "corrupt" ? { error: readResult.error } : {}),
   };
 }
 
@@ -1097,6 +1189,7 @@ export class HttpGatewayRouteRegistry implements ProjectLifecycleRouteRegistry {
 export class PlexusProjectLifecycle {
   private readonly routeRegistry?: ProjectLifecycleRouteRegistry;
   private readonly imageToolCaller?: ProjectLifecycleImageToolCaller;
+  private readonly homeImageCacheClient?: PharoLauncherMcpToolClient;
   private readonly projectOpen: typeof openProject;
   private readonly projectClose: typeof closeProject;
   private readonly imageRescue: typeof rescueImage;
@@ -1105,6 +1198,7 @@ export class PlexusProjectLifecycle {
   constructor(options: ProjectLifecycleOptions = {}) {
     this.routeRegistry = options.routeRegistry;
     this.imageToolCaller = options.imageToolCaller;
+    this.homeImageCacheClient = options.homeImageCacheClient;
     this.projectOpen = options.projectOpen ?? openProject;
     this.projectClose = options.projectClose ?? closeProject;
     this.imageRescue = options.imageRescue ?? rescueImage;
@@ -1120,6 +1214,14 @@ export class PlexusProjectLifecycle {
         stateRoot: input.stateRoot,
         workspaceId: input.workspaceId,
         targetId: input.targetId,
+        preparedImageCacheApproval: {
+          approved: true,
+          runnerId: "plexus-project-open",
+        },
+        homeImageCacheApproval: {
+          approved: true,
+          runnerId: "plexus-project-open",
+        },
       });
       let routeRegistry = this.routeRegistry;
       let startedProjectGateway = false;
@@ -1158,6 +1260,110 @@ export class PlexusProjectLifecycle {
       }
 
       return result(openResult);
+    } catch (error) {
+      return failure(error);
+    }
+  }
+
+  async homeImageCacheStatus(
+    input: ProjectHomeImageCacheToolInput,
+  ): Promise<ProjectLifecycleToolResult<ProjectHomeImageCacheStatus>> {
+    try {
+      const projectRoot = path.resolve(input.projectPath);
+      const config = loadProjectConfig(projectRoot);
+      const homePath = resolvePlexusHomePath({ config });
+      const cacheRoot = homeImageCacheRootPath(homePath);
+      const entries = input.key
+        ? [
+            cacheEntryStatusFromReadResult(
+              readHomeImageCacheManifest(
+                homeImageCacheManifestPath(cacheRoot, input.key),
+              ),
+            ),
+          ]
+        : listHomeImageCacheManifests(cacheRoot).map(
+            cacheEntryStatusFromReadResult,
+          );
+
+      return result({
+        projectRoot,
+        homePath,
+        cacheRoot,
+        entries,
+      });
+    } catch (error) {
+      return failure(error);
+    }
+  }
+
+  async flushHomeImageCache(
+    input: ProjectHomeImageCacheFlushToolInput,
+  ): Promise<ProjectLifecycleToolResult<ProjectHomeImageCacheFlushResult>> {
+    try {
+      if (input.confirm !== true) {
+        throw new ProjectLifecycleInputError("confirm: true is required");
+      }
+
+      const projectRoot = path.resolve(input.projectPath);
+      const config = loadProjectConfig(projectRoot);
+      const plan = planHomeImageCacheFlush({
+        config,
+        key: input.key,
+      });
+      const homeProfile = homeImageCacheProfile(plan.homePath);
+      const manifests: HomeImageCacheManifest[] = plan.entries
+        .map((entry) => readHomeImageCacheManifest(entry.manifestPath))
+        .filter(
+          (
+            readResult,
+          ): readResult is Extract<
+            HomeImageCacheManifestReadResult,
+            { status: "ok" }
+          > => readResult.status === "ok",
+        )
+        .map((readResult) => readResult.manifest);
+      let client = this.homeImageCacheClient;
+      let ownsClient = false;
+      const deletedImages: string[] = [];
+
+      try {
+        if (manifests.length > 0 && !client) {
+          client = await createStdioPharoLauncherMcpClient(undefined, {
+            profileEnvironment: profileEnvironmentFromPaths(homeProfile),
+          });
+          ownsClient = true;
+        }
+
+        for (const manifest of manifests) {
+          const deleteResult = await client!.callTool<LauncherCommandResult>(
+            "pharo_launcher_image_delete",
+            {
+              imageName: manifest.cacheImageName,
+              force: true,
+              confirm: true,
+            },
+          );
+          assertLauncherOk(deleteResult, "pharo_launcher_image_delete");
+          deletedImages.push(manifest.cacheImageName);
+        }
+      } finally {
+        if (ownsClient) {
+          await client?.close?.();
+        }
+      }
+
+      flushHomeImageCache(plan);
+
+      return result({
+        projectRoot,
+        homePath: plan.homePath,
+        cacheRoot: plan.cacheRoot,
+        entries: listHomeImageCacheManifests(plan.cacheRoot).map(
+          cacheEntryStatusFromReadResult,
+        ),
+        deletedImages,
+        flushedEntries: plan.entries,
+      });
     } catch (error) {
       return failure(error);
     }
@@ -1340,6 +1546,19 @@ export class PlexusProjectLifecycle {
             stateRoot: optionalString(input, "stateRoot"),
             refreshHealth: optionalBoolean(input, "refreshHealth"),
             includeDiagnostics: optionalBoolean(input, "includeDiagnostics"),
+          });
+
+        case "plexus_home_image_cache_status":
+          return this.homeImageCacheStatus({
+            projectPath: requireString(input, "projectPath"),
+            key: optionalString(input, "key"),
+          });
+
+        case "plexus_home_image_cache_flush":
+          return this.flushHomeImageCache({
+            projectPath: requireString(input, "projectPath"),
+            key: optionalString(input, "key"),
+            confirm: optionalBooleanValue(input, "confirm"),
           });
 
         case "plexus_rescue_image":

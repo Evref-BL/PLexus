@@ -170,6 +170,9 @@ export function buildLiveSmokeRunPlan(options, context = {}) {
   if (options.fixtureRoot) {
     assertDisposablePath(options.fixtureRoot, "--fixtureRoot", repoRoot);
   }
+  if (options.homePath) {
+    assertDisposablePath(options.homePath, "--homePath", repoRoot);
+  }
 
   validateDisposableImages(options.images ?? []);
 
@@ -283,10 +286,21 @@ export function smokeProjectConfig(options) {
   return {
     id: requiredString(options.projectId, "projectId"),
     name: "plexus-smoke-open-route-close",
+    ...(options.homePath
+      ? {
+          home: {
+            path: path.resolve(options.homePath),
+            imageCache: {
+              enabled: true,
+            },
+          },
+        }
+      : {}),
     images: (options.images ?? []).map((image) => ({
       id: image.id,
       imageName: image.imageName,
       active: image.active,
+      ...(image.create ? { create: image.create } : {}),
       mcp: {
         loadScript: image.loadScript,
         ...(image.port ? { port: image.port } : {}),

@@ -16,6 +16,7 @@ import type {
   ProjectGatewayProcessStartOptions,
   ProjectGatewayProcessStopOptions,
 } from "./projectGateway.js";
+import type { PharoLauncherMcpToolClient } from "./pharoLauncherMcpClient.js";
 import { claimPort, inspectPortClaim } from "./portClaims.js";
 import {
   ProjectOpenError,
@@ -120,6 +121,19 @@ class FakeGatewayProcessManager implements ProjectGatewayProcessManager {
   }
 }
 
+class FakeHomeImageCacheClient implements PharoLauncherMcpToolClient {
+  readonly calls: Array<{ name: string; argumentsValue: Record<string, unknown> }> =
+    [];
+
+  async callTool<T = unknown>(
+    name: string,
+    argumentsValue: Record<string, unknown> = {},
+  ): Promise<T> {
+    this.calls.push({ name, argumentsValue });
+    return { ok: true } as T;
+  }
+}
+
 function makeTempDir(prefix: string): string {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
   tempDirs.push(tempDir);
@@ -208,6 +222,55 @@ function statePath(stateRoot: string): string {
     "worktree-a",
     "state.json",
   );
+}
+
+function writeHomeImageCacheManifest(homePath: string, key: string): string {
+  const entryDirectory = path.join(homePath, "image-cache", "entries", key);
+  const manifestPath = path.join(entryDirectory, "manifest.json");
+  fs.mkdirSync(entryDirectory, { recursive: true });
+  fs.writeFileSync(
+    manifestPath,
+    JSON.stringify(
+      {
+        schemaVersion: 1,
+        key,
+        createdAt: "2026-05-19T10:00:00.000Z",
+        updatedAt: "2026-05-19T10:00:00.000Z",
+        cacheImageName: "PlexusHomeCache-test",
+        source: {
+          kind: "template",
+          templateName: "Pharo 13.0 - 64bit",
+        },
+        pharoMcp: {
+          support: {
+            status: "supported",
+            actualMajorVersion: 13,
+            supportedMajorVersions: [12, 13, 14],
+            metadataKey: "io.github.evref-bl/pharo",
+            reason: "Pharo 13 is supported for Pharo MCP preparation.",
+          },
+          preparationStatus: "prepared",
+        },
+        paths: {
+          entryDirectory,
+          manifestPath,
+          lockPath: path.join(homePath, "image-cache", "locks", key),
+          preparationScriptPath: path.join(entryDirectory, "prepare.st"),
+          profileStateRoot: path.join(
+            homePath,
+            "profiles",
+            "pharo-launcher-mcp",
+            "image-cache",
+          ),
+        },
+      },
+      null,
+      2,
+    ),
+    "utf8",
+  );
+
+  return manifestPath;
 }
 
 interface CapturedGatewayRequest {
@@ -362,6 +425,94 @@ describe("project lifecycle tools", () => {
     expect(JSON.stringify(result.data)).not.toContain("MyProject-dev");
     expect(JSON.stringify(result.data)).not.toContain("7123");
     expect(JSON.stringify(result.data)).not.toContain("1234");
+  });
+
+  it("reports PLexus home image cache entries", async () => {
+    const projectRoot = makeTempDir("plexus-project-");
+    const homePath = makeTempDir("plexus-home-");
+    const key = "a".repeat(64);
+    writeProjectConfig(projectRoot, {
+      home: {
+        path: homePath,
+        imageCache: { enabled: true },
+      },
+    });
+    writeHomeImageCacheManifest(homePath, key);
+    const lifecycle = new PlexusProjectLifecycle();
+
+    const result = await lifecycle.handleTool("plexus_home_image_cache_status", {
+      projectPath: projectRoot,
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
+      data: {
+        projectRoot: path.resolve(projectRoot),
+        homePath,
+        cacheRoot: path.join(homePath, "image-cache"),
+        entries: [
+          {
+            key,
+            status: "ok",
+            cacheImageName: "PlexusHomeCache-test",
+            preparationStatus: "prepared",
+            supportStatus: "supported",
+          },
+        ],
+      },
+    });
+  });
+
+  it("flushes PLexus home image cache entries and deletes home-profile launcher images", async () => {
+    const projectRoot = makeTempDir("plexus-project-");
+    const homePath = makeTempDir("plexus-home-");
+    const key = "b".repeat(64);
+    const homeImageCacheClient = new FakeHomeImageCacheClient();
+    writeProjectConfig(projectRoot, {
+      home: {
+        path: homePath,
+        imageCache: { enabled: true },
+      },
+    });
+    writeHomeImageCacheManifest(homePath, key);
+    const lifecycle = new PlexusProjectLifecycle({
+      homeImageCacheClient,
+    });
+
+    const result = await lifecycle.handleTool("plexus_home_image_cache_flush", {
+      projectPath: projectRoot,
+      key,
+      confirm: true,
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
+      data: {
+        projectRoot: path.resolve(projectRoot),
+        homePath,
+        deletedImages: ["PlexusHomeCache-test"],
+        entries: [],
+        flushedEntries: [
+          expect.objectContaining({
+            key,
+            exists: true,
+          }),
+        ],
+      },
+    });
+    expect(homeImageCacheClient.calls).toEqual([
+      {
+        name: "pharo_launcher_image_delete",
+        argumentsValue: {
+          imageName: "PlexusHomeCache-test",
+          force: true,
+          confirm: true,
+        },
+      },
+    ]);
+    expect(
+      fs.existsSync(path.join(homePath, "image-cache", "entries", key)),
+    ).toBe(false);
   });
 
   it("returns raw lifecycle state only when diagnostics are requested", async () => {

@@ -292,6 +292,42 @@ test("renders image Git transport into smoke project config", () => {
   });
 });
 
+test("renders home cache project config for template-created smoke images", () => {
+  const config = smokeProjectConfig({
+    projectId: "home-cache-smoke",
+    homePath: "/tmp/plexus-home-cache-smoke/home",
+    images: [
+      {
+        id: "dev",
+        imageName: "PlexusHomeCacheSmoke-{workspaceId}-dev",
+        active: true,
+        create: {
+          kind: "template",
+          templateName: "Pharo 13.0 - 64bit",
+          templateCategory: "Official",
+        },
+        loadScript: "/tmp/load-mcp.st",
+        git: {
+          transport: "https",
+        },
+      },
+    ],
+  });
+
+  assert.deepEqual(config.home, {
+    path: path.resolve("/tmp/plexus-home-cache-smoke/home"),
+    imageCache: {
+      enabled: true,
+    },
+  });
+  assert.deepEqual(config.images[0].create, {
+    kind: "template",
+    templateName: "Pharo 13.0 - 64bit",
+    templateCategory: "Official",
+  });
+  assert.equal(config.images[0].git.transport, "https");
+});
+
 test("renders local MCP-Pharo Tonel load script source", () => {
   const source = mcpPharoTonelLoadScriptSource("/tmp/mcp-pharo");
 

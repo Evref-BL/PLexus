@@ -216,6 +216,22 @@ npm run smoke:open-route-close -- \
   --imageSpecJson '{"id":"peer","copyFromImageName":"MCP12-2"}'
 ```
 
+To exercise the PLexus home image cache from a fresh template, pass a disposable
+home path plus a template-created image spec. The smoke stages both the
+project-owned launcher profile and the home cache launcher profile:
+
+```sh
+npm run smoke:open-route-close -- \
+  --homePath /private/tmp/plexus-home-cache-smoke/home \
+  --mcpPharoRepoDir /path/to/MCP-Pharo \
+  --imageSpecJson '{"id":"dev","imageName":"PlexusHomeCacheSmoke-dev","active":true,"create":{"kind":"template","templateName":"Pharo 13.0 - 64bit","templateCategory":"Official"},"git":{"transport":"https"}}'
+```
+
+Run a second smoke with the same `--homePath` and a different runtime image name
+to verify the hit path. Flush the disposable cache afterward with
+`plexus_home_image_cache_flush({ projectPath, confirm: true })` before removing
+the temp root.
+
 Multi-image runs verify that PLexus starts distinct processes, assigns distinct
 ports, routes into each image, and keeps image-local state isolated through a
 second routed probe.

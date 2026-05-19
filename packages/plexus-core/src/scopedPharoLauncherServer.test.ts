@@ -179,8 +179,14 @@ describe("scoped pharo launcher facade", () => {
   it("creates only declared images from an approved project template policy", async () => {
     const projectRoot = makeTempDir("plexus-project-");
     const stateRoot = makeTempDir("plexus-state-");
+    const homePath = makeTempDir("plexus-home-");
     const { client, calls } = fakeLauncherClient();
-    writeProjectConfig(projectRoot);
+    writeProjectConfig(projectRoot, {
+      home: {
+        path: homePath,
+        imageCache: { enabled: true },
+      },
+    });
 
     const result = await new ScopedPharoLauncher({
       projectRoot,
@@ -192,12 +198,49 @@ describe("scoped pharo launcher facade", () => {
 
     expect(calls).toEqual([
       {
+        name: "pharo_launcher_template_update",
+        argumentsValue: {},
+      },
+      {
         name: "pharo_launcher_image_create",
         argumentsValue: {
-          newImageName: "MyProject-worktree-a-dev",
+          newImageName: expect.stringMatching(/^PlexusHomeCache-/),
           templateName: "Pharo 13.0 - 64bit",
           templateCategory: "Official",
           noLaunch: true,
+        },
+      },
+      {
+        name: "pharo_launcher_image_launch",
+        argumentsValue: {
+          imageName: expect.stringMatching(/^PlexusHomeCache-/),
+          detached: false,
+          script: expect.stringContaining(
+            path.join(homePath, "image-cache", "entries"),
+          ),
+        },
+      },
+      {
+        name: "pharo_launcher_image_copy_between_profiles",
+        argumentsValue: {
+          sourceProfile: expect.objectContaining({
+            stateRoot: path.join(
+              homePath,
+              "profiles",
+              "pharo-launcher-mcp",
+              "image-cache",
+            ),
+          }),
+          destinationProfile: expect.objectContaining({
+            stateRoot: path.join(
+              stateRoot,
+              "profiles",
+              "pharo-launcher-mcp",
+              "project-123",
+            ),
+          }),
+          sourceImageName: expect.stringMatching(/^PlexusHomeCache-/),
+          destinationImageName: "MyProject-worktree-a-dev",
         },
       },
     ]);

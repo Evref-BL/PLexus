@@ -101,6 +101,31 @@ export const projectLifecycleTools = [
     }),
   },
   {
+    name: "plexus_home_image_cache_status",
+    description:
+      "List PLexus home-level template image cache entries for one project.",
+    inputSchema: objectSchema(
+      {
+        projectPath: stringSchema,
+        key: optionalStringSchema,
+      },
+      ["projectPath"],
+    ),
+  },
+  {
+    name: "plexus_home_image_cache_flush",
+    description:
+      "Flush PLexus home-level template image cache entries and delete their home-profile launcher images. Requires confirm: true.",
+    inputSchema: objectSchema(
+      {
+        projectPath: stringSchema,
+        key: optionalStringSchema,
+        confirm: { type: "boolean" },
+      },
+      ["projectPath", "confirm"],
+    ),
+  },
+  {
     name: "plexus_rescue_image",
     description:
       "Plan or run rescue of a crashed Pharo image into a new image by recreating launcher state, restoring repositories when possible, and applying selected history entries from the source image ombu files.",

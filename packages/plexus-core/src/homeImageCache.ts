@@ -27,6 +27,10 @@ import {
   pharoLauncherMcpProfileEnvironment,
   type PharoLauncherMcpProfilePaths,
 } from "./pharoLauncherProfile.js";
+import {
+  createStdioPharoLauncherMcpClient,
+  type PharoLauncherMcpToolClient,
+} from "./pharoLauncherMcpClient.js";
 import type { ProjectImageState } from "./projectState.js";
 
 export const plexusHomeEnvironmentKey = "PLEXUS_HOME";
@@ -171,6 +175,11 @@ export interface HomeImageCacheLiveOperation {
   reason: string;
 }
 
+export interface HomeImageCacheMutationApproval {
+  approved: true;
+  runnerId: string;
+}
+
 export interface HomeImageCachePlan {
   status: HomeImageCachePlanStatus;
   key: string;
@@ -188,6 +197,7 @@ export interface HomeImageCachePlan {
   homeProfile: Required<PharoLauncherMcpProfilePaths>;
   keyMaterial: HomeImageCacheKeyMaterial;
   expectedManifest: HomeImageCacheManifest;
+  refreshTemplateCatalog?: HomeImageCacheLiveOperation;
   createCacheImage?: HomeImageCacheLiveOperation;
   prepareCacheImage?: HomeImageCacheLiveOperation;
   runtimeCopy?: HomeImageCacheLiveOperation;
@@ -221,11 +231,37 @@ export interface HomeImageCacheFlushPlan {
   }>;
 }
 
+export interface MaterializeProjectImageFromHomeCacheOptions {
+  runtimeClient: PharoLauncherMcpToolClient;
+  homeClient?: PharoLauncherMcpToolClient;
+  projectRoot: string;
+  config: ProjectConfig;
+  imageConfig: ProjectImageConfig;
+  imageState: ProjectImageState;
+  workspaceId?: string;
+  targetId?: string;
+  stateRoot?: string;
+  approval?: HomeImageCacheMutationApproval;
+  env?: NodeJS.ProcessEnv;
+  homeDirectory?: string;
+  now?: () => Date;
+  templateMetadata?: HomeImageCacheTemplateMetadata;
+}
+
+export interface HomeImageCacheMaterializationResult {
+  plan: HomeImageCachePlan;
+  operations: HomeImageCacheLiveOperation[];
+}
+
 export class HomeImageCacheError extends Error {
   constructor(message: string) {
     super(message);
     this.name = "HomeImageCacheError";
   }
+}
+
+interface LauncherCommandResult {
+  ok: boolean;
 }
 
 function removeUndefined(value: unknown): unknown {
@@ -299,6 +335,12 @@ function sourceFromProjectImage(
   throw new HomeImageCacheError(
     `Project image ${imageConfig.id} has no template create or prepared image source`,
   );
+}
+
+export function projectImageCanUseHomeImageCache(
+  imageConfig: ProjectImageConfig,
+): boolean {
+  return Boolean(imageConfig.create || imageConfig.preparedImage?.cacheId);
 }
 
 function createSource(source: ProjectImageCreateConfig): HomeImageCacheSource {
@@ -870,6 +912,17 @@ export function buildHomeImageCachePlan(
   };
 
   const shouldPrepare = status === "miss" || status === "corrupt";
+  const refreshTemplateCatalog =
+    enabled && shouldPrepare
+      ? {
+          toolName: "pharo_launcher_template_update",
+          profileEnvironment: profileEnvironmentFromPaths(homeProfile),
+          argumentsValue: {},
+          requiresApproval: true as const,
+          reason:
+            "A fresh PLexus home image cache profile must have a launcher template catalog before creating a cache base.",
+        }
+      : undefined;
   const createCacheImage =
     enabled && shouldPrepare
       ? {
@@ -936,6 +989,7 @@ export function buildHomeImageCachePlan(
     homeProfile,
     keyMaterial,
     expectedManifest,
+    ...(refreshTemplateCatalog ? { refreshTemplateCatalog } : {}),
     ...(createCacheImage ? { createCacheImage } : {}),
     ...(prepareCacheImage ? { prepareCacheImage } : {}),
     ...(runtimeCopy ? { runtimeCopy } : {}),
@@ -964,4 +1018,215 @@ export function writeHomeImageCachePreparationScript(plan: HomeImageCachePlan): 
     filePath: plan.expectedManifest.paths.preparationScriptPath,
     source,
   };
+}
+
+function assertLauncherOk(
+  result: LauncherCommandResult | undefined,
+  toolName: string,
+): void {
+  if (result && result.ok === false) {
+    throw new HomeImageCacheError(`${toolName} returned ok: false`);
+  }
+}
+
+function requireMutationApproval(
+  approval: HomeImageCacheMutationApproval | undefined,
+  operation: string,
+): HomeImageCacheMutationApproval {
+  if (!approval?.approved || approval.runnerId.length === 0) {
+    throw new HomeImageCacheError(
+      `${operation} requires an approved home image cache runner`,
+    );
+  }
+
+  return approval;
+}
+
+async function callLauncherOperation(
+  client: PharoLauncherMcpToolClient,
+  operation: HomeImageCacheLiveOperation,
+): Promise<void> {
+  const result = await client.callTool<LauncherCommandResult>(
+    operation.toolName,
+    operation.argumentsValue,
+  );
+  assertLauncherOk(result, operation.toolName);
+}
+
+function finalizedManifest(options: {
+  plan: HomeImageCachePlan;
+  preparationStatus: HomeImageCachePreparationStatus;
+  diagnostics?: string[];
+  now?: () => Date;
+}): HomeImageCacheManifest {
+  const timestamp = (options.now ?? (() => new Date()))().toISOString();
+  const existingCreatedAt =
+    options.plan.manifest.status === "ok"
+      ? options.plan.manifest.manifest.createdAt
+      : undefined;
+
+  return {
+    ...options.plan.expectedManifest,
+    createdAt: existingCreatedAt ?? timestamp,
+    updatedAt: timestamp,
+    pharoMcp: {
+      ...options.plan.expectedManifest.pharoMcp,
+      preparationStatus: options.preparationStatus,
+      diagnostics: [
+        ...options.plan.diagnostics,
+        ...(options.diagnostics ?? []),
+      ],
+    },
+  };
+}
+
+async function prepareHomeImageCacheEntry(options: {
+  plan: HomeImageCachePlan;
+  homeClient: PharoLauncherMcpToolClient;
+  approval: HomeImageCacheMutationApproval;
+  now?: () => Date;
+}): Promise<HomeImageCacheLiveOperation[]> {
+  if (!options.plan.createCacheImage) {
+    return [];
+  }
+
+  const lock = tryAcquireHomeImageCacheLock({
+    lockPath: options.plan.lockPath,
+    key: options.plan.key,
+    owner: options.approval.runnerId,
+    now: options.now,
+  });
+  if (!lock.acquired) {
+    const detail =
+      lock.current.status === "ok"
+        ? `current owner: ${lock.current.lock.owner}`
+        : lock.current.status === "corrupt"
+          ? lock.current.error
+          : "lock appeared before acquisition";
+    throw new HomeImageCacheError(
+      `Home image cache entry ${options.plan.key} is already being prepared (${detail})`,
+    );
+  }
+
+  const operations: HomeImageCacheLiveOperation[] = [];
+  try {
+    if (options.plan.prepareCacheImage) {
+      writeHomeImageCachePreparationScript(options.plan);
+    }
+
+    if (options.plan.refreshTemplateCatalog) {
+      await callLauncherOperation(options.homeClient, options.plan.refreshTemplateCatalog);
+      operations.push(options.plan.refreshTemplateCatalog);
+    }
+
+    await callLauncherOperation(options.homeClient, options.plan.createCacheImage);
+    operations.push(options.plan.createCacheImage);
+
+    if (options.plan.prepareCacheImage) {
+      await callLauncherOperation(options.homeClient, options.plan.prepareCacheImage);
+      operations.push(options.plan.prepareCacheImage);
+    }
+
+    writeHomeImageCacheManifest(
+      finalizedManifest({
+        plan: options.plan,
+        preparationStatus: options.plan.prepareCacheImage ? "prepared" : "skipped",
+        now: options.now,
+      }),
+    );
+
+    return operations;
+  } catch (error) {
+    writeHomeImageCacheManifest(
+      finalizedManifest({
+        plan: options.plan,
+        preparationStatus: "failed",
+        diagnostics: [error instanceof Error ? error.message : String(error)],
+        now: options.now,
+      }),
+    );
+    throw error;
+  } finally {
+    releaseHomeImageCacheLock(options.plan.lockPath);
+  }
+}
+
+export async function materializeProjectImageFromHomeCache(
+  options: MaterializeProjectImageFromHomeCacheOptions,
+): Promise<HomeImageCacheMaterializationResult | undefined> {
+  if (!projectImageCanUseHomeImageCache(options.imageConfig)) {
+    return undefined;
+  }
+
+  const plan = buildHomeImageCachePlan({
+    projectRoot: options.projectRoot,
+    config: options.config,
+    imageConfig: options.imageConfig,
+    imageState: options.imageState,
+    workspaceId: options.workspaceId,
+    targetId: options.targetId,
+    stateRoot: options.stateRoot,
+    env: options.env,
+    homeDirectory: options.homeDirectory,
+    now: options.now,
+    templateMetadata: options.templateMetadata,
+  });
+  if (plan.status === "disabled") {
+    return undefined;
+  }
+  if (plan.status === "in-progress") {
+    const detail =
+      plan.lock.status === "ok"
+        ? `current owner: ${plan.lock.lock.owner}`
+        : plan.lock.status === "corrupt"
+          ? plan.lock.error
+          : "lock is present";
+    throw new HomeImageCacheError(
+      `Home image cache entry ${plan.key} is already being prepared (${detail})`,
+    );
+  }
+
+  const approval = requireMutationApproval(
+    options.approval,
+    `Materializing image ${options.imageState.id} from the home image cache`,
+  );
+  const operations: HomeImageCacheLiveOperation[] = [];
+  let homeClient = options.homeClient;
+  let ownsHomeClient = false;
+
+  try {
+    if ((plan.status === "miss" || plan.status === "corrupt") && !homeClient) {
+      homeClient = await createStdioPharoLauncherMcpClient(undefined, {
+        profileEnvironment: profileEnvironmentFromPaths(plan.homeProfile),
+      });
+      ownsHomeClient = true;
+    }
+
+    if (plan.status === "miss" || plan.status === "corrupt") {
+      if (!homeClient) {
+        throw new HomeImageCacheError(
+          "Home image cache preparation requires a home launcher client",
+        );
+      }
+      operations.push(
+        ...(await prepareHomeImageCacheEntry({
+          plan,
+          homeClient,
+          approval,
+          now: options.now,
+        })),
+      );
+    }
+
+    if (plan.runtimeCopy) {
+      await callLauncherOperation(options.runtimeClient, plan.runtimeCopy);
+      operations.push(plan.runtimeCopy);
+    }
+
+    return { plan, operations };
+  } finally {
+    if (ownsHomeClient) {
+      await homeClient?.close?.();
+    }
+  }
 }

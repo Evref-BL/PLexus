@@ -13,6 +13,8 @@ describe("project lifecycle server", () => {
       "plexus_project_open",
       "plexus_project_close",
       "plexus_project_status",
+      "plexus_home_image_cache_status",
+      "plexus_home_image_cache_flush",
       "plexus_rescue_image",
     ]);
   });

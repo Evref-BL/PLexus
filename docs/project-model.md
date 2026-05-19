@@ -246,11 +246,22 @@ but it must skip the MCP load step and mark the manifest as not Pharo-MCP
 routable.
 
 Because runtime images stay in project-owned launcher profiles while home cache
-bases live in a home-owned launcher profile, PLexus needs a launcher-owned
-cross-profile copy/export/import operation before the home cache can become the
-default live path. Until that launcher contract is available, PLexus can derive
-home cache keys, manifests, locks, preparation scripts, hit/miss plans, and
-flush plans without mutating launcher state.
+bases live in a home-owned launcher profile, PLexus uses the launcher-owned
+`pharo_launcher_image_copy_between_profiles` tool rather than raw filesystem
+copying. On a miss PLexus updates the home profile template catalog, creates the
+cache image, starts it headlessly when Pharo MCP is supported, loads MCP,
+snapshots, and quits. On a hit PLexus copies the cached base into the project
+launcher profile and starts only the project-owned runtime image.
+
+Project MCP tools expose the operational surface:
+
+```text
+plexus_home_image_cache_status({ projectPath, key? })
+plexus_home_image_cache_flush({ projectPath, key?, confirm: true })
+```
+
+Flush deletes the home-profile launcher image before removing PLexus cache
+metadata.
 
 ## Routing Rules
 
