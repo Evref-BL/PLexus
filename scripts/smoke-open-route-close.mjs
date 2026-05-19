@@ -15,8 +15,13 @@ import { PlexusGateway } from "@evref-bl/plexus-gateway";
 import {
   assertPharoLauncherMcpDiscoveryMetadata,
   assertFreshPharoLauncherMcpHealth,
+  assertMcpPharoRepoDir,
+  assertSmokeLoadScriptsReady,
   buildLiveSmokeRunPlan,
+  collectLauncherLogFiles,
+  formatToolFailure,
   isPathInside,
+  mcpPharoTonelLoadScriptSource,
 } from "./live-smoke-runner-policy.mjs";
 
 const scriptPath = fileURLToPath(import.meta.url);
@@ -77,6 +82,9 @@ function parseArgs(argv) {
         break;
       case "--pharoLauncherMcpRepoDir":
         options.pharoLauncherMcpRepoDir = next();
+        break;
+      case "--mcpPharoRepoDir":
+        options.mcpPharoRepoDir = next();
         break;
       case "--artifactRoot":
         options.artifactRoot = next();
@@ -156,6 +164,9 @@ function parseArgs(argv) {
       case "--keepTemp":
         options.keepTemp = true;
         break;
+      case "--allowRemoteMcpFallback":
+        options.allowRemoteMcpFallback = true;
+        break;
       default:
         throw new Error(`Unknown argument: ${arg}`);
     }
@@ -171,6 +182,7 @@ function parseArgs(argv) {
     process.env.PHARO_LAUNCHER_MCP_STATE_ROOT;
   options.pharoLauncherMcpRepoDir ??=
     process.env.PLEXUS_SMOKE_PHARO_LAUNCHER_MCP_REPO_DIR;
+  options.mcpPharoRepoDir ??= process.env.PLEXUS_SMOKE_MCP_PHARO_REPO_DIR;
   options.artifactRoot ??= process.env.PLEXUS_SMOKE_ARTIFACT_ROOT;
   options.runId ??= process.env.PLEXUS_SMOKE_RUN_ID;
   options.timeoutBudgetJson ??= process.env.PLEXUS_SMOKE_TIMEOUT_BUDGET_JSON;
@@ -182,6 +194,9 @@ function parseArgs(argv) {
   options.fixtureRoot ??= process.env.PLEXUS_SMOKE_FIXTURE_ROOT;
   options.createSourceFromTemplate ||= booleanEnv(
     process.env.PLEXUS_SMOKE_CREATE_SOURCE_FROM_TEMPLATE,
+  );
+  options.allowRemoteMcpFallback ||= booleanEnv(
+    process.env.PLEXUS_SMOKE_ALLOW_REMOTE_MCP_FALLBACK,
   );
   options.sourceImageName ??= process.env.PLEXUS_SMOKE_SOURCE_IMAGE_NAME;
   options.sourceTemplateName ??= process.env.PLEXUS_SMOKE_SOURCE_TEMPLATE_NAME;
@@ -230,6 +245,7 @@ function usage() {
     "  --launcherProfile <id>       pharo-launcher-mcp profile id; defaults to project-owned profile",
     "  --launcherProfileRoot <path> Optional isolated pharo-launcher-mcp profile root; defaults to the project-owned root",
     "  --pharoLauncherMcpRepoDir <path> Use current pharo-launcher-mcp component source for the smoke",
+    "  --mcpPharoRepoDir <path>  Generate a load script for a local MCP-Pharo Tonel checkout",
     "  --artifactRoot <path>        Required artifact retention root",
     "  --runId <id>                 Defaults to a unique smoke id",
     "  --timeoutBudgetJson <json>   Overrides setup/open/routing/close/cleanup timeout ms",
@@ -244,6 +260,7 @@ function usage() {
     "  --imageId <id>                Defaults to dev for the one-image path",
     "  --port <number>               Defaults to PLexus allocation",
     "  --loadScript <path>           Defaults to pharo/load-mcp.st in this repo",
+    "  --allowRemoteMcpFallback      Explicitly allow missing load scripts to fall back to remote Metacello",
     "  --toolName <name>             Defaults to find-packages",
     "  --toolArgumentsJson <json>    Defaults to {\"projectNames\":[\"MCP\"]}",
     "  --expectedText <text>         Defaults to packages found for the read-only probe",
@@ -412,6 +429,7 @@ function normalizeImageSpecs(options) {
       copyFromImageName,
       port,
       loadScript: stringProperty(rawImage, "loadScript") ?? options.loadScript,
+      usesDefaultLoadScript: stringProperty(rawImage, "loadScript") === undefined,
       active,
       copied: false,
       index,
@@ -839,6 +857,56 @@ function snapshotFileArtifact(options, sourcePath, name) {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   fs.copyFileSync(sourcePath, filePath);
   recordEvent(options, "artifact-copied", { name, sourcePath, filePath });
+}
+
+function configureMcpPharoLoadSource(options) {
+  if (!options.mcpPharoRepoDir) {
+    return;
+  }
+
+  const repoDir = assertMcpPharoRepoDir(options.mcpPharoRepoDir);
+  const scriptPath = path.join(options.artifactDirectory, "load-local-mcp.st");
+  fs.mkdirSync(path.dirname(scriptPath), { recursive: true });
+  fs.writeFileSync(scriptPath, mcpPharoTonelLoadScriptSource(repoDir), "utf8");
+
+  for (const image of options.images) {
+    if (image.usesDefaultLoadScript) {
+      image.loadScript = scriptPath;
+    }
+  }
+  recordEvent(options, "mcp-pharo-local-load-script-written", {
+    repoDir,
+    scriptPath,
+  });
+  textResult("mcp-pharo load script", scriptPath);
+}
+
+function preflightMcpLoadScripts(options) {
+  const checked = assertSmokeLoadScriptsReady(options, { repoRoot });
+  snapshotJsonArtifact(options, "mcp-load-script-preflight.json", checked);
+  recordEvent(options, "mcp-load-script-preflight-ok", { checked });
+}
+
+function launcherLogFilesForOpenFailure(options, openResult) {
+  const failures = openResult?.diagnostics?.projectOpen?.failures;
+  const imageNames =
+    Array.isArray(failures) && failures.length > 0
+      ? failures.map((failure) => failure.imageName)
+      : options.images.map((image) => image.imageName).filter(Boolean);
+  return collectLauncherLogFiles({
+    logsDir: options.launcherProfileEnvironment?.PHARO_LAUNCHER_MCP_LOGS_DIR,
+    imageNames,
+  });
+}
+
+function snapshotLauncherLogs(options, launcherLogFiles) {
+  for (const filePath of launcherLogFiles) {
+    snapshotFileArtifact(
+      options,
+      filePath,
+      path.join("launcher-logs", path.basename(filePath)),
+    );
+  }
 }
 
 async function withPhaseTimeout(options, phase, action) {
@@ -1715,6 +1783,8 @@ async function main() {
   options.artifactEventsPath = artifactFiles.eventsPath;
   textResult("artifactDirectory", options.artifactDirectory);
   recordEvent(options, "run-started");
+  configureMcpPharoLoadSource(options);
+  preflightMcpLoadScripts(options);
   applyPharoLauncherMcpRepoEnvironment(options);
   applyLauncherProfileEnvironment(options);
   const discoveryPreflight = preflightPharoLauncherMcpRuntime(options, {
@@ -1779,6 +1849,20 @@ async function main() {
         ...(options.targetId ? { targetId: options.targetId } : {}),
       });
     });
+    snapshotJsonArtifact(options, "project-open-result.json", openResult);
+    if (!openResult?.ok) {
+      const launcherLogFiles = launcherLogFilesForOpenFailure(options, openResult);
+      snapshotLauncherLogs(options, launcherLogFiles);
+      snapshotJsonArtifact(options, "project-open-failure.json", {
+        result: openResult,
+        launcherLogFiles,
+      });
+      throw new Error(
+        formatToolFailure("plexus_project_open", openResult, {
+          launcherLogFiles,
+        }),
+      );
+    }
     openData = requireGatewayOk(openResult, "plexus_project_open");
     opened = true;
     textResult("open ok", openResult.ok);

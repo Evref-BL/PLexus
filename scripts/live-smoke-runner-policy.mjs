@@ -1,3 +1,4 @@
+import fs from "node:fs";
 import path from "node:path";
 
 export const defaultTimeoutBudget = {
@@ -187,6 +188,130 @@ export function buildLiveSmokeRunPlan(options, context = {}) {
   };
 }
 
+export function mcpPharoTonelLoadScriptSource(repoDir) {
+  const sourceDirectory = path.join(path.resolve(repoDir), "src");
+  return [
+    '"Load MCP-Pharo from an explicit local Tonel checkout for this PLexus smoke run."',
+    "Metacello new",
+    "  baseline: 'MCP';",
+    `  repository: ${smalltalkString(`tonel://${sourceDirectory.replaceAll("\\", "/")}`)};`,
+    "  load: 'Core'.",
+    "",
+  ].join("\n");
+}
+
+export function assertMcpPharoRepoDir(repoDir) {
+  const resolvedRepoDir = path.resolve(requiredString(repoDir, "--mcpPharoRepoDir"));
+  const baselinePath = path.join(
+    resolvedRepoDir,
+    "src",
+    "BaselineOfMCP",
+    "BaselineOfMCP.class.st",
+  );
+  if (!fs.existsSync(baselinePath)) {
+    throw new Error(
+      `--mcpPharoRepoDir must point at an MCP-Pharo checkout with src/BaselineOfMCP/BaselineOfMCP.class.st: ${resolvedRepoDir}`,
+    );
+  }
+
+  return resolvedRepoDir;
+}
+
+export function resolveSmokeLoadScriptPath(image, options, context = {}) {
+  const loadScript = requiredString(
+    image.loadScript,
+    `image ${image.id ?? "(unknown)"} loadScript`,
+  );
+  if (path.isAbsolute(loadScript)) {
+    return path.resolve(loadScript);
+  }
+
+  if (!options.projectRoot) {
+    throw new Error(
+      `Image ${image.id} loadScript is relative (${loadScript}) but --projectRoot is not set; pass an absolute --loadScript, set --projectRoot, or use --mcpPharoRepoDir.`,
+    );
+  }
+
+  return path.resolve(options.projectRoot ?? context.repoRoot, loadScript);
+}
+
+export function assertSmokeLoadScriptsReady(options, context = {}) {
+  const checked = [];
+  for (const image of options.images ?? []) {
+    const resolvedPath = resolveSmokeLoadScriptPath(image, options, context);
+    const exists = fs.existsSync(resolvedPath);
+    checked.push({
+      imageId: image.id,
+      loadScript: image.loadScript,
+      resolvedPath,
+      exists,
+    });
+
+    if (!exists && !options.allowRemoteMcpFallback) {
+      throw new Error(
+        [
+          `Image ${image.id} MCP load script does not exist before image startup: ${resolvedPath}`,
+          "Pass --loadScript pointing at a real script, use --mcpPharoRepoDir to generate a local Tonel load script, or pass --allowRemoteMcpFallback to explicitly use the configured remote Metacello fallback.",
+        ].join("\n"),
+      );
+    }
+  }
+
+  return checked;
+}
+
+export function collectLauncherLogFiles({ logsDir, imageNames = [] }) {
+  if (!logsDir || !fs.existsSync(logsDir)) {
+    return [];
+  }
+
+  const imageSegments = imageNames
+    .filter((imageName) => typeof imageName === "string" && imageName.length > 0)
+    .map(safeFileSegment);
+  if (imageSegments.length === 0) {
+    return [];
+  }
+
+  return fs
+    .readdirSync(logsDir, { withFileTypes: true })
+    .filter((entry) => entry.isFile())
+    .map((entry) => path.join(logsDir, entry.name))
+    .filter(
+      (filePath) =>
+        /\.(?:out|err)\.log$/.test(path.basename(filePath)) &&
+        imageSegments.some((segment) => path.basename(filePath).includes(segment)),
+    )
+    .sort();
+}
+
+export function formatToolFailure(label, result, context = {}) {
+  const lines = [
+    `${label} failed: ${result?.error ?? JSON.stringify(result)}`,
+  ];
+  const failures = result?.diagnostics?.projectOpen?.failures;
+  if (Array.isArray(failures) && failures.length > 0) {
+    lines.push("project open failures:");
+    for (const failure of failures) {
+      lines.push(
+        `- ${failure.imageId}/${failure.imageName}: ${failure.message}`,
+      );
+    }
+  }
+
+  if (context.launcherLogFiles?.length > 0) {
+    lines.push("launcher logs:");
+    for (const filePath of context.launcherLogFiles) {
+      lines.push(`- ${filePath}`);
+    }
+  }
+
+  if (result?.diagnostics) {
+    lines.push(`diagnostics: ${JSON.stringify(result.diagnostics, null, 2)}`);
+  }
+
+  return lines.join("\n");
+}
+
 export function assertFreshPharoLauncherMcpHealth(healthResult, runtime = {}) {
   const runtimeLabel = pharoLauncherMcpRuntimeLabel(runtime);
   const remediation =
@@ -245,6 +370,15 @@ function requiredString(value, label) {
     throw new Error(`${label} is required for live smoke runs`);
   }
   return value.trim();
+}
+
+function smalltalkString(value) {
+  return `'${String(value).replaceAll("'", "''")}'`;
+}
+
+function safeFileSegment(value) {
+  const cleaned = String(value).replaceAll(/[^A-Za-z0-9._-]+/g, "-");
+  return cleaned.length > 0 ? cleaned : "image";
 }
 
 function requiredPath(value, label) {

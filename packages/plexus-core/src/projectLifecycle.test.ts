@@ -17,7 +17,11 @@ import type {
   ProjectGatewayProcessStopOptions,
 } from "./projectGateway.js";
 import { claimPort, inspectPortClaim } from "./portClaims.js";
-import type { ProjectOpenOptions, ProjectOpenResult } from "./projectOpen.js";
+import {
+  ProjectOpenError,
+  type ProjectOpenOptions,
+  type ProjectOpenResult,
+} from "./projectOpen.js";
 import {
   loadProjectState,
   saveProjectState,
@@ -450,6 +454,58 @@ describe("project lifecycle tools", () => {
         },
         projectConfig: {
           issues: ["config.id must be a non-empty string"],
+        },
+      },
+    });
+  });
+
+  it("includes project open failures in tool diagnostics", async () => {
+    const failureResult: ProjectOpenResult = {
+      ok: false,
+      projectRoot: "/tmp/project",
+      statePath: "/tmp/state/project.json",
+      state: {
+        ...runningState,
+        images: [
+          {
+            id: "dev",
+            imageName: "MyProject-dev",
+            assignedPort: 7123,
+            status: "failed",
+          },
+        ],
+      },
+      failures: [
+        {
+          imageId: "dev",
+          imageName: "MyProject-dev",
+          message: "Timed out waiting for Pharo MCP health on port 7123",
+        },
+      ],
+    };
+    const lifecycle = new PlexusProjectLifecycle({
+      projectOpen: async () => {
+        throw new ProjectOpenError(
+          "One or more project images failed to open",
+          failureResult,
+        );
+      },
+    });
+
+    const result = await lifecycle.handleTool("plexus_project_open", {
+      projectPath: "/tmp/project",
+      stateRoot: "/tmp/state",
+      workspaceId: "worktree-a",
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: "One or more project images failed to open",
+      diagnostics: {
+        projectOpen: {
+          statePath: "/tmp/state/project.json",
+          failures: failureResult.failures,
+          images: failureResult.state.images,
         },
       },
     });

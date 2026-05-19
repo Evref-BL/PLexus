@@ -1,12 +1,18 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import {
+  assertSmokeLoadScriptsReady,
+  collectLauncherLogFiles,
   assertPharoLauncherMcpDiscoveryMetadata,
   assertFreshPharoLauncherMcpHealth,
   buildLiveSmokeRunPlan,
   defaultRunId,
+  formatToolFailure,
   isPathInside,
+  mcpPharoTonelLoadScriptSource,
   parseTimeoutBudget,
 } from "./live-smoke-runner-policy.mjs";
 
@@ -164,6 +170,124 @@ test("rejects a target image that aliases the copy source", () => {
       ),
     /must differ from copyFromImageName/,
   );
+});
+
+test("rejects missing smoke MCP load scripts before image startup", () => {
+  const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), "plexus-smoke-project-"));
+  try {
+    assert.throws(
+      () =>
+        assertSmokeLoadScriptsReady({
+          projectRoot,
+          images: [
+            {
+              id: "dev",
+              loadScript: "pharo/missing-load-mcp.st",
+            },
+          ],
+        }),
+      /MCP load script does not exist before image startup/,
+    );
+  } finally {
+    fs.rmSync(projectRoot, { recursive: true, force: true });
+  }
+});
+
+test("requires explicit project root or absolute path for relative smoke MCP load scripts", () => {
+  assert.throws(
+    () =>
+      assertSmokeLoadScriptsReady({
+        images: [
+          {
+            id: "dev",
+            loadScript: "pharo/load-mcp.st",
+          },
+        ],
+      }),
+    /loadScript is relative .* --projectRoot is not set/,
+  );
+});
+
+test("allows explicit remote MCP fallback while recording missing load scripts", () => {
+  const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), "plexus-smoke-project-"));
+  try {
+    const checked = assertSmokeLoadScriptsReady({
+      projectRoot,
+      allowRemoteMcpFallback: true,
+      images: [
+        {
+          id: "dev",
+          loadScript: "pharo/missing-load-mcp.st",
+        },
+      ],
+    });
+
+    assert.equal(checked[0].exists, false);
+    assert.equal(
+      checked[0].resolvedPath,
+      path.join(projectRoot, "pharo", "missing-load-mcp.st"),
+    );
+  } finally {
+    fs.rmSync(projectRoot, { recursive: true, force: true });
+  }
+});
+
+test("renders local MCP-Pharo Tonel load script source", () => {
+  const source = mcpPharoTonelLoadScriptSource("/tmp/mcp-pharo");
+
+  assert.match(source, /repository: 'tonel:\/\/\/tmp\/mcp-pharo\/src'/);
+  assert.match(source, /load: 'Core'\./);
+});
+
+test("formats project-open diagnostics and launcher logs for smoke failures", () => {
+  const message = formatToolFailure(
+    "plexus_project_open",
+    {
+      ok: false,
+      error: "One or more project images failed to open",
+      diagnostics: {
+        projectOpen: {
+          failures: [
+            {
+              imageId: "dev",
+              imageName: "PlexusSmokedev",
+              message: "Timed out waiting for Pharo MCP health on port 7100",
+            },
+          ],
+        },
+      },
+    },
+    {
+      launcherLogFiles: ["/tmp/logs/2026-PlexusSmokedev-launch.err.log"],
+    },
+  );
+
+  assert.match(message, /project open failures:/);
+  assert.match(message, /dev\/PlexusSmokedev: Timed out/);
+  assert.match(message, /2026-PlexusSmokedev-launch.err.log/);
+});
+
+test("collects launcher logs for failed smoke images", () => {
+  const logsDir = fs.mkdtempSync(path.join(os.tmpdir(), "plexus-smoke-logs-"));
+  try {
+    const expected = path.join(logsDir, "2026-PlexusSmokedev-launch.err.log");
+    fs.writeFileSync(expected, "failure\n", "utf8");
+    fs.writeFileSync(
+      path.join(logsDir, "2026-OtherImage-launch.err.log"),
+      "other\n",
+      "utf8",
+    );
+
+    assert.deepEqual(
+      collectLauncherLogFiles({
+        logsDir,
+        imageNames: ["PlexusSmokedev"],
+      }),
+      [expected],
+    );
+  } finally {
+    fs.rmSync(logsDir, { recursive: true, force: true });
+  }
 });
 
 test("parses timeout budget overrides", () => {

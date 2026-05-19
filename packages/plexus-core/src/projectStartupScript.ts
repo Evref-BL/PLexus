@@ -19,7 +19,7 @@ export const defaultPharoMcpMetacelloRepository = {
   githubUser: "Evref-BL",
   project: "MCP",
   commitish: "main",
-  path: "",
+  path: "src",
   baseline: "MCP",
 } as const;
 

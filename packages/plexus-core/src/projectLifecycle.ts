@@ -37,7 +37,11 @@ import {
   type PortClaimInspection,
   type PortClaimRecord,
 } from "./portClaims.js";
-import { openProject, type ProjectOpenResult } from "./projectOpen.js";
+import {
+  openProject,
+  ProjectOpenError,
+  type ProjectOpenResult,
+} from "./projectOpen.js";
 import {
   defaultPlexusStateRoot,
   defaultTargetId,
@@ -302,6 +306,11 @@ export interface ProjectLifecycleToolResult<T = unknown> {
 
 export interface ProjectLifecycleToolFailureDiagnostics {
   toolRuntime: PlexusRuntimeIdentityDiagnostic;
+  projectOpen?: {
+    statePath: string;
+    failures: ProjectOpenResult["failures"];
+    images: ProjectOpenResult["state"]["images"];
+  };
   projectConfig?: {
     issues: string[];
   };
@@ -541,6 +550,15 @@ function failure<T = unknown>(error: unknown): ProjectLifecycleToolResult<T> {
       ? {
           projectConfig: {
             issues: error.issues,
+          },
+        }
+      : {}),
+    ...(error instanceof ProjectOpenError
+      ? {
+          projectOpen: {
+            statePath: error.result.statePath,
+            failures: error.result.failures,
+            images: error.result.state.images,
           },
         }
       : {}),
