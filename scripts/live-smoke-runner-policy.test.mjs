@@ -330,8 +330,11 @@ test("renders home cache project config for template-created smoke images", () =
 
 test("renders local MCP-Pharo Tonel load script source", () => {
   const source = mcpPharoTonelLoadScriptSource("/tmp/mcp-pharo");
+  const expectedRepository = `tonel://${path
+    .resolve("/tmp/mcp-pharo", "src")
+    .replaceAll("\\", "/")}`;
 
-  assert.match(source, /repository: 'tonel:\/\/\/tmp\/mcp-pharo\/src'/);
+  assert.match(source, new RegExp(`repository: '${expectedRepository}'`));
   assert.match(source, /load: 'Core'\./);
 });
 
