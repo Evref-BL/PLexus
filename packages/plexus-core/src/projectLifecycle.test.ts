@@ -1042,12 +1042,246 @@ describe("project lifecycle tools", () => {
             ],
             stale: [],
             conflicts: [],
+            otherScopes: [],
           },
           routeTable: {
             status: "registered",
             targetId: "project-123--worktree-a",
           },
           conflictingListeners: [],
+        },
+      },
+    });
+  });
+
+  it("reports unrelated other-scope claims without degrading this scope", async () => {
+    const projectRoot = makeTempDir("plexus-project-");
+    const stateRoot = makeTempDir("plexus-state-");
+    const claimsRoot = makeTempDir("plexus-claims-");
+    const stateFilePath = statePath(stateRoot);
+    const gatewayClaim = await claimPort({
+      claimsRoot,
+      projectId: "project-123",
+      projectName: "my-project",
+      workspaceId: "worktree-a",
+      targetId: "project-123--worktree-a",
+      purpose: "gateway",
+      requestedPort: 8133,
+      claimId: "gateway-claim",
+    });
+    await claimPort({
+      claimsRoot,
+      projectId: "other-project",
+      projectName: "other-project",
+      workspaceId: "other-workspace",
+      targetId: "other-target",
+      purpose: "gateway",
+      requestedPort: 8134,
+      claimId: "other-gateway-claim",
+    });
+    await claimPort({
+      claimsRoot,
+      projectId: "stale-project",
+      projectName: "stale-project",
+      workspaceId: "stale-workspace",
+      targetId: "stale-target",
+      purpose: "image-mcp",
+      imageId: "dev",
+      requestedPort: 7124,
+      pid: 2222,
+      claimId: "other-stale-image-claim",
+    });
+    const idleState: ProjectState = {
+      ...runningState,
+      runtimeStatus: "idle",
+      images: [],
+      gateway: {
+        mode: "project-local",
+        endpoint: "http://127.0.0.1:8133/mcp",
+        controlEndpoint: "http://127.0.0.1:8133/control-mcp",
+        host: "127.0.0.1",
+        port: 8133,
+        routePath: "/mcp",
+        controlPath: "/control-mcp",
+        owningProjectId: "project-123",
+        managedByProject: true,
+        claim: {
+          claimsRoot,
+          claimId: gatewayClaim.claimId,
+          assignedPort: gatewayClaim.assignedPort,
+        },
+      },
+    };
+    writeProjectConfig(projectRoot, {
+      images: [],
+      runtime: {
+        gateway: {
+          mode: "project-local",
+          host: "127.0.0.1",
+          port: 8133,
+          agentMcpPath: "/mcp",
+          routeControlMcpPath: "/control-mcp",
+        },
+        imagePorts: {
+          coordination: {
+            mode: "host-local",
+            root: claimsRoot,
+          },
+        },
+      },
+    });
+    saveProjectState(stateFilePath, idleState);
+    const lifecycle = new PlexusProjectLifecycle({
+      routeRegistry: new FakeRouteRegistry(),
+      gateway: {
+        checks: {
+          isProcessAlive: async () => false,
+          isPortListening: async (port) => port === 8133 || port === 8134,
+        },
+      },
+    });
+
+    const result = await lifecycle.handleTool("plexus_project_status", {
+      projectPath: projectRoot,
+      stateRoot,
+      workspaceId: "worktree-a",
+      includeDiagnostics: true,
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
+      data: {
+        diagnostics: {
+          runtime: {
+            status: "operational-but-idle",
+          },
+          portClaims: {
+            active: [
+              expect.objectContaining({
+                port: 8133,
+                status: "claimed",
+                ownedByCurrentScope: true,
+              }),
+            ],
+            stale: [],
+            conflicts: [],
+            otherScopes: [
+              expect.objectContaining({
+                port: 7124,
+                status: "stale",
+                reason: "process-dead",
+                ownedByCurrentScope: false,
+              }),
+              expect.objectContaining({
+                port: 8134,
+                status: "claimed",
+                reason: "port-listening",
+                ownedByCurrentScope: false,
+              }),
+            ],
+          },
+          staleClaims: [],
+          conflictingListeners: [],
+        },
+      },
+    });
+  });
+
+  it("degrades when another scope claims this scope's expected image port", async () => {
+    const projectRoot = makeTempDir("plexus-project-");
+    const stateRoot = makeTempDir("plexus-state-");
+    const claimsRoot = makeTempDir("plexus-claims-");
+    const stateFilePath = statePath(stateRoot);
+    const gatewayClaim = await claimPort({
+      claimsRoot,
+      projectId: "project-123",
+      projectName: "my-project",
+      workspaceId: "worktree-a",
+      targetId: "project-123--worktree-a",
+      purpose: "gateway",
+      requestedPort: 8133,
+      claimId: "gateway-claim",
+    });
+    await claimPort({
+      claimsRoot,
+      projectId: "other-project",
+      projectName: "other-project",
+      workspaceId: "other-workspace",
+      targetId: "other-target",
+      purpose: "image-mcp",
+      imageId: "dev",
+      requestedPort: 7123,
+      claimId: "other-image-claim",
+    });
+    writeProjectConfig(projectRoot, {
+      runtime: {
+        gateway: {
+          mode: "project-local",
+          host: "127.0.0.1",
+          port: 8133,
+          agentMcpPath: "/mcp",
+          routeControlMcpPath: "/control-mcp",
+        },
+        imagePorts: {
+          coordination: {
+            mode: "host-local",
+            root: claimsRoot,
+          },
+        },
+      },
+    });
+    saveProjectState(stateFilePath, {
+      ...runningState,
+      gateway: {
+        mode: "project-local",
+        endpoint: "http://127.0.0.1:8133/mcp",
+        controlEndpoint: "http://127.0.0.1:8133/control-mcp",
+        host: "127.0.0.1",
+        port: 8133,
+        routePath: "/mcp",
+        controlPath: "/control-mcp",
+        owningProjectId: "project-123",
+        managedByProject: true,
+        claim: {
+          claimsRoot,
+          claimId: gatewayClaim.claimId,
+          assignedPort: gatewayClaim.assignedPort,
+        },
+      },
+    });
+    const lifecycle = new PlexusProjectLifecycle({
+      routeRegistry: new FakeRouteRegistry(),
+      gateway: {
+        checks: {
+          isPortListening: async (port) => port === 7123 || port === 8133,
+        },
+      },
+    });
+
+    const result = await lifecycle.handleTool("plexus_project_status", {
+      projectPath: projectRoot,
+      stateRoot,
+      workspaceId: "worktree-a",
+      includeDiagnostics: true,
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
+      data: {
+        diagnostics: {
+          runtime: {
+            status: "degraded",
+          },
+          portClaims: {
+            conflicts: [
+              expect.objectContaining({
+                port: 7123,
+                status: "claimed",
+                ownedByCurrentScope: false,
+              }),
+            ],
+            otherScopes: [],
+          },
         },
       },
     });

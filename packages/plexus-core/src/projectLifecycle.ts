@@ -256,6 +256,7 @@ export interface ProjectLifecyclePortClaimsDiagnostics {
   active: ProjectLifecyclePortClaimDiagnostic[];
   stale: ProjectLifecyclePortClaimDiagnostic[];
   conflicts: ProjectLifecyclePortClaimDiagnostic[];
+  otherScopes: ProjectLifecyclePortClaimDiagnostic[];
 }
 
 export type ProjectLifecycleImagePortCoordinationBasis =
@@ -837,10 +838,12 @@ async function inspectClaimRoots(
     workspaceId: string;
     targetId: string;
   },
+  currentScopePorts: Set<number>,
 ): Promise<ProjectLifecyclePortClaimsDiagnostics> {
   const active: ProjectLifecyclePortClaimDiagnostic[] = [];
   const stale: ProjectLifecyclePortClaimDiagnostic[] = [];
   const conflicts: ProjectLifecyclePortClaimDiagnostic[] = [];
+  const otherScopes: ProjectLifecyclePortClaimDiagnostic[] = [];
 
   for (const claimsRoot of claimsRoots) {
     const claims = await listPortClaims({ claimsRoot });
@@ -855,13 +858,21 @@ async function inspectClaimRoots(
       }
 
       const diagnostic = portClaimDiagnostic(claimsRoot, inspection, scope);
-      if (diagnostic.status === "stale") {
-        stale.push(diagnostic);
+      if (!diagnostic.ownedByCurrentScope) {
+        if (currentScopePorts.has(diagnostic.port)) {
+          if (diagnostic.status === "stale") {
+            stale.push(diagnostic);
+          } else {
+            conflicts.push(diagnostic);
+          }
+        } else {
+          otherScopes.push(diagnostic);
+        }
         continue;
       }
 
-      if (!diagnostic.ownedByCurrentScope) {
-        conflicts.push(diagnostic);
+      if (diagnostic.status === "stale") {
+        stale.push(diagnostic);
         continue;
       }
 
@@ -874,6 +885,7 @@ async function inspectClaimRoots(
     active,
     stale,
     conflicts,
+    otherScopes,
   };
 }
 
@@ -1049,6 +1061,34 @@ function expectedPortClaims(
   portClaims: ProjectLifecyclePortClaimsDiagnostics,
 ): Set<number> {
   return new Set(portClaims.active.map((claim) => claim.port));
+}
+
+function currentScopeClaimPorts(
+  config: ProjectConfig,
+  state: ProjectState | undefined,
+  gateway: ProjectGatewayState,
+): Set<number> {
+  const ports = new Set<number>();
+  if (gateway.port !== undefined) {
+    ports.add(gateway.port);
+  }
+  if (gateway.claim?.assignedPort !== undefined) {
+    ports.add(gateway.claim.assignedPort);
+  }
+
+  for (const image of state?.images ?? []) {
+    if (image.assignedPort !== undefined) {
+      ports.add(image.assignedPort);
+    }
+  }
+
+  for (const image of config.images) {
+    if (image.mcp.port !== undefined) {
+      ports.add(image.mcp.port);
+    }
+  }
+
+  return ports;
 }
 
 async function conflictingListenerDiagnostics(
@@ -1709,6 +1749,7 @@ export class PlexusProjectLifecycle {
       configuredClaimRoots(projectRoot, config, state),
       checks,
       scope,
+      currentScopeClaimPorts(config, state, gateway),
     );
     const routeTable = routeTableDiagnostics(targetId, route, routeError);
     const conflictingListeners = await conflictingListenerDiagnostics(
