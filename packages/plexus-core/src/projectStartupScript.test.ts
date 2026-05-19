@@ -100,6 +100,8 @@ describe("project startup scripts", () => {
     expect(source).not.toContain("IceCredentialsProvider");
     expect(source).toContain("mcp port: 7123.");
     expect(source).toContain("mcp start.");
+    expect(source).not.toContain("bindToLoopback");
+    expect(source).not.toContain("endpointFile writeStreamDo:");
     expect(source).toContain(
       "Smalltalk globals at: #PLexusMCPServer put: mcp.",
     );
@@ -145,6 +147,85 @@ describe("project startup scripts", () => {
       }),
     ).toThrow(
       "Project image dev requires Pharo MCP startup but has no assigned MCP port",
+    );
+  });
+
+  it("generates endpoint handoff startup for dynamic-port images", () => {
+    const projectRoot = path.join("C:", "dev", "code", "git", "my-project");
+    const source = generateImageStartupScript({
+      projectRoot,
+      imageConfig: {
+        ...config.images[0],
+        mcp: {
+          loadScript: "pharo/load-mcp.st",
+        },
+      },
+      imageState: {
+        id: "dev",
+        imageName: "MyProject-dev",
+        assignedPort: 7123,
+        status: "starting",
+      },
+      endpointHandoffPath: path.join(
+        "C:",
+        "dev",
+        "code",
+        "git",
+        "my-project",
+        ".plexus",
+        "projects",
+        "project-123",
+        "workspaces",
+        "my-project",
+        "mcp-endpoints",
+        "dev.properties",
+      ),
+    });
+
+    expect(source).toContain("mcp bindToLoopback.");
+    expect(source).toContain("mcp port: 0.");
+    expect(source).toContain("endpoint := mcp endpoint.");
+    expect(source).toContain("endpointFile writeStreamDo:");
+    expect(source).toContain("nextPutAll: 'transport='");
+    expect(source).toContain("nextPutAll: 'host='");
+    expect(source).toContain("nextPutAll: 'port='");
+    expect(source).toContain("nextPutAll: 'path='");
+    expect(source).toContain("mcp port: 7123.");
+  });
+
+  it("can require endpoint handoff without a fixed fallback port", () => {
+    const source = generateImageStartupScript({
+      projectRoot: path.join("C:", "dev", "code", "git", "my-project"),
+      imageConfig: {
+        ...config.images[0],
+        mcp: {
+          loadScript: "pharo/load-mcp.st",
+        },
+      },
+      imageState: {
+        id: "dev",
+        imageName: "MyProject-dev",
+        status: "starting",
+      },
+      endpointHandoffPath: path.join(
+        "C:",
+        "dev",
+        "code",
+        "git",
+        "my-project",
+        ".plexus",
+        "projects",
+        "project-123",
+        "workspaces",
+        "my-project",
+        "mcp-endpoints",
+        "dev.properties",
+      ),
+    });
+
+    expect(source).toContain("mcp bindToLoopback.");
+    expect(source).toContain(
+      "MCP endpoint handoff is required, but this image-side MCP does not support bindToLoopback/endpoint.",
     );
   });
 

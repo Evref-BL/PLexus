@@ -40,6 +40,7 @@ class FakePharoLauncherMcpClient implements PharoLauncherMcpToolClient {
   constructor(
     private readonly processes: LauncherProcess[] = [],
     private readonly launchError?: Error,
+    private readonly onLaunch?: (argumentsValue: Record<string, unknown>) => void,
   ) {}
 
   async callTool<T = unknown>(
@@ -53,6 +54,7 @@ class FakePharoLauncherMcpClient implements PharoLauncherMcpToolClient {
         throw this.launchError;
       }
 
+      this.onLaunch?.(argumentsValue);
       return { ok: true } as T;
     }
 
@@ -80,11 +82,27 @@ class FakePharoLauncherMcpClient implements PharoLauncherMcpToolClient {
 
 class FakeHealthClient implements PharoMcpHealthClient {
   readonly ports: number[] = [];
+  readonly endpoints: Array<{
+    transport: "http";
+    host: string;
+    port: number;
+    path: string;
+  }> = [];
 
   constructor(private readonly healthy: boolean) {}
 
   async check(port: number): Promise<boolean> {
     this.ports.push(port);
+    return this.healthy;
+  }
+
+  async checkEndpoint(endpoint: {
+    transport: "http";
+    host: string;
+    port: number;
+    path: string;
+  }): Promise<boolean> {
+    this.endpoints.push(endpoint);
     return this.healthy;
   }
 }
@@ -261,6 +279,250 @@ describe("project open", () => {
         },
       ],
     });
+  });
+
+  it("records an auto-bound MCP endpoint and releases the fallback port claim", async () => {
+    const claimsRoot = makeTempDir("plexus-port-claims-");
+    const projectRoot = makeTempDir("plexus-project-");
+    const stateRoot = makeTempDir("plexus-state-");
+    writeProjectConfig(projectRoot, {
+      runtime: hostLocalRuntime(claimsRoot, 7200, 7200),
+      images: [
+        {
+          id: "dev",
+          imageName: "MyProject-dev",
+          active: true,
+          mcp: {
+            loadScript: "pharo/load-mcp.st",
+          },
+        },
+      ],
+    });
+    const endpointPath = path.join(
+      stateRoot,
+      "projects",
+      "project-123",
+      "workspaces",
+      "worktree-a",
+      "mcp-endpoints",
+      "dev.properties",
+    );
+    const pharoLauncherMcpClient = new FakePharoLauncherMcpClient(
+      [
+        {
+          pid: 1234,
+          imageName: "MyProject-dev",
+          commandLine: "PharoConsole.exe MyProject-dev.image",
+        },
+      ],
+      undefined,
+      () => {
+        fs.mkdirSync(path.dirname(endpointPath), { recursive: true });
+        fs.writeFileSync(
+          endpointPath,
+          "transport=http\nhost=127.0.0.1\nport=7432\npath=/mcp\n",
+          "utf8",
+        );
+      },
+    );
+    const healthClient = new FakeHealthClient(true);
+
+    const result = await openProject({
+      projectRoot,
+      stateRoot,
+      workspaceId: "worktree-a",
+      pharoLauncherMcpClient,
+      healthClient,
+      now: fixedNow,
+      sleep: async () => {},
+      poll: {
+        intervalMs: 0,
+      },
+      portClaimChecks: fakeLivePortClaimChecks,
+    });
+
+    const scriptPath = path.join(
+      stateRoot,
+      "projects",
+      "project-123",
+      "workspaces",
+      "worktree-a",
+      "scripts",
+      "start-dev.st",
+    );
+
+    expect(result.ok).toBe(true);
+    expect(fs.readFileSync(scriptPath, "utf8")).toContain("mcp bindToLoopback.");
+    expect(healthClient.endpoints).toEqual([
+      {
+        transport: "http",
+        host: "127.0.0.1",
+        port: 7432,
+        path: "/mcp",
+      },
+    ]);
+    expect(healthClient.ports).toEqual([]);
+    expect(result.state.images[0]).toEqual({
+      id: "dev",
+      imageName: "MyProject-dev",
+      mcpEndpoint: {
+        transport: "http",
+        host: "127.0.0.1",
+        port: 7432,
+        path: "/mcp",
+      },
+      pid: 1234,
+      status: "running",
+    });
+    await expect(listPortClaims({ claimsRoot })).resolves.toEqual([]);
+  });
+
+  it("falls back to the assigned port when endpoint handoff is unavailable", async () => {
+    const projectRoot = makeTempDir("plexus-project-");
+    const stateRoot = makeTempDir("plexus-state-");
+    writeProjectConfig(projectRoot, {
+      images: [
+        {
+          id: "dev",
+          imageName: "MyProject-dev",
+          active: true,
+          mcp: {
+            loadScript: "pharo/load-mcp.st",
+          },
+        },
+      ],
+    });
+    const pharoLauncherMcpClient = new FakePharoLauncherMcpClient([
+      {
+        pid: 1234,
+        imageName: "MyProject-dev",
+        commandLine: "PharoConsole.exe MyProject-dev.image",
+      },
+    ]);
+    const healthClient = new FakeHealthClient(true);
+
+    const result = await openProject({
+      projectRoot,
+      stateRoot,
+      workspaceId: "worktree-a",
+      pharoLauncherMcpClient,
+      healthClient,
+      now: fixedNow,
+      sleep: async () => {},
+      poll: {
+        intervalMs: 0,
+      },
+    });
+
+    expect(result.ok).toBe(true);
+    expect(healthClient.endpoints).toEqual([]);
+    expect(healthClient.ports).toEqual([7100]);
+    expect(result.state.images[0]).toMatchObject({
+      id: "dev",
+      assignedPort: 7100,
+      pid: 1234,
+      status: "running",
+    });
+    expect(result.state.images[0]).not.toHaveProperty("mcpEndpoint");
+  });
+
+  it("fails when endpoint handoff content is invalid", async () => {
+    const projectRoot = makeTempDir("plexus-project-");
+    const stateRoot = makeTempDir("plexus-state-");
+    writeProjectConfig(projectRoot, {
+      images: [
+        {
+          id: "dev",
+          imageName: "MyProject-dev",
+          active: true,
+          mcp: {
+            loadScript: "pharo/load-mcp.st",
+          },
+        },
+      ],
+    });
+    const endpointPath = path.join(
+      stateRoot,
+      "projects",
+      "project-123",
+      "workspaces",
+      "worktree-a",
+      "mcp-endpoints",
+      "dev.properties",
+    );
+    const pharoLauncherMcpClient = new FakePharoLauncherMcpClient(
+      [
+        {
+          pid: 1234,
+          imageName: "MyProject-dev",
+          commandLine: "PharoConsole.exe MyProject-dev.image",
+        },
+      ],
+      undefined,
+      () => {
+        fs.mkdirSync(path.dirname(endpointPath), { recursive: true });
+        fs.writeFileSync(
+          endpointPath,
+          "transport=http\nhost=127.0.0.1\nport=nope\npath=/\n",
+          "utf8",
+        );
+      },
+    );
+
+    await expect(
+      openProject({
+        projectRoot,
+        stateRoot,
+        workspaceId: "worktree-a",
+        pharoLauncherMcpClient,
+        healthClient: new FakeHealthClient(true),
+        now: fixedNow,
+        sleep: async () => {},
+        poll: {
+          intervalMs: 0,
+        },
+      }),
+    ).rejects.toThrow(ProjectOpenError);
+  });
+
+  it("reports missing endpoint handoff when fallback health never becomes ready", async () => {
+    const projectRoot = makeTempDir("plexus-project-");
+    const stateRoot = makeTempDir("plexus-state-");
+    writeProjectConfig(projectRoot, {
+      images: [
+        {
+          id: "dev",
+          imageName: "MyProject-dev",
+          active: true,
+          mcp: {
+            loadScript: "pharo/load-mcp.st",
+          },
+        },
+      ],
+    });
+    const pharoLauncherMcpClient = new FakePharoLauncherMcpClient([
+      {
+        pid: 1234,
+        imageName: "MyProject-dev",
+        commandLine: "PharoConsole.exe MyProject-dev.image",
+      },
+    ]);
+
+    await expect(
+      openProject({
+        projectRoot,
+        stateRoot,
+        workspaceId: "worktree-a",
+        pharoLauncherMcpClient,
+        healthClient: new FakeHealthClient(false),
+        now: fixedNow,
+        sleep: async () => {},
+        poll: {
+          intervalMs: 0,
+          healthTimeoutMs: 1,
+        },
+      }),
+    ).rejects.toThrow(ProjectOpenError);
   });
 
   it("materializes first-open template images from the PLexus home image cache", async () => {

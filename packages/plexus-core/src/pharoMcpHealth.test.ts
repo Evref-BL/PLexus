@@ -101,4 +101,60 @@ describe("pharo MCP health", () => {
     expect(rootPostCalls).toBeGreaterThan(0);
     expect(mcpPostCalls).toBe(0);
   });
+
+  it("checks the registered endpoint host and path", async () => {
+    const port = await freePort();
+    let endpointPostCalls = 0;
+    let rootPostCalls = 0;
+    const server = http.createServer((request, response) => {
+      if (request.method === "POST" && request.url === "/image-mcp") {
+        endpointPostCalls += 1;
+        const chunks: Buffer[] = [];
+        request.on("data", (chunk) => {
+          chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+        });
+        request.on("end", () => {
+          const payload = JSON.parse(Buffer.concat(chunks).toString("utf8")) as {
+            id?: string | number;
+          };
+          response.writeHead(200, { "content-type": "application/json" });
+          response.end(
+            JSON.stringify({
+              jsonrpc: "2.0",
+              id: payload.id ?? null,
+              result: { ok: true },
+            }),
+          );
+        });
+        return;
+      }
+
+      if (request.method === "POST" && request.url === "/") {
+        rootPostCalls += 1;
+      }
+
+      response.writeHead(404);
+      response.end();
+    });
+
+    await new Promise<void>((resolve) => {
+      server.listen(port, "127.0.0.1", () => resolve());
+    });
+    servers.push(server);
+
+    const client = new HttpPharoMcpHealthClient({
+      timeoutMs: 1_000,
+    });
+
+    await expect(
+      client.checkEndpoint({
+        transport: "http",
+        host: "127.0.0.1",
+        port,
+        path: "/image-mcp",
+      }),
+    ).resolves.toBe(true);
+    expect(endpointPostCalls).toBeGreaterThan(0);
+    expect(rootPostCalls).toBe(0);
+  });
 });

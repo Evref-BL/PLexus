@@ -10,6 +10,7 @@ import {
   imagePortClaimsRootForConfig,
   prepareImagePortClaims,
   recordImagePortClaimProcess,
+  releaseImagePortClaimIfOwned,
   releasePreparedImagePortClaims,
   type PreparedImagePortClaim,
 } from "./imagePortClaims.js";
@@ -32,6 +33,11 @@ import {
   type PharoMcpHealthClient,
 } from "./pharoMcpHealth.js";
 import {
+  imageMcpEndpointHandoffPath,
+  readImageMcpEndpointHandoff,
+  removeImageMcpEndpointHandoff,
+} from "./projectImageMcpEndpoint.js";
+import {
   collectReservedProjectPortOwners,
   createProjectState,
   defaultWorkspaceId,
@@ -41,6 +47,7 @@ import {
   runtimeStatusForImages,
   sanitizeRuntimeId,
   saveProjectState,
+  type ProjectImageMcpEndpoint,
   type ProjectImageState,
   type ProjectPortRange,
   type ProjectState,
@@ -194,18 +201,64 @@ async function pollProcessForImage(
   });
 }
 
-async function pollHealth(
+async function pollEndpointHealth(
   healthClient: PharoMcpHealthClient,
-  port: number,
-  timeoutMs: number,
-  intervalMs: number,
-  sleep: (durationMs: number) => Promise<void>,
+  endpoint: ProjectImageMcpEndpoint,
 ): Promise<boolean> {
-  const result = await pollUntil(timeoutMs, intervalMs, sleep, async () =>
-    (await healthClient.check(port)) ? true : undefined,
-  );
+  if (healthClient.checkEndpoint) {
+    return healthClient.checkEndpoint(endpoint);
+  }
 
-  return result === true;
+  return healthClient.check(endpoint.port);
+}
+
+type ImageMcpReadiness =
+  | { kind: "endpoint"; endpoint: ProjectImageMcpEndpoint }
+  | { kind: "assignedPort"; port: number };
+
+async function pollPharoMcpReadiness(options: {
+  imageState: ProjectImageState;
+  endpointHandoffPath: string;
+  preferEndpointHandoff: boolean;
+  healthClient: PharoMcpHealthClient;
+  timeoutMs: number;
+  intervalMs: number;
+  sleep: (durationMs: number) => Promise<void>;
+}): Promise<ImageMcpReadiness | undefined> {
+  return pollUntil(
+    options.timeoutMs,
+    options.intervalMs,
+    options.sleep,
+    async () => {
+      if (options.preferEndpointHandoff) {
+        const handoff = readImageMcpEndpointHandoff(options.endpointHandoffPath);
+        if (handoff.status === "invalid") {
+          throw new Error(
+            `Invalid Pharo MCP endpoint handoff at ${handoff.path}: ${handoff.error}`,
+          );
+        }
+
+        if (
+          handoff.status === "valid" &&
+          (await pollEndpointHealth(options.healthClient, handoff.endpoint))
+        ) {
+          return { kind: "endpoint", endpoint: handoff.endpoint };
+        }
+      }
+
+      if (
+        options.imageState.assignedPort !== undefined &&
+        (await options.healthClient.check(options.imageState.assignedPort))
+      ) {
+        return {
+          kind: "assignedPort",
+          port: options.imageState.assignedPort,
+        };
+      }
+
+      return undefined;
+    },
+  );
 }
 
 async function launchImageAndPollProcess(
@@ -294,10 +347,7 @@ function activeStateImages(state: ProjectState): ProjectImageState[] {
 }
 
 function imageRequiresPharoMcpHealth(image: ProjectImageState): boolean {
-  return (
-    image.pharoMcpContract?.status !== "unsupported" &&
-    image.assignedPort !== undefined
-  );
+  return image.pharoMcpContract?.status !== "unsupported";
 }
 
 function applyScopedImageSelection(
@@ -479,6 +529,16 @@ export async function openProject(
           });
         }
 
+        const endpointHandoffPath = imageMcpEndpointHandoffPath({
+          projectRoot,
+          projectId: state.projectId,
+          workspaceId,
+          imageId: imageState.id,
+          stateRoot: resolvedStateRoot,
+        });
+        removeImageMcpEndpointHandoff(endpointHandoffPath);
+        delete imageState.mcpEndpoint;
+
         const startupScript = writeProjectImageStartupScript({
           projectRoot,
           config,
@@ -520,22 +580,43 @@ export async function openProject(
           }
 
           if (imageRequiresPharoMcpHealth(imageState)) {
-            if (imageState.assignedPort === undefined) {
+            const preferEndpointHandoff = imageConfig.mcp.port === undefined;
+            const readiness = await pollPharoMcpReadiness({
+              imageState,
+              endpointHandoffPath,
+              preferEndpointHandoff,
+              healthClient,
+              timeoutMs: poll.healthTimeoutMs,
+              intervalMs: poll.intervalMs,
+              sleep,
+            });
+            if (!readiness) {
+              const endpointHint = preferEndpointHandoff
+                ? ` or endpoint handoff at ${endpointHandoffPath}`
+                : "";
+              const portHint =
+                imageState.assignedPort === undefined
+                  ? ""
+                  : ` on port ${imageState.assignedPort}`;
               throw new Error(
-                `Project image ${imageState.id} requires Pharo MCP health but has no assigned MCP port`,
+                `Timed out waiting for Pharo MCP health${portHint}${endpointHint}`,
               );
             }
-            const healthy = await pollHealth(
-              healthClient,
-              imageState.assignedPort,
-              poll.healthTimeoutMs,
-              poll.intervalMs,
-              sleep,
-            );
-            if (!healthy) {
-              throw new Error(
-                `Timed out waiting for Pharo MCP health on port ${imageState.assignedPort}`,
-              );
+
+            if (readiness.kind === "endpoint") {
+              imageState.mcpEndpoint = readiness.endpoint;
+              if (claimsRoot && imageState.assignedPort !== undefined) {
+                await releaseImagePortClaimIfOwned({
+                  state,
+                  image: imageState,
+                  claimsRoot,
+                  checks: portClaimChecks,
+                });
+                preparedPortClaims = preparedPortClaims.filter(
+                  (candidate) => candidate.imageId !== imageState.id,
+                );
+              }
+              delete imageState.assignedPort;
             }
           }
         } finally {

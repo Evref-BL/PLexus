@@ -70,6 +70,7 @@ import {
   runtimeStatusForImages,
   sanitizeRuntimeId,
   saveProjectState,
+  type ProjectImageMcpEndpoint,
   type ProjectImageState,
   type ProjectGatewayState,
   type ProjectState,
@@ -283,6 +284,8 @@ export interface ProjectLifecycleRouteTableDiagnostics {
   routableImages: Array<{
     imageId: string;
     port?: number;
+    mcpEndpoint?: ProjectImageState["mcpEndpoint"];
+    routingMode?: "endpoint" | "fixed-port" | "none";
     status?: string;
     routable?: unknown;
   }>;
@@ -345,6 +348,8 @@ export interface ProjectLifecycleDiagnostics {
     imageId: string;
     imageName: string;
     port?: number;
+    mcpEndpoint?: ProjectImageState["mcpEndpoint"];
+    routingMode: "endpoint" | "fixed-port" | "none";
     status: ProjectImageState["status"];
     pid?: number;
   }>;
@@ -383,6 +388,19 @@ class ProjectLifecycleInputError extends Error {
 
 function isObject(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function isProjectImageMcpEndpoint(
+  value: unknown,
+): value is ProjectImageMcpEndpoint {
+  return (
+    isObject(value) &&
+    value.transport === "http" &&
+    typeof value.host === "string" &&
+    typeof value.port === "number" &&
+    Number.isInteger(value.port) &&
+    typeof value.path === "string"
+  );
 }
 
 function requireString(
@@ -945,6 +963,13 @@ function imageMcpPorts(
     imageId: image.id,
     imageName: image.imageName,
     ...(image.assignedPort !== undefined ? { port: image.assignedPort } : {}),
+    ...(image.mcpEndpoint !== undefined ? { mcpEndpoint: image.mcpEndpoint } : {}),
+    routingMode:
+      image.mcpEndpoint !== undefined
+        ? "endpoint"
+        : image.assignedPort !== undefined
+          ? "fixed-port"
+          : "none",
     status: image.status,
     ...(image.pid !== undefined ? { pid: image.pid } : {}),
   }));
@@ -991,6 +1016,14 @@ function routeTableDiagnostics(
       .map((image) => ({
         imageId: typeof image.id === "string" ? image.id : "",
         ...(typeof image.port === "number" ? { port: image.port } : {}),
+        ...(isProjectImageMcpEndpoint(image.mcpEndpoint)
+          ? { mcpEndpoint: image.mcpEndpoint }
+          : {}),
+        routingMode: isProjectImageMcpEndpoint(image.mcpEndpoint)
+          ? "endpoint"
+          : typeof image.port === "number"
+            ? "fixed-port"
+            : "none",
         ...(typeof image.status === "string" ? { status: image.status } : {}),
         ...("routable" in image ? { routable: image.routable } : {}),
       })),

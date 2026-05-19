@@ -9,6 +9,10 @@ import {
   createStdioPharoLauncherMcpClient,
   type PharoLauncherMcpToolClient,
 } from "./pharoLauncherMcpClient.js";
+import {
+  imageMcpEndpointHandoffPath,
+  removeImageMcpEndpointHandoff,
+} from "./projectImageMcpEndpoint.js";
 import { pharoLauncherMcpProfileEnvironment } from "./pharoLauncherProfile.js";
 import {
   defaultWorkspaceId,
@@ -93,6 +97,25 @@ function assertLauncherOk(
   }
 }
 
+function clearImageEndpointRuntimeState(options: {
+  projectRoot: string;
+  projectId: string;
+  workspaceId: string;
+  stateRoot?: string;
+  imageState: ProjectImageState;
+}): void {
+  removeImageMcpEndpointHandoff(
+    imageMcpEndpointHandoffPath({
+      projectRoot: options.projectRoot,
+      projectId: options.projectId,
+      workspaceId: options.workspaceId,
+      stateRoot: options.stateRoot,
+      imageId: options.imageState.id,
+    }),
+  );
+  delete options.imageState.mcpEndpoint;
+}
+
 export async function closeProject(
   options: ProjectCloseOptions,
 ): Promise<ProjectCloseResult> {
@@ -109,6 +132,7 @@ export async function closeProject(
   });
   const state = loadProjectState(statePath);
   const now = options.now ?? (() => new Date());
+  const resolvedStateRoot = projectStateRootForConfig(config, options.stateRoot);
   const claimsRoot = imagePortClaimsRootForConfig(projectRoot, config);
   const portClaimChecks =
     options.portClaimChecks ?? defaultImagePortClaimChecks();
@@ -147,6 +171,15 @@ export async function closeProject(
         }
       }
     }
+    for (const imageState of selected) {
+      clearImageEndpointRuntimeState({
+        projectRoot,
+        projectId: state.projectId,
+        workspaceId,
+        stateRoot: resolvedStateRoot,
+        imageState,
+      });
+    }
 
     state.updatedAt = now().toISOString();
     state.runtimeStatus = runtimeStatusForImages(state.images);
@@ -179,7 +212,7 @@ export async function closeProject(
         config,
         workspaceId,
         targetId: state.targetId,
-        stateRoot: projectStateRootForConfig(config, options.stateRoot),
+        stateRoot: resolvedStateRoot,
       }),
     }));
   const ownsClient = !options.pharoLauncherMcpClient;
@@ -198,6 +231,13 @@ export async function closeProject(
 
         imageState.status = "stopped";
         delete imageState.pid;
+        clearImageEndpointRuntimeState({
+          projectRoot,
+          projectId: state.projectId,
+          workspaceId,
+          stateRoot: resolvedStateRoot,
+          imageState,
+        });
         stoppedImages.push({ ...imageState });
       } catch (error) {
         failures.push({

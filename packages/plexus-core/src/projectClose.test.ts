@@ -228,6 +228,66 @@ describe("project close", () => {
     ]);
   });
 
+  it("clears endpoint runtime state and handoff files when stopping images", async () => {
+    const projectRoot = makeTempDir("plexus-project-");
+    const stateRoot = makeTempDir("plexus-state-");
+    const endpointPath = path.join(
+      stateRoot,
+      "projects",
+      "project-123",
+      "workspaces",
+      "worktree-a",
+      "mcp-endpoints",
+      "dev.properties",
+    );
+    writeProjectConfig(projectRoot);
+    fs.mkdirSync(path.dirname(endpointPath), { recursive: true });
+    fs.writeFileSync(
+      endpointPath,
+      "transport=http\nhost=127.0.0.1\nport=7432\npath=/\n",
+      "utf8",
+    );
+    writeRuntimeState(stateRoot, {
+      projectId: "project-123",
+      projectName: "my-project",
+      workspaceId: "worktree-a",
+      targetId: "project-123--worktree-a",
+      updatedAt: "2026-04-25T10:00:00.000Z",
+      images: [
+        {
+          id: "dev",
+          imageName: "MyProject-dev",
+          mcpEndpoint: {
+            transport: "http",
+            host: "127.0.0.1",
+            port: 7432,
+            path: "/",
+          },
+          pid: 1234,
+          status: "running",
+        },
+      ],
+    });
+
+    const result = await closeProject({
+      projectRoot,
+      stateRoot,
+      workspaceId: "worktree-a",
+      pharoLauncherMcpClient: new FakePharoLauncherMcpClient(),
+      now: fixedNow,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(fs.existsSync(endpointPath)).toBe(false);
+    expect(loadProjectState(result.statePath)?.images).toEqual([
+      {
+        id: "dev",
+        imageName: "MyProject-dev",
+        status: "stopped",
+      },
+    ]);
+  });
+
   it("can scope project close to selected running images", async () => {
     const projectRoot = makeTempDir("plexus-project-");
     const stateRoot = makeTempDir("plexus-state-");

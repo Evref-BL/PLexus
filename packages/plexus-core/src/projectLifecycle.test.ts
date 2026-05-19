@@ -566,6 +566,105 @@ describe("project lifecycle tools", () => {
     });
   });
 
+  it("reports endpoint-based image routing diagnostics", async () => {
+    const projectRoot = makeTempDir("plexus-project-");
+    const stateRoot = makeTempDir("plexus-state-");
+    const endpoint = {
+      transport: "http" as const,
+      host: "127.0.0.1",
+      port: 7432,
+      path: "/mcp",
+    };
+    const stateFilePath = statePath(stateRoot);
+    const endpointState: ProjectState = {
+      ...runningState,
+      images: [
+        {
+          id: "dev",
+          imageName: "MyProject-dev",
+          mcpEndpoint: endpoint,
+          pid: 1234,
+          status: "running",
+        },
+      ],
+    };
+    writeProjectConfig(projectRoot);
+    saveProjectState(stateFilePath, endpointState);
+    const lifecycle = new PlexusProjectLifecycle({
+      routeRegistry: {
+        async registerProjectRoute() {
+          return { ok: true, data: {} };
+        },
+        async unregisterProjectRoute() {
+          return { ok: true, data: {} };
+        },
+        async getRouteStatus() {
+          return {
+            ok: true,
+            data: {
+              projectId: endpointState.projectId,
+              workspaceId: endpointState.workspaceId,
+              targetId: endpointState.targetId,
+              projectRoot,
+              statePath: stateFilePath,
+              images: [
+                {
+                  id: "dev",
+                  imageName: "MyProject-dev",
+                  mcpEndpoint: endpoint,
+                  status: "running",
+                  routable: {
+                    ok: true,
+                    code: "ready",
+                    message: "Image is routable",
+                  },
+                },
+              ],
+            },
+          };
+        },
+      },
+    });
+
+    const result = await lifecycle.handleTool("plexus_project_status", {
+      projectPath: projectRoot,
+      stateRoot,
+      workspaceId: "worktree-a",
+      includeDiagnostics: true,
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
+      data: {
+        diagnostics: {
+          imageMcpPorts: [
+            {
+              imageId: "dev",
+              mcpEndpoint: endpoint,
+              routingMode: "endpoint",
+              status: "running",
+            },
+          ],
+          routeTable: {
+            status: "registered",
+            routableImages: [
+              {
+                imageId: "dev",
+                mcpEndpoint: endpoint,
+                routingMode: "endpoint",
+                status: "running",
+              },
+            ],
+          },
+        },
+      },
+    });
+    expect(result.data?.diagnostics.imageMcpPorts[0]).not.toHaveProperty("port");
+    expect(result.data?.diagnostics.routeTable.routableImages[0]).not.toHaveProperty(
+      "port",
+    );
+  });
+
   it("includes config schema and runtime identity diagnostics on config failures", async () => {
     const projectRoot = makeTempDir("plexus-project-");
     fs.writeFileSync(

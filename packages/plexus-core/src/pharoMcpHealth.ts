@@ -1,5 +1,8 @@
+import type { ProjectImageMcpEndpoint } from "./projectState.js";
+
 export interface PharoMcpHealthClient {
   check(port: number): Promise<boolean>;
+  checkEndpoint?(endpoint: ProjectImageMcpEndpoint): Promise<boolean>;
 }
 
 export interface HttpPharoMcpHealthClientOptions {
@@ -26,10 +29,34 @@ export class HttpPharoMcpHealthClient implements PharoMcpHealthClient {
   }
 
   async check(port: number): Promise<boolean> {
+    return this.checkHttpTarget({
+      host: this.host,
+      port,
+      mcpPath: this.mcpPath,
+    });
+  }
+
+  async checkEndpoint(endpoint: ProjectImageMcpEndpoint): Promise<boolean> {
+    if (endpoint.transport !== "http") {
+      return false;
+    }
+
+    return this.checkHttpTarget({
+      host: endpoint.host,
+      port: endpoint.port,
+      mcpPath: endpoint.path,
+    });
+  }
+
+  private async checkHttpTarget(options: {
+    host: string;
+    port: number;
+    mcpPath: string;
+  }): Promise<boolean> {
     for (const method of this.probeMethods) {
       try {
         const response = await this.fetchWithTimeout(
-          `http://${this.host}:${port}${this.mcpPath}`,
+          `http://${options.host}:${options.port}${options.mcpPath}`,
           {
             method: "POST",
             headers: {
@@ -55,7 +82,7 @@ export class HttpPharoMcpHealthClient implements PharoMcpHealthClient {
     for (const pathname of this.paths) {
       try {
         const response = await this.fetchWithTimeout(
-          `http://${this.host}:${port}${pathname}`,
+          `http://${options.host}:${options.port}${pathname}`,
         );
         if (response.ok) {
           return true;
