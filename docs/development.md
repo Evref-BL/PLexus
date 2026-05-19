@@ -183,12 +183,21 @@ npm run smoke:open-route-close -- --createSourceFromTemplate
 
 The smoke creates a disposable PLexus project and isolated state root, copies
 the source image when `--copyFromImageName` is used, opens it through PLexus
-core lifecycle orchestration, registers the route in an in-process
-`PlexusGateway`, verifies `tools/list` exposes the current Pharo MCP
-`find-packages` tool, routes that read-only probe into every active image,
-closes the images, checks that the processes are gone, checks that the closed
-target is unregistered from gateway status, then deletes copied images,
-temporary source images, and temp directories.
+core lifecycle orchestration, registers the route, verifies `tools/list`
+exposes the current Pharo MCP `find-packages` tool, routes that read-only probe
+into every active image, closes the images, checks that the processes are gone,
+checks that the closed target is unregistered from gateway status, then deletes
+copied images, temporary source images, and temp directories.
+
+For a deliberate showcase/debug run, pass `--keepOpen` or `--showcase`. That
+mode still requires copied or template-created disposable images and a
+project-owned launcher profile under the smoke state root. It starts and
+registers through the project-local route-control gateway, keeps a separate
+in-process gateway only for smoke probes, verifies route-control status before
+exiting, and writes `keep-open-cleanup-context.json` with the scoped
+`plexus project close ...` command, retained paths, launcher profile
+environment, and the owned `pharo_launcher_image_delete` tool calls needed to
+remove copied/source images after close.
 
 Use `--imageSpecJson` more than once to exercise the real multi-image shape:
 

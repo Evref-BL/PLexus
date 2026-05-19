@@ -200,6 +200,24 @@ export function mcpPharoTonelLoadScriptSource(repoDir) {
   ].join("\n");
 }
 
+export function usesDefaultSmokeLoadScript({
+  imageLoadScriptExplicit,
+  loadScriptExplicit,
+}) {
+  return !imageLoadScriptExplicit && !loadScriptExplicit;
+}
+
+export function defaultSmokeImageSpec(options) {
+  return {
+    id: options.imageId,
+    imageName: options.imageName,
+    copyFromImageName: options.copyFromImageName,
+    port: options.port,
+    ...(options.loadScriptExplicit ? { loadScript: options.loadScript } : {}),
+    active: true,
+  };
+}
+
 export function assertMcpPharoRepoDir(repoDir) {
   const resolvedRepoDir = path.resolve(requiredString(repoDir, "--mcpPharoRepoDir"));
   const baselinePath = path.join(
@@ -275,6 +293,142 @@ export function smokeProjectConfig(options) {
       },
       ...(image.git ? { git: image.git } : {}),
     })),
+  };
+}
+
+export function assertKeepOpenShowcaseBoundary(options) {
+  if (!options.keepOpen) {
+    return;
+  }
+
+  const stateRoot = requiredPath(options.stateRoot, "--stateRoot");
+  const launcherProfileRoot = requiredPath(
+    options.launcherProfileRoot,
+    "--launcherProfileRoot",
+  );
+  if (!isPathInside(stateRoot, launcherProfileRoot)) {
+    throw new Error(
+      "--launcherProfileRoot must be inside --stateRoot for keep-open mode",
+    );
+  }
+
+  const images = options.images ?? [];
+  if (images.length === 0) {
+    throw new Error("Keep-open mode requires at least one image");
+  }
+  for (const image of images) {
+    if (!image.copyFromImageName && !options.createSourceFromTemplate) {
+      throw new Error(
+        `Keep-open mode requires copied or template-created disposable images; image ${image.id} only references an existing imageName`,
+      );
+    }
+  }
+}
+
+export function buildKeepOpenCleanupContext({
+  projectPaths,
+  options,
+  openData,
+}) {
+  const projectRoot = requiredString(
+    projectPaths?.projectRoot,
+    "projectPaths.projectRoot",
+  );
+  const stateRoot = requiredString(projectPaths?.stateRoot, "projectPaths.stateRoot");
+  const workspaceId = requiredString(options?.workspaceId, "options.workspaceId");
+  const targetId = requiredString(
+    openData?.state?.targetId ?? options?.targetId,
+    "openData.state.targetId",
+  );
+  const copiedImages = (options?.images ?? [])
+    .filter((image) => image.copied && image.imageName)
+    .map((image) => ({
+      id: image.id,
+      imageName: image.imageName,
+    }));
+  const cleanupImageNames = [
+    ...copiedImages.map((image) => image.imageName),
+    ...(options?.createdSourceImageName ? [options.createdSourceImageName] : []),
+  ];
+
+  const closeCommand = [
+    "plexus",
+    "project",
+    "close",
+    projectRoot,
+    "--workspace-id",
+    workspaceId,
+    "--state-root",
+    stateRoot,
+  ];
+  const statusCommand = [
+    "plexus",
+    "project",
+    "status",
+    projectRoot,
+    "--workspace-id",
+    workspaceId,
+    "--state-root",
+    stateRoot,
+  ];
+
+  return {
+    mode: "keep-open",
+    reason:
+      "Runner was asked to retain the scoped disposable project and images after successful smoke validation.",
+    closeCommand,
+    closeCommandString: shellCommand(closeCommand),
+    statusCommand,
+    statusCommandString: shellCommand(statusCommand),
+    mcpCloseCall: {
+      tool: "plexus_project_close",
+      arguments: {
+        projectPath: projectRoot,
+        stateRoot,
+        workspaceId,
+      },
+    },
+    launcherCleanup: {
+      profile: options?.launcherProfile,
+      profileRoot: options?.launcherProfileRoot,
+      environment: options?.launcherProfileEnvironment,
+      deleteImageToolCalls: cleanupImageNames.map((imageName) => ({
+        tool: "pharo_launcher_image_delete",
+        arguments: {
+          imageName,
+          force: true,
+          confirm: true,
+        },
+      })),
+    },
+    routeControl: {
+      targetId,
+      controlEndpoint: openData?.state?.gateway?.controlEndpoint,
+      routeStatusTool: "plexus_gateway_status",
+      routeStatusArguments: {
+        targetId,
+        refreshHealth: true,
+      },
+    },
+    retained: {
+      artifactDirectory: options?.artifactDirectory,
+      eventsPath: options?.artifactEventsPath,
+      projectRoot,
+      stateRoot,
+      fixtureRoot: projectPaths?.fixtureRoot,
+      launcherProfile: options?.launcherProfile,
+      launcherProfileRoot: options?.launcherProfileRoot,
+      statePath: openData?.statePath,
+      copiedImages,
+      createdSourceImageName: options?.createdSourceImageName,
+      images: (openData?.state?.images ?? []).map((image) => ({
+        id: image.id,
+        imageName: image.imageName,
+        assignedPort: image.assignedPort,
+        pid: image.pid,
+        status: image.status,
+      })),
+    },
   };
 }
 
@@ -401,6 +555,19 @@ function safeFileSegment(value) {
 
 function requiredPath(value, label) {
   return path.resolve(requiredString(value, label));
+}
+
+function shellCommand(args) {
+  return args.map(shellQuote).join(" ");
+}
+
+function shellQuote(value) {
+  const text = String(value);
+  if (/^[A-Za-z0-9_./:=@+-]+$/.test(text)) {
+    return text;
+  }
+
+  return `'${text.replaceAll("'", "'\\''")}'`;
 }
 
 function pharoLauncherMcpRuntimeLabel(runtime) {

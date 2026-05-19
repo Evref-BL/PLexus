@@ -22,6 +22,15 @@ The runner must:
 - retain enough logs and state snapshots for diagnosis before cleanup
 - run cleanup even when setup, launch, health checks, routing, or close fails
 
+The only intentional cleanup exception is a successful
+`smoke-open-route-close --keepOpen` or `--showcase` run. That mode is for
+approved demonstrations and debugging only:
+it must use copied or template-created disposable images, keep the launcher
+profile under the smoke state root, leave the route registered through the
+project-local route-control gateway, and write a cleanup context artifact with
+the exact scoped `plexus project close` command plus the owned launcher image
+delete tool calls for copied/source images.
+
 ## Disposable Inputs
 
 A future approved run must use disposable inputs only:
@@ -80,6 +89,7 @@ Retain these artifacts before deleting disposable runtime directories:
 - PLexus state snapshots before open, after open, and after close
 - generated startup scripts
 - gateway status snapshots
+- keep-open cleanup context when `--keepOpen` or `--showcase` is used
 - command stdout/stderr and timeout metadata
 - Pharo Launcher logs from the isolated profile
 - the list of created image names, pids, assigned ports, and target ids

@@ -7,22 +7,27 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   createStdioPharoLauncherMcpClient,
+  HttpGatewayRouteRegistry,
   loadPharoLauncherMcpConfig,
   loadProjectState,
   PlexusProjectLifecycle,
 } from "@evref-bl/plexus-core";
 import { PlexusGateway } from "@evref-bl/plexus-gateway";
 import {
+  assertKeepOpenShowcaseBoundary,
   assertPharoLauncherMcpDiscoveryMetadata,
   assertFreshPharoLauncherMcpHealth,
   assertMcpPharoRepoDir,
   assertSmokeLoadScriptsReady,
+  buildKeepOpenCleanupContext,
   buildLiveSmokeRunPlan,
   collectLauncherLogFiles,
+  defaultSmokeImageSpec,
   formatToolFailure,
   isPathInside,
   mcpPharoTonelLoadScriptSource,
   smokeProjectConfig,
+  usesDefaultSmokeLoadScript,
 } from "./live-smoke-runner-policy.mjs";
 
 const scriptPath = fileURLToPath(import.meta.url);
@@ -42,7 +47,9 @@ function parseArgs(argv) {
     toolName: "find-packages",
     toolArgumentsJson: '{"projectNames":["MCP"]}',
     expectedText: "packages found",
+    keepOpen: false,
     keepTemp: false,
+    loadScriptExplicit: false,
   };
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -125,6 +132,7 @@ function parseArgs(argv) {
         break;
       case "--loadScript":
         options.loadScript = next();
+        options.loadScriptExplicit = true;
         break;
       case "--toolName":
         options.toolName = next();
@@ -134,6 +142,10 @@ function parseArgs(argv) {
         break;
       case "--expectedText":
         options.expectedText = next();
+        break;
+      case "--keepOpen":
+      case "--showcase":
+        options.keepOpen = true;
         break;
       case "--stepJson":
         options.stepSpecs.push(jsonObjectFromString(next(), "--stepJson"));
@@ -212,8 +224,14 @@ function parseArgs(argv) {
     process.env.PLEXUS_SMOKE_TOOL_ARGUMENTS_JSON ?? options.toolArgumentsJson;
   options.expectedText =
     process.env.PLEXUS_SMOKE_EXPECTED_TEXT ?? options.expectedText;
+  options.keepOpen ||=
+    booleanEnv(process.env.PLEXUS_SMOKE_KEEP_OPEN) ||
+    booleanEnv(process.env.PLEXUS_SMOKE_SHOWCASE);
+  if (options.loadScript === undefined && process.env.PLEXUS_SMOKE_LOAD_SCRIPT) {
+    options.loadScript = process.env.PLEXUS_SMOKE_LOAD_SCRIPT;
+    options.loadScriptExplicit = true;
+  }
   options.loadScript ??=
-    process.env.PLEXUS_SMOKE_LOAD_SCRIPT ??
     path.join(repoRoot, "pharo", "load-mcp.st");
 
   appendJsonArrayEnv(
@@ -265,6 +283,7 @@ function usage() {
     "  --toolName <name>             Defaults to find-packages",
     "  --toolArgumentsJson <json>    Defaults to {\"projectNames\":[\"MCP\"]}",
     "  --expectedText <text>         Defaults to packages found for the read-only probe",
+    "  --keepOpen, --showcase        Leave scoped disposable images open and retain route-control registration",
     "  --stepJson <json>             Adds a routed tool step; use forEachImage=true to fan out",
     "  --scenario <name>             basic or project-edit-export",
     "  --createSourceFromTemplate    Create a temporary source image, then copy smoke images from it",
@@ -372,6 +391,11 @@ function assertValidOptions(options) {
   options.artifactDirectory = runPlan.artifactDirectory;
   options.timeoutBudget = runPlan.timeoutBudget;
 
+  if (options.keepOpen) {
+    options.keepTemp = true;
+    assertKeepOpenShowcaseBoundary(options);
+  }
+
   if (!["basic", "project-edit-export"].includes(options.scenario)) {
     throw new Error("--scenario must be basic or project-edit-export");
   }
@@ -381,16 +405,7 @@ function normalizeImageSpecs(options) {
   const rawImages =
     options.imageSpecs.length > 0
       ? options.imageSpecs
-      : [
-          {
-            id: options.imageId,
-            imageName: options.imageName,
-            copyFromImageName: options.copyFromImageName,
-            port: options.port,
-            loadScript: options.loadScript,
-            active: true,
-          },
-        ];
+      : [defaultSmokeImageSpec(options)];
 
   if (rawImages.length === 0) {
     throw new Error("Missing image source");
@@ -423,14 +438,18 @@ function normalizeImageSpecs(options) {
     if (!active) {
       throw new Error(`Image ${id} must be active for this smoke`);
     }
+    const imageLoadScript = stringProperty(rawImage, "loadScript");
 
     return {
       id,
       imageName,
       copyFromImageName,
       port,
-      loadScript: stringProperty(rawImage, "loadScript") ?? options.loadScript,
-      usesDefaultLoadScript: stringProperty(rawImage, "loadScript") === undefined,
+      loadScript: imageLoadScript ?? options.loadScript,
+      usesDefaultLoadScript: usesDefaultSmokeLoadScript({
+        imageLoadScriptExplicit: imageLoadScript !== undefined,
+        loadScriptExplicit: options.loadScriptExplicit,
+      }),
       git: objectProperty(rawImage, "git"),
       active,
       copied: false,
@@ -1037,6 +1056,41 @@ function requireGatewayOk(result, label) {
   }
 
   return result.data;
+}
+
+async function registerProbeRoute(gateway, openData, projectPaths) {
+  return gateway.handleTool("plexus_gateway_register_target", {
+    projectRoot: projectPaths.projectRoot,
+    statePath: openData.statePath,
+    state: openData.state,
+  });
+}
+
+async function persistentRouteStatus(openData, refreshHealth) {
+  const controlEndpoint = openData?.state?.gateway?.controlEndpoint;
+  if (typeof controlEndpoint !== "string" || controlEndpoint.length === 0) {
+    return {
+      ok: false,
+      error:
+        "Project-local gateway did not report a route-control endpoint for keep-open status",
+    };
+  }
+
+  const registry = new HttpGatewayRouteRegistry({ url: controlEndpoint });
+  try {
+    return {
+      ok: true,
+      data: await registry.getRouteStatus({
+        targetId: openData.state.targetId,
+        refreshHealth,
+      }),
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
 }
 
 function routeOutputText(value) {
@@ -1800,10 +1854,11 @@ async function main() {
   );
   const gateway = new PlexusGateway();
   const lifecycle = new PlexusProjectLifecycle({
-    routeRegistry: gateway,
+    ...(options.keepOpen ? {} : { routeRegistry: gateway }),
     imageToolCaller: gateway,
   });
   let opened = false;
+  let keepOpenRetained = false;
   let projectPaths;
   let openData;
 
@@ -1868,16 +1923,27 @@ async function main() {
     opened = true;
     textResult("open ok", openResult.ok);
     textResult("statePath", openData.statePath);
+    if (options.keepOpen) {
+      requireGatewayOk(
+        await registerProbeRoute(gateway, openData, projectPaths),
+        "in-process probe route registration",
+      );
+      recordEvent(options, "probe-route-registered", {
+        targetId: openData.state.targetId,
+      });
+    }
 
     const stateAfterOpen = loadProjectState(openData.statePath);
     snapshotJsonArtifact(options, "state-after-open.json", stateAfterOpen);
     snapshotJsonArtifact(
       options,
       "gateway-status-after-open.json",
-      await gateway.handleTool("plexus_gateway_status", {
-        targetId: openData.state.targetId,
-        refreshHealth: false,
-      }),
+      options.keepOpen
+        ? await persistentRouteStatus(openData, false)
+        : await gateway.handleTool("plexus_gateway_status", {
+            targetId: openData.state.targetId,
+            refreshHealth: false,
+          }),
     );
     validateOpenedState(stateAfterOpen, options);
     await withPhaseTimeout(options, "routing", async () => {
@@ -1896,6 +1962,36 @@ async function main() {
           options,
         );
       });
+    }
+
+    if (options.keepOpen) {
+      const keepOpenRouteStatus = await persistentRouteStatus(openData, true);
+      snapshotJsonArtifact(
+        options,
+        "gateway-status-keep-open.json",
+        keepOpenRouteStatus,
+      );
+      requireGatewayOk(keepOpenRouteStatus, "keep-open route-control status");
+      const cleanupContext = buildKeepOpenCleanupContext({
+        projectPaths,
+        options,
+        openData,
+      });
+      snapshotJsonArtifact(
+        options,
+        "keep-open-cleanup-context.json",
+        cleanupContext,
+      );
+      recordEvent(options, "keep-open-retained", {
+        targetId: cleanupContext.routeControl.targetId,
+        closeCommand: cleanupContext.closeCommand,
+        artifactDirectory: cleanupContext.retained.artifactDirectory,
+      });
+      keepOpenRetained = true;
+      textResult("keep open", "retaining scoped project and images");
+      textResult("cleanup command", cleanupContext.closeCommandString);
+      recordEvent(options, "run-completed");
+      return 0;
     }
 
     await withPhaseTimeout(options, "close", async () => {
@@ -1925,6 +2021,13 @@ async function main() {
   } finally {
     await withPhaseTimeout(options, "cleanup", async () => {
       recordEvent(options, "cleanup-started");
+      if (keepOpenRetained) {
+        recordEvent(options, "cleanup-skipped-keep-open", {
+          reason: "keep-open mode retains scoped disposable runtime for inspection",
+        });
+        return;
+      }
+
       if (opened && projectPaths) {
         await cleanupStep("project close", async () => {
           await lifecycle.handleTool("plexus_project_close", {
