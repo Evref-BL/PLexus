@@ -199,6 +199,59 @@ runtime image, and deleting it are live PharoLauncher mutations. Those operation
 require an approved runner boundary. Without that approval, `project open`
 fails before copying or launching an image that requests `copy-on-open`.
 
+### PLexus Home Image Cache
+
+PLexus also has a home context for reusable state that is not tied to one
+project checkout. The default home path is `~/.plexus`; set `PLEXUS_HOME` to
+override it for a process, or use optional project config to override or disable
+the image cache for one project:
+
+```json
+{
+  "home": {
+    "path": "/Users/ada/.plexus",
+    "imageCache": {
+      "enabled": true
+    }
+  }
+}
+```
+
+The home image cache is intended for template-created base images. PLexus
+derives a content key from the launcher template identity, normalized Pharo
+version, architecture/VM metadata when available, Pharo MCP support policy, MCP
+load script/repository identity, Git transport policy, and the PLexus cache
+schema version. Moose templates are classified by the underlying Pharo version,
+so a Moose 13 template is treated as Pharo 13 for Pharo MCP preparation.
+
+Home cache entries live under:
+
+```text
+<PLEXUS_HOME>/image-cache/entries/<cache-key>/manifest.json
+<PLEXUS_HOME>/image-cache/entries/<cache-key>/prepare.st
+<PLEXUS_HOME>/image-cache/locks/<cache-key>/lock.json
+```
+
+The prepared base image lives in an explicit home-level pharo-launcher-mcp
+profile under:
+
+```text
+<PLEXUS_HOME>/profiles/pharo-launcher-mcp/image-cache
+```
+
+Runtime workspace images must remain copies of home cache bases; agents must
+not operate directly on home cache images. If a template's Pharo version is not
+supported by the image-side Pharo MCP, PLexus may still cache the base image,
+but it must skip the MCP load step and mark the manifest as not Pharo-MCP
+routable.
+
+Because runtime images stay in project-owned launcher profiles while home cache
+bases live in a home-owned launcher profile, PLexus needs a launcher-owned
+cross-profile copy/export/import operation before the home cache can become the
+default live path. Until that launcher contract is available, PLexus can derive
+home cache keys, manifests, locks, preparation scripts, hit/miss plans, and
+flush plans without mutating launcher state.
+
 ## Routing Rules
 
 Split routing into two layers:

@@ -148,6 +148,15 @@ the image. Generating the script is source-only. Creating the cache image,
 copying it into a workspace runtime image, and deleting it remain live launcher
 mutations and require an approved runner.
 
+Home image cache planning uses `PLEXUS_HOME` when set, otherwise `~/.plexus`.
+The home cache stores manifests, preparation scripts, and lock directories under
+`<PLEXUS_HOME>/image-cache`, while home cache base images live in a separate
+explicit pharo-launcher-mcp profile under
+`<PLEXUS_HOME>/profiles/pharo-launcher-mcp/image-cache`. Runtime images still
+belong to project-owned launcher profiles, so live home-cache copy requires a
+launcher-owned cross-profile copy/export/import operation rather than raw
+filesystem copying.
+
 ## Prototype Open/Close Check
 
 Run one real-image lifecycle check after building:

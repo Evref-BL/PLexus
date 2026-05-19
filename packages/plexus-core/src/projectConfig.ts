@@ -90,6 +90,15 @@ export interface ProjectPreparedImageConfig {
   mcp: ProjectPreparedImageMcpConfig;
 }
 
+export interface ProjectHomeImageCacheConfig {
+  enabled: boolean;
+}
+
+export interface ProjectHomeConfig {
+  path?: string;
+  imageCache: ProjectHomeImageCacheConfig;
+}
+
 export interface ProjectRuntimePortRange {
   start: number;
   end: number;
@@ -171,6 +180,7 @@ export interface ProjectConfig {
   id: string;
   name: string;
   kanban?: ProjectKanbanConfig;
+  home?: ProjectHomeConfig;
   runtime?: ProjectRuntimePolicy;
   preparedImages?: ProjectPreparedImageConfig[];
   images: ProjectImageConfig[];
@@ -281,6 +291,26 @@ function booleanField(
 
   issues.push(`${pathPrefix}.${key} must be a boolean`);
   return false;
+}
+
+function booleanFieldWithDefault(
+  object: Record<string, unknown>,
+  key: string,
+  issues: string[],
+  pathPrefix: string,
+  defaultValue: boolean,
+): boolean {
+  const value = object[key];
+  if (value === undefined) {
+    return defaultValue;
+  }
+
+  if (typeof value === "boolean") {
+    return value;
+  }
+
+  issues.push(`${pathPrefix}.${key} must be a boolean`);
+  return defaultValue;
 }
 
 function optionalPortField(
@@ -469,6 +499,41 @@ function parseKanban(
   return {
     provider: "vibe-kanban",
     projectId: stringField(value, "projectId", issues, "kanban"),
+  };
+}
+
+function parseHome(value: unknown, issues: string[]): ProjectHomeConfig | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (!isObject(value)) {
+    issues.push("home must be an object");
+    return undefined;
+  }
+
+  const imageCacheValue = value.imageCache;
+  let imageCache: ProjectHomeImageCacheConfig = { enabled: true };
+  if (imageCacheValue !== undefined) {
+    if (!isObject(imageCacheValue)) {
+      issues.push("home.imageCache must be an object");
+    } else {
+      imageCache = {
+        enabled: booleanFieldWithDefault(
+          imageCacheValue,
+          "enabled",
+          issues,
+          "home.imageCache",
+          true,
+        ),
+      };
+    }
+  }
+
+  const path = optionalStringField(value, "path", issues, "home");
+  return {
+    ...(path ? { path } : {}),
+    imageCache,
   };
 }
 
@@ -1262,11 +1327,13 @@ export function parseProjectConfig(value: unknown): ProjectConfig {
   }
 
   const legacyKanban = parseKanban(value.kanban, issues);
+  const home = parseHome(value.home, issues);
   const preparedImages = parsePreparedImages(value.preparedImages, issues);
   const config: ProjectConfig = {
     id: parseProjectIdentity(value, legacyKanban, issues),
     name: stringField(value, "name", issues, "config"),
     ...(legacyKanban ? { kanban: legacyKanban } : {}),
+    ...(home ? { home } : {}),
     runtime: parseRuntimePolicy(value.runtime, issues),
     ...(preparedImages ? { preparedImages } : {}),
     images: parseImages(value.images, issues),

@@ -1,4 +1,5 @@
 export * from "./config.js";
+export * from "./homeImageCache.js";
 export * from "./imagePortClaims.js";
 export * from "./imageRescue.js";
 export * from "./pharoLauncherMcpClient.js";

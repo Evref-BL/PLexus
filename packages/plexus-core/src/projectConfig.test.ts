@@ -238,6 +238,24 @@ describe("project config", () => {
     });
   });
 
+  it("parses optional PLexus home and image-cache policy", () => {
+    const config: ReturnType<typeof validProjectConfig> & { home?: unknown } =
+      validProjectConfig();
+    config.home = {
+      path: "/Users/ada/.plexus-custom",
+      imageCache: {
+        enabled: false,
+      },
+    };
+
+    expect(parseProjectConfig(config).home).toEqual({
+      path: "/Users/ada/.plexus-custom",
+      imageCache: {
+        enabled: false,
+      },
+    });
+  });
+
   it("records project-local gateway host, fixed port, route path, and control path", () => {
     const config: ReturnType<typeof validProjectConfig> & { runtime?: unknown } =
       validProjectConfig();
