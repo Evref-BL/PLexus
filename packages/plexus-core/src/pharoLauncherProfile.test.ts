@@ -16,10 +16,14 @@ function projectConfig(runtime: Record<string, unknown> = {}) {
   });
 }
 
+function rootPath(...segments: string[]): string {
+  return path.resolve(path.sep, ...segments);
+}
+
 describe("pharo-launcher-mcp profile derivation", () => {
   it("derives the default project-owned launcher profile from project scope", () => {
-    const projectRoot = path.join(path.sep, "tmp", "my-project");
-    const stateRoot = path.join(path.sep, "tmp", "plexus-state");
+    const projectRoot = rootPath("tmp", "my-project");
+    const stateRoot = rootPath("tmp", "plexus-state");
     const env = pharoLauncherMcpProfileEnvironment({
       projectRoot,
       config: projectConfig(),
@@ -62,8 +66,8 @@ describe("pharo-launcher-mcp profile derivation", () => {
   });
 
   it("shares the default profile across workspaces while rendering distinct image names", () => {
-    const projectRoot = path.join(path.sep, "tmp", "my-project");
-    const stateRoot = path.join(path.sep, "tmp", "plexus-state");
+    const projectRoot = rootPath("tmp", "my-project");
+    const stateRoot = rootPath("tmp", "plexus-state");
     const config = parseProjectConfig({
       id: "project-123",
       name: "my-project",
@@ -115,9 +119,9 @@ describe("pharo-launcher-mcp profile derivation", () => {
   });
 
   it("supports explicit project-owned profile name and root overrides", () => {
-    const profileRoot = path.join(path.sep, "profiles", "custom-launcher");
+    const profileRoot = rootPath("profiles", "custom-launcher");
     const diagnostic = describePharoLauncherMcpProfile({
-      projectRoot: path.join(path.sep, "tmp", "my-project"),
+      projectRoot: rootPath("tmp", "my-project"),
       config: projectConfig({
         launcherProfile: {
           mode: "project-owned",
@@ -141,7 +145,7 @@ describe("pharo-launcher-mcp profile derivation", () => {
 
   it("reports externally supplied launcher profile environment only when configured external", () => {
     const diagnostic = describePharoLauncherMcpProfile({
-      projectRoot: path.join(path.sep, "tmp", "my-project"),
+      projectRoot: rootPath("tmp", "my-project"),
       config: projectConfig({
         launcherProfile: {
           mode: "external",
@@ -151,7 +155,7 @@ describe("pharo-launcher-mcp profile derivation", () => {
       targetId: "target-a",
       env: {
         PHARO_LAUNCHER_MCP_PROFILE: "user-profile",
-        PHARO_LAUNCHER_MCP_STATE_ROOT: path.join(path.sep, "user", "profile"),
+        PHARO_LAUNCHER_MCP_STATE_ROOT: rootPath("user", "profile"),
       },
     });
 
@@ -160,7 +164,7 @@ describe("pharo-launcher-mcp profile derivation", () => {
       mode: "external",
       profileScope: "external",
       profileName: "user-profile",
-      stateRoot: path.join(path.sep, "user", "profile"),
+      stateRoot: rootPath("user", "profile"),
       environmentKeys: [
         "PHARO_LAUNCHER_MCP_PROFILE",
         "PHARO_LAUNCHER_MCP_STATE_ROOT",
@@ -170,7 +174,7 @@ describe("pharo-launcher-mcp profile derivation", () => {
 
   it("reports unknown profile scope when external mode has no profile environment", () => {
     const diagnostic = describePharoLauncherMcpProfile({
-      projectRoot: path.join(path.sep, "tmp", "my-project"),
+      projectRoot: rootPath("tmp", "my-project"),
       config: projectConfig({
         launcherProfile: {
           mode: "external",

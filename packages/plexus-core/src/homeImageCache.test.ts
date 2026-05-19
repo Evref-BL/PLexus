@@ -27,6 +27,10 @@ import type { ProjectImageState } from "./projectState.js";
 
 const tempDirs: string[] = [];
 
+function rootPath(...segments: string[]): string {
+  return path.resolve(path.sep, ...segments);
+}
+
 function makeTempDir(prefix: string): string {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
   tempDirs.push(tempDir);
@@ -87,7 +91,7 @@ afterEach(() => {
 
 describe("home image cache", () => {
   it("resolves the PLexus home path from environment, config, then user home", () => {
-    const homeDirectory = path.join(path.sep, "Users", "ada");
+    const homeDirectory = rootPath("Users", "ada");
     expect(defaultPlexusHomePath(homeDirectory)).toBe(
       path.join(homeDirectory, ".plexus"),
     );
@@ -101,26 +105,26 @@ describe("home image cache", () => {
       resolvePlexusHomePath({
         config: {
           home: {
-            path: path.join(path.sep, "configured", "plexus-home"),
+            path: rootPath("configured", "plexus-home"),
             imageCache: { enabled: true },
           },
         },
         env: {},
       }),
-    ).toBe(path.join(path.sep, "configured", "plexus-home"));
+    ).toBe(rootPath("configured", "plexus-home"));
     expect(
       resolvePlexusHomePath({
         config: {
           home: {
-            path: path.join(path.sep, "configured", "plexus-home"),
+            path: rootPath("configured", "plexus-home"),
             imageCache: { enabled: true },
           },
         },
         env: {
-          PLEXUS_HOME: path.join(path.sep, "env", "plexus-home"),
+          PLEXUS_HOME: rootPath("env", "plexus-home"),
         },
       }),
-    ).toBe(path.join(path.sep, "env", "plexus-home"));
+    ).toBe(rootPath("env", "plexus-home"));
   });
 
   it("derives stable cache keys from template, MCP support, Git, and launcher metadata", () => {
