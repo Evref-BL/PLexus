@@ -74,6 +74,10 @@ function defaultRuntimePolicy() {
     launcherProfile: {
       mode: "project-owned",
     },
+    pharoMcp: {
+      metadataKey: "io.github.evref-bl/pharo",
+      supportedMajorVersions: [12, 13, 14],
+    },
   };
 }
 
@@ -179,6 +183,10 @@ describe("project config", () => {
         name: "my-project-isolated",
         root: "C:\\dev\\plexus-state\\profiles\\pharo-launcher",
       },
+      pharoMcp: {
+        metadataKey: "io.github.evref-bl/pharo",
+        supportedMajorVersions: [12, 13, 14],
+      },
     };
 
     expect(parseProjectConfig(config)).toEqual(config);
@@ -211,6 +219,22 @@ describe("project config", () => {
 
     expect(parseProjectConfig(config).runtime?.launcherProfile).toEqual({
       mode: "external",
+    });
+  });
+
+  it("parses Pharo MCP supported version policy overrides", () => {
+    const config: ReturnType<typeof validProjectConfig> & { runtime?: unknown } =
+      validProjectConfig();
+    config.runtime = {
+      pharoMcp: {
+        metadataKey: "io.github.evref-bl/pharo",
+        supportedMajorVersions: [13, 14],
+      },
+    };
+
+    expect(parseProjectConfig(config).runtime?.pharoMcp).toEqual({
+      metadataKey: "io.github.evref-bl/pharo",
+      supportedMajorVersions: [13, 14],
     });
   });
 

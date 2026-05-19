@@ -106,6 +106,30 @@ describe("project startup scripts", () => {
     expect(source).toContain("Semaphore new wait.");
   });
 
+  it("skips MCP load and startup for known unsupported Pharo versions", () => {
+    const projectRoot = path.join("C:", "dev", "code", "git", "my-project");
+    const source = generateImageStartupScript({
+      projectRoot,
+      imageConfig: config.images[0],
+      imageState: {
+        ...imageState,
+        pharoVersion: "11",
+        pharoMcpContract: {
+          status: "unsupported",
+          actualMajorVersion: 11,
+          supportedMajorVersions: [12, 13, 14],
+          reason: "Pharo 11 is outside the supported Pharo MCP range.",
+        },
+      },
+    });
+
+    expect(source).toContain("Pharo MCP startup is disabled");
+    expect(source).not.toContain("Metacello new");
+    expect(source).not.toContain("mcp start.");
+    expect(source).not.toContain("MCP class is not available after loading.");
+    expect(source).toContain("Semaphore new wait.");
+  });
+
   it.each([
     [
       "Windows",

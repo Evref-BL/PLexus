@@ -285,6 +285,10 @@ function activeStateImages(state: ProjectState): ProjectImageState[] {
   return state.images.filter((image) => image.status === "starting");
 }
 
+function imageRequiresPharoMcpHealth(image: ProjectImageState): boolean {
+  return image.pharoMcpContract?.status !== "unsupported";
+}
+
 function applyScopedImageSelection(
   state: ProjectState,
   previousState: ProjectState | undefined,
@@ -459,17 +463,19 @@ export async function openProject(
             }
           }
 
-          const healthy = await pollHealth(
-            healthClient,
-            imageState.assignedPort,
-            poll.healthTimeoutMs,
-            poll.intervalMs,
-            sleep,
-          );
-          if (!healthy) {
-            throw new Error(
-              `Timed out waiting for Pharo MCP health on port ${imageState.assignedPort}`,
+          if (imageRequiresPharoMcpHealth(imageState)) {
+            const healthy = await pollHealth(
+              healthClient,
+              imageState.assignedPort,
+              poll.healthTimeoutMs,
+              poll.intervalMs,
+              sleep,
             );
+            if (!healthy) {
+              throw new Error(
+                `Timed out waiting for Pharo MCP health on port ${imageState.assignedPort}`,
+              );
+            }
           }
         } finally {
           if (ownsLaunchClient) {

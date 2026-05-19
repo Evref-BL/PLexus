@@ -139,6 +139,14 @@ export interface ProjectImagePortPolicy {
   coordination: ProjectImagePortCoordinationPolicy;
 }
 
+export const defaultPharoMcpMetadataKey = "io.github.evref-bl/pharo";
+export const defaultPharoMcpSupportedMajorVersions = [12, 13, 14] as const;
+
+export interface ProjectPharoMcpPolicy {
+  metadataKey: string;
+  supportedMajorVersions: number[];
+}
+
 export type ProjectLauncherProfileMode = "project-owned" | "external";
 
 export interface ProjectLauncherProfilePolicy {
@@ -153,6 +161,7 @@ export interface ProjectRuntimePolicy {
   gateway: ProjectGatewayPolicy;
   imagePorts: ProjectImagePortPolicy;
   launcherProfile: ProjectLauncherProfilePolicy;
+  pharoMcp: ProjectPharoMcpPolicy;
 }
 
 export interface ProjectConfig {
@@ -208,6 +217,10 @@ export function defaultProjectRuntimePolicy(): ProjectRuntimePolicy {
     },
     launcherProfile: {
       mode: "project-owned",
+    },
+    pharoMcp: {
+      metadataKey: defaultPharoMcpMetadataKey,
+      supportedMajorVersions: [...defaultPharoMcpSupportedMajorVersions],
     },
   };
 }
@@ -408,6 +421,28 @@ function parseRuntimePortRange(
   }
 
   return { start, end };
+}
+
+function parsePositiveIntegerArray(
+  value: unknown,
+  issues: string[],
+  pathPrefix: string,
+  fallback: readonly number[],
+): number[] {
+  if (value === undefined) {
+    return [...fallback];
+  }
+
+  if (
+    !Array.isArray(value) ||
+    value.length === 0 ||
+    !value.every((item) => Number.isInteger(item) && item > 0)
+  ) {
+    issues.push(`${pathPrefix} must be a non-empty array of positive integers`);
+    return [...fallback];
+  }
+
+  return [...new Set(value)];
 }
 
 function parseKanban(
@@ -1055,6 +1090,43 @@ function parseLauncherProfilePolicy(
   };
 }
 
+function parsePharoMcpPolicy(
+  value: unknown,
+  issues: string[],
+): ProjectPharoMcpPolicy {
+  const defaults = defaultProjectRuntimePolicy().pharoMcp;
+  if (value === undefined) {
+    return {
+      metadataKey: defaults.metadataKey,
+      supportedMajorVersions: [...defaults.supportedMajorVersions],
+    };
+  }
+
+  if (!isObject(value)) {
+    issues.push("runtime.pharoMcp must be an object");
+    return {
+      metadataKey: defaults.metadataKey,
+      supportedMajorVersions: [...defaults.supportedMajorVersions],
+    };
+  }
+
+  return {
+    metadataKey: stringFieldWithDefault(
+      value,
+      "metadataKey",
+      issues,
+      "runtime.pharoMcp",
+      defaults.metadataKey,
+    ),
+    supportedMajorVersions: parsePositiveIntegerArray(
+      value.supportedMajorVersions,
+      issues,
+      "runtime.pharoMcp.supportedMajorVersions",
+      defaults.supportedMajorVersions,
+    ),
+  };
+}
+
 function parseRuntimePolicy(
   value: unknown,
   issues: string[],
@@ -1082,6 +1154,7 @@ function parseRuntimePolicy(
       value.launcherProfile,
       issues,
     ),
+    pharoMcp: parsePharoMcpPolicy(value.pharoMcp, issues),
   };
 }
 

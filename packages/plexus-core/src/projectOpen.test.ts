@@ -565,6 +565,92 @@ describe("project open", () => {
     expect(healthClient.ports).toEqual([7123]);
   });
 
+  it("opens known unsupported Pharo versions without waiting for MCP health", async () => {
+    const projectRoot = makeTempDir("plexus-project-");
+    const stateRoot = makeTempDir("plexus-state-");
+    writeProjectConfig(projectRoot, {
+      images: [
+        {
+          id: "legacy",
+          imageName: "MyProject-legacy",
+          active: true,
+          create: {
+            kind: "template",
+            templateName: "Pharo 11.0 - 64bit",
+          },
+          mcp: {
+            port: 7123,
+            loadScript: "pharo/load-mcp.st",
+          },
+        },
+      ],
+    });
+    const pharoLauncherMcpClient = new FakePharoLauncherMcpClient([
+      {
+        pid: 1234,
+        imageName: "MyProject-legacy",
+        commandLine: "PharoConsole.exe MyProject-legacy.image",
+      },
+    ]);
+    const healthClient = new FakeHealthClient(false);
+
+    const result = await openProject({
+      projectRoot,
+      stateRoot,
+      workspaceId: "worktree-a",
+      pharoLauncherMcpClient,
+      healthClient,
+      now: fixedNow,
+      sleep: async () => {},
+      poll: {
+        intervalMs: 0,
+      },
+    });
+
+    const scriptPath = path.join(
+      stateRoot,
+      "projects",
+      "project-123",
+      "workspaces",
+      "worktree-a",
+      "scripts",
+      "start-legacy.st",
+    );
+
+    expect(result.ok).toBe(true);
+    expect(pharoLauncherMcpClient.calls).toEqual([
+      {
+        name: "pharo_launcher_image_launch",
+        argumentsValue: {
+          imageName: "MyProject-legacy",
+          detached: true,
+          script: scriptPath,
+        },
+      },
+      {
+        name: "pharo_launcher_process_list",
+        argumentsValue: {},
+      },
+    ]);
+    expect(healthClient.ports).toEqual([]);
+    expect(fs.readFileSync(scriptPath, "utf8")).toContain(
+      "Pharo MCP startup is disabled",
+    );
+    expect(result.state.images[0]).toMatchObject({
+      id: "legacy",
+      imageName: "MyProject-legacy",
+      assignedPort: 7123,
+      pid: 1234,
+      status: "running",
+      pharoVersion: "11",
+      pharoMcpContract: {
+        status: "unsupported",
+        actualMajorVersion: 11,
+        supportedMajorVersions: [12, 13, 14],
+      },
+    });
+  });
+
   it("keeps unselected scoped images in their previous runtime state", async () => {
     const projectRoot = makeTempDir("plexus-project-");
     const stateRoot = makeTempDir("plexus-state-");

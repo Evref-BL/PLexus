@@ -3,6 +3,7 @@ import {
   projectConfigId,
   resolveProjectRuntimePolicy,
   type ProjectConfig,
+  type ProjectImageConfig,
   type ProjectGatewayMode,
   type ProjectRuntimePortRange,
 } from "./projectConfig.js";
@@ -24,7 +25,11 @@ export const defaultProjectPortRange = {
 
 export type ProjectImageStatus = "starting" | "running" | "stopped" | "failed";
 export type ProjectRuntimeStatus = "idle" | "starting" | "running" | "failed";
-export type PharoMcpContractStatus = "unknown" | "matching" | "mismatched";
+export type PharoMcpContractStatus =
+  | "unknown"
+  | "matching"
+  | "mismatched"
+  | "unsupported";
 export type ProjectImageMcpEndpointTransport = "http";
 
 export interface ProjectImageMcpEndpoint {
@@ -44,6 +49,10 @@ export interface ProjectImagePharoMcpContractState
   status?: PharoMcpContractStatus;
   expectedId?: string;
   expectedHash?: string;
+  metadataKey?: string;
+  actualMajorVersion?: number;
+  supportedMajorVersions?: number[];
+  reason?: string;
 }
 
 export interface ProjectImageState {
@@ -285,6 +294,78 @@ function previousImagePort(
     ?.assignedPort;
 }
 
+function pharoMajorVersionFromText(value: string | undefined): number | undefined {
+  if (!value) {
+    return undefined;
+  }
+
+  const pharoMatch = /\bPharo\s*(\d{1,2})(?:\.\d+)?\b/i.exec(value);
+  if (pharoMatch) {
+    return Number.parseInt(pharoMatch[1], 10);
+  }
+
+  const numericMatch = /^(\d{1,2})(?:\.\d+)?$/.exec(value.trim());
+  if (numericMatch) {
+    return Number.parseInt(numericMatch[1], 10);
+  }
+
+  const launcherVersionMatch = /^(\d{2})0$/.exec(value.trim());
+  if (launcherVersionMatch) {
+    return Number.parseInt(launcherVersionMatch[1], 10);
+  }
+
+  return undefined;
+}
+
+function preparedImageForProjectImage(
+  config: ProjectConfig,
+  image: ProjectImageConfig,
+) {
+  const cacheId = image.preparedImage?.cacheId;
+  return cacheId
+    ? config.preparedImages?.find((candidate) => candidate.id === cacheId)
+    : undefined;
+}
+
+function detectedPharoMajorVersion(
+  config: ProjectConfig,
+  image: ProjectImageConfig,
+): number | undefined {
+  return (
+    pharoMajorVersionFromText(image.create?.templateName) ??
+    pharoMajorVersionFromText(
+      preparedImageForProjectImage(config, image)?.source.templateName,
+    )
+  );
+}
+
+function pharoMcpSupportState(
+  config: ProjectConfig,
+  image: ProjectImageConfig,
+): Pick<ProjectImageState, "pharoVersion" | "pharoMcpContract"> {
+  const majorVersion = detectedPharoMajorVersion(config, image);
+  if (majorVersion === undefined) {
+    return {};
+  }
+
+  const policy = resolveProjectRuntimePolicy(config).pharoMcp;
+  const supported = policy.supportedMajorVersions.includes(majorVersion);
+  const supportedLabel = policy.supportedMajorVersions.join(", ");
+
+  return {
+    pharoVersion: String(majorVersion),
+    pharoMcpContract: {
+      metadataKey: policy.metadataKey,
+      status: supported ? "matching" : "unsupported",
+      actualMajorVersion: majorVersion,
+      supportedMajorVersions: [...policy.supportedMajorVersions],
+      reason: supported
+        ? `Pharo ${majorVersion} is supported by the Pharo MCP contract.`
+        : `Pharo ${majorVersion} is outside the supported Pharo MCP range (${supportedLabel}).`,
+    },
+  };
+}
+
 function normalizeCreateProjectStateOptions(
   optionsOrUpdatedAt: string | CreateProjectStateOptions | undefined,
 ): NormalizedCreateProjectStateOptions {
@@ -489,6 +570,7 @@ export function createProjectState(
       }),
       assignedPort,
       status: image.active ? "starting" : "stopped",
+      ...pharoMcpSupportState(config, image),
     };
   });
 

@@ -669,6 +669,65 @@ describe("PlexusGateway", () => {
     expect(imageRouter.calls).toHaveLength(1);
   });
 
+  it("reports and rejects unsupported Pharo MCP image versions before forwarding", async () => {
+    const imageRouter = new FakeImageRouter();
+    const gateway = new PlexusGateway({
+      imageRouter,
+      pharoTools: [pharoEvalTool],
+      pharoScope: {
+        projectId: "project-123",
+        workspaceId: "worktree-a",
+      },
+    });
+
+    await registerTarget(gateway, {
+      ...runningState,
+      images: [
+        {
+          id: "legacy",
+          imageName: "MyProject-legacy",
+          assignedPort: 7123,
+          pid: 1234,
+          status: "running",
+          pharoMcpContract: {
+            status: "unsupported",
+            actualMajorVersion: 11,
+            supportedMajorVersions: [12, 13, 14],
+            reason: "Pharo 11 is outside the supported Pharo MCP range.",
+          },
+        },
+      ],
+    });
+
+    const status = data(
+      await gateway.handleTool("plexus_gateway_status", {
+        projectId: "project-123",
+        workspaceId: "worktree-a",
+      }),
+    );
+    expect(status.images).toEqual([
+      expect.objectContaining({
+        id: "legacy",
+        routable: {
+          ok: false,
+          code: "unsupported",
+          message: "Pharo 11 is outside the supported Pharo MCP range.",
+        },
+      }),
+    ]);
+
+    await expect(
+      gateway.callPharoTool("pharo_eval", {
+        imageId: "legacy",
+        code: "1 + 1",
+      }),
+    ).resolves.toMatchObject({
+      ok: false,
+      error: "Pharo 11 is outside the supported Pharo MCP range.",
+    });
+    expect(imageRouter.calls).toEqual([]);
+  });
+
   it("refuses to route to stopped images", async () => {
     const gateway = new PlexusGateway();
 

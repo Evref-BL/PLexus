@@ -68,6 +68,13 @@ function defaultRuntimePolicy(): ProjectRuntimePolicy {
         mode: "host-local",
       },
     },
+    launcherProfile: {
+      mode: "project-owned",
+    },
+    pharoMcp: {
+      metadataKey: "io.github.evref-bl/pharo",
+      supportedMajorVersions: [12, 13, 14],
+    },
   };
 }
 
@@ -238,6 +245,64 @@ describe("project state", () => {
         },
       ],
     });
+  });
+
+  it("records Pharo MCP support state from known template versions", () => {
+    const state = createProjectState(
+      {
+        ...config,
+        images: [
+          {
+            id: "legacy",
+            imageName: "MyProject-legacy",
+            active: true,
+            create: {
+              kind: "template",
+              templateName: "Pharo 11.0 - 64bit",
+            },
+            mcp: {
+              port: 7123,
+              loadScript: "pharo/load-mcp.st",
+            },
+          },
+          {
+            id: "current",
+            imageName: "MyProject-current",
+            active: true,
+            create: {
+              kind: "template",
+              templateName: "Pharo 13.0 - 64bit",
+            },
+            mcp: {
+              port: 7124,
+              loadScript: "pharo/load-mcp.st",
+            },
+          },
+        ],
+      },
+      "2026-04-25T10:00:00.000Z",
+    );
+
+    expect(state.images).toEqual([
+      expect.objectContaining({
+        id: "legacy",
+        pharoVersion: "11",
+        pharoMcpContract: expect.objectContaining({
+          status: "unsupported",
+          actualMajorVersion: 11,
+          supportedMajorVersions: [12, 13, 14],
+        }),
+      }),
+      expect.objectContaining({
+        id: "current",
+        pharoVersion: "13",
+        pharoMcpContract: expect.objectContaining({
+          status: "matching",
+          actualMajorVersion: 13,
+          supportedMajorVersions: [12, 13, 14],
+        }),
+      }),
+    ]);
   });
 
   it("creates idle runtime state for projects with no images", () => {

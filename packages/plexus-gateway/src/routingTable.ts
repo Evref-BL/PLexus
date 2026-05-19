@@ -9,7 +9,8 @@ export type GatewayProjectImageStatus =
 export type GatewayPharoMcpContractStatus =
   | "unknown"
   | "matching"
-  | "mismatched";
+  | "mismatched"
+  | "unsupported";
 export type GatewayImageMcpEndpointTransport = "http";
 
 export interface GatewayImageMcpEndpoint {
@@ -29,6 +30,10 @@ export interface GatewayProjectImagePharoMcpContractState
   status?: GatewayPharoMcpContractStatus;
   expectedId?: string;
   expectedHash?: string;
+  metadataKey?: string;
+  actualMajorVersion?: number;
+  supportedMajorVersions?: number[];
+  reason?: string;
 }
 
 export interface GatewayProjectImageState {
@@ -55,6 +60,7 @@ export type GatewayImageHealth = "unknown" | "healthy" | "unhealthy";
 export type GatewayImageRoutabilityCode =
   | "ready"
   | "image_unavailable"
+  | "unsupported"
   | "contract_unknown"
   | "contract_mismatch";
 
@@ -128,6 +134,16 @@ function contractRoutability(
   imageContract: GatewayProjectImagePharoMcpContractState | undefined,
   imageId: string,
 ): GatewayImageRoutability {
+  if (imageContract?.status === "unsupported") {
+    return {
+      ok: false,
+      code: "unsupported",
+      message:
+        imageContract.reason ??
+        `Image ${imageId} Pharo MCP contract is unsupported`,
+    };
+  }
+
   if (imageContract?.status === "mismatched") {
     return {
       ok: false,
