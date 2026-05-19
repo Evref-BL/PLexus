@@ -173,6 +173,10 @@ function previousImagePort(
     ?.assignedPort;
 }
 
+function imageCanUsePharoMcpPort(image: ProjectImageState): boolean {
+  return image.pharoMcpContract?.status !== "unsupported";
+}
+
 function portInRange(port: number, range: ProjectPortRange): boolean {
   return port >= range.start && port <= range.end;
 }
@@ -399,8 +403,14 @@ export async function prepareImagePortClaims(
     options.projectReservedOwners.map((owner) => [owner.port, owner]),
   );
   const projectReservedPorts = new Set(projectOwnersByPort.keys());
+  const imageIdsThatCanUsePharoMcpPort = new Set(
+    options.images
+      .filter((image) => imageCanUsePharoMcpPort(image))
+      .map((image) => image.id),
+  );
   const configuredPorts = new Set(
     options.config.images
+      .filter((image) => imageIdsThatCanUsePharoMcpPort.has(image.id))
       .map((image) => image.mcp.port)
       .filter((port): port is number => port !== undefined),
   );
@@ -408,6 +418,11 @@ export async function prepareImagePortClaims(
 
   try {
     for (const image of options.images) {
+      if (!imageCanUsePharoMcpPort(image)) {
+        delete image.assignedPort;
+        continue;
+      }
+
       const imageConfig = imageConfigForState(options.config, image);
       const scope = claimScopeForImage(options.state, image);
       const configuredPort = imageConfig.mcp.port;
@@ -492,6 +507,10 @@ export async function prepareImagePortClaims(
 export async function releaseImagePortClaimIfOwned(
   options: ReleaseImagePortClaimOptions,
 ): Promise<void> {
+  if (options.image.assignedPort === undefined) {
+    return;
+  }
+
   const scope = claimScopeForImage(options.state, options.image);
   const inspection = await inspectPortClaim({
     claimsRoot: options.claimsRoot,

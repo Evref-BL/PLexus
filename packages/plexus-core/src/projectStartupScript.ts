@@ -280,6 +280,12 @@ Semaphore new wait.
 `;
   }
 
+  if (options.imageState.assignedPort === undefined) {
+    throw new ProjectStartupScriptError(
+      `Project image ${options.imageState.id} requires Pharo MCP startup but has no assigned MCP port`,
+    );
+  }
+
   const repository = options.repository ?? defaultPharoMcpMetacelloRepository;
   const loadScriptPath = resolveLoadScriptPath(
     options.projectRoot,

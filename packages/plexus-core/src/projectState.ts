@@ -58,7 +58,7 @@ export interface ProjectImagePharoMcpContractState
 export interface ProjectImageState {
   id: string;
   imageName: string;
-  assignedPort: number;
+  assignedPort?: number;
   mcpEndpoint?: ProjectImageMcpEndpoint;
   pid?: number;
   status: ProjectImageStatus;
@@ -366,6 +366,12 @@ function pharoMcpSupportState(
   };
 }
 
+function imageCanUsePharoMcpPort(
+  supportState: Pick<ProjectImageState, "pharoMcpContract">,
+): boolean {
+  return supportState.pharoMcpContract?.status !== "unsupported";
+}
+
 function normalizeCreateProjectStateOptions(
   optionsOrUpdatedAt: string | CreateProjectStateOptions | undefined,
 ): NormalizedCreateProjectStateOptions {
@@ -450,7 +456,7 @@ export function collectReservedProjectPortOwners(
     }
 
     for (const image of state.images) {
-      if (image.status !== "stopped") {
+      if (image.status !== "stopped" && image.assignedPort !== undefined) {
         owners.push({
           port: image.assignedPort,
           projectId: state.projectId,
@@ -531,33 +537,40 @@ export function createProjectState(
     defaultTargetId(projectConfigId(config), options.workspaceId);
   const configuredPorts = new Set(
     config.images
+      .filter((image) => imageCanUsePharoMcpPort(pharoMcpSupportState(config, image)))
       .map((image) => image.mcp.port)
       .filter((port): port is number => port !== undefined),
   );
   const unavailablePorts = new Set([...options.reservedPorts, ...configuredPorts]);
   const images: ProjectImageState[] = config.images.map((image) => {
+    const supportState = pharoMcpSupportState(config, image);
+    const canUsePharoMcpPort = imageCanUsePharoMcpPort(supportState);
     const previousPort = previousImagePort(options.previousState, image.id);
     let assignedPort = image.mcp.port;
 
-    if (assignedPort !== undefined && options.reservedPorts.has(assignedPort)) {
-      throw new PortAllocationError(
-        `Configured port ${assignedPort} is already reserved by another workspace`,
-      );
-    }
-
-    if (assignedPort === undefined) {
-      if (
-        previousPort !== undefined &&
-        !configuredPorts.has(previousPort) &&
-        !unavailablePorts.has(previousPort)
-      ) {
-        assignedPort = previousPort;
-      } else {
-        assignedPort = nextAvailablePort(portRange, unavailablePorts);
+    if (canUsePharoMcpPort) {
+      if (assignedPort !== undefined && options.reservedPorts.has(assignedPort)) {
+        throw new PortAllocationError(
+          `Configured port ${assignedPort} is already reserved by another workspace`,
+        );
       }
-    }
 
-    unavailablePorts.add(assignedPort);
+      if (assignedPort === undefined) {
+        if (
+          previousPort !== undefined &&
+          !configuredPorts.has(previousPort) &&
+          !unavailablePorts.has(previousPort)
+        ) {
+          assignedPort = previousPort;
+        } else {
+          assignedPort = nextAvailablePort(portRange, unavailablePorts);
+        }
+      }
+
+      unavailablePorts.add(assignedPort);
+    } else {
+      assignedPort = undefined;
+    }
 
     return {
       id: image.id,
@@ -568,9 +581,9 @@ export function createProjectState(
         targetId,
         imageId: image.id,
       }),
-      assignedPort,
+      ...(assignedPort !== undefined ? { assignedPort } : {}),
       status: image.active ? "starting" : "stopped",
-      ...pharoMcpSupportState(config, image),
+      ...supportState,
     };
   });
 

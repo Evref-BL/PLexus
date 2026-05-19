@@ -198,6 +198,14 @@ function imageRoutability(
   projectContract: GatewayPharoMcpContractReference | undefined,
   image: GatewayProjectImageState,
 ): GatewayImageRoutability {
+  if (image.pharoMcpContract?.status === "unsupported") {
+    return contractRoutability(
+      projectContract,
+      image.pharoMcpContract,
+      image.id,
+    );
+  }
+
   if (!image.mcpEndpoint && image.assignedPort === undefined) {
     return {
       ok: false,

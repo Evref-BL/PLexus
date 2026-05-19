@@ -340,6 +340,11 @@ function stateInput(input: Record<string, unknown>): GatewayProjectState {
 
       const assignedPort = image.assignedPort;
       const mcpEndpoint = endpointInput(image, index);
+      const pharoMcpContract = isObject(image.pharoMcpContract)
+        ? image.pharoMcpContract
+        : undefined;
+      const unsupportedPharoMcp =
+        pharoMcpContract?.status === "unsupported";
       const pid = image.pid;
       if (
         assignedPort !== undefined &&
@@ -349,7 +354,7 @@ function stateInput(input: Record<string, unknown>): GatewayProjectState {
           `state.images[${index}].assignedPort must be an integer`,
         );
       }
-      if (assignedPort === undefined && !mcpEndpoint) {
+      if (assignedPort === undefined && !mcpEndpoint && !unsupportedPharoMcp) {
         throw new GatewayInputError(
           `state.images[${index}] must include assignedPort or mcpEndpoint`,
         );
@@ -379,9 +384,7 @@ function stateInput(input: Record<string, unknown>): GatewayProjectState {
         ...(mcpEndpoint ? { mcpEndpoint } : {}),
         ...(pid ? { pid } : {}),
         status,
-        ...(isObject(image.pharoMcpContract)
-          ? { pharoMcpContract: image.pharoMcpContract }
-          : {}),
+        ...(pharoMcpContract ? { pharoMcpContract } : {}),
       };
     }),
   };
@@ -788,7 +791,7 @@ export class PlexusGateway {
         this.routingTable.updateImageHealth(
           route.targetId,
           image.id,
-          "unhealthy",
+          image.routable.code === "unsupported" ? "unknown" : "unhealthy",
         );
         continue;
       }

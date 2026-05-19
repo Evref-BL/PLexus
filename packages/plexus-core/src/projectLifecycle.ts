@@ -282,7 +282,7 @@ export interface ProjectLifecycleRouteTableDiagnostics {
   status: "registered" | "missing" | "unavailable" | "not-configured";
   routableImages: Array<{
     imageId: string;
-    port: number;
+    port?: number;
     status?: string;
     routable?: unknown;
   }>;
@@ -344,7 +344,7 @@ export interface ProjectLifecycleDiagnostics {
   imageMcpPorts: Array<{
     imageId: string;
     imageName: string;
-    port: number;
+    port?: number;
     status: ProjectImageState["status"];
     pid?: number;
   }>;
@@ -944,7 +944,7 @@ function imageMcpPorts(
   return (state?.images ?? []).map((image) => ({
     imageId: image.id,
     imageName: image.imageName,
-    port: image.assignedPort,
+    ...(image.assignedPort !== undefined ? { port: image.assignedPort } : {}),
     status: image.status,
     ...(image.pid !== undefined ? { pid: image.pid } : {}),
   }));
@@ -990,7 +990,7 @@ function routeTableDiagnostics(
       .filter(isObject)
       .map((image) => ({
         imageId: typeof image.id === "string" ? image.id : "",
-        port: typeof image.port === "number" ? image.port : 0,
+        ...(typeof image.port === "number" ? { port: image.port } : {}),
         ...(typeof image.status === "string" ? { status: image.status } : {}),
         ...("routable" in image ? { routable: image.routable } : {}),
       })),
@@ -1028,6 +1028,10 @@ async function conflictingListenerDiagnostics(
   const diagnostics: ProjectLifecyclePortListenerDiagnostic[] = [];
 
   for (const image of state?.images ?? []) {
+    if (image.assignedPort === undefined) {
+      continue;
+    }
+
     const listening = Boolean(await checks.isPortListening?.(image.assignedPort));
     if (
       listening &&

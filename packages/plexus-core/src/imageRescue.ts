@@ -350,15 +350,22 @@ async function launchImage(
     );
   }
 
+  if (imageState.assignedPort === undefined) {
+    throw new Error(
+      `Project image ${imageState.id} requires Pharo MCP health but has no assigned MCP port`,
+    );
+  }
+  const assignedPort = imageState.assignedPort;
+
   const healthy = await pollUntil(
     poll.healthTimeoutMs,
     poll.intervalMs,
     sleep,
-    async () => ((await healthClient.check(imageState.assignedPort)) ? true : undefined),
+    async () => ((await healthClient.check(assignedPort)) ? true : undefined),
   );
   if (!healthy) {
     throw new Error(
-      `Timed out waiting for Pharo MCP health on port ${imageState.assignedPort}`,
+      `Timed out waiting for Pharo MCP health on port ${assignedPort}`,
     );
   }
 
@@ -395,7 +402,11 @@ function allocatePort(
   requestedPort: number | undefined,
   range: ProjectPortRange,
 ): number {
-  const usedPorts = new Set(state.images.map((image) => image.assignedPort));
+  const usedPorts = new Set(
+    state.images
+      .map((image) => image.assignedPort)
+      .filter((port): port is number => port !== undefined),
+  );
   if (requestedPort !== undefined) {
     if (usedPorts.has(requestedPort)) {
       throw new ImageRescueError(`Requested target MCP port is already used: ${requestedPort}`);

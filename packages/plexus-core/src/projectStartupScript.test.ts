@@ -112,7 +112,9 @@ describe("project startup scripts", () => {
       projectRoot,
       imageConfig: config.images[0],
       imageState: {
-        ...imageState,
+        id: "dev",
+        imageName: "MyProject-dev",
+        status: "starting",
         pharoVersion: "11",
         pharoMcpContract: {
           status: "unsupported",
@@ -128,6 +130,22 @@ describe("project startup scripts", () => {
     expect(source).not.toContain("mcp start.");
     expect(source).not.toContain("MCP class is not available after loading.");
     expect(source).toContain("Semaphore new wait.");
+  });
+
+  it("fails supported MCP startup generation when no port is assigned", () => {
+    expect(() =>
+      generateImageStartupScript({
+        projectRoot: path.join("C:", "dev", "code", "git", "my-project"),
+        imageConfig: config.images[0],
+        imageState: {
+          id: "dev",
+          imageName: "MyProject-dev",
+          status: "starting",
+        },
+      }),
+    ).toThrow(
+      "Project image dev requires Pharo MCP startup but has no assigned MCP port",
+    );
   });
 
   it.each([

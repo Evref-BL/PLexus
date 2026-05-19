@@ -294,7 +294,10 @@ function activeStateImages(state: ProjectState): ProjectImageState[] {
 }
 
 function imageRequiresPharoMcpHealth(image: ProjectImageState): boolean {
-  return image.pharoMcpContract?.status !== "unsupported";
+  return (
+    image.pharoMcpContract?.status !== "unsupported" &&
+    image.assignedPort !== undefined
+  );
 }
 
 function applyScopedImageSelection(
@@ -517,6 +520,11 @@ export async function openProject(
           }
 
           if (imageRequiresPharoMcpHealth(imageState)) {
+            if (imageState.assignedPort === undefined) {
+              throw new Error(
+                `Project image ${imageState.id} requires Pharo MCP health but has no assigned MCP port`,
+              );
+            }
             const healthy = await pollHealth(
               healthClient,
               imageState.assignedPort,

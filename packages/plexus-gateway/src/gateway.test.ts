@@ -686,7 +686,6 @@ describe("PlexusGateway", () => {
         {
           id: "legacy",
           imageName: "MyProject-legacy",
-          assignedPort: 7123,
           pid: 1234,
           status: "running",
           pharoMcpContract: {
@@ -715,6 +714,7 @@ describe("PlexusGateway", () => {
         },
       }),
     ]);
+    expect(status.images[0]).not.toHaveProperty("port");
 
     await expect(
       gateway.callPharoTool("pharo_eval", {

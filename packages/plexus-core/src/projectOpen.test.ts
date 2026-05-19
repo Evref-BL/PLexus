@@ -777,7 +777,6 @@ describe("project open", () => {
     expect(result.state.images[0]).toMatchObject({
       id: "legacy",
       imageName: "MyProject-legacy",
-      assignedPort: 7123,
       pid: 1234,
       status: "running",
       pharoVersion: "11",
@@ -787,6 +786,56 @@ describe("project open", () => {
         supportedMajorVersions: [12, 13, 14],
       },
     });
+    expect(result.state.images[0]).not.toHaveProperty("assignedPort");
+  });
+
+  it("does not claim host-local image MCP ports for known unsupported Pharo versions", async () => {
+    const claimsRoot = makeTempDir("plexus-port-claims-");
+    const projectRoot = makeTempDir("plexus-project-");
+    const stateRoot = makeTempDir("plexus-state-");
+    writeProjectConfig(projectRoot, {
+      runtime: hostLocalRuntime(claimsRoot, 7200, 7200),
+      images: [
+        {
+          id: "legacy",
+          imageName: "MyProject-legacy",
+          active: true,
+          create: {
+            kind: "template",
+            templateName: "Pharo 11.0 - 64bit",
+          },
+          mcp: {
+            port: 7200,
+            loadScript: "pharo/load-mcp.st",
+          },
+        },
+      ],
+    });
+    const pharoLauncherMcpClient = new FakePharoLauncherMcpClient([
+      {
+        pid: 1234,
+        imageName: "MyProject-legacy",
+        commandLine: "PharoConsole.exe MyProject-legacy.image",
+      },
+    ]);
+
+    const result = await openProject({
+      projectRoot,
+      stateRoot,
+      workspaceId: "worktree-a",
+      pharoLauncherMcpClient,
+      healthClient: new FakeHealthClient(false),
+      now: fixedNow,
+      sleep: async () => {},
+      poll: {
+        intervalMs: 0,
+      },
+      portClaimChecks: fakeLivePortClaimChecks,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.state.images[0]).not.toHaveProperty("assignedPort");
+    await expect(listPortClaims({ claimsRoot })).resolves.toEqual([]);
   });
 
   it("keeps unselected scoped images in their previous runtime state", async () => {

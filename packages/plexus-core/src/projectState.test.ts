@@ -295,6 +295,7 @@ describe("project state", () => {
       }),
       expect.objectContaining({
         id: "current",
+        assignedPort: 7124,
         pharoVersion: "13",
         pharoMcpContract: expect.objectContaining({
           status: "matching",
@@ -303,6 +304,66 @@ describe("project state", () => {
         }),
       }),
     ]);
+    expect(state.images[0]).not.toHaveProperty("assignedPort");
+  });
+
+  it("does not let unsupported configured MCP ports reserve the dynamic range", () => {
+    const state = createProjectState(
+      {
+        ...config,
+        images: [
+          {
+            id: "legacy",
+            imageName: "MyProject-legacy",
+            active: true,
+            create: {
+              kind: "template",
+              templateName: "Pharo 11.0 - 64bit",
+            },
+            mcp: {
+              port: 7100,
+              loadScript: "pharo/load-mcp.st",
+            },
+          },
+          {
+            id: "current",
+            imageName: "MyProject-current",
+            active: true,
+            create: {
+              kind: "template",
+              templateName: "Pharo 13.0 - 64bit",
+            },
+            mcp: {
+              loadScript: "pharo/load-mcp.st",
+            },
+          },
+        ],
+      },
+      {
+        updatedAt: "2026-04-25T10:00:00.000Z",
+        portRange: {
+          start: 7100,
+          end: 7100,
+        },
+      },
+    );
+
+    expect(state.images).toEqual([
+      expect.objectContaining({
+        id: "legacy",
+        pharoMcpContract: expect.objectContaining({
+          status: "unsupported",
+        }),
+      }),
+      expect.objectContaining({
+        id: "current",
+        assignedPort: 7100,
+        pharoMcpContract: expect.objectContaining({
+          status: "matching",
+        }),
+      }),
+    ]);
+    expect(state.images[0]).not.toHaveProperty("assignedPort");
   });
 
   it("creates idle runtime state for projects with no images", () => {
