@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import {
   projectConfigId,
+  projectMcpStartupMode,
   resolveProjectRuntimePolicy,
   type ProjectConfig,
   type ProjectImageConfig,
@@ -458,8 +459,12 @@ function pharoMcpSupportState(
 
 function imageCanUsePharoMcpPort(
   supportState: Pick<ProjectImageState, "pharoMcpContract">,
+  image: ProjectImageConfig,
 ): boolean {
-  return supportState.pharoMcpContract?.status !== "unsupported";
+  return (
+    projectMcpStartupMode(image.mcp) !== "disabled" &&
+    supportState.pharoMcpContract?.status !== "unsupported"
+  );
 }
 
 function normalizeCreateProjectStateOptions(
@@ -709,14 +714,16 @@ export function createProjectState(
     defaultTargetId(projectConfigId(config), options.workspaceId);
   const configuredPorts = new Set(
     config.images
-      .filter((image) => imageCanUsePharoMcpPort(pharoMcpSupportState(config, image)))
+      .filter((image) =>
+        imageCanUsePharoMcpPort(pharoMcpSupportState(config, image), image),
+      )
       .map((image) => image.mcp.port)
       .filter((port): port is number => port !== undefined),
   );
   const unavailablePorts = new Set([...options.reservedPorts, ...configuredPorts]);
   const images: ProjectImageState[] = config.images.map((image) => {
     const supportState = pharoMcpSupportState(config, image);
-    const canUsePharoMcpPort = imageCanUsePharoMcpPort(supportState);
+    const canUsePharoMcpPort = imageCanUsePharoMcpPort(supportState, image);
     const previousPort = previousImagePort(options.previousState, image.id);
     const imageContext = {
       projectId: projectConfigId(config),

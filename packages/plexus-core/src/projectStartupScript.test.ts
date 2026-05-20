@@ -172,6 +172,66 @@ describe("project startup scripts", () => {
     expect(source).toContain("Semaphore new wait.");
   });
 
+  it("skips MCP load and startup when Pharo MCP startup is disabled", () => {
+    const projectRoot = path.join("C:", "dev", "code", "git", "my-project");
+    const source = generateImageStartupScript({
+      projectRoot,
+      imageConfig: {
+        ...config.images[0],
+        mcp: {
+          ...config.images[0].mcp,
+          startupMode: "disabled",
+        },
+      },
+      imageState,
+    });
+
+    expect(source).toContain("Project image mcp.startupMode is disabled.");
+    expect(source).not.toContain("Metacello new");
+    expect(source).not.toContain("mcp start.");
+    expect(source).not.toContain("MCP class is not available after loading.");
+    expect(source).toContain("Semaphore new wait.");
+  });
+
+  it("records optional Pharo MCP load failures without aborting image startup", () => {
+    const projectRoot = path.join("C:", "dev", "code", "git", "my-project");
+    const statusPath = path.join(
+      "C:",
+      "dev",
+      "code",
+      "git",
+      "my-project",
+      ".plexus",
+      "projects",
+      "project-123",
+      "workspaces",
+      "worktree-a",
+      "scripts",
+      "pharo-mcp-load-dev.properties",
+    );
+    const source = generateImageStartupScript({
+      projectRoot,
+      imageConfig: {
+        ...config.images[0],
+        mcp: {
+          ...config.images[0].mcp,
+          startupMode: "optional",
+        },
+      },
+      imageState,
+      pharoMcpLoadStatusPath: statusPath,
+    });
+
+    expect(source).toContain(
+      "pharoMcpLoadStatusWriter value: 'failed' value: error description.",
+    );
+    expect(source).toContain("Optional Pharo MCP startup records the failure");
+    expect(source).toContain("(Smalltalk globals includesKey: #MCP)");
+    expect(source).toContain("mcp start.");
+    expect(source).not.toContain("error pass");
+    expect(source).toContain("Semaphore new wait.");
+  });
+
   it("fails supported MCP startup generation when no port is assigned", () => {
     expect(() =>
       generateImageStartupScript({
