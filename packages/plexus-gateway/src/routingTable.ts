@@ -196,7 +196,13 @@ function contractRoutability(
 
 function imageRoutability(
   projectContract: GatewayPharoMcpContractReference | undefined,
-  image: GatewayProjectImageState,
+  image: Pick<
+    GatewayProjectImageState,
+    "id" | "status" | "mcpEndpoint" | "assignedPort" | "pharoMcpContract"
+  > & {
+    port?: number;
+    health?: GatewayImageHealth;
+  },
 ): GatewayImageRoutability {
   if (image.pharoMcpContract?.status === "unsupported") {
     return contractRoutability(
@@ -206,7 +212,11 @@ function imageRoutability(
     );
   }
 
-  if (!image.mcpEndpoint && image.assignedPort === undefined) {
+  if (
+    !image.mcpEndpoint &&
+    image.assignedPort === undefined &&
+    image.port === undefined
+  ) {
     return {
       ok: false,
       code: "image_unavailable",
@@ -219,6 +229,14 @@ function imageRoutability(
       ok: false,
       code: "image_unavailable",
       message: `Image ${image.id} is not running; current status is ${image.status}`,
+    };
+  }
+
+  if (image.health === "unhealthy") {
+    return {
+      ok: false,
+      code: "image_unavailable",
+      message: `Image ${image.id} health check failed`,
     };
   }
 
@@ -280,6 +298,7 @@ export class PlexusRoutingTable {
       updatedAt: state.updatedAt,
       images: state.images.map((image) => {
         const port = imageRoutePort(image);
+        const health = existingHealth.get(image.id) ?? "unknown";
         return {
           id: image.id,
           imageName: image.imageName,
@@ -287,8 +306,11 @@ export class PlexusRoutingTable {
           ...(image.mcpEndpoint ? { mcpEndpoint: image.mcpEndpoint } : {}),
           ...(image.pid ? { pid: image.pid } : {}),
           status: image.status,
-          health: existingHealth.get(image.id) ?? "unknown",
-          routable: imageRoutability(state.pharoMcpContract, image),
+          health,
+          routable: imageRoutability(state.pharoMcpContract, {
+            ...image,
+            health,
+          }),
           routeMetadata: imageRouteMetadata(state, image.id),
           ...(image.pharoMcpContract
             ? { pharoMcpContract: image.pharoMcpContract }
@@ -378,6 +400,7 @@ export class PlexusRoutingTable {
     const image = project?.images.find((candidate) => candidate.id === imageId);
     if (image) {
       image.health = health;
+      image.routable = imageRoutability(project?.pharoMcpContract, image);
       image.updatedAt = new Date().toISOString();
     }
   }

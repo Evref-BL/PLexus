@@ -26,6 +26,7 @@ import {
   type ProjectOpenResult,
 } from "./projectOpen.js";
 import {
+  defaultPlexusStateRoot,
   loadProjectState,
   saveProjectState,
   type ProjectState,
@@ -90,14 +91,15 @@ class FakeRouteRegistry implements ProjectLifecycleRouteRegistry {
   async getRouteStatus(
     input: ProjectLifecycleRouteReference,
   ): Promise<unknown> {
+    const registration = this.registrations.at(-1);
     return {
       ok: true,
       data: {
         projectId: input.projectId ?? runningState.projectId,
         workspaceId: input.workspaceId ?? runningState.workspaceId,
         targetId: input.targetId ?? runningState.targetId,
-        projectRoot: "project-root",
-        statePath: "state.json",
+        projectRoot: registration?.projectRoot ?? "project-root",
+        statePath: registration?.statePath ?? "state.json",
       },
     };
   }
@@ -475,6 +477,54 @@ describe("project lifecycle tools", () => {
     expect(JSON.stringify(result.data)).not.toContain("1234");
   });
 
+  it("uses PLEXUS_STATE_ROOT as the lifecycle default state root", async () => {
+    const projectRoot = makeTempDir("plexus-project-");
+    const envStateRoot = makeTempDir("plexus-env-state-");
+    const failedState: ProjectState = {
+      ...runningState,
+      images: [
+        {
+          ...runningState.images[0],
+          status: "failed",
+        },
+      ],
+    };
+    writeProjectConfig(projectRoot);
+    saveProjectState(statePath(defaultPlexusStateRoot(projectRoot)), runningState);
+    saveProjectState(statePath(envStateRoot), failedState);
+    const lifecycle = createProjectLifecycleFromEnvironment({
+      PLEXUS_STATE_ROOT: envStateRoot,
+    } as NodeJS.ProcessEnv);
+
+    const result = await lifecycle.handleTool("plexus_project_status", {
+      projectPath: projectRoot,
+      workspaceId: "worktree-a",
+      includeDiagnostics: true,
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
+      data: {
+        stateRoot: envStateRoot,
+        statePath: statePath(envStateRoot),
+        state: {
+          images: [
+            {
+              id: "dev",
+              status: "failed",
+            },
+          ],
+        },
+        diagnostics: {
+          scope: {
+            stateRoot: envStateRoot,
+            statePath: statePath(envStateRoot),
+          },
+        },
+      },
+    });
+  });
+
   it("reports PLexus home image cache entries", async () => {
     const projectRoot = makeTempDir("plexus-project-");
     const homePath = makeTempDir("plexus-home-");
@@ -711,6 +761,83 @@ describe("project lifecycle tools", () => {
     expect(result.data?.diagnostics.routeTable.routableImages[0]).not.toHaveProperty(
       "port",
     );
+  });
+
+  it("re-registers stale gateway routes that point at a different state path", async () => {
+    const projectRoot = makeTempDir("plexus-project-");
+    const stateRoot = makeTempDir("plexus-state-");
+    const stateFilePath = statePath(stateRoot);
+    const staleStatePath = path.join(makeTempDir("plexus-stale-state-"), "state.json");
+    const registrations: ProjectLifecycleRouteRegistration[] = [];
+    let route = {
+      projectId: runningState.projectId,
+      workspaceId: runningState.workspaceId,
+      targetId: runningState.targetId,
+      projectRoot,
+      statePath: staleStatePath,
+      images: [
+        {
+          id: "dev",
+          imageName: "MyProject-dev",
+          port: 7123,
+          status: "running",
+          routable: {
+            ok: true,
+            code: "ready",
+            message: "Image is routable",
+          },
+        },
+      ],
+    };
+    const lifecycle = new PlexusProjectLifecycle({
+      routeRegistry: {
+        async registerProjectRoute(input) {
+          registrations.push(input);
+          route = {
+            ...route,
+            projectRoot: input.projectRoot,
+            statePath: input.statePath,
+          };
+          return { ok: true, data: route };
+        },
+        async unregisterProjectRoute() {
+          return { ok: true, data: {} };
+        },
+        async getRouteStatus() {
+          return { ok: true, data: route };
+        },
+      },
+    });
+    writeProjectConfig(projectRoot);
+    saveProjectState(stateFilePath, runningState);
+
+    const result = await lifecycle.handleTool("plexus_project_status", {
+      projectPath: projectRoot,
+      stateRoot,
+      workspaceId: "worktree-a",
+      includeDiagnostics: true,
+    });
+
+    expect(registrations).toHaveLength(1);
+    expect(registrations[0]).toMatchObject({
+      projectRoot: path.resolve(projectRoot),
+      statePath: stateFilePath,
+      state: runningState,
+    });
+    expect(result).toMatchObject({
+      ok: true,
+      data: {
+        route: {
+          statePath: stateFilePath,
+        },
+        diagnostics: {
+          routeTable: {
+            status: "registered",
+            statePath: stateFilePath,
+          },
+        },
+      },
+    });
   });
 
   it("includes config schema and runtime identity diagnostics on config failures", async () => {

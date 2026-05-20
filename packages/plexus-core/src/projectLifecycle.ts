@@ -142,6 +142,7 @@ export interface ProjectLifecycleOptions {
   routeRegistry?: ProjectLifecycleRouteRegistry;
   imageToolCaller?: ProjectLifecycleImageToolCaller;
   homeImageCacheClient?: PharoLauncherMcpToolClient;
+  defaultStateRoot?: string;
   projectOpen?: typeof openProject;
   projectClose?: typeof closeProject;
   imageRescue?: typeof rescueImage;
@@ -295,6 +296,8 @@ export interface ProjectLifecyclePortListenerDiagnostic {
 export interface ProjectLifecycleRouteTableDiagnostics {
   targetId?: string;
   status: "registered" | "missing" | "unavailable" | "not-configured";
+  statePath?: string;
+  expectedStatePath?: string;
   routableImages: Array<{
     imageId: string;
     port?: number;
@@ -1155,10 +1158,25 @@ function imageMcpPorts(
   }));
 }
 
+function registeredRouteStatePath(route: unknown): string | undefined {
+  return isObject(route) && typeof route.statePath === "string"
+    ? route.statePath
+    : undefined;
+}
+
+function sameResolvedPath(left: string | undefined, right: string | undefined): boolean {
+  return (
+    left !== undefined &&
+    right !== undefined &&
+    path.resolve(left) === path.resolve(right)
+  );
+}
+
 function routeTableDiagnostics(
   targetId: string | undefined,
   route: unknown,
   routeError: unknown,
+  expectedStatePath?: string,
 ): ProjectLifecycleRouteTableDiagnostics {
   if (!targetId) {
     return {
@@ -1188,25 +1206,57 @@ function routeTableDiagnostics(
   }
 
   const images = Array.isArray(route.images) ? route.images : [];
-  return {
-    targetId,
-    status: "registered",
-    routableImages: images
-      .filter(isObject)
-      .map((image) => ({
+  const statePath = registeredRouteStatePath(route);
+  const statePathMismatch =
+    statePath !== undefined &&
+    expectedStatePath !== undefined &&
+    !sameResolvedPath(statePath, expectedStatePath);
+  const routableImages: ProjectLifecycleRouteTableDiagnostics["routableImages"] = images
+    .filter(isObject)
+    .map((image) => {
+      const mcpEndpoint = isProjectImageMcpEndpoint(image.mcpEndpoint)
+        ? image.mcpEndpoint
+        : undefined;
+      const routingMode: "endpoint" | "fixed-port" | "none" = mcpEndpoint
+        ? "endpoint"
+        : typeof image.port === "number"
+          ? "fixed-port"
+          : "none";
+
+      return {
         imageId: typeof image.id === "string" ? image.id : "",
         ...(typeof image.port === "number" ? { port: image.port } : {}),
-        ...(isProjectImageMcpEndpoint(image.mcpEndpoint)
-          ? { mcpEndpoint: image.mcpEndpoint }
-          : {}),
-        routingMode: isProjectImageMcpEndpoint(image.mcpEndpoint)
-          ? "endpoint"
-          : typeof image.port === "number"
-            ? "fixed-port"
-            : "none",
+        ...(mcpEndpoint ? { mcpEndpoint } : {}),
+        routingMode,
         ...(typeof image.status === "string" ? { status: image.status } : {}),
-        ...("routable" in image ? { routable: image.routable } : {}),
-      })),
+        ...(statePathMismatch
+          ? {
+              routable: {
+                ok: false,
+                code: "image_unavailable",
+                message:
+                  "Registered gateway route uses a different PLexus runtime state path",
+              },
+            }
+          : "routable" in image
+            ? { routable: image.routable }
+            : {}),
+      };
+    });
+
+  return {
+    targetId,
+    status: statePathMismatch ? "unavailable" : "registered",
+    ...(statePath ? { statePath } : {}),
+    ...(statePathMismatch && expectedStatePath ? { expectedStatePath } : {}),
+    ...(statePathMismatch
+      ? {
+          error:
+            `Registered gateway route state path ${statePath} does not match ` +
+            `selected lifecycle state path ${expectedStatePath}`,
+        }
+      : {}),
+    routableImages,
   };
 }
 
@@ -1439,6 +1489,7 @@ export class PlexusProjectLifecycle {
   private readonly routeRegistry?: ProjectLifecycleRouteRegistry;
   private readonly imageToolCaller?: ProjectLifecycleImageToolCaller;
   private readonly homeImageCacheClient?: PharoLauncherMcpToolClient;
+  private readonly defaultStateRoot?: string;
   private readonly projectOpen: typeof openProject;
   private readonly projectClose: typeof closeProject;
   private readonly imageRescue: typeof rescueImage;
@@ -1448,10 +1499,15 @@ export class PlexusProjectLifecycle {
     this.routeRegistry = options.routeRegistry;
     this.imageToolCaller = options.imageToolCaller;
     this.homeImageCacheClient = options.homeImageCacheClient;
+    this.defaultStateRoot = options.defaultStateRoot;
     this.projectOpen = options.projectOpen ?? openProject;
     this.projectClose = options.projectClose ?? closeProject;
     this.imageRescue = options.imageRescue ?? rescueImage;
     this.gateway = options.gateway ?? {};
+  }
+
+  private effectiveStateRoot(stateRoot?: string): string | undefined {
+    return stateRoot ?? this.defaultStateRoot;
   }
 
   async open(
@@ -1460,7 +1516,7 @@ export class PlexusProjectLifecycle {
     try {
       const openResult = await this.projectOpen({
         projectRoot: input.projectPath,
-        stateRoot: input.stateRoot,
+        stateRoot: this.effectiveStateRoot(input.stateRoot),
         workspaceId: input.workspaceId,
         targetId: input.targetId,
         preparedImageCacheApproval: {
@@ -1624,7 +1680,7 @@ export class PlexusProjectLifecycle {
     try {
       const closeResult = await this.projectClose({
         projectRoot: input.projectPath,
-        stateRoot: input.stateRoot,
+        stateRoot: this.effectiveStateRoot(input.stateRoot),
         workspaceId: input.workspaceId,
         ...(input.repositoryWorkspaceCleanupPolicy
           ? {
@@ -1735,6 +1791,7 @@ export class PlexusProjectLifecycle {
       const options: ImageRescueOptions = {
         ...input,
         projectRoot: input.projectPath ?? "",
+        stateRoot: this.effectiveStateRoot(input.stateRoot),
         imageMcpClient: imageToolCaller
           ? {
               callTool: async (image, toolName, argumentsValue) =>
@@ -1880,14 +1937,15 @@ export class PlexusProjectLifecycle {
     const workspaceId = input.workspaceId
       ? sanitizeRuntimeId(input.workspaceId)
       : defaultWorkspaceId(projectRoot);
+    const requestedStateRoot = this.effectiveStateRoot(input.stateRoot);
     const stateRoot =
-      projectStateRootForConfig(config, input.stateRoot) ??
+      projectStateRootForConfig(config, requestedStateRoot) ??
       defaultPlexusStateRoot(projectRoot);
     const statePath = projectStatePathForConfig({
       projectRoot,
       config,
       workspaceId,
-      stateRoot: input.stateRoot,
+      stateRoot,
     });
     const state = loadProjectState(statePath);
     const gateway = projectGatewayStatus(config, state);
@@ -1903,6 +1961,27 @@ export class PlexusProjectLifecycle {
           },
           routeRegistry,
         );
+        if (
+          routeRegistry &&
+          registeredRouteStatePath(route) &&
+          !sameResolvedPath(registeredRouteStatePath(route), statePath)
+        ) {
+          await this.registerRoute(
+            {
+              projectRoot,
+              statePath,
+              state,
+            },
+            routeRegistry,
+          );
+          route = await this.getRouteStatus(
+            {
+              targetId: state.targetId,
+              refreshHealth: input.refreshHealth,
+            },
+            routeRegistry,
+          );
+        }
       } catch (error) {
         routeError = error;
       }
@@ -1932,7 +2011,12 @@ export class PlexusProjectLifecycle {
       scope,
       currentScopeClaimPorts(config, state, gateway),
     );
-    const routeTable = routeTableDiagnostics(targetId, route, routeError);
+    const routeTable = routeTableDiagnostics(
+      targetId,
+      route,
+      routeError,
+      statePath,
+    );
     const conflictingListeners = await conflictingListenerDiagnostics(
       state,
       gateway,
@@ -2090,5 +2174,9 @@ export function createProjectLifecycleFromEnvironment(
         })
       : undefined;
 
-  return new PlexusProjectLifecycle({ routeRegistry, gateway: { env } });
+  return new PlexusProjectLifecycle({
+    routeRegistry,
+    defaultStateRoot: env.PLEXUS_STATE_ROOT,
+    gateway: { env },
+  });
 }

@@ -235,6 +235,61 @@ describe("PlexusGateway", () => {
     });
   });
 
+  it("marks unhealthy refreshed routes as unroutable", async () => {
+    const imageRouter = new FakeImageRouter();
+    const gateway = new PlexusGateway({
+      healthClient: new FakeHealthClient(),
+      imageRouter,
+    });
+    const unhealthyState: GatewayProjectState = {
+      ...runningState,
+      images: [
+        {
+          id: "dev",
+          imageName: "MyProject-dev",
+          assignedPort: 7125,
+          pid: 1234,
+          status: "running",
+        },
+      ],
+    };
+
+    await registerTarget(gateway, unhealthyState);
+    const status = data(
+      await gateway.handleTool("plexus_gateway_status", {
+        projectId: "project-123",
+        workspaceId: "worktree-a",
+        refreshHealth: true,
+      }),
+    );
+
+    expect(status).toMatchObject({
+      images: [
+        {
+          id: "dev",
+          health: "unhealthy",
+          routable: {
+            ok: false,
+            code: "image_unavailable",
+            message: "Image dev health check failed",
+          },
+        },
+      ],
+    });
+    await expect(
+      gateway.handleTool("plexus_route_to_image", {
+        projectId: "project-123",
+        workspaceId: "worktree-a",
+        imageId: "dev",
+        toolName: "pharo_eval",
+      }),
+    ).resolves.toMatchObject({
+      ok: false,
+      error: "Image dev health check failed",
+    });
+    expect(imageRouter.calls).toEqual([]);
+  });
+
   it("routes Pharo MCP calls to the selected running image", async () => {
     const imageRouter = new FakeImageRouter();
     const gateway = new PlexusGateway({ imageRouter });
