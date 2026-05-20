@@ -6,6 +6,7 @@ import type { ProjectConfig } from "./projectConfig.js";
 import type { ProjectImageState } from "./projectState.js";
 import {
   generateImageStartupScript,
+  imageRepositoryWorkspaceLoadStatusPath,
   imageStartupScriptFileName,
   imageStartupScriptPath,
   ProjectStartupScriptError,
@@ -191,6 +192,73 @@ describe("project startup scripts", () => {
     expect(source).toContain("nextPutAll: 'port='");
     expect(source).toContain("nextPutAll: 'path='");
     expect(source).toContain("mcp port: 7123.");
+  });
+
+  it("generates a Pharo project load from an image-local repository workspace", () => {
+    const projectRoot = path.join("C:", "dev", "code", "git", "my-project");
+    const loadStatusPath = path.join(
+      "C:",
+      "dev",
+      "code",
+      "git",
+      "my-project",
+      ".plexus",
+      "projects",
+      "project-123",
+      "workspaces",
+      "worktree-a",
+      "scripts",
+      "repository-workspace-load-dev.properties",
+    );
+    const source = generateImageStartupScript({
+      projectRoot,
+      imageConfig: config.images[0],
+      repositoryWorkspaceLoadStatusPath: loadStatusPath,
+      imageState: {
+        ...imageState,
+        repositoryWorkspace: {
+          repository: {
+            id: "my-project",
+            componentId: "my-project",
+          },
+          path: path.join(
+            "C:",
+            "Pharo",
+            "images",
+            "dev",
+            "pharo-local",
+            "iceberg",
+            "my-project",
+          ),
+          materializationStrategy: "copy",
+          sourceDirectory: "src",
+          baseline: "MyProject",
+          loadGroup: "tests",
+          currentCommit: "abc123",
+          materializationState: "ready",
+          diagnostics: [],
+          dirtyState: "clean",
+          loadState: "pending",
+        },
+      },
+    });
+
+    expect(source).toContain(
+      "'C:/dev/code/git/my-project/.plexus/projects/project-123/workspaces/worktree-a/scripts/repository-workspace-load-dev.properties' asFileReference",
+    );
+    expect(source).toContain(
+      "repositorySourcePath := 'C:/Pharo/images/dev/pharo-local/iceberg/my-project/src'.",
+    );
+    expect(source).toContain(
+      "repository: 'tonel://', repositorySourceDirectory fullName;",
+    );
+    expect(source).toContain("baseline: 'MyProject';");
+    expect(source).toContain("load: (Array with: 'tests').");
+    expect(source).toContain("nextPutAll: 'currentCommit=';");
+    expect(source).toContain("nextPutAll: 'abc123';");
+    expect(source.indexOf("Load the configured Pharo project")).toBeLessThan(
+      source.indexOf("Load the Pharo MCP project"),
+    );
   });
 
   it("can require endpoint handoff without a fixed fallback port", () => {
@@ -401,6 +469,71 @@ describe("project startup scripts", () => {
         ),
       );
       expect(fs.readFileSync(written.filePath, "utf8")).toBe(written.source);
+      expect(written.repositoryWorkspaceLoadStatusPath).toBeUndefined();
+    } finally {
+      fs.rmSync(projectRoot, { recursive: true, force: true });
+      fs.rmSync(stateRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("reports the repository workspace load status path when startup will load a Pharo project", () => {
+    const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), "plexus-project-"));
+    const stateRoot = fs.mkdtempSync(path.join(os.tmpdir(), "plexus-state-"));
+    const repositoryConfig: ProjectConfig = {
+      ...config,
+      images: [
+        {
+          ...config.images[0],
+          repositoryWorkspace: {
+            repository: {
+              id: "my-project",
+              originPath: "/repo/source",
+            },
+            sourceDirectory: "src",
+            baseline: "MyProject",
+            materialization: {
+              strategy: "copy",
+            },
+          },
+        },
+      ],
+    };
+
+    try {
+      const written = writeProjectImageStartupScript({
+        projectRoot,
+        config: repositoryConfig,
+        imageId: "dev",
+        imageState: {
+          ...imageState,
+          repositoryWorkspace: {
+            repository: {
+              id: "my-project",
+              originPath: "/repo/source",
+            },
+            path: "/image/pharo-local/iceberg/my-project",
+            materializationStrategy: "copy",
+            sourceDirectory: "src",
+            baseline: "MyProject",
+            materializationState: "ready",
+            diagnostics: [],
+            dirtyState: "clean",
+            loadState: "not-loaded",
+          },
+        },
+        workspaceId: "worktree-a",
+        stateRoot,
+      });
+
+      expect(written.repositoryWorkspaceLoadStatusPath).toBe(
+        imageRepositoryWorkspaceLoadStatusPath({
+          projectRoot,
+          projectId: "project-123",
+          imageId: "dev",
+          workspaceId: "worktree-a",
+          stateRoot,
+        }),
+      );
     } finally {
       fs.rmSync(projectRoot, { recursive: true, force: true });
       fs.rmSync(stateRoot, { recursive: true, force: true });

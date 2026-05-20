@@ -60,7 +60,11 @@ export type ProjectImageRepositoryWorkspaceDirtyState =
   | "unknown"
   | "clean"
   | "dirty";
-export type ProjectImageRepositoryWorkspaceLoadState = "not-loaded";
+export type ProjectImageRepositoryWorkspaceLoadState =
+  | "not-loaded"
+  | "pending"
+  | "loaded"
+  | "failed";
 export type ProjectImageRepositoryWorkspaceMaterializationState =
   | "planned"
   | "ready"
@@ -93,6 +97,9 @@ export interface ProjectImageRepositoryWorkspaceState {
   diagnostics: string[];
   dirtyState: ProjectImageRepositoryWorkspaceDirtyState;
   loadState: ProjectImageRepositoryWorkspaceLoadState;
+  loadSourcePath?: string;
+  loadStatusPath?: string;
+  loadError?: string;
 }
 
 export interface ProjectImageState {

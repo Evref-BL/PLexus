@@ -1,3 +1,4 @@
+import fs from "node:fs";
 import path from "node:path";
 import {
   loadProjectConfig,
@@ -298,6 +299,100 @@ function repositoryWorkspaceNeedsLauncherPaths(imageState: ProjectImageState): b
     imageState.repositoryWorkspace?.path.startsWith("image-local://") &&
       !imageState.localDirectoryPath,
   );
+}
+
+function appendRepositoryWorkspaceDiagnostic(
+  imageState: ProjectImageState,
+  message: string,
+): void {
+  const workspace = imageState.repositoryWorkspace;
+  if (!workspace || workspace.diagnostics.includes(message)) {
+    return;
+  }
+
+  workspace.diagnostics = [...workspace.diagnostics, message];
+}
+
+function parseStatusProperties(filePath: string): Record<string, string> {
+  return Object.fromEntries(
+    fs
+      .readFileSync(filePath, "utf8")
+      .split(/\r?\n/)
+      .map((line): [string, string] | undefined => {
+        if (!line || line.startsWith("#")) {
+          return undefined;
+        }
+
+        const separator = line.indexOf("=");
+        if (separator <= 0) {
+          return undefined;
+        }
+
+        return [line.slice(0, separator), line.slice(separator + 1)];
+      })
+      .filter((entry): entry is [string, string] => entry !== undefined),
+  );
+}
+
+function prepareRepositoryWorkspaceLoadStatus(
+  imageState: ProjectImageState,
+  statusPath: string | undefined,
+): void {
+  const workspace = imageState.repositoryWorkspace;
+  if (!workspace || !statusPath) {
+    return;
+  }
+
+  workspace.loadState = "pending";
+  workspace.loadStatusPath = statusPath;
+  workspace.loadSourcePath = joinPathLike(
+    workspace.path,
+    workspace.sourceDirectory,
+  );
+  delete workspace.loadError;
+}
+
+function refreshRepositoryWorkspaceLoadStatus(
+  imageState: ProjectImageState,
+): string | undefined {
+  const workspace = imageState.repositoryWorkspace;
+  if (!workspace?.loadStatusPath) {
+    return undefined;
+  }
+
+  if (!fs.existsSync(workspace.loadStatusPath)) {
+    appendRepositoryWorkspaceDiagnostic(
+      imageState,
+      `Pharo project load has not reported status at ${workspace.loadStatusPath}.`,
+    );
+    return undefined;
+  }
+
+  const properties = parseStatusProperties(workspace.loadStatusPath);
+  const status = properties.status;
+  workspace.loadSourcePath = properties.sourcePath ?? workspace.loadSourcePath;
+  if (properties.message) {
+    workspace.loadError = properties.message;
+  }
+
+  if (status === "loaded") {
+    workspace.loadState = "loaded";
+    delete workspace.loadError;
+    return undefined;
+  }
+
+  if (status === "failed") {
+    workspace.loadState = "failed";
+    workspace.loadError =
+      properties.message ?? "Pharo project load failed without a reported message.";
+    appendRepositoryWorkspaceDiagnostic(imageState, workspace.loadError);
+    return `Pharo project load failed for image ${imageState.id}: ${workspace.loadError}`;
+  }
+
+  workspace.loadState = "failed";
+  workspace.loadError = `Invalid Pharo project load status at ${workspace.loadStatusPath}: ${status ?? "(missing)"}`;
+  appendRepositoryWorkspaceDiagnostic(imageState, workspace.loadError);
+  return workspace.loadError;
 }
 
 async function hydrateRepositoryWorkspaceImagePaths(
@@ -717,6 +812,10 @@ export async function openProject(
           workspaceId,
           stateRoot: resolvedStateRoot,
         });
+        prepareRepositoryWorkspaceLoadStatus(
+          imageState,
+          startupScript.repositoryWorkspaceLoadStatusPath,
+        );
 
         const launchClient = options.pharoLauncherMcpClient
           ? client
@@ -789,6 +888,10 @@ export async function openProject(
               delete imageState.assignedPort;
             }
           }
+          const loadFailure = refreshRepositoryWorkspaceLoadStatus(imageState);
+          if (loadFailure) {
+            throw new Error(loadFailure);
+          }
         } finally {
           if (ownsLaunchClient) {
             closeClientQuietly(launchClient);
@@ -812,7 +915,8 @@ export async function openProject(
         failures.push({
           imageId: imageState.id,
           imageName: imageState.imageName,
-          message: errorMessage(error),
+          message:
+            refreshRepositoryWorkspaceLoadStatus(imageState) ?? errorMessage(error),
         });
       }
     }

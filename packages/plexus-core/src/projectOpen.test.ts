@@ -380,10 +380,34 @@ describe("project open", () => {
         },
       ],
       undefined,
-      undefined,
+      (argumentsValue) => {
+        const scriptPath = argumentsValue.script as string;
+        fs.writeFileSync(
+          path.join(
+            path.dirname(scriptPath),
+            "repository-workspace-load-dev.properties",
+          ),
+          [
+            "status=loaded",
+            `sourcePath=${repositoryPath}/src`,
+            "sourceDirectory=src",
+            "baseline=MyProject",
+            `currentCommit=${sourceCommit}`,
+            "",
+          ].join("\n"),
+          "utf8",
+        );
+      },
       imagesDir,
     );
 
+    const repositoryPath = path.join(
+      imagesDir,
+      "MyProject-dev",
+      "pharo-local",
+      "iceberg",
+      "my-project",
+    );
     const result = await openProject({
       projectRoot,
       stateRoot,
@@ -397,13 +421,6 @@ describe("project open", () => {
       },
     });
 
-    const repositoryPath = path.join(
-      imagesDir,
-      "MyProject-dev",
-      "pharo-local",
-      "iceberg",
-      "my-project",
-    );
     const launchIndex = pharoLauncherMcpClient.calls.findIndex(
       (call) => call.name === "pharo_launcher_image_launch",
     );
@@ -421,7 +438,119 @@ describe("project open", () => {
       baseCommit: sourceCommit,
       materializationState: "ready",
       dirtyState: "clean",
-      loadState: "not-loaded",
+      loadState: "loaded",
+      loadSourcePath: `${repositoryPath}/src`,
+      loadStatusPath: path.join(
+        stateRoot,
+        "projects",
+        "project-123",
+        "workspaces",
+        "worktree-a",
+        "scripts",
+        "repository-workspace-load-dev.properties",
+      ),
+    });
+  });
+
+  it("records Pharo project load failures reported by the startup script", async () => {
+    const projectRoot = makeTempDir("plexus-project-");
+    const stateRoot = makeTempDir("plexus-state-");
+    const sourceRoot = makeTempDir("plexus-source-");
+    const imagesDir = makeTempDir("plexus-images-");
+    initRepository(sourceRoot);
+    writeProjectConfig(projectRoot, {
+      images: [
+        {
+          id: "dev",
+          imageName: "MyProject-dev",
+          active: true,
+          mcp: {
+            port: 7123,
+            loadScript: "pharo/load-mcp.st",
+          },
+          repositoryWorkspace: {
+            repository: {
+              id: "my-project",
+              originPath: sourceRoot,
+            },
+            sourceDirectory: "missing",
+            baseline: "MyProject",
+            materialization: {
+              strategy: "copy",
+            },
+          },
+        },
+      ],
+    });
+    const pharoLauncherMcpClient = new FakePharoLauncherMcpClient(
+      [
+        {
+          pid: 1234,
+          imageName: "MyProject-dev",
+          commandLine: "PharoConsole.exe MyProject-dev.image",
+        },
+      ],
+      undefined,
+      (argumentsValue) => {
+        const scriptPath = argumentsValue.script as string;
+        fs.writeFileSync(
+          path.join(
+            path.dirname(scriptPath),
+            "repository-workspace-load-dev.properties",
+          ),
+          [
+            "status=failed",
+            "sourcePath=/image/pharo-local/iceberg/my-project/missing",
+            "sourceDirectory=missing",
+            "baseline=MyProject",
+            "message=Configured Pharo project source directory does not exist",
+            "",
+          ].join("\n"),
+          "utf8",
+        );
+      },
+      imagesDir,
+    );
+
+    await expect(
+      openProject({
+        projectRoot,
+        stateRoot,
+        workspaceId: "worktree-a",
+        pharoLauncherMcpClient,
+        healthClient: new FakeHealthClient(true),
+        now: fixedNow,
+        sleep: async () => {},
+        poll: {
+          intervalMs: 0,
+        },
+      }),
+    ).rejects.toMatchObject({
+      result: {
+        ok: false,
+        failures: [
+          {
+            imageId: "dev",
+            message:
+              "Pharo project load failed for image dev: Configured Pharo project source directory does not exist",
+          },
+        ],
+      },
+    });
+    const failedState = loadProjectState(
+      path.join(
+        stateRoot,
+        "projects",
+        "project-123",
+        "workspaces",
+        "worktree-a",
+        "state.json",
+      ),
+    );
+    expect(failedState?.images[0].repositoryWorkspace).toMatchObject({
+      loadState: "failed",
+      loadError: "Configured Pharo project source directory does not exist",
+      loadSourcePath: "/image/pharo-local/iceberg/my-project/missing",
     });
   });
 
