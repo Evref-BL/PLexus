@@ -357,6 +357,59 @@ function makeGatewayFetch(
   }) as typeof fetch;
 }
 
+function makeGatewayAndImageFetch(
+  requests: CapturedGatewayRequest[],
+  tools: Tool[],
+): typeof fetch {
+  return (async (input, init) => {
+    const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+    requests.push({
+      url: String(input),
+      body,
+    });
+
+    if (body.method === "tools/list") {
+      return new Response(
+        JSON.stringify({
+          jsonrpc: "2.0",
+          id: body.id,
+          result: { tools },
+        }),
+        {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        },
+      );
+    }
+
+    return new Response(
+      JSON.stringify({
+        jsonrpc: "2.0",
+        id: "test",
+        result: {
+          ok: true,
+          data: {
+            projectId: runningState.projectId,
+            workspaceId: runningState.workspaceId,
+            targetId: runningState.targetId,
+          },
+        },
+      }),
+      {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      },
+    );
+  }) as typeof fetch;
+}
+
+function clonedRunningState(): ProjectState {
+  return {
+    ...runningState,
+    images: runningState.images.map((image) => ({ ...image })),
+  };
+}
+
 afterEach(() => {
   for (const tempDir of tempDirs.splice(0)) {
     fs.rmSync(tempDir, { recursive: true, force: true });
@@ -1926,6 +1979,71 @@ describe("project lifecycle tools", () => {
         workspaceId: "worktree-a",
         targetId: "project-123--worktree-a",
         assignedPort: 8134,
+      },
+    });
+  });
+
+  it("starts a project-local gateway with Pharo tools discovered from the running image", async () => {
+    const projectRoot = makeTempDir("plexus-project-");
+    const stateRoot = makeTempDir("plexus-state-");
+    const claimsRoot = makeTempDir("plexus-claims-");
+    const requests: CapturedGatewayRequest[] = [];
+    const processManager = new FakeGatewayProcessManager(9022);
+    writeProjectConfig(projectRoot, {
+      runtime: {
+        gateway: {
+          mode: "project-local",
+          host: "127.0.0.1",
+          port: 8136,
+          agentMcpPath: "/mcp",
+          routeControlMcpPath: "/control-mcp",
+        },
+      },
+    });
+    const lifecycle = new PlexusProjectLifecycle({
+      projectOpen: async (
+        options: ProjectOpenOptions,
+      ): Promise<ProjectOpenResult> => ({
+        ok: true,
+        projectRoot: path.resolve(options.projectRoot),
+        statePath: statePath(stateRoot),
+        state: clonedRunningState(),
+        failures: [],
+      }),
+      gateway: {
+        claimsRoot,
+        processManager,
+        fetch: makeGatewayAndImageFetch(requests, [pharoEvalTool]),
+        skipHealthCheck: true,
+        checks: {
+          isPortListening: async () => false,
+        },
+      },
+    });
+
+    const openResult = await lifecycle.handleTool("plexus_project_open", {
+      projectPath: projectRoot,
+      stateRoot,
+      workspaceId: "worktree-a",
+    });
+
+    expect(openResult).toMatchObject({ ok: true });
+    expect(processManager.starts).toHaveLength(1);
+    expect(processManager.starts[0]).toMatchObject({
+      port: 8136,
+      pharoTools: [pharoEvalTool],
+    });
+    expect(requests.map((request) => request.url)).toEqual([
+      "http://127.0.0.1:7123/",
+      "http://127.0.0.1:8136/control-mcp",
+    ]);
+    expect(requests[0]?.body).toMatchObject({
+      method: "tools/list",
+    });
+    expect(requests[1]?.body).toMatchObject({
+      method: "tools/call",
+      params: {
+        name: "plexus_gateway_register_target",
       },
     });
   });
