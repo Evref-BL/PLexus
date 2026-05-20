@@ -4,6 +4,10 @@
   "private": true,
   "description": "Agentic orchestration tools for Pharo projects using Git worktrees, pharo-launcher-mcp, and image-scoped Pharo workers.",
   "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Evref-BL/PLexus.git"
+  },
   "type": "module",
   "bin": {
     "plexus": "./packages/plexus-core/dist/cli.js",
