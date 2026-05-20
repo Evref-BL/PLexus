@@ -245,6 +245,7 @@ describe("project config", () => {
       path: "/Users/ada/.plexus-custom",
       imageCache: {
         enabled: false,
+        networkPolicy: "local-only",
       },
     };
 
@@ -252,8 +253,32 @@ describe("project config", () => {
       path: "/Users/ada/.plexus-custom",
       imageCache: {
         enabled: false,
+        networkPolicy: "local-only",
       },
     });
+  });
+
+  it("rejects invalid PLexus home image-cache network policy", () => {
+    const config: ReturnType<typeof validProjectConfig> & { home?: unknown } =
+      validProjectConfig();
+    config.home = {
+      imageCache: {
+        enabled: true,
+        networkPolicy: "offline",
+      },
+    };
+
+    expect(() => parseProjectConfig(config)).toThrow(ProjectConfigError);
+
+    try {
+      parseProjectConfig(config);
+    } catch (error) {
+      expect((error as ProjectConfigError).issues).toEqual(
+        expect.arrayContaining([
+          "home.imageCache.networkPolicy must be one of online, local-only",
+        ]),
+      );
+    }
   });
 
   it("records project-local gateway host, fixed port, route path, and control path", () => {

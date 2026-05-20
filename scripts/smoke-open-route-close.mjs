@@ -120,6 +120,9 @@ function parseArgs(argv) {
         options.homePath = next();
         options.homePathExplicit = true;
         break;
+      case "--homeImageCacheNetworkPolicy":
+        options.homeImageCacheNetworkPolicy = next();
+        break;
       case "--workspaceId":
         options.workspaceId = next();
         break;
@@ -212,6 +215,16 @@ function parseArgs(argv) {
   options.fixtureRoot ??= process.env.PLEXUS_SMOKE_FIXTURE_ROOT;
   options.homePath ??= process.env.PLEXUS_SMOKE_HOME_PATH;
   options.homePathExplicit ||= process.env.PLEXUS_SMOKE_HOME_PATH !== undefined;
+  options.homeImageCacheNetworkPolicy ??=
+    process.env.PLEXUS_SMOKE_HOME_IMAGE_CACHE_NETWORK_POLICY;
+  if (
+    options.homeImageCacheNetworkPolicy !== undefined &&
+    !["online", "local-only"].includes(options.homeImageCacheNetworkPolicy)
+  ) {
+    throw new Error(
+      "--homeImageCacheNetworkPolicy must be one of online, local-only",
+    );
+  }
   options.createSourceFromTemplate ||= booleanEnv(
     process.env.PLEXUS_SMOKE_CREATE_SOURCE_FROM_TEMPLATE,
   );
@@ -281,6 +294,7 @@ function usage() {
     "  --stateRoot <path>            Required disposable state root",
     "  --fixtureRoot <path>          Defaults to an owned temp root for scenario repos",
     "  --homePath <path>             PLexus home used for home image cache smoke runs",
+    "  --homeImageCacheNetworkPolicy <online|local-only>  Home cache network policy",
     "  --workspaceId <id>            Defaults to a unique smoke id",
     "  --targetId <id>               Overrides the runtime target id",
     "  --projectId <id>              Defaults to smoke-open-route-close",

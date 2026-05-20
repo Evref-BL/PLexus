@@ -318,6 +318,7 @@ test("renders home cache project config for template-created smoke images", () =
     path: path.resolve("/tmp/plexus-home-cache-smoke/home"),
     imageCache: {
       enabled: true,
+      networkPolicy: "online",
     },
   });
   assert.deepEqual(config.images[0].create, {
@@ -325,6 +326,28 @@ test("renders home cache project config for template-created smoke images", () =
     templateName: "Pharo 13.0 - 64bit (stable)",
   });
   assert.equal(config.images[0].git.transport, "https");
+});
+
+test("renders local-only home cache network policy for smoke images", () => {
+  const config = smokeProjectConfig({
+    projectId: "home-cache-smoke",
+    homePath: "/tmp/plexus-home-cache-smoke/home",
+    homeImageCacheNetworkPolicy: "local-only",
+    images: [
+      {
+        id: "dev",
+        imageName: "PlexusHomeCacheSmoke-{workspaceId}-dev",
+        active: true,
+        create: {
+          kind: "template",
+          templateName: "Pharo 13.0 - 64bit (stable)",
+        },
+        loadScript: "/tmp/load-mcp.st",
+      },
+    ],
+  });
+
+  assert.equal(config.home.imageCache.networkPolicy, "local-only");
 });
 
 test("resolves stale explicit source template selectors against current inventory", () => {

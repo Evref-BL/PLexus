@@ -13,6 +13,7 @@ import {
   type ProjectImageCreateConfig,
   type ProjectImageGitConfig,
   type ProjectImageMcpConfig,
+  type ProjectHomeImageCacheNetworkPolicy,
   type ProjectPreparedImageConfig,
   type ProjectPreparedImageMcpConfig,
   type ProjectPreparedImageSourceConfig,
@@ -56,12 +57,37 @@ export type HomeImageCachePreparationStatus =
   | "skipped"
   | "failed";
 
+export type HomeImageCacheLocalInputAvailability =
+  | "available"
+  | "missing"
+  | "unknown";
+
+export type HomeImageCacheOfflineReadinessStatus =
+  | "not-required"
+  | "ready"
+  | "missing";
+
 export interface HomeImageCacheTemplateMetadata {
   identity?: unknown;
   architecture?: string;
   launcherVersion?: string;
   pharoVersion?: string;
   sourceFile?: unknown;
+}
+
+export interface HomeImageCacheLocalInputs {
+  templateSource?: HomeImageCacheLocalInputAvailability;
+  baseImage?: HomeImageCacheLocalInputAvailability;
+  vm?: HomeImageCacheLocalInputAvailability;
+  pharoMcpLoadScript?: HomeImageCacheLocalInputAvailability;
+  pharoMcpDependencies?: HomeImageCacheLocalInputAvailability;
+  diagnostics?: string[];
+}
+
+export interface HomeImageCacheOfflineReadiness {
+  status: HomeImageCacheOfflineReadinessStatus;
+  missingInputs: string[];
+  diagnostics: string[];
 }
 
 export interface HomeImageCacheSource {
@@ -181,6 +207,8 @@ export interface HomeImageCacheMutationApproval {
 
 export interface HomeImageCachePlan {
   status: HomeImageCachePlanStatus;
+  networkPolicy: ProjectHomeImageCacheNetworkPolicy;
+  offlineReadiness: HomeImageCacheOfflineReadiness;
   key: string;
   projectRoot: string;
   homePath: string;
@@ -216,6 +244,7 @@ export interface BuildHomeImageCachePlanOptions {
   homeDirectory?: string;
   now?: () => Date;
   templateMetadata?: HomeImageCacheTemplateMetadata;
+  localInputs?: HomeImageCacheLocalInputs;
 }
 
 export interface HomeImageCacheFlushPlan {
@@ -246,6 +275,7 @@ export interface MaterializeProjectImageFromHomeCacheOptions {
   homeDirectory?: string;
   now?: () => Date;
   templateMetadata?: HomeImageCacheTemplateMetadata;
+  localInputs?: HomeImageCacheLocalInputs;
 }
 
 export interface HomeImageCacheMaterializationResult {
@@ -300,6 +330,15 @@ function toMetacelloRepository(
   repository: ProjectPreparedImageMcpConfig["repository"] | undefined,
 ): PharoMcpMetacelloRepository {
   return repository ?? defaultPharoMcpMetacelloRepository;
+}
+
+function resolveMcpLoadScriptPath(
+  projectRoot: string,
+  mcp: ProjectPreparedImageMcpConfig | ProjectImageMcpConfig,
+): string {
+  return isAbsolutePathLike(mcp.loadScript)
+    ? resolvePathLike(mcp.loadScript)
+    : resolvePathLike(projectRoot, mcp.loadScript);
 }
 
 function sourceFromProjectImage(
@@ -393,6 +432,12 @@ export function homeImageCacheEnabled(
   config: Pick<ProjectConfig, "home">,
 ): boolean {
   return config.home?.imageCache.enabled ?? true;
+}
+
+export function homeImageCacheNetworkPolicy(
+  config: Pick<ProjectConfig, "home">,
+): ProjectHomeImageCacheNetworkPolicy {
+  return config.home?.imageCache.networkPolicy ?? "online";
 }
 
 export function homeImageCacheRootPath(homePath: string): string {
@@ -799,6 +844,110 @@ function planStatus(
     : "miss";
 }
 
+function resolvedLocalInputAvailability(options: {
+  key: keyof Omit<HomeImageCacheLocalInputs, "diagnostics">;
+  inputs?: HomeImageCacheLocalInputs;
+  inferred?: HomeImageCacheLocalInputAvailability;
+}): HomeImageCacheLocalInputAvailability {
+  return options.inputs?.[options.key] ?? options.inferred ?? "unknown";
+}
+
+function localOnlyReadiness(options: {
+  networkPolicy: ProjectHomeImageCacheNetworkPolicy;
+  status: HomeImageCachePlanStatus;
+  support: HomeImageCachePharoMcpSupport;
+  projectRoot: string;
+  mcp: ProjectPreparedImageMcpConfig | ProjectImageMcpConfig;
+  templateMetadata?: HomeImageCacheTemplateMetadata;
+  localInputs?: HomeImageCacheLocalInputs;
+}): HomeImageCacheOfflineReadiness {
+  if (options.networkPolicy !== "local-only") {
+    return {
+      status: "not-required",
+      missingInputs: [],
+      diagnostics: [],
+    };
+  }
+
+  if (options.status === "hit") {
+    return {
+      status: "ready",
+      missingInputs: [],
+      diagnostics: [],
+    };
+  }
+
+  if (options.status !== "miss" && options.status !== "corrupt") {
+    return {
+      status: "not-required",
+      missingInputs: [],
+      diagnostics: [],
+    };
+  }
+
+  const diagnostics = [...(options.localInputs?.diagnostics ?? [])];
+  const missingInputs: string[] = [];
+  const requireInput = (
+    key: keyof Omit<HomeImageCacheLocalInputs, "diagnostics">,
+    label: string,
+    inferred?: HomeImageCacheLocalInputAvailability,
+  ) => {
+    const availability = resolvedLocalInputAvailability({
+      key,
+      inputs: options.localInputs,
+      inferred,
+    });
+    if (availability === "available") {
+      return;
+    }
+
+    missingInputs.push(key);
+    diagnostics.push(
+      availability === "missing"
+        ? `${label} is missing for local-only home image cache preparation.`
+        : `${label} has not been proven local for local-only home image cache preparation.`,
+    );
+  };
+  const loadScriptPath = resolveMcpLoadScriptPath(options.projectRoot, options.mcp);
+
+  requireInput(
+    "templateSource",
+    "The selected home launcher template source",
+    options.templateMetadata?.sourceFile ? "available" : undefined,
+  );
+  requireInput("baseImage", "The selected Pharo base image artifact");
+  requireInput("vm", "The selected Pharo VM");
+
+  if (options.support.status === "supported") {
+    requireInput(
+      "pharoMcpLoadScript",
+      "The Pharo MCP load script",
+      fs.existsSync(loadScriptPath) ? "available" : "missing",
+    );
+    requireInput(
+      "pharoMcpDependencies",
+      "The Pharo MCP load script dependencies",
+    );
+  }
+
+  if (missingInputs.length === 0) {
+    diagnostics.push(
+      "PLexus home image cache is in local-only mode; template catalog refresh will be skipped.",
+    );
+    return {
+      status: "ready",
+      missingInputs,
+      diagnostics,
+    };
+  }
+
+  return {
+    status: "missing",
+    missingInputs,
+    diagnostics,
+  };
+}
+
 function preparationScriptSource(options: {
   cacheId: string;
   projectRoot: string;
@@ -809,9 +958,10 @@ function preparationScriptSource(options: {
   const repository = toMetacelloRepository(
     "repository" in options.mcp ? options.mcp.repository : undefined,
   );
-  const loadScriptPath = isAbsolutePathLike(options.mcp.loadScript)
-    ? resolvePathLike(options.mcp.loadScript)
-    : resolvePathLike(options.projectRoot, options.mcp.loadScript);
+  const loadScriptPath = resolveMcpLoadScriptPath(
+    options.projectRoot,
+    options.mcp,
+  );
   const quoted = (value: string) => `'${value.replaceAll("'", "''")}'`;
   const pathString = (value: string) => quoted(value.replace(/\\/g, "/"));
   const repositoryLabel = `github://${repository.githubUser}/${repository.project}:${repository.commitish}/${repository.path}`;
@@ -888,6 +1038,7 @@ export function buildHomeImageCachePlan(
   const manifest = readHomeImageCacheManifest(manifestPath);
   const lock = readHomeImageCacheLock(lockPath);
   const enabled = homeImageCacheEnabled(options.config);
+  const networkPolicy = homeImageCacheNetworkPolicy(options.config);
   const status = planStatus(enabled, manifest, lock);
   const diagnostics: string[] = [];
 
@@ -923,6 +1074,17 @@ export function buildHomeImageCachePlan(
     );
   }
 
+  const offlineReadiness = localOnlyReadiness({
+    networkPolicy,
+    status,
+    support: keyMaterial.pharoMcp.support,
+    projectRoot: options.projectRoot,
+    mcp,
+    templateMetadata: options.templateMetadata,
+    localInputs: options.localInputs,
+  });
+  diagnostics.push(...offlineReadiness.diagnostics);
+
   const expectedManifest: HomeImageCacheManifest = {
     schemaVersion: homeImageCacheSchemaVersion,
     key,
@@ -947,8 +1109,12 @@ export function buildHomeImageCachePlan(
   };
 
   const shouldPrepare = status === "miss" || status === "corrupt";
+  const canPrepareCacheEntry =
+    enabled &&
+    shouldPrepare &&
+    (networkPolicy === "online" || offlineReadiness.status === "ready");
   const refreshTemplateCatalog =
-    enabled && shouldPrepare
+    canPrepareCacheEntry && networkPolicy === "online"
       ? {
           toolName: "pharo_launcher_template_update",
           profileEnvironment: profileEnvironmentFromPaths(homeProfile),
@@ -959,7 +1125,7 @@ export function buildHomeImageCachePlan(
         }
       : undefined;
   const createCacheImage =
-    enabled && shouldPrepare
+    canPrepareCacheEntry
       ? {
           toolName: "pharo_launcher_image_create",
           profileEnvironment: profileEnvironmentFromPaths(homeProfile),
@@ -977,7 +1143,7 @@ export function buildHomeImageCachePlan(
         }
       : undefined;
   const prepareCacheImage =
-    enabled && shouldPrepare && keyMaterial.pharoMcp.support.status === "supported"
+    canPrepareCacheEntry && keyMaterial.pharoMcp.support.status === "supported"
       ? {
           toolName: "pharo_launcher_image_launch",
           profileEnvironment: profileEnvironmentFromPaths(homeProfile),
@@ -992,7 +1158,10 @@ export function buildHomeImageCachePlan(
         }
       : undefined;
   const runtimeCopy =
-    enabled && options.imageState && destinationProfile && status !== "disabled"
+    enabled &&
+    options.imageState &&
+    destinationProfile &&
+    (status === "hit" || canPrepareCacheEntry)
       ? {
           toolName: "pharo_launcher_image_copy_between_profiles",
           argumentsValue: {
@@ -1009,6 +1178,8 @@ export function buildHomeImageCachePlan(
 
   return {
     status,
+    networkPolicy,
+    offlineReadiness,
     key,
     projectRoot: options.projectRoot,
     homePath,
@@ -1251,9 +1422,18 @@ export async function materializeProjectImageFromHomeCache(
     homeDirectory: options.homeDirectory,
     now: options.now,
     templateMetadata: options.templateMetadata,
+    localInputs: options.localInputs,
   });
   if (plan.status === "disabled") {
     return undefined;
+  }
+  if (plan.offlineReadiness.status === "missing") {
+    throw new HomeImageCacheError(
+      [
+        `Home image cache local-only preparation is missing required local inputs for entry ${plan.key}: ${plan.offlineReadiness.missingInputs.join(", ")}`,
+        ...plan.offlineReadiness.diagnostics,
+      ].join("\n"),
+    );
   }
   if (plan.status === "in-progress") {
     const detail =

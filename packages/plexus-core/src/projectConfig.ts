@@ -122,8 +122,11 @@ export interface ProjectPreparedImageConfig {
   mcp: ProjectPreparedImageMcpConfig;
 }
 
+export type ProjectHomeImageCacheNetworkPolicy = "online" | "local-only";
+
 export interface ProjectHomeImageCacheConfig {
   enabled: boolean;
+  networkPolicy: ProjectHomeImageCacheNetworkPolicy;
 }
 
 export interface ProjectHomeConfig {
@@ -564,11 +567,20 @@ function parseHome(value: unknown, issues: string[]): ProjectHomeConfig | undefi
   }
 
   const imageCacheValue = value.imageCache;
-  let imageCache: ProjectHomeImageCacheConfig = { enabled: true };
+  let imageCache: ProjectHomeImageCacheConfig = {
+    enabled: true,
+    networkPolicy: "online",
+  };
   if (imageCacheValue !== undefined) {
     if (!isObject(imageCacheValue)) {
       issues.push("home.imageCache must be an object");
     } else {
+      const networkPolicy = imageCacheValue.networkPolicy ?? "online";
+      if (networkPolicy !== "online" && networkPolicy !== "local-only") {
+        issues.push(
+          "home.imageCache.networkPolicy must be one of online, local-only",
+        );
+      }
       imageCache = {
         enabled: booleanFieldWithDefault(
           imageCacheValue,
@@ -577,6 +589,8 @@ function parseHome(value: unknown, issues: string[]): ProjectHomeConfig | undefi
           "home.imageCache",
           true,
         ),
+        networkPolicy:
+          networkPolicy === "local-only" ? "local-only" : "online",
       };
     }
   }

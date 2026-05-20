@@ -908,7 +908,7 @@ describe("project open", () => {
     writeProjectConfig(projectRoot, {
       home: {
         path: homePath,
-        imageCache: { enabled: true },
+        imageCache: { enabled: true, networkPolicy: "online" },
       },
       images: [
         {

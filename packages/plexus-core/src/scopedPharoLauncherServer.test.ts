@@ -184,7 +184,7 @@ describe("scoped pharo launcher facade", () => {
     writeProjectConfig(projectRoot, {
       home: {
         path: homePath,
-        imageCache: { enabled: true },
+        imageCache: { enabled: true, networkPolicy: "online" },
       },
     });
 

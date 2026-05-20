@@ -482,7 +482,7 @@ describe("project lifecycle tools", () => {
     writeProjectConfig(projectRoot, {
       home: {
         path: homePath,
-        imageCache: { enabled: true },
+        imageCache: { enabled: true, networkPolicy: "online" },
       },
     });
     writeHomeImageCacheManifest(homePath, key);
@@ -519,7 +519,7 @@ describe("project lifecycle tools", () => {
     writeProjectConfig(projectRoot, {
       home: {
         path: homePath,
-        imageCache: { enabled: true },
+        imageCache: { enabled: true, networkPolicy: "online" },
       },
     });
     writeHomeImageCacheManifest(homePath, key);

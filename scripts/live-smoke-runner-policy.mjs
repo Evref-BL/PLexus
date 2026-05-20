@@ -392,6 +392,7 @@ export function smokeProjectConfig(options) {
             path: path.resolve(options.homePath),
             imageCache: {
               enabled: true,
+              networkPolicy: options.homeImageCacheNetworkPolicy ?? "online",
             },
           },
         }
