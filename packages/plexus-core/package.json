@@ -4,6 +4,11 @@
   "private": false,
   "description": "PLexus project, workspace, and image lifecycle orchestration tools.",
   "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Evref-BL/PLexus.git",
+    "directory": "packages/plexus-core"
+  },
   "type": "module",
   "main": "./dist/index.js",
   "exports": {
