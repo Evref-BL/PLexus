@@ -6,6 +6,12 @@ import {
   type ProjectImageConfig,
 } from "./projectConfig.js";
 import {
+  dirnamePathLike,
+  isAbsolutePathLike,
+  joinPathLike,
+  resolvePathLike,
+} from "./pathStyle.js";
+import {
   defaultImagePortClaimChecks,
   imagePortClaimsRootForConfig,
   prepareImagePortClaims,
@@ -53,11 +59,26 @@ import {
   type ProjectState,
 } from "./projectState.js";
 import { writeProjectImageStartupScript } from "./projectStartupScript.js";
+import { materializeProjectImageRepositoryWorkspace } from "./projectRepositoryWorkspace.js";
 import type { PortClaimChecks } from "./portClaims.js";
 
 export interface LauncherCommandResult<T = unknown> {
   ok: boolean;
   data?: T;
+}
+
+interface LauncherImageInfo {
+  imagePath?: string;
+  imageDirectoryPath?: string;
+  changesPath?: string;
+  localDirectoryPath?: string;
+  ombuDirectoryPath?: string;
+  pharoVersion?: string | number;
+  vmId?: string;
+  originTemplate?: {
+    name?: string;
+    url?: string;
+  };
 }
 
 export interface LauncherProcess {
@@ -159,6 +180,148 @@ type ProcessOutcome = {
   kind: "process";
   process: LauncherProcess | undefined;
 };
+
+function isObject(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function optionalStringField(
+  value: Record<string, unknown>,
+  key: string,
+): string | undefined {
+  return typeof value[key] === "string" && value[key].length > 0
+    ? value[key]
+    : undefined;
+}
+
+function launcherImageInfo(value: unknown): LauncherImageInfo | undefined {
+  if (!isObject(value)) {
+    return undefined;
+  }
+
+  const originTemplate = isObject(value.originTemplate)
+    ? {
+        ...(optionalStringField(value.originTemplate, "name")
+          ? { name: optionalStringField(value.originTemplate, "name") }
+          : {}),
+        ...(optionalStringField(value.originTemplate, "url")
+          ? { url: optionalStringField(value.originTemplate, "url") }
+          : {}),
+      }
+    : undefined;
+  const pharoVersion =
+    typeof value.pharoVersion === "string" || typeof value.pharoVersion === "number"
+      ? value.pharoVersion
+      : undefined;
+
+  return {
+    imagePath: optionalStringField(value, "imagePath"),
+    imageDirectoryPath: optionalStringField(value, "imageDirectoryPath"),
+    changesPath: optionalStringField(value, "changesPath"),
+    localDirectoryPath: optionalStringField(value, "localDirectoryPath"),
+    ombuDirectoryPath: optionalStringField(value, "ombuDirectoryPath"),
+    ...(pharoVersion !== undefined ? { pharoVersion } : {}),
+    vmId: optionalStringField(value, "vmId"),
+    ...(originTemplate ? { originTemplate } : {}),
+  };
+}
+
+function profileImagesDirectory(value: unknown): string | undefined {
+  if (!isObject(value) || !isObject(value.profile) || !isObject(value.profile.imagesDir)) {
+    return undefined;
+  }
+
+  return optionalStringField(value.profile.imagesDir, "path");
+}
+
+async function launcherImagesDirectory(
+  client: PharoLauncherMcpToolClient,
+): Promise<string | undefined> {
+  const result =
+    await client.callTool<LauncherCommandResult<Record<string, unknown>>>(
+      "pharo_launcher_config",
+      {},
+    );
+  assertLauncherOk(result, "pharo_launcher_config");
+  return profileImagesDirectory(launcherResultData(result));
+}
+
+function normalizeImagePath(imagePath: string, imagesDirectory?: string): string {
+  if (isAbsolutePathLike(imagePath)) {
+    return resolvePathLike(imagePath);
+  }
+
+  return imagesDirectory ? joinPathLike(imagesDirectory, imagePath) : imagePath;
+}
+
+function applyLauncherImageInfo(
+  imageState: ProjectImageState,
+  info: LauncherImageInfo | undefined,
+  imagesDirectory?: string,
+): void {
+  if (!info) {
+    return;
+  }
+
+  const imagePath = info.imagePath
+    ? normalizeImagePath(info.imagePath, imagesDirectory)
+    : undefined;
+  const imageDirectoryPath =
+    info.imageDirectoryPath ??
+    (imagePath ? dirnamePathLike(imagePath) : undefined);
+  imageState.imagePath = imagePath ?? imageState.imagePath;
+  imageState.imageDirectoryPath =
+    imageDirectoryPath ?? imageState.imageDirectoryPath;
+  imageState.changesPath =
+    info.changesPath ??
+    (imagePath ? imagePath.replace(/\.image$/i, ".changes") : imageState.changesPath);
+  imageState.localDirectoryPath =
+    info.localDirectoryPath ??
+    (imageDirectoryPath
+      ? joinPathLike(imageDirectoryPath, "pharo-local")
+      : imageState.localDirectoryPath);
+  imageState.ombuDirectoryPath =
+    info.ombuDirectoryPath ??
+    (imageDirectoryPath
+      ? joinPathLike(imageDirectoryPath, "ombu")
+      : imageState.ombuDirectoryPath);
+  imageState.vmId = info.vmId ?? imageState.vmId;
+  imageState.pharoVersion =
+    info.pharoVersion !== undefined
+      ? String(info.pharoVersion)
+      : imageState.pharoVersion;
+  imageState.originTemplate = info.originTemplate ?? imageState.originTemplate;
+}
+
+function repositoryWorkspaceNeedsLauncherPaths(imageState: ProjectImageState): boolean {
+  return Boolean(
+    imageState.repositoryWorkspace?.path.startsWith("image-local://") &&
+      !imageState.localDirectoryPath,
+  );
+}
+
+async function hydrateRepositoryWorkspaceImagePaths(
+  client: PharoLauncherMcpToolClient,
+  imageState: ProjectImageState,
+): Promise<void> {
+  if (!repositoryWorkspaceNeedsLauncherPaths(imageState)) {
+    return;
+  }
+
+  const infoResult = await client.callTool<LauncherCommandResult>(
+    "pharo_launcher_image_info",
+    {
+      imageName: imageState.imageName,
+    },
+  );
+  assertLauncherOk(infoResult, "pharo_launcher_image_info");
+  const info = launcherImageInfo(launcherResultData(infoResult));
+  const imagesDirectory =
+    info?.imagePath && !isAbsolutePathLike(info.imagePath)
+      ? await launcherImagesDirectory(client)
+      : undefined;
+  applyLauncherImageInfo(imageState, info, imagesDirectory);
+}
 
 async function pollUntil<T>(
   timeoutMs: number,
@@ -528,6 +691,13 @@ export async function openProject(
             approval: options.preparedImageCacheApproval,
           });
         }
+
+        await hydrateRepositoryWorkspaceImagePaths(client, imageState);
+        materializeProjectImageRepositoryWorkspace({
+          projectRoot,
+          imageConfig,
+          imageState,
+        });
 
         const endpointHandoffPath = imageMcpEndpointHandoffPath({
           projectRoot,

@@ -11,6 +11,7 @@ export * from "./projectConfig.js";
 export * from "./projectGateway.js";
 export * from "./projectLifecycle.js";
 export * from "./projectOpen.js";
+export * from "./projectRepositoryWorkspace.js";
 export * from "./server.js";
 export * from "./projectStartupScript.js";
 export * from "./projectState.js";

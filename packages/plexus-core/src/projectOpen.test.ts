@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import { execFileSync } from "node:child_process";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
@@ -28,6 +29,12 @@ const fakeLivePortClaimChecks = {
   isProcessAlive: async () => true,
   isPortListening: async () => false,
 };
+const gitEnv = {
+  GIT_AUTHOR_NAME: "PLexus Test",
+  GIT_AUTHOR_EMAIL: "plexus-test@example.invalid",
+  GIT_COMMITTER_NAME: "PLexus Test",
+  GIT_COMMITTER_EMAIL: "plexus-test@example.invalid",
+};
 
 interface ToolCall {
   name: string;
@@ -41,6 +48,7 @@ class FakePharoLauncherMcpClient implements PharoLauncherMcpToolClient {
     private readonly processes: LauncherProcess[] = [],
     private readonly launchError?: Error,
     private readonly onLaunch?: (argumentsValue: Record<string, unknown>) => void,
+    private readonly imagesDir?: string,
   ) {}
 
   async callTool<T = unknown>(
@@ -74,6 +82,33 @@ class FakePharoLauncherMcpClient implements PharoLauncherMcpToolClient {
       } satisfies LauncherCommandResult<LauncherProcess[]>;
 
       return result as T;
+    }
+
+    if (name === "pharo_launcher_image_info") {
+      const imageName = argumentsValue.imageName as string;
+      return {
+        ok: true,
+        data: {
+          name: imageName,
+          imagePath: path.join(imageName, `${imageName}.image`),
+          pharoVersion: "13",
+          vmId: "vm-13",
+        },
+      } as T;
+    }
+
+    if (name === "pharo_launcher_config") {
+      return {
+        ok: true,
+        data: {
+          profile: {
+            imagesDir: {
+              path: this.imagesDir ?? makeTempDir("plexus-images-"),
+              exists: true,
+            },
+          },
+        },
+      } as T;
     }
 
     throw new Error(`Unexpected tool call: ${name}`);
@@ -111,6 +146,31 @@ function makeTempDir(prefix: string): string {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
   tempDirs.push(tempDir);
   return tempDir;
+}
+
+function git(cwd: string, args: string[]): string {
+  return execFileSync("git", args, {
+    cwd,
+    env: {
+      ...process.env,
+      ...gitEnv,
+    },
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+  }).trim();
+}
+
+function initRepository(sourceRoot: string): string {
+  git(sourceRoot, ["init", "--initial-branch=main"]);
+  fs.mkdirSync(path.join(sourceRoot, "src"), { recursive: true });
+  fs.writeFileSync(
+    path.join(sourceRoot, "src", "BaselineOfMyProject.class.st"),
+    "baseline",
+    "utf8",
+  );
+  git(sourceRoot, ["add", "."]);
+  git(sourceRoot, ["commit", "-m", "Initial"]);
+  return git(sourceRoot, ["rev-parse", "HEAD"]);
 }
 
 function projectStateRuntime(start = 7100, end = 7199) {
@@ -278,6 +338,90 @@ describe("project open", () => {
           status: "stopped",
         },
       ],
+    });
+  });
+
+  it("materializes image-local repository workspaces before startup launch", async () => {
+    const projectRoot = makeTempDir("plexus-project-");
+    const stateRoot = makeTempDir("plexus-state-");
+    const sourceRoot = makeTempDir("plexus-source-");
+    const imagesDir = makeTempDir("plexus-images-");
+    const sourceCommit = initRepository(sourceRoot);
+    writeProjectConfig(projectRoot, {
+      images: [
+        {
+          id: "dev",
+          imageName: "MyProject-dev",
+          active: true,
+          mcp: {
+            port: 7123,
+            loadScript: "pharo/load-mcp.st",
+          },
+          repositoryWorkspace: {
+            repository: {
+              id: "my-project",
+              originPath: sourceRoot,
+            },
+            sourceDirectory: "src",
+            baseline: "MyProject",
+            materialization: {
+              strategy: "copy",
+            },
+          },
+        },
+      ],
+    });
+    const pharoLauncherMcpClient = new FakePharoLauncherMcpClient(
+      [
+        {
+          pid: 1234,
+          imageName: "MyProject-dev",
+          commandLine: "PharoConsole.exe MyProject-dev.image",
+        },
+      ],
+      undefined,
+      undefined,
+      imagesDir,
+    );
+
+    const result = await openProject({
+      projectRoot,
+      stateRoot,
+      workspaceId: "worktree-a",
+      pharoLauncherMcpClient,
+      healthClient: new FakeHealthClient(true),
+      now: fixedNow,
+      sleep: async () => {},
+      poll: {
+        intervalMs: 0,
+      },
+    });
+
+    const repositoryPath = path.join(
+      imagesDir,
+      "MyProject-dev",
+      "pharo-local",
+      "iceberg",
+      "my-project",
+    );
+    const launchIndex = pharoLauncherMcpClient.calls.findIndex(
+      (call) => call.name === "pharo_launcher_image_launch",
+    );
+    const infoIndex = pharoLauncherMcpClient.calls.findIndex(
+      (call) => call.name === "pharo_launcher_image_info",
+    );
+
+    expect(infoIndex).toBeGreaterThanOrEqual(0);
+    expect(launchIndex).toBeGreaterThan(infoIndex);
+    expect(git(repositoryPath, ["rev-parse", "HEAD"])).toBe(sourceCommit);
+    expect(result.state.images[0].repositoryWorkspace).toMatchObject({
+      path: repositoryPath,
+      sourcePath: sourceRoot,
+      currentCommit: sourceCommit,
+      baseCommit: sourceCommit,
+      materializationState: "ready",
+      dirtyState: "clean",
+      loadState: "not-loaded",
     });
   });
 

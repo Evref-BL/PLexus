@@ -56,8 +56,16 @@ export interface ProjectImagePharoMcpContractState
   reason?: string;
 }
 
-export type ProjectImageRepositoryWorkspaceDirtyState = "unknown";
+export type ProjectImageRepositoryWorkspaceDirtyState =
+  | "unknown"
+  | "clean"
+  | "dirty";
 export type ProjectImageRepositoryWorkspaceLoadState = "not-loaded";
+export type ProjectImageRepositoryWorkspaceMaterializationState =
+  | "planned"
+  | "ready"
+  | "reused"
+  | "failed";
 
 export interface ProjectImageRepositoryWorkspaceRepositoryState {
   id: string;
@@ -79,6 +87,10 @@ export interface ProjectImageRepositoryWorkspaceState {
   branch?: string;
   baseBranch?: string;
   baseCommit?: string;
+  currentCommit?: string;
+  sourcePath?: string;
+  materializationState: ProjectImageRepositoryWorkspaceMaterializationState;
+  diagnostics: string[];
   dirtyState: ProjectImageRepositoryWorkspaceDirtyState;
   loadState: ProjectImageRepositoryWorkspaceLoadState;
 }
@@ -608,6 +620,8 @@ export function projectImageRepositoryWorkspaceState(
     ...(workspace.branch ? { branch: workspace.branch } : {}),
     ...(workspace.baseBranch ? { baseBranch: workspace.baseBranch } : {}),
     ...(workspace.baseCommit ? { baseCommit: workspace.baseCommit } : {}),
+    materializationState: "planned",
+    diagnostics: [],
     dirtyState: "unknown",
     loadState: "not-loaded",
   };
