@@ -65,6 +65,10 @@ export type ProjectImageRepositoryWorkspaceLoadState =
   | "pending"
   | "loaded"
   | "failed";
+export type ProjectImagePharoMcpLoadState =
+  | "provided"
+  | "loaded"
+  | "failed";
 export type ProjectImageRepositoryWorkspaceMaterializationState =
   | "planned"
   | "ready"
@@ -129,6 +133,16 @@ export interface ProjectImageRepositoryWorkspaceState {
   cleanupState?: ProjectImageRepositoryWorkspaceCleanupRecord;
 }
 
+export interface ProjectImagePharoMcpLoadStatus {
+  state: ProjectImagePharoMcpLoadState;
+  statusPath: string;
+  source?: string;
+  loadScript?: string;
+  repository?: string;
+  baseline?: string;
+  error?: string;
+}
+
 export interface ProjectImageState {
   id: string;
   imageName: string;
@@ -137,6 +151,7 @@ export interface ProjectImageState {
   pid?: number;
   status: ProjectImageStatus;
   pharoMcpContract?: ProjectImagePharoMcpContractState;
+  pharoMcpLoad?: ProjectImagePharoMcpLoadStatus;
   repositoryWorkspace?: ProjectImageRepositoryWorkspaceState;
   imagePath?: string;
   imageDirectoryPath?: string;

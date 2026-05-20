@@ -6,6 +6,7 @@ import type { ProjectConfig } from "./projectConfig.js";
 import type { ProjectImageState } from "./projectState.js";
 import {
   generateImageStartupScript,
+  imagePharoMcpLoadStatusPath,
   imageRepositoryWorkspaceLoadStatusPath,
   imageStartupScriptFileName,
   imageStartupScriptPath,
@@ -107,6 +108,42 @@ describe("project startup scripts", () => {
       "Smalltalk globals at: #PLexusMCPServer put: mcp.",
     );
     expect(source).toContain("Semaphore new wait.");
+  });
+
+  it("generates a Pharo MCP load status writer when a status path is provided", () => {
+    const projectRoot = path.join("C:", "dev", "code", "git", "my-project");
+    const statusPath = path.join(
+      "C:",
+      "dev",
+      "code",
+      "git",
+      "my-project",
+      ".plexus",
+      "projects",
+      "project-123",
+      "workspaces",
+      "worktree-a",
+      "scripts",
+      "pharo-mcp-load-dev.properties",
+    );
+    const source = generateImageStartupScript({
+      projectRoot,
+      imageConfig: config.images[0],
+      imageState,
+      pharoMcpLoadStatusPath: statusPath,
+    });
+
+    expect(source).toContain(
+      "'C:/dev/code/git/my-project/.plexus/projects/project-123/workspaces/worktree-a/scripts/pharo-mcp-load-dev.properties' asFileReference",
+    );
+    expect(source).toContain("pharoMcpLoadStatusWriter := [ :status :message |");
+    expect(source).toContain("nextPutAll: 'imageId=';");
+    expect(source).toContain("nextPutAll: 'source=';");
+    expect(source).toContain("nextPutAll: 'loadScript=';");
+    expect(source).toContain("nextPutAll: 'repository=';");
+    expect(source).toContain("pharoMcpLoadStatusWriter value: 'loaded' value: nil");
+    expect(source).toContain("pharoMcpLoadStatusWriter value: 'failed' value: error description.");
+    expect(source).toContain("error pass");
   });
 
   it("skips MCP load and startup for known unsupported Pharo versions", () => {
@@ -469,6 +506,15 @@ describe("project startup scripts", () => {
         ),
       );
       expect(fs.readFileSync(written.filePath, "utf8")).toBe(written.source);
+      expect(written.pharoMcpLoadStatusPath).toBe(
+        imagePharoMcpLoadStatusPath({
+          projectRoot,
+          projectId: "project-123",
+          imageId: "dev",
+          workspaceId: "worktree-a",
+          stateRoot,
+        }),
+      );
       expect(written.repositoryWorkspaceLoadStatusPath).toBeUndefined();
     } finally {
       fs.rmSync(projectRoot, { recursive: true, force: true });

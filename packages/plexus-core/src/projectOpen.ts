@@ -504,6 +504,71 @@ function parseStatusProperties(filePath: string): Record<string, string> {
   );
 }
 
+function clearPharoMcpLoadStatus(
+  imageState: ProjectImageState,
+  statusPath: string | undefined,
+): void {
+  if (!statusPath) {
+    return;
+  }
+
+  fs.rmSync(statusPath, { force: true });
+  delete imageState.pharoMcpLoad;
+}
+
+function pharoMcpLoadStatusDetails(
+  properties: Record<string, string>,
+  statusPath: string,
+) {
+  return {
+    statusPath,
+    ...(properties.source ? { source: properties.source } : {}),
+    ...(properties.loadScript ? { loadScript: properties.loadScript } : {}),
+    ...(properties.repository ? { repository: properties.repository } : {}),
+    ...(properties.baseline ? { baseline: properties.baseline } : {}),
+  };
+}
+
+function refreshPharoMcpLoadStatus(
+  imageState: ProjectImageState,
+  statusPath: string | undefined,
+): string | undefined {
+  if (!statusPath || !fs.existsSync(statusPath)) {
+    return undefined;
+  }
+
+  const properties = parseStatusProperties(statusPath);
+  const status = properties.status;
+  const details = pharoMcpLoadStatusDetails(properties, statusPath);
+
+  if (status === "provided" || status === "loaded") {
+    imageState.pharoMcpLoad = {
+      state: status,
+      ...details,
+    };
+    return undefined;
+  }
+
+  if (status === "failed") {
+    const message =
+      properties.message ?? "Pharo MCP load failed without a reported message.";
+    imageState.pharoMcpLoad = {
+      state: "failed",
+      ...details,
+      error: message,
+    };
+    return `Pharo MCP load failed for image ${imageState.id}: ${message}`;
+  }
+
+  const message = `Invalid Pharo MCP load status at ${statusPath}: ${status ?? "(missing)"}`;
+  imageState.pharoMcpLoad = {
+    state: "failed",
+    ...details,
+    error: message,
+  };
+  return message;
+}
+
 function prepareRepositoryWorkspaceLoadStatus(
   imageState: ProjectImageState,
   statusPath: string | undefined,
@@ -724,6 +789,7 @@ async function pollPharoMcpReadiness(options: {
   healthClient: PharoMcpHealthClient;
   processClient?: PharoLauncherMcpToolClient;
   imageName?: string;
+  pharoMcpLoadStatusPath?: string;
   timeoutMs: number;
   intervalMs: number;
   sleep: (durationMs: number) => Promise<void>;
@@ -733,6 +799,14 @@ async function pollPharoMcpReadiness(options: {
     options.intervalMs,
     options.sleep,
     async () => {
+      const loadFailure = refreshPharoMcpLoadStatus(
+        options.imageState,
+        options.pharoMcpLoadStatusPath,
+      );
+      if (loadFailure) {
+        throw new Error(loadFailure);
+      }
+
       if (options.preferEndpointHandoff) {
         const handoff = readImageMcpEndpointHandoff(options.endpointHandoffPath);
         if (handoff.status === "invalid") {
@@ -1066,6 +1140,7 @@ export async function openProject(
       if (!imageConfig) {
         continue;
       }
+      let pharoMcpLoadStatusPath: string | undefined;
 
       try {
         const homeMaterialization =
@@ -1127,6 +1202,8 @@ export async function openProject(
           workspaceId,
           stateRoot: resolvedStateRoot,
         });
+        pharoMcpLoadStatusPath = startupScript.pharoMcpLoadStatusPath;
+        clearPharoMcpLoadStatus(imageState, pharoMcpLoadStatusPath);
         prepareRepositoryWorkspaceLoadStatus(
           imageState,
           startupScript.repositoryWorkspaceLoadStatusPath,
@@ -1173,6 +1250,7 @@ export async function openProject(
               healthClient,
               processClient: client,
               imageName: imageState.imageName,
+              pharoMcpLoadStatusPath,
               timeoutMs: poll.healthTimeoutMs,
               intervalMs: poll.intervalMs,
               sleep,
@@ -1217,6 +1295,13 @@ export async function openProject(
               delete imageState.assignedPort;
             }
           }
+          const pharoMcpLoadFailure = refreshPharoMcpLoadStatus(
+            imageState,
+            pharoMcpLoadStatusPath,
+          );
+          if (pharoMcpLoadFailure) {
+            throw new Error(pharoMcpLoadFailure);
+          }
           const loadFailure = refreshRepositoryWorkspaceLoadStatus(imageState);
           if (loadFailure) {
             throw new Error(loadFailure);
@@ -1241,13 +1326,21 @@ export async function openProject(
             );
           }
         }
+        const pharoMcpLoadFailure = refreshPharoMcpLoadStatus(
+          imageState,
+          pharoMcpLoadStatusPath,
+        );
         const loadFailure = refreshRepositoryWorkspaceLoadStatus(imageState);
         failures.push({
           imageId: imageState.id,
           imageName: imageState.imageName,
-          message: loadFailure ?? errorMessage(error),
-          ...(loadFailure ? {} : launcherFailureDetails(error)),
-          ...(loadFailure ? {} : startupFailureDetails(error)),
+          message: loadFailure ?? pharoMcpLoadFailure ?? errorMessage(error),
+          ...(loadFailure || pharoMcpLoadFailure
+            ? {}
+            : launcherFailureDetails(error)),
+          ...(loadFailure || pharoMcpLoadFailure
+            ? {}
+            : startupFailureDetails(error)),
         });
       }
     }

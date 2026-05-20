@@ -10,6 +10,7 @@ import {
   copyProjectImageFromPreparedCache,
   generatePreparedImageCacheScript,
   preparedImageCacheName,
+  preparedImageLoadStatusPath,
   preparedImageScriptFileName,
   PreparedImageCacheError,
   writePreparedImageCacheScript,
@@ -145,7 +146,21 @@ describe("prepared image cache", () => {
         "prepare-pharo-13-mcp.st",
       ),
     );
+    expect(written.loadStatusPath).toBe(
+      preparedImageLoadStatusPath({
+        projectRoot,
+        projectId: "project-123",
+        cacheId: "pharo-13-mcp",
+        stateRoot,
+      }),
+    );
     expect(fs.readFileSync(written.filePath, "utf8")).toBe(written.source);
+    expect(written.source).toContain(
+      `'${written.loadStatusPath.replace(/\\/g, "/")}' asFileReference`,
+    );
+    expect(written.source).toContain(
+      "loadStatusWriter value: 'failed' value: error description.",
+    );
   });
 
   it("builds an approved-runner live operation plan without mutating launcher state", () => {

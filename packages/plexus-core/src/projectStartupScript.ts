@@ -51,6 +51,7 @@ export interface GenerateImageStartupScriptOptions {
   imageConfig: ProjectImageConfig;
   imageState: ProjectImageState;
   endpointHandoffPath?: string;
+  pharoMcpLoadStatusPath?: string;
   repositoryWorkspaceLoadStatusPath?: string;
   repository?: PharoMcpMetacelloRepository;
 }
@@ -75,6 +76,7 @@ export interface WriteProjectImageStartupScriptOptions {
 export interface WrittenImageStartupScript {
   filePath: string;
   source: string;
+  pharoMcpLoadStatusPath?: string;
   repositoryWorkspaceLoadStatusPath?: string;
 }
 
@@ -122,6 +124,18 @@ export function imageRepositoryWorkspaceLoadStatusPath(
   return joinPathLike(
     projectScriptsDirectoryPath(options),
     `repository-workspace-load-${imageScriptName}`,
+  );
+}
+
+export function imagePharoMcpLoadStatusPath(
+  options: ProjectImageStartupScriptPathOptions,
+): string {
+  const imageScriptName = imageStartupScriptFileName(options.imageId)
+    .replace(/^start-/, "")
+    .replace(/\.st$/, ".properties");
+  return joinPathLike(
+    projectScriptsDirectoryPath(options),
+    `pharo-mcp-load-${imageScriptName}`,
   );
 }
 
@@ -398,6 +412,91 @@ ${loadCommand}.
 `;
 }
 
+function generatePharoMcpLoadScript(options: {
+  imageId: string;
+  loadScriptPath: string;
+  repository: PharoMcpMetacelloRepository;
+  statusPath?: string;
+}): string {
+  const repositoryLabel = `github://${options.repository.githubUser}/${options.repository.project}:${options.repository.commitish}/${options.repository.path}`;
+
+  if (!options.statusPath) {
+    return `"Load the Pharo MCP project if the image does not already provide it."
+(Smalltalk globals includesKey: #MCP) ifFalse: [
+  loadScript := ${smalltalkPath(options.loadScriptPath)} asFileReference.
+  loadScript exists
+    ifTrue: [ loadScript fileIn ]
+    ifFalse: [
+      Metacello new
+        githubUser: ${smalltalkString(options.repository.githubUser)} project: ${smalltalkString(options.repository.project)} commitish: ${smalltalkString(options.repository.commitish)} path: ${smalltalkString(options.repository.path)};
+        baseline: ${smalltalkString(options.repository.baseline)};
+        load ] ].
+
+(Smalltalk globals includesKey: #MCP)
+  ifFalse: [ Error signal: 'MCP class is not available after loading.' ].`;
+  }
+
+  return `"Load the Pharo MCP project if the image does not already provide it."
+pharoMcpLoadStatusFile := ${smalltalkPath(options.statusPath)} asFileReference.
+pharoMcpLoadStatusFile exists ifTrue: [ pharoMcpLoadStatusFile delete ].
+pharoMcpLoadSource := 'pending'.
+pharoMcpLoadStatusWriter := [ :status :message |
+  pharoMcpLoadStatusFile parent ensureCreateDirectory.
+  pharoMcpLoadStatusFile writeStreamDo: [ :stream |
+    stream
+      nextPutAll: 'status=';
+      nextPutAll: status;
+      cr.
+    stream
+      nextPutAll: 'imageId=';
+      nextPutAll: ${smalltalkString(options.imageId)};
+      cr.
+    stream
+      nextPutAll: 'source=';
+      nextPutAll: (pharoMcpLoadSource ifNil: [ 'unknown' ]);
+      cr.
+    stream
+      nextPutAll: 'loadScript=';
+      nextPutAll: ${smalltalkPath(options.loadScriptPath)};
+      cr.
+    stream
+      nextPutAll: 'repository=';
+      nextPutAll: ${smalltalkString(repositoryLabel)};
+      cr.
+    stream
+      nextPutAll: 'baseline=';
+      nextPutAll: ${smalltalkString(options.repository.baseline)};
+      cr.
+    message ifNotNil: [
+      stream
+        nextPutAll: 'message=';
+        nextPutAll: message asString;
+        cr ] ] ].
+[
+  (Smalltalk globals includesKey: #MCP)
+    ifTrue: [
+      pharoMcpLoadSource := 'provided'.
+      pharoMcpLoadStatusWriter value: 'provided' value: nil ]
+    ifFalse: [
+      loadScript := ${smalltalkPath(options.loadScriptPath)} asFileReference.
+      loadScript exists
+        ifTrue: [
+          pharoMcpLoadSource := 'loadScript'.
+          loadScript fileIn ]
+        ifFalse: [
+          pharoMcpLoadSource := 'metacello'.
+          Metacello new
+            githubUser: ${smalltalkString(options.repository.githubUser)} project: ${smalltalkString(options.repository.project)} commitish: ${smalltalkString(options.repository.commitish)} path: ${smalltalkString(options.repository.path)};
+            baseline: ${smalltalkString(options.repository.baseline)};
+            load ].
+      (Smalltalk globals includesKey: #MCP)
+        ifFalse: [ Error signal: 'MCP class is not available after loading.' ].
+      pharoMcpLoadStatusWriter value: 'loaded' value: nil ] ]
+  on: Error do: [ :error |
+    pharoMcpLoadStatusWriter value: 'failed' value: error description.
+    error pass ].`;
+}
+
 export function generateImageStartupScript(
   options: GenerateImageStartupScriptOptions,
 ): string {
@@ -442,6 +541,12 @@ Semaphore new wait.
     options.imageConfig,
   );
   const gitConfiguration = generateGitConfigurationScript(options.imageConfig);
+  const pharoMcpLoadScript = generatePharoMcpLoadScript({
+    imageId: options.imageState.id,
+    loadScriptPath,
+    repository,
+    statusPath: options.pharoMcpLoadStatusPath,
+  });
 
   const mcpStartup = preferEndpointHandoff
     ? generateEndpointHandoffStartupScript({
@@ -457,25 +562,13 @@ Semaphore new wait.
 
   return `"Generated by PLexus. Do not edit."
 
-| loadScript mcp endpointFile endpoint endpointValue endpointTransport endpointHost endpointPort endpointPath repositoryLoadStatusFile repositorySourcePath repositorySourceDirectory repositoryLoadStatusWriter |
+| loadScript mcp endpointFile endpoint endpointValue endpointTransport endpointHost endpointPort endpointPath pharoMcpLoadStatusFile pharoMcpLoadStatusWriter pharoMcpLoadSource repositoryLoadStatusFile repositorySourcePath repositorySourceDirectory repositoryLoadStatusWriter |
 
 ${gitConfiguration}
 
 ${repositoryWorkspaceLoadScript}
 
-"Load the Pharo MCP project if the image does not already provide it."
-(Smalltalk globals includesKey: #MCP) ifFalse: [
-  loadScript := ${smalltalkPath(loadScriptPath)} asFileReference.
-  loadScript exists
-    ifTrue: [ loadScript fileIn ]
-    ifFalse: [
-      Metacello new
-        githubUser: ${smalltalkString(repository.githubUser)} project: ${smalltalkString(repository.project)} commitish: ${smalltalkString(repository.commitish)} path: ${smalltalkString(repository.path)};
-        baseline: ${smalltalkString(repository.baseline)};
-        load ] ].
-
-(Smalltalk globals includesKey: #MCP)
-  ifFalse: [ Error signal: 'MCP class is not available after loading.' ].
+${pharoMcpLoadScript}
 
 "Stop the previous server registered by PLexus before starting a new one."
 (Smalltalk globals at: #PLexusMCPServer ifAbsent: [ nil ])
@@ -510,8 +603,19 @@ export function writeImageStartupScript(
         stateRoot: options.stateRoot,
       })
     : undefined;
+  const pharoMcpLoadStatusPath =
+    options.imageState.pharoMcpContract?.status === "unsupported"
+      ? undefined
+      : imagePharoMcpLoadStatusPath({
+          projectRoot: options.projectRoot,
+          projectId: options.projectId,
+          workspaceId: options.workspaceId,
+          imageId: options.imageConfig.id,
+          stateRoot: options.stateRoot,
+        });
   const source = generateImageStartupScript({
     ...options,
+    ...(pharoMcpLoadStatusPath ? { pharoMcpLoadStatusPath } : {}),
     ...(repositoryWorkspaceLoadStatusPath
       ? { repositoryWorkspaceLoadStatusPath }
       : {}),
@@ -523,6 +627,7 @@ export function writeImageStartupScript(
   return {
     filePath,
     source,
+    ...(pharoMcpLoadStatusPath ? { pharoMcpLoadStatusPath } : {}),
     ...(repositoryWorkspaceLoadStatusPath
       ? { repositoryWorkspaceLoadStatusPath }
       : {}),

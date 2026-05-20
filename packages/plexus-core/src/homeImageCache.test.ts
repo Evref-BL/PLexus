@@ -328,6 +328,12 @@ describe("home image cache", () => {
     expect(script.source).toContain(
       `'${path.join(projectRoot, "pharo", "load-mcp.st").replace(/\\/g, "/")}' asFileReference`,
     );
+    expect(script.source).toContain(
+      `'${plan.expectedManifest.paths.preparationStatusPath.replace(/\\/g, "/")}' asFileReference`,
+    );
+    expect(script.source).toContain(
+      "preparationStatusWriter value: 'failed' value: error description.",
+    );
     expect(script.source).toContain("Smalltalk snapshot: true andQuit: true.");
 
     writeHomeImageCacheManifest(plan.expectedManifest);
@@ -539,6 +545,90 @@ describe("home image cache", () => {
       },
     });
     expect(fs.existsSync(result!.plan.lockPath)).toBe(false);
+  });
+
+  it("records image-side home cache preparation failures in the manifest", async () => {
+    const projectRoot = makeTempDir("plexus-project-");
+    const homeDirectory = makeTempDir("plexus-user-home-");
+    const projectConfig = config();
+    const statusMessage = "Metacello could not load BaselineOfMCP";
+    const homeCalls: Array<{
+      name: string;
+      argumentsValue: Record<string, unknown>;
+    }> = [];
+    const homeClient: PharoLauncherMcpToolClient = {
+      async callTool(name, argumentsValue = {}) {
+        homeCalls.push({ name, argumentsValue });
+        if (name === "pharo_launcher_image_launch") {
+          const scriptPath = argumentsValue.script as string;
+          fs.writeFileSync(
+            path.join(path.dirname(scriptPath), "preparation-status.properties"),
+            [
+              "status=failed",
+              "cacheKey=abc123",
+              "source=metacello",
+              "loadScript=/repo/pharo/load-mcp.st",
+              "repository=github://Evref-BL/MCP:main/src",
+              "baseline=MCP",
+              `message=${statusMessage}`,
+              "",
+            ].join("\n"),
+            "utf8",
+          );
+          return { ok: false };
+        }
+
+        return { ok: true };
+      },
+    };
+    const runtime = fakeLauncherClient();
+
+    await expect(
+      materializeProjectImageFromHomeCache({
+        runtimeClient: runtime.client,
+        homeClient,
+        projectRoot,
+        config: projectConfig,
+        imageConfig: projectConfig.images[0]!,
+        imageState,
+        workspaceId: "worktree-a",
+        targetId: "project-123--worktree-a",
+        homeDirectory,
+        approval: {
+          approved: true,
+          runnerId: "runner-1",
+        },
+        now: () => new Date("2026-05-19T10:00:00.000Z"),
+      }),
+    ).rejects.toThrow("pharo_launcher_image_launch returned ok: false");
+
+    expect(homeCalls.map((call) => call.name)).toEqual([
+      "pharo_launcher_template_update",
+      "pharo_launcher_image_create",
+      "pharo_launcher_image_launch",
+    ]);
+    expect(runtime.calls).toEqual([]);
+    const plan = buildHomeImageCachePlan({
+      projectRoot,
+      config: projectConfig,
+      imageConfig: projectConfig.images[0]!,
+      imageState,
+      workspaceId: "worktree-a",
+      targetId: "project-123--worktree-a",
+      homeDirectory,
+    });
+    expect(readHomeImageCacheManifest(plan.manifestPath)).toMatchObject({
+      status: "ok",
+      manifest: {
+        pharoMcp: {
+          preparationStatus: "failed",
+          diagnostics: [
+            `Home image cache Pharo MCP preparation failed: ${statusMessage}`,
+          ],
+        },
+      },
+    });
+    expect(fs.existsSync(plan.lockPath)).toBe(false);
   });
 
   it("executes a cache hit by copying from the existing home cache image", async () => {

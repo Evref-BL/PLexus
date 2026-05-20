@@ -578,6 +578,85 @@ describe("project open", () => {
     });
   });
 
+  it("records Pharo MCP load failures reported by the startup script before health timeout", async () => {
+    const projectRoot = makeTempDir("plexus-project-");
+    const stateRoot = makeTempDir("plexus-state-");
+    writeProjectConfig(projectRoot);
+    const statusMessage = "Metacello could not resolve BaselineOfMCP";
+    const pharoLauncherMcpClient = new FakePharoLauncherMcpClient(
+      [
+        {
+          pid: 1234,
+          imageName: "MyProject-dev",
+          commandLine: "PharoConsole.exe MyProject-dev.image",
+        },
+      ],
+      undefined,
+      (argumentsValue) => {
+        const scriptPath = argumentsValue.script as string;
+        fs.writeFileSync(
+          path.join(path.dirname(scriptPath), "pharo-mcp-load-dev.properties"),
+          [
+            "status=failed",
+            "imageId=dev",
+            "source=metacello",
+            `loadScript=${path.join(projectRoot, "pharo", "load-mcp.st")}`,
+            "repository=github://Evref-BL/MCP:main/src",
+            "baseline=MCP",
+            `message=${statusMessage}`,
+            "",
+          ].join("\n"),
+          "utf8",
+        );
+      },
+    );
+    const healthClient = new FakeHealthClient(false);
+
+    await expect(
+      openProject({
+        projectRoot,
+        stateRoot,
+        workspaceId: "worktree-a",
+        pharoLauncherMcpClient,
+        healthClient,
+        now: fixedNow,
+        sleep: async () => {},
+        poll: {
+          intervalMs: 0,
+          healthTimeoutMs: 60_000,
+        },
+      }),
+    ).rejects.toMatchObject({
+      result: {
+        ok: false,
+        failures: [
+          {
+            imageId: "dev",
+            message: `Pharo MCP load failed for image dev: ${statusMessage}`,
+          },
+        ],
+      },
+    });
+    expect(healthClient.ports).toEqual([]);
+    const failedState = loadProjectState(
+      path.join(
+        stateRoot,
+        "projects",
+        "project-123",
+        "workspaces",
+        "worktree-a",
+        "state.json",
+      ),
+    );
+    expect(failedState?.images[0].pharoMcpLoad).toMatchObject({
+      state: "failed",
+      source: "metacello",
+      repository: "github://Evref-BL/MCP:main/src",
+      baseline: "MCP",
+      error: statusMessage,
+    });
+  });
+
   it("records an auto-bound MCP endpoint and releases the fallback port claim", async () => {
     const claimsRoot = makeTempDir("plexus-port-claims-");
     const projectRoot = makeTempDir("plexus-project-");
