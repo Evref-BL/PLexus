@@ -525,6 +525,9 @@ function pharoMcpLoadStatusDetails(
     ...(properties.source ? { source: properties.source } : {}),
     ...(properties.loadScript ? { loadScript: properties.loadScript } : {}),
     ...(properties.repository ? { repository: properties.repository } : {}),
+    ...(properties.configuredRepositoryHint
+      ? { configuredRepositoryHint: properties.configuredRepositoryHint }
+      : {}),
     ...(properties.baseline ? { baseline: properties.baseline } : {}),
   };
 }

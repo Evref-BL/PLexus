@@ -140,7 +140,9 @@ describe("project startup scripts", () => {
     expect(source).toContain("nextPutAll: 'imageId=';");
     expect(source).toContain("nextPutAll: 'source=';");
     expect(source).toContain("nextPutAll: 'loadScript=';");
+    expect(source).toContain("pharoMcpLoadSource = 'metacello'");
     expect(source).toContain("nextPutAll: 'repository=';");
+    expect(source).toContain("nextPutAll: 'configuredRepositoryHint=';");
     expect(source).toContain("pharoMcpLoadStatusWriter value: 'loaded' value: nil");
     expect(source).toContain("pharoMcpLoadStatusWriter value: 'failed' value: error description.");
     expect(source).toContain("error pass");

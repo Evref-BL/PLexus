@@ -658,6 +658,73 @@ describe("project open", () => {
     });
   });
 
+  it("does not persist inferred repository metadata for script-provided Pharo MCP loads", async () => {
+    const projectRoot = makeTempDir("plexus-project-");
+    const stateRoot = makeTempDir("plexus-state-");
+    writeProjectConfig(projectRoot);
+    const loadScriptPath = path.join(projectRoot, "pharo", "load-mcp.st");
+    const pharoLauncherMcpClient = new FakePharoLauncherMcpClient(
+      [
+        {
+          pid: 1234,
+          imageName: "MyProject-dev",
+          commandLine: "PharoConsole.exe MyProject-dev.image",
+        },
+      ],
+      undefined,
+      (argumentsValue) => {
+        const scriptPath = argumentsValue.script as string;
+        fs.writeFileSync(
+          path.join(path.dirname(scriptPath), "pharo-mcp-load-dev.properties"),
+          [
+            "status=loaded",
+            "imageId=dev",
+            "source=loadScript",
+            `loadScript=${loadScriptPath}`,
+            "configuredRepositoryHint=github://Evref-BL/MCP:main/src",
+            "baseline=MCP",
+            "",
+          ].join("\n"),
+          "utf8",
+        );
+      },
+    );
+
+    const result = await openProject({
+      projectRoot,
+      stateRoot,
+      workspaceId: "worktree-a",
+      pharoLauncherMcpClient,
+      healthClient: new FakeHealthClient(true),
+      now: fixedNow,
+      sleep: async () => {},
+      poll: {
+        intervalMs: 0,
+      },
+    });
+
+    const pharoMcpLoad = result.state.images[0].pharoMcpLoad;
+    expect(pharoMcpLoad).toMatchObject({
+      state: "loaded",
+      source: "loadScript",
+      loadScript: loadScriptPath,
+      configuredRepositoryHint: "github://Evref-BL/MCP:main/src",
+      baseline: "MCP",
+    });
+    expect(pharoMcpLoad).not.toHaveProperty("repository");
+    const savedState = loadProjectState(
+      path.join(
+        stateRoot,
+        "projects",
+        "project-123",
+        "workspaces",
+        "worktree-a",
+        "state.json",
+      ),
+    );
+    expect(savedState?.images[0].pharoMcpLoad).toEqual(pharoMcpLoad);
+  });
+
   it("records an auto-bound MCP endpoint and releases the fallback port claim", async () => {
     const claimsRoot = makeTempDir("plexus-port-claims-");
     const projectRoot = makeTempDir("plexus-project-");
