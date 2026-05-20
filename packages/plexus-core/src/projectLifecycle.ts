@@ -60,6 +60,7 @@ import {
   ProjectOpenError,
   type ProjectOpenResult,
 } from "./projectOpen.js";
+import { inspectProjectImageRepositoryWorkspace } from "./projectRepositoryWorkspace.js";
 import {
   defaultPlexusStateRoot,
   defaultTargetId,
@@ -73,6 +74,8 @@ import {
   sanitizeRuntimeId,
   saveProjectState,
   type ProjectImageMcpEndpoint,
+  type ProjectImageRepositoryWorkspaceCleanupPolicy,
+  type ProjectImageRepositoryWorkspaceCleanupRecord,
   type ProjectImageRepositoryWorkspaceState,
   type ProjectImageState,
   type ProjectGatewayState,
@@ -158,6 +161,8 @@ export interface ProjectCloseToolInput {
   projectPath: string;
   stateRoot?: string;
   workspaceId?: string;
+  repositoryWorkspaceCleanupPolicy?: ProjectImageRepositoryWorkspaceCleanupPolicy;
+  repositoryWorkspaceArchiveRoot?: string;
 }
 
 export interface ProjectStatusToolInput extends ProjectLifecycleRouteReference {
@@ -329,6 +334,14 @@ export interface ProjectLifecycleRepositoryWorkspaceDiagnostic {
   imageName: string;
   status: ProjectImageState["status"] | "declared";
   workspace: ProjectImageRepositoryWorkspaceState;
+  cleanup: {
+    defaultPolicy: "preserve";
+    destructivePolicyRequired: true;
+    reviewRequired: boolean;
+    recommendedAction: "none" | "materialize" | "review" | "repair";
+    message: string;
+    lastDecision?: ProjectImageRepositoryWorkspaceCleanupRecord;
+  };
 }
 
 export interface ProjectLifecycleDiagnostics {
@@ -985,7 +998,94 @@ function agentAccessDiagnostics(
   };
 }
 
+function repositoryWorkspaceCleanupDiagnostic(
+  workspace: ProjectImageRepositoryWorkspaceState,
+  inspection:
+    | ReturnType<typeof inspectProjectImageRepositoryWorkspace>
+    | undefined,
+): ProjectLifecycleRepositoryWorkspaceDiagnostic["cleanup"] {
+  const lastDecision = workspace.cleanupState;
+  if (!inspection) {
+    return {
+      defaultPolicy: "preserve",
+      destructivePolicyRequired: true,
+      reviewRequired: false,
+      recommendedAction: "materialize",
+      message:
+        "Repository workspace is planned; destructive cleanup is unavailable until it is materialized.",
+      ...(lastDecision ? { lastDecision } : {}),
+    };
+  }
+
+  if (!inspection.exists) {
+    return {
+      defaultPolicy: "preserve",
+      destructivePolicyRequired: true,
+      reviewRequired: true,
+      recommendedAction: "materialize",
+      message: "Repository workspace path is missing.",
+      ...(lastDecision ? { lastDecision } : {}),
+    };
+  }
+
+  if (!inspection.isGitRepository) {
+    return {
+      defaultPolicy: "preserve",
+      destructivePolicyRequired: true,
+      reviewRequired: true,
+      recommendedAction: "repair",
+      message: "Repository workspace path exists but is not a Git repository.",
+      ...(lastDecision ? { lastDecision } : {}),
+    };
+  }
+
+  if (inspection.dirtyState === "dirty") {
+    return {
+      defaultPolicy: "preserve",
+      destructivePolicyRequired: true,
+      reviewRequired: true,
+      recommendedAction: "review",
+      message:
+        "Repository workspace has uncommitted changes; preserve, archive, or hand off before deletion.",
+      ...(lastDecision ? { lastDecision } : {}),
+    };
+  }
+
+  return {
+    defaultPolicy: "preserve",
+    destructivePolicyRequired: true,
+    reviewRequired: false,
+    recommendedAction: "none",
+    message:
+      "Repository workspace is clean; destructive cleanup still requires an explicit policy.",
+    ...(lastDecision ? { lastDecision } : {}),
+  };
+}
+
+function liveRepositoryWorkspaceState(
+  workspace: ProjectImageRepositoryWorkspaceState,
+  inspection:
+    | ReturnType<typeof inspectProjectImageRepositoryWorkspace>
+    | undefined,
+): ProjectImageRepositoryWorkspaceState {
+  if (!inspection) {
+    return workspace;
+  }
+
+  return {
+    ...workspace,
+    path: inspection.path,
+    dirtyState: inspection.dirtyState,
+    diagnostics: [...workspace.diagnostics, ...inspection.diagnostics],
+    ...(inspection.branch ? { branch: inspection.branch } : {}),
+    ...(inspection.currentCommit
+      ? { currentCommit: inspection.currentCommit }
+      : {}),
+  };
+}
+
 function repositoryWorkspaceDiagnostics(
+  projectRoot: string,
   config: ProjectConfig,
   state: ProjectState | undefined,
   scope: {
@@ -1010,6 +1110,13 @@ function repositoryWorkspaceDiagnostics(
       if (!workspace) {
         return undefined;
       }
+      const inspection = imageState
+        ? inspectProjectImageRepositoryWorkspace({
+            projectRoot,
+            imageState,
+          })
+        : undefined;
+      const liveWorkspace = liveRepositoryWorkspaceState(workspace, inspection);
 
       return {
         imageId: imageConfig.id,
@@ -1017,7 +1124,8 @@ function repositoryWorkspaceDiagnostics(
           imageState?.imageName ??
           renderProjectImageName(imageConfig.imageName, context),
         status: imageState?.status ?? "declared",
-        workspace,
+        workspace: liveWorkspace,
+        cleanup: repositoryWorkspaceCleanupDiagnostic(liveWorkspace, inspection),
       };
     })
     .filter(
@@ -1518,6 +1626,15 @@ export class PlexusProjectLifecycle {
         projectRoot: input.projectPath,
         stateRoot: input.stateRoot,
         workspaceId: input.workspaceId,
+        ...(input.repositoryWorkspaceCleanupPolicy
+          ? {
+              repositoryWorkspaceCleanupPolicy:
+                input.repositoryWorkspaceCleanupPolicy,
+            }
+          : {}),
+        ...(input.repositoryWorkspaceArchiveRoot
+          ? { repositoryWorkspaceArchiveRoot: input.repositoryWorkspaceArchiveRoot }
+          : {}),
       });
       const projectRoot = path.resolve(input.projectPath);
       const config =
@@ -1857,6 +1974,7 @@ export class PlexusProjectLifecycle {
       }),
       agentAccess: agentAccessDiagnostics(gateway),
       repositoryWorkspaces: repositoryWorkspaceDiagnostics(
+        projectRoot,
         config,
         state,
         scope,

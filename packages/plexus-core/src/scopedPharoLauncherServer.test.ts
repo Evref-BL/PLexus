@@ -343,6 +343,7 @@ describe("scoped pharo launcher facade", () => {
           statePath: statePath(projectRoot, stateRoot),
           state: runningState(),
           stoppedImages: [],
+          repositoryWorkspaceCleanups: [],
           failures: [],
         };
       },

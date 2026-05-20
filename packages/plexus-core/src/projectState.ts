@@ -70,12 +70,38 @@ export type ProjectImageRepositoryWorkspaceMaterializationState =
   | "ready"
   | "reused"
   | "failed";
+export type ProjectImageRepositoryWorkspaceCleanupPolicy =
+  | "preserve"
+  | "archive"
+  | "delete-disposable";
+export type ProjectImageRepositoryWorkspaceCleanupDecision =
+  | "preserved"
+  | "archived"
+  | "deleted"
+  | "refused"
+  | "missing"
+  | "failed";
 
 export interface ProjectImageRepositoryWorkspaceRepositoryState {
   id: string;
   componentId?: string;
   remoteUrl?: string;
   originPath?: string;
+}
+
+export interface ProjectImageRepositoryWorkspaceCleanupRecord {
+  policy: ProjectImageRepositoryWorkspaceCleanupPolicy;
+  decision: ProjectImageRepositoryWorkspaceCleanupDecision;
+  imageId: string;
+  repositoryId: string;
+  path: string;
+  dirtyState: ProjectImageRepositoryWorkspaceDirtyState;
+  recordedAt: string;
+  branch?: string;
+  baseCommit?: string;
+  currentCommit?: string;
+  archivePath?: string;
+  message?: string;
 }
 
 export interface ProjectImageRepositoryWorkspaceState {
@@ -100,6 +126,7 @@ export interface ProjectImageRepositoryWorkspaceState {
   loadSourcePath?: string;
   loadStatusPath?: string;
   loadError?: string;
+  cleanupState?: ProjectImageRepositoryWorkspaceCleanupRecord;
 }
 
 export interface ProjectImageState {

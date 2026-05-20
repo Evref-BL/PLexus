@@ -15,6 +15,9 @@ import {
 } from "./projectImageMcpEndpoint.js";
 import { pharoLauncherMcpProfileEnvironment } from "./pharoLauncherProfile.js";
 import {
+  cleanupProjectImageRepositoryWorkspace,
+} from "./projectRepositoryWorkspace.js";
+import {
   defaultWorkspaceId,
   loadProjectState,
   projectStateRootForConfig,
@@ -23,6 +26,8 @@ import {
   sanitizeRuntimeId,
   saveProjectState,
   type ProjectImageState,
+  type ProjectImageRepositoryWorkspaceCleanupPolicy,
+  type ProjectImageRepositoryWorkspaceCleanupRecord,
   type ProjectState,
 } from "./projectState.js";
 import type { PortClaimChecks } from "./portClaims.js";
@@ -40,6 +45,9 @@ export interface ProjectCloseOptions {
   pharoLauncherMcpClient?: PharoLauncherMcpToolClient;
   now?: () => Date;
   portClaimChecks?: PortClaimChecks;
+  repositoryWorkspaceCleanupPolicy?: ProjectImageRepositoryWorkspaceCleanupPolicy;
+  repositoryWorkspaceArchiveRoot?: string;
+  env?: NodeJS.ProcessEnv;
 }
 
 export interface ProjectCloseFailure {
@@ -54,6 +62,7 @@ export interface ProjectCloseResult {
   statePath: string;
   state?: ProjectState;
   stoppedImages: ProjectImageState[];
+  repositoryWorkspaceCleanups: ProjectImageRepositoryWorkspaceCleanupRecord[];
   failures: ProjectCloseFailure[];
 }
 
@@ -116,6 +125,58 @@ function clearImageEndpointRuntimeState(options: {
   delete options.imageState.mcpEndpoint;
 }
 
+function repositoryWorkspaceCleanupFailure(
+  record: ProjectImageRepositoryWorkspaceCleanupRecord,
+): boolean {
+  return (
+    record.decision === "failed" ||
+    (record.policy === "delete-disposable" && record.decision === "refused")
+  );
+}
+
+function applyRepositoryWorkspaceCleanup(options: {
+  projectRoot: string;
+  statePath: string;
+  imageStates: ProjectImageState[];
+  policy: ProjectImageRepositoryWorkspaceCleanupPolicy;
+  archiveRoot?: string;
+  now: () => Date;
+  env?: NodeJS.ProcessEnv;
+  failures: ProjectCloseFailure[];
+}): ProjectImageRepositoryWorkspaceCleanupRecord[] {
+  const records: ProjectImageRepositoryWorkspaceCleanupRecord[] = [];
+  const archiveRoot =
+    options.archiveRoot ??
+    path.join(path.dirname(options.statePath), "repository-workspace-archives");
+
+  for (const imageState of options.imageStates) {
+    const record = cleanupProjectImageRepositoryWorkspace({
+      projectRoot: options.projectRoot,
+      imageState,
+      policy: options.policy,
+      archiveRoot,
+      now: options.now,
+      env: options.env,
+    });
+    if (!record) {
+      continue;
+    }
+
+    records.push(record);
+    if (repositoryWorkspaceCleanupFailure(record)) {
+      options.failures.push({
+        imageId: imageState.id,
+        imageName: imageState.imageName,
+        message:
+          record.message ??
+          `Repository workspace cleanup ${record.decision} for ${record.path}`,
+      });
+    }
+  }
+
+  return records;
+}
+
 export async function closeProject(
   options: ProjectCloseOptions,
 ): Promise<ProjectCloseResult> {
@@ -143,6 +204,7 @@ export async function closeProject(
       projectRoot,
       statePath,
       stoppedImages: [],
+      repositoryWorkspaceCleanups: [],
       failures: [],
     };
   }
@@ -151,6 +213,8 @@ export async function closeProject(
   const images = imagesToClose(state, options.imageIds);
   const stoppedImages: ProjectImageState[] = [];
   const failures: ProjectCloseFailure[] = [];
+  const repositoryWorkspaceCleanupPolicy =
+    options.repositoryWorkspaceCleanupPolicy ?? "preserve";
 
   if (images.length === 0) {
     if (claimsRoot) {
@@ -180,6 +244,16 @@ export async function closeProject(
         imageState,
       });
     }
+    const repositoryWorkspaceCleanups = applyRepositoryWorkspaceCleanup({
+      projectRoot,
+      statePath,
+      imageStates: selected,
+      policy: repositoryWorkspaceCleanupPolicy,
+      archiveRoot: options.repositoryWorkspaceArchiveRoot,
+      now,
+      env: options.env,
+      failures,
+    });
 
     state.updatedAt = now().toISOString();
     state.runtimeStatus = runtimeStatusForImages(state.images);
@@ -191,6 +265,7 @@ export async function closeProject(
       statePath,
       state,
       stoppedImages: [],
+      repositoryWorkspaceCleanups,
       failures,
     };
 
@@ -269,6 +344,17 @@ export async function closeProject(
       }
     }
 
+    const repositoryWorkspaceCleanups = applyRepositoryWorkspaceCleanup({
+      projectRoot,
+      statePath,
+      imageStates: selected,
+      policy: repositoryWorkspaceCleanupPolicy,
+      archiveRoot: options.repositoryWorkspaceArchiveRoot,
+      now,
+      env: options.env,
+      failures,
+    });
+
     state.updatedAt = now().toISOString();
     state.runtimeStatus = runtimeStatusForImages(state.images);
     saveProjectState(statePath, state);
@@ -279,6 +365,7 @@ export async function closeProject(
       statePath,
       state,
       stoppedImages,
+      repositoryWorkspaceCleanups,
       failures,
     };
 

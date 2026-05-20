@@ -209,6 +209,62 @@ describe("scoped project context", () => {
     });
   });
 
+  it("includes repository workspace preservation metadata in cleanup diagnostics", () => {
+    const diagnostics = buildScopedProjectContextDiagnostics({
+      projectRoot,
+      projectConfig,
+      workspaceId: "task-123",
+      targetId: "target-123",
+      stateRoot,
+      projectState: {
+        ...projectState,
+        images: [
+          {
+            ...projectState.images[0],
+            repositoryWorkspace: {
+              repository: {
+                id: "my-project",
+              },
+              path: "C:\\Users\\me\\Pharo\\images\\pharo-local\\iceberg\\my-project",
+              materializationStrategy: "copy",
+              sourceDirectory: "src",
+              baseline: "MyProject",
+              materializationState: "ready",
+              diagnostics: [],
+              dirtyState: "dirty",
+              loadState: "loaded",
+              cleanupState: {
+                policy: "preserve",
+                decision: "preserved",
+                imageId: "dev",
+                repositoryId: "my-project",
+                path: "C:\\Users\\me\\Pharo\\images\\pharo-local\\iceberg\\my-project",
+                dirtyState: "dirty",
+                recordedAt: "2026-05-16T11:00:00.000Z",
+              },
+            },
+          },
+        ],
+      },
+    });
+
+    expect(diagnostics.images[0].cleanup.repositoryWorkspace).toEqual({
+      path: "C:\\Users\\me\\Pharo\\images\\pharo-local\\iceberg\\my-project",
+      dirtyState: "dirty",
+      defaultPolicy: "preserve",
+      destructivePolicyRequired: true,
+      lastDecision: {
+        policy: "preserve",
+        decision: "preserved",
+        imageId: "dev",
+        repositoryId: "my-project",
+        path: "C:\\Users\\me\\Pharo\\images\\pharo-local\\iceberg\\my-project",
+        dirtyState: "dirty",
+        recordedAt: "2026-05-16T11:00:00.000Z",
+      },
+    });
+  });
+
   it("includes gateway route metadata for the imageId consumed by Pharo tools", () => {
     const context = buildScopedProjectContext({
       projectRoot,

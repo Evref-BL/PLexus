@@ -9,7 +9,7 @@ function usage(): string {
   return [
     "Usage:",
     "  plexus project open <path> [--workspace-id <id>] [--target-id <id>] [--state-root <path>]",
-    "  plexus project close <path> [--workspace-id <id>] [--state-root <path>]",
+    "  plexus project close <path> [--workspace-id <id>] [--state-root <path>] [--repository-workspace-cleanup-policy <preserve|archive|delete-disposable>] [--repository-workspace-archive-root <path>]",
     "  plexus project status <path> [--workspace-id <id>] [--state-root <path>]",
     "  plexus mcp project",
     "  plexus mcp pharo-launcher [--project-path <path>] [--workspace-id <id>] [--target-id <id>] [--state-root <path>]",
@@ -29,6 +29,8 @@ interface ParsedCommand {
   stateRoot?: string;
   workspaceId?: string;
   targetId?: string;
+  repositoryWorkspaceCleanupPolicy?: "preserve" | "archive" | "delete-disposable";
+  repositoryWorkspaceArchiveRoot?: string;
 }
 
 function parseCommand(argv: string[]): ParsedCommand {
@@ -59,6 +61,21 @@ function parseCommand(argv: string[]): ParsedCommand {
         break;
       case "--target-id":
         parsed.targetId = value;
+        break;
+      case "--repository-workspace-cleanup-policy":
+        if (
+          value !== "preserve" &&
+          value !== "archive" &&
+          value !== "delete-disposable"
+        ) {
+          throw new Error(
+            "--repository-workspace-cleanup-policy must be preserve, archive, or delete-disposable",
+          );
+        }
+        parsed.repositoryWorkspaceCleanupPolicy = value;
+        break;
+      case "--repository-workspace-archive-root":
+        parsed.repositoryWorkspaceArchiveRoot = value;
         break;
       default:
         throw new Error(`Unknown option: ${arg}`);
@@ -162,6 +179,18 @@ async function main(argv: string[]): Promise<number> {
       projectPath: parsed.projectPath,
       stateRoot,
       workspaceId,
+      ...(parsed.repositoryWorkspaceCleanupPolicy
+        ? {
+            repositoryWorkspaceCleanupPolicy:
+              parsed.repositoryWorkspaceCleanupPolicy,
+          }
+        : {}),
+      ...(parsed.repositoryWorkspaceArchiveRoot
+        ? {
+            repositoryWorkspaceArchiveRoot:
+              parsed.repositoryWorkspaceArchiveRoot,
+          }
+        : {}),
     });
     if (!lifecycleResult.ok || !lifecycleResult.data) {
       console.error(JSON.stringify(lifecycleResult, null, 2));
@@ -178,6 +207,7 @@ async function main(argv: string[]): Promise<number> {
           gateway: result.state?.gateway,
           images: result.state?.images ?? [],
           stoppedImages: result.stoppedImages,
+          repositoryWorkspaceCleanups: result.repositoryWorkspaceCleanups,
         },
         null,
         2,
@@ -210,6 +240,8 @@ async function main(argv: string[]): Promise<number> {
             failures: error.result.failures,
             images: error.result.state?.images ?? [],
             stoppedImages: error.result.stoppedImages,
+            repositoryWorkspaceCleanups:
+              error.result.repositoryWorkspaceCleanups,
           },
           null,
           2,

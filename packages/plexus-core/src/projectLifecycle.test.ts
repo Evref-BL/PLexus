@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -30,6 +31,12 @@ import {
 } from "./projectState.js";
 
 const tempDirs: string[] = [];
+const gitEnv = {
+  GIT_AUTHOR_NAME: "PLexus Test",
+  GIT_AUTHOR_EMAIL: "plexus-test@example.invalid",
+  GIT_COMMITTER_NAME: "PLexus Test",
+  GIT_COMMITTER_EMAIL: "plexus-test@example.invalid",
+};
 
 const runningState: ProjectState = {
   projectId: "project-123",
@@ -138,6 +145,32 @@ function makeTempDir(prefix: string): string {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
   tempDirs.push(tempDir);
   return tempDir;
+}
+
+function git(cwd: string, args: string[]): string {
+  return execFileSync("git", args, {
+    cwd,
+    env: {
+      ...process.env,
+      ...gitEnv,
+    },
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+  }).trim();
+}
+
+function writeFile(filePath: string, contents: string): void {
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  fs.writeFileSync(filePath, contents, "utf8");
+}
+
+function initRepository(repositoryPath: string): string {
+  fs.mkdirSync(repositoryPath, { recursive: true });
+  git(repositoryPath, ["init", "--initial-branch=main"]);
+  writeFile(path.join(repositoryPath, "src", "BaselineOfMyProject.class.st"), "baseline");
+  git(repositoryPath, ["add", "."]);
+  git(repositoryPath, ["commit", "-m", "Initial"]);
+  return git(repositoryPath, ["rev-parse", "HEAD"]);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -362,6 +395,7 @@ describe("project lifecycle tools", () => {
         statePath: "state.json",
         state: runningState,
         stoppedImages: runningState.images,
+        repositoryWorkspaceCleanups: [],
         failures: [],
       }),
     });
@@ -1135,6 +1169,89 @@ describe("project lifecycle tools", () => {
                 baseBranch: "main",
                 dirtyState: "unknown",
                 loadState: "not-loaded",
+              },
+              cleanup: {
+                defaultPolicy: "preserve",
+                destructivePolicyRequired: true,
+                reviewRequired: false,
+                recommendedAction: "materialize",
+              },
+            },
+          ],
+        },
+      },
+    });
+  });
+
+  it("reports live dirty repository workspaces that need review from status diagnostics", async () => {
+    const projectRoot = makeTempDir("plexus-project-");
+    const stateRoot = makeTempDir("plexus-state-");
+    const repositoryPath = path.join(makeTempDir("plexus-repo-"), "my-project");
+    const commit = initRepository(repositoryPath);
+    writeFile(path.join(repositoryPath, "src", "Dirty.class.st"), "dirty");
+    writeProjectConfig(projectRoot);
+    saveProjectState(statePath(stateRoot), {
+      projectId: "project-123",
+      projectName: "my-project",
+      workspaceId: "worktree-a",
+      targetId: "project-123--worktree-a",
+      updatedAt: "2026-04-25T10:00:00.000Z",
+      images: [
+        {
+          id: "dev",
+          imageName: "MyProject-dev",
+          status: "stopped",
+          repositoryWorkspace: {
+            repository: {
+              id: "my-project",
+              originPath: repositoryPath,
+            },
+            path: repositoryPath,
+            materializationStrategy: "copy",
+            sourceDirectory: "src",
+            baseline: "MyProject",
+            materializationState: "ready",
+            diagnostics: [],
+            dirtyState: "clean",
+            loadState: "not-loaded",
+            baseCommit: commit,
+          },
+        },
+      ],
+    });
+    const lifecycle = new PlexusProjectLifecycle({
+      gateway: {
+        checks: {
+          isPortListening: async () => false,
+        },
+      },
+    });
+
+    const result = await lifecycle.handleTool("plexus_project_status", {
+      projectPath: projectRoot,
+      stateRoot,
+      workspaceId: "worktree-a",
+      includeDiagnostics: true,
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
+      data: {
+        diagnostics: {
+          repositoryWorkspaces: [
+            {
+              imageId: "dev",
+              workspace: {
+                path: repositoryPath,
+                dirtyState: "dirty",
+                currentCommit: commit,
+              },
+              cleanup: {
+                defaultPolicy: "preserve",
+                destructivePolicyRequired: true,
+                reviewRequired: true,
+                recommendedAction: "review",
+                message: expect.stringContaining("uncommitted changes"),
               },
             },
           ],

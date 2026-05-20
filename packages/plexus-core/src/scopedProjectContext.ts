@@ -76,12 +76,21 @@ export interface ScopedImageCleanupPaths {
   ombuDirectoryPath?: string;
 }
 
+export interface ScopedImageRepositoryWorkspaceCleanupMetadata {
+  path: string;
+  dirtyState: ProjectImageRepositoryWorkspaceState["dirtyState"];
+  defaultPolicy: "preserve";
+  destructivePolicyRequired: true;
+  lastDecision?: ProjectImageRepositoryWorkspaceState["cleanupState"];
+}
+
 export interface ScopedImageCleanupMetadata {
   disposable: true;
   statePath: string;
   launcherImageName: string;
   policy: ScopedImageCleanupPolicy;
   paths: ScopedImageCleanupPaths;
+  repositoryWorkspace?: ScopedImageRepositoryWorkspaceCleanupMetadata;
 }
 
 export interface ScopedImageGatewayRouteMetadata {
@@ -179,6 +188,24 @@ function cleanupPaths(
       : {}),
     ...(imageState?.ombuDirectoryPath
       ? { ombuDirectoryPath: imageState.ombuDirectoryPath }
+      : {}),
+  };
+}
+
+function repositoryWorkspaceCleanupMetadata(
+  repositoryWorkspaceState: ProjectImageRepositoryWorkspaceState | undefined,
+): ScopedImageRepositoryWorkspaceCleanupMetadata | undefined {
+  if (!repositoryWorkspaceState) {
+    return undefined;
+  }
+
+  return {
+    path: repositoryWorkspaceState.path,
+    dirtyState: repositoryWorkspaceState.dirtyState,
+    defaultPolicy: "preserve",
+    destructivePolicyRequired: true,
+    ...(repositoryWorkspaceState.cleanupState
+      ? { lastDecision: repositoryWorkspaceState.cleanupState }
       : {}),
   };
 }
@@ -398,6 +425,8 @@ function scopedImageDiagnostics(
     imageConfig,
     imageState,
   );
+  const repositoryWorkspaceCleanup =
+    repositoryWorkspaceCleanupMetadata(repositoryWorkspaceState);
 
   return {
     imageId: imageConfig.id,
@@ -418,6 +447,9 @@ function scopedImageDiagnostics(
       launcherImageName,
       policy: "workspace_cleanup_only",
       paths: cleanupPaths(imageState),
+      ...(repositoryWorkspaceCleanup
+        ? { repositoryWorkspace: repositoryWorkspaceCleanup }
+        : {}),
     },
   };
 }

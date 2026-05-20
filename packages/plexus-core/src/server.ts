@@ -86,6 +86,11 @@ export const projectLifecycleTools = [
         projectPath: stringSchema,
         workspaceId: optionalStringSchema,
         stateRoot: optionalStringSchema,
+        repositoryWorkspaceCleanupPolicy: {
+          type: "string",
+          enum: ["preserve", "archive", "delete-disposable"],
+        },
+        repositoryWorkspaceArchiveRoot: optionalStringSchema,
       },
       ["projectPath"],
     ),
