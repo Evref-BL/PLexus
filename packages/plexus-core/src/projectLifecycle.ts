@@ -1,4 +1,5 @@
 import path from "node:path";
+import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import {
   defaultImagePortClaimChecks,
   imagePortClaimsRootForConfig,
@@ -137,6 +138,7 @@ export interface HttpGatewayRouteRegistryOptions {
 }
 
 const defaultGatewayRouteControlMcpPath = "/control-mcp";
+const defaultPharoToolsDiscoveryTimeoutMs = 5_000;
 
 export interface ProjectLifecycleOptions {
   routeRegistry?: ProjectLifecycleRouteRegistry;
@@ -1485,6 +1487,159 @@ export class HttpGatewayRouteRegistry implements ProjectLifecycleRouteRegistry {
   }
 }
 
+function gatewayHasExplicitPharoTools(
+  gateway: ProjectLifecycleOptions["gateway"],
+): boolean {
+  if (gateway?.pharoTools !== undefined) {
+    return true;
+  }
+
+  const value = gateway?.env?.PLEXUS_PHARO_TOOLS_JSON;
+  if (value === undefined || value.trim().length === 0) {
+    return false;
+  }
+
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return Array.isArray(parsed) && parsed.length > 0;
+  } catch {
+    return true;
+  }
+}
+
+function imageMcpEndpointForToolDiscovery(
+  image: ProjectImageState,
+): ProjectImageMcpEndpoint | undefined {
+  if (image.status !== "running") {
+    return undefined;
+  }
+
+  if (image.mcpEndpoint) {
+    return image.mcpEndpoint;
+  }
+
+  if (image.assignedPort !== undefined) {
+    return {
+      transport: "http",
+      host: "127.0.0.1",
+      port: image.assignedPort,
+      path: "/",
+    };
+  }
+
+  return undefined;
+}
+
+function hostForUrl(host: string): string {
+  return host.includes(":") && !host.startsWith("[") ? `[${host}]` : host;
+}
+
+function imageMcpEndpointUrl(endpoint: ProjectImageMcpEndpoint): string {
+  return `http://${hostForUrl(endpoint.host)}:${endpoint.port}${endpoint.path}`;
+}
+
+function toolFromMcpListItem(value: unknown, index: number): Tool {
+  if (!isObject(value) || typeof value.name !== "string") {
+    throw new Error(`MCP tools/list returned an invalid tool at index ${index}`);
+  }
+
+  if (!isObject(value.inputSchema)) {
+    throw new Error(
+      `MCP tools/list returned tool ${value.name} without an inputSchema object`,
+    );
+  }
+
+  return value as Tool;
+}
+
+async function fetchPharoMcpTools(options: {
+  endpoint: ProjectImageMcpEndpoint;
+  fetchFn: typeof fetch;
+  timeoutMs: number;
+}): Promise<Tool[]> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), options.timeoutMs);
+
+  try {
+    const response = await options.fetchFn(imageMcpEndpointUrl(options.endpoint), {
+      method: "POST",
+      headers: {
+        accept: "application/json, text/event-stream",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: `plexus-tools-list-${Date.now()}`,
+        method: "tools/list",
+      }),
+      signal: controller.signal,
+    });
+
+    if (!response.ok) {
+      throw new Error(`MCP tools/list failed with HTTP ${response.status}`);
+    }
+
+    const payload = (await response.json()) as unknown;
+    if (!isObject(payload)) {
+      throw new Error("MCP tools/list response was not a JSON object");
+    }
+
+    if ("error" in payload) {
+      throw new Error(JSON.stringify(payload.error));
+    }
+
+    const result = payload.result;
+    if (!isObject(result) || !Array.isArray(result.tools)) {
+      throw new Error("MCP tools/list response did not include result.tools");
+    }
+
+    return result.tools.map(toolFromMcpListItem);
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function discoverPharoMcpToolsFromRunningImages(options: {
+  state: ProjectState;
+  fetchFn: typeof fetch;
+  timeoutMs?: number;
+}): Promise<Tool[] | undefined> {
+  const errors: string[] = [];
+  let attempted = false;
+
+  for (const image of options.state.images) {
+    const endpoint = imageMcpEndpointForToolDiscovery(image);
+    if (!endpoint) {
+      continue;
+    }
+
+    attempted = true;
+    try {
+      const tools = await fetchPharoMcpTools({
+        endpoint,
+        fetchFn: options.fetchFn,
+        timeoutMs: options.timeoutMs ?? defaultPharoToolsDiscoveryTimeoutMs,
+      });
+      if (tools.length > 0) {
+        return tools;
+      }
+      errors.push(`${image.id}: MCP tools/list returned no tools`);
+    } catch (error) {
+      errors.push(
+        `${image.id}: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+
+  if (attempted) {
+    throw new Error(
+      `Unable to discover Pharo MCP tools from running project images: ${errors.join("; ")}`,
+    );
+  }
+
+  return undefined;
+}
+
 export class PlexusProjectLifecycle {
   private readonly routeRegistry?: ProjectLifecycleRouteRegistry;
   private readonly imageToolCaller?: ProjectLifecycleImageToolCaller;
@@ -1533,8 +1688,13 @@ export class PlexusProjectLifecycle {
 
       if (!routeRegistry) {
         const config = loadProjectConfig(openResult.projectRoot);
+        const discoveredPharoTools =
+          await this.discoverGatewayPharoTools(openResult.state);
         const gatewayResult = await ensureProjectGateway({
           ...this.gateway,
+          ...(discoveredPharoTools !== undefined
+            ? { pharoTools: discoveredPharoTools }
+            : {}),
           projectRoot: openResult.projectRoot,
           config,
           state: openResult.state,
@@ -1568,6 +1728,19 @@ export class PlexusProjectLifecycle {
     } catch (error) {
       return failure(error);
     }
+  }
+
+  private async discoverGatewayPharoTools(
+    state: ProjectState,
+  ): Promise<Tool[] | undefined> {
+    if (gatewayHasExplicitPharoTools(this.gateway)) {
+      return undefined;
+    }
+
+    return discoverPharoMcpToolsFromRunningImages({
+      state,
+      fetchFn: this.gateway.fetch ?? fetch,
+    });
   }
 
   async homeImageCacheStatus(
