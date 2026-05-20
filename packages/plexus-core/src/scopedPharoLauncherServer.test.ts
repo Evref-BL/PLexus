@@ -151,6 +151,7 @@ describe("scoped pharo launcher facade", () => {
       "pharo_launcher_image_info",
       "pharo_launcher_image_create",
       "pharo_launcher_image_start",
+      "pharo_launcher_image_open_interactive",
       "pharo_launcher_image_stop",
     ]);
     expect(
@@ -215,6 +216,7 @@ describe("scoped pharo launcher facade", () => {
         argumentsValue: {
           imageName: expect.stringMatching(/^PlexusHomeCache-/),
           detached: false,
+          displayMode: "headless",
           script: expect.stringContaining(
             path.join(homePath, "image-cache", "entries"),
           ),
@@ -369,5 +371,43 @@ describe("scoped pharo launcher facade", () => {
         imageIds: ["dev"],
       }),
     ]);
+  });
+
+  it("opens declared images interactively only through explicit display mode", async () => {
+    const projectRoot = makeTempDir("plexus-project-");
+    const stateRoot = makeTempDir("plexus-state-");
+    const { client, calls } = fakeLauncherClient();
+    writeProjectConfig(projectRoot);
+
+    const result = await new ScopedPharoLauncher({
+      projectRoot,
+      stateRoot,
+      workspaceId: "worktree-a",
+      pharoLauncherMcpClient: client,
+    }).openImageInteractive("dev");
+
+    expect(calls).toEqual([
+      {
+        name: "pharo_launcher_image_launch",
+        argumentsValue: {
+          imageName: "MyProject-worktree-a-dev",
+          detached: true,
+          displayMode: "interactive",
+        },
+      },
+    ]);
+    expect(result).toMatchObject({
+      image: {
+        imageId: "dev",
+        status: "declared",
+        displayModes: {
+          runtimeStart: "headless",
+          interactiveOpen: "interactive",
+        },
+      },
+      displayMode: "interactive",
+      launcherToolName: "pharo_launcher_image_launch",
+      runtimeStateUnchanged: true,
+    });
   });
 });

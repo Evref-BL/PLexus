@@ -93,6 +93,10 @@ interface WorkspaceImageSummary {
   imageId: string;
   active: boolean;
   status: ProjectImageState["status"] | "declared";
+  displayModes: {
+    runtimeStart: "headless";
+    interactiveOpen: "interactive";
+  };
   pharoMcpContract?: ProjectImageState["pharoMcpContract"];
 }
 
@@ -211,6 +215,10 @@ function imageSummary(
     imageId: imageConfig.id,
     active: imageConfig.active,
     status: imageState?.status ?? "declared",
+    displayModes: {
+      runtimeStart: "headless",
+      interactiveOpen: "interactive",
+    },
     ...(imageState?.pharoMcpContract
       ? { pharoMcpContract: imageState.pharoMcpContract }
       : {}),
@@ -479,6 +487,69 @@ export class ScopedPharoLauncher {
     return this.imageInfo(imageId);
   }
 
+  async openImageInteractive(imageId: string): Promise<{
+    scope: WorkspaceScopeSummary;
+    launcherProfile: LauncherProfileSummary;
+    image: WorkspaceImageSummary;
+    displayMode: "interactive";
+    launcherToolName: "pharo_launcher_image_launch";
+    launcherResult?: LauncherCommandResult;
+    runtimeStateUnchanged: true;
+  }> {
+    const before = this.imageInfo(imageId);
+    if (!before.image.active) {
+      throw new ScopedPharoLauncherError(
+        `Image ${imageId} is not active in project config; interactive open is rejected`,
+      );
+    }
+    if (before.image.status === "running" || before.image.status === "starting") {
+      throw new ScopedPharoLauncherError(
+        `Image ${imageId} is already ${before.image.status}; stop the runtime before interactive open`,
+      );
+    }
+
+    const scope = resolveScope(this.options);
+    const projectConfig = loadProjectConfig(scope.projectRoot);
+    const imageConfig = findImageConfig(projectConfig, imageId);
+    const imageName = renderedImageName(scope, imageConfig);
+    const client =
+      this.options.pharoLauncherMcpClient ??
+      (await createStdioPharoLauncherMcpClient(undefined, {
+        profileEnvironment: pharoLauncherMcpProfileEnvironment({
+          projectRoot: scope.projectRoot,
+          config: projectConfig,
+          workspaceId: scope.workspaceId,
+          targetId: scope.targetId,
+          stateRoot: scope.stateRoot,
+        }),
+      }));
+    const ownsClient = !this.options.pharoLauncherMcpClient;
+
+    try {
+      const launcherResult = await client.callTool<LauncherCommandResult>(
+        "pharo_launcher_image_launch",
+        {
+          imageName,
+          detached: true,
+          displayMode: "interactive",
+        },
+      );
+      assertLauncherOk(launcherResult, "pharo_launcher_image_launch");
+
+      return {
+        ...before,
+        displayMode: "interactive",
+        launcherToolName: "pharo_launcher_image_launch",
+        launcherResult,
+        runtimeStateUnchanged: true,
+      };
+    } finally {
+      if (ownsClient) {
+        await client.close?.();
+      }
+    }
+  }
+
   async stopImage(imageId: string): Promise<{
     scope: WorkspaceScopeSummary;
     launcherProfile: LauncherProfileSummary;
@@ -525,7 +596,13 @@ export const scopedPharoLauncherTools = [
   {
     name: "pharo_launcher_image_start",
     description:
-      "Start a workspace-scoped active image through PLexus project open policy.",
+      "Start a workspace-scoped active image headlessly through PLexus project open policy.",
+    inputSchema: objectSchema({ imageId: stringSchema }, ["imageId"]),
+  },
+  {
+    name: "pharo_launcher_image_open_interactive",
+    description:
+      "Explicitly open a workspace-scoped active image in interactive display mode for human image work.",
     inputSchema: objectSchema({ imageId: stringSchema }, ["imageId"]),
   },
   {
@@ -583,6 +660,11 @@ export function createScopedPharoLauncherServer(
         case "pharo_launcher_image_start":
           return textResult(
             await facade.startImage(requireString(input, "imageId")),
+          );
+
+        case "pharo_launcher_image_open_interactive":
+          return textResult(
+            await facade.openImageInteractive(requireString(input, "imageId")),
           );
 
         case "pharo_launcher_image_stop":

@@ -1150,6 +1150,7 @@ export function buildHomeImageCachePlan(
           argumentsValue: {
             imageName: cacheImageName,
             detached: false,
+            displayMode: "headless",
             script: preparationScriptPath,
           },
           requiresApproval: true as const,

@@ -861,6 +861,7 @@ async function launchImageAndPollProcess(
     .callTool<LauncherCommandResult>("pharo_launcher_image_launch", {
       imageName,
       detached: true,
+      displayMode: "headless",
       script: startupScriptPath,
     })
     .then(

@@ -330,6 +330,7 @@ describe("project open", () => {
         argumentsValue: {
           imageName: "MyProject-dev",
           detached: true,
+          displayMode: "headless",
           script: scriptPath,
         },
       },
@@ -990,6 +991,7 @@ describe("project open", () => {
         argumentsValue: {
           imageName: expect.stringMatching(/^PlexusHomeCache-/),
           detached: false,
+          displayMode: "headless",
           script: expect.stringContaining(
             path.join(homePath, "image-cache", "entries"),
           ),
@@ -1023,6 +1025,7 @@ describe("project open", () => {
         argumentsValue: {
           imageName: "MyProject-worktree-a-dev",
           detached: true,
+          displayMode: "headless",
           script: scriptPath,
         },
       },
@@ -1168,6 +1171,7 @@ describe("project open", () => {
         argumentsValue: {
           imageName: "MyProject-baseline",
           detached: true,
+          displayMode: "headless",
           script: baselineScriptPath,
         },
       },
@@ -1330,6 +1334,7 @@ describe("project open", () => {
         argumentsValue: {
           imageName: "MyProject-worktree-a-dev",
           detached: true,
+          displayMode: "headless",
           script: scriptPath,
         },
       },
@@ -1400,6 +1405,7 @@ describe("project open", () => {
         argumentsValue: {
           imageName: "MyProject-legacy",
           detached: true,
+          displayMode: "headless",
           script: scriptPath,
         },
       },

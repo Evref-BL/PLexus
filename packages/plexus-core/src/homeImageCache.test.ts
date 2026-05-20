@@ -280,6 +280,7 @@ describe("home image cache", () => {
       argumentsValue: {
         imageName: plan.cacheImageName,
         detached: false,
+        displayMode: "headless",
         script: plan.expectedManifest.paths.preparationScriptPath,
       },
       requiresApproval: true,

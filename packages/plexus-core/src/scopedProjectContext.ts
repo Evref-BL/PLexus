@@ -64,6 +64,7 @@ export type ScopedImageAffordance =
 export interface ScopedImageAffordances {
   create: ScopedImageAffordance;
   start: ScopedImageAffordance;
+  openInteractive: ScopedImageAffordance;
   stop: ScopedImageAffordance;
   delete: ScopedImageAffordanceDenied;
 }
@@ -255,6 +256,25 @@ function startAffordance(
   return allowed("pharo_launcher_image_start", { imageId: imageConfig.id });
 }
 
+function openInteractiveAffordance(
+  imageConfig: ProjectImageConfig,
+  status: ScopedImageStatus,
+): ScopedImageAffordance {
+  if (!imageConfig.active) {
+    return denied("Image is inactive in project config");
+  }
+
+  if (status === "running" || status === "starting") {
+    return denied(
+      "Stop the headless runtime before interactive open to avoid two processes using the same image",
+    );
+  }
+
+  return allowed("pharo_launcher_image_open_interactive", {
+    imageId: imageConfig.id,
+  });
+}
+
 function stopAffordance(
   imageId: string,
   status: ScopedImageStatus,
@@ -277,6 +297,7 @@ function lifecycleAffordances(
   return {
     create: createAffordance(imageConfig, imageState),
     start: startAffordance(imageConfig, status),
+    openInteractive: openInteractiveAffordance(imageConfig, status),
     stop: stopAffordance(imageConfig.id, status),
     delete: denied(
       "Deletion is reserved for PLexus workspace cleanup policy, not the agent launcher surface",

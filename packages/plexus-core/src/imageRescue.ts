@@ -332,6 +332,7 @@ async function launchImage(
     {
       imageName: imageState.imageName,
       detached: true,
+      displayMode: "headless",
       script: startupScriptPath,
     },
   );

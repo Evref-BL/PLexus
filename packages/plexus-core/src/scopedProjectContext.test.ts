@@ -145,6 +145,11 @@ describe("scoped project context", () => {
         allowed: false,
         reason: "Image is already running",
       },
+      openInteractive: {
+        allowed: false,
+        reason:
+          "Stop the headless runtime before interactive open to avoid two processes using the same image",
+      },
       stop: {
         allowed: true,
         toolName: "pharo_launcher_image_stop",
@@ -162,6 +167,31 @@ describe("scoped project context", () => {
     expect(context.images[1].affordances.start).toEqual({
       allowed: false,
       reason: "Image is inactive in project config",
+    });
+    const interactiveContext = buildScopedProjectContext({
+      projectRoot,
+      projectConfig: {
+        ...projectConfig,
+        images: [
+          ...projectConfig.images,
+          {
+            id: "preview",
+            imageName: "MyProject-{workspaceId}-preview",
+            active: true,
+          },
+        ],
+      },
+      workspaceId: "task-123",
+      targetId: "target-123",
+      stateRoot,
+      projectState,
+    });
+    expect(interactiveContext.images[2].affordances.openInteractive).toEqual({
+      allowed: true,
+      toolName: "pharo_launcher_image_open_interactive",
+      arguments: {
+        imageId: "preview",
+      },
     });
     expect(JSON.stringify(context.images[0].affordances)).not.toContain("pid");
     expect(JSON.stringify(context.images[0].affordances)).not.toContain(
