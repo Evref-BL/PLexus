@@ -224,7 +224,7 @@ project-owned launcher profile and the home cache launcher profile:
 npm run smoke:open-route-close -- \
   --homePath /private/tmp/plexus-home-cache-smoke/home \
   --mcpPharoRepoDir /path/to/MCP-Pharo \
-  --imageSpecJson '{"id":"dev","imageName":"PlexusHomeCacheSmoke-dev","active":true,"create":{"kind":"template","templateName":"Pharo 13.0 - 64bit","templateCategory":"Official"},"git":{"transport":"https"}}'
+  --imageSpecJson '{"id":"dev","imageName":"PlexusHomeCacheSmoke-dev","active":true,"create":{"kind":"template","templateName":"Pharo 13.0 - 64bit (stable)"},"git":{"transport":"https"}}'
 ```
 
 Run a second smoke with the same `--homePath` and a different runtime image name

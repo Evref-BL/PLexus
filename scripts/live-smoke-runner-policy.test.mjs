@@ -17,6 +17,7 @@ import {
   isPathInside,
   mcpPharoTonelLoadScriptSource,
   parseTimeoutBudget,
+  resolveRequestedSourceTemplate,
   smokeProjectConfig,
   usesDefaultSmokeLoadScript,
 } from "./live-smoke-runner-policy.mjs";
@@ -303,8 +304,7 @@ test("renders home cache project config for template-created smoke images", () =
         active: true,
         create: {
           kind: "template",
-          templateName: "Pharo 13.0 - 64bit",
-          templateCategory: "Official",
+          templateName: "Pharo 13.0 - 64bit (stable)",
         },
         loadScript: "/tmp/load-mcp.st",
         git: {
@@ -322,10 +322,49 @@ test("renders home cache project config for template-created smoke images", () =
   });
   assert.deepEqual(config.images[0].create, {
     kind: "template",
-    templateName: "Pharo 13.0 - 64bit",
-    templateCategory: "Official",
+    templateName: "Pharo 13.0 - 64bit (stable)",
   });
   assert.equal(config.images[0].git.transport, "https");
+});
+
+test("resolves stale explicit source template selectors against current inventory", () => {
+  assert.deepEqual(
+    resolveRequestedSourceTemplate(
+      {
+        name: "Pharo 13.0 - 64bit",
+        category: "Official",
+      },
+      [
+        {
+          name: "Pharo 14.0 - 64bit (development version, latest)",
+        },
+        {
+          name: "Pharo 13.0 - 64bit (stable)",
+        },
+      ],
+    ),
+    {
+      name: "Pharo 13.0 - 64bit (stable)",
+    },
+  );
+});
+
+test("reports available templates when an explicit source selector is missing", () => {
+  assert.throws(
+    () =>
+      resolveRequestedSourceTemplate(
+        {
+          name: "Pharo 11.0 - 64bit",
+          category: "Official",
+        },
+        [
+          {
+            name: "Pharo 13.0 - 64bit (stable)",
+          },
+        ],
+      ),
+    /Requested source template was not found: Official\/Pharo 11\.0 - 64bit\nAvailable templates: Pharo 13\.0 - 64bit \(stable\)/,
+  );
 });
 
 test("renders local MCP-Pharo Tonel load script source", () => {

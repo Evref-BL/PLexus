@@ -146,8 +146,7 @@ images remain reusable inside that project-owned launcher profile.
       "source": {
         "kind": "template",
         "profileId": "pharo-13-default",
-        "templateName": "Pharo 13.0 - 64bit",
-        "templateCategory": "Official"
+        "templateName": "Pharo 13.0 - 64bit (stable)"
       },
       "mcp": {
         "loadScript": "pharo/load-mcp.st",

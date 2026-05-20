@@ -4,7 +4,10 @@ import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import type { PharoLauncherMcpToolClient } from "./pharoLauncherMcpClient.js";
+import {
+  PharoLauncherMcpToolError,
+  type PharoLauncherMcpToolClient,
+} from "./pharoLauncherMcpClient.js";
 import type { PharoMcpHealthClient } from "./pharoMcpHealth.js";
 import {
   claimPort,
@@ -2151,6 +2154,57 @@ describe("project open", () => {
         status: "stopped",
       },
     ]);
+  });
+
+  it("preserves launcher diagnostics when image launch fails", async () => {
+    const projectRoot = makeTempDir("plexus-project-");
+    const stateRoot = makeTempDir("plexus-state-");
+    writeProjectConfig(projectRoot, {
+      images: [dynamicImage()],
+    });
+
+    const launchError = new PharoLauncherMcpToolError(
+      "pharo-launcher-mcp tool failed: pharo_launcher_image_launch",
+      "pharo_launcher_image_launch",
+      {
+        ok: false,
+        diagnostic:
+          "Profile-scoped image launch was refused because Pharo Launcher can use the default VM store.",
+        action:
+          "Launch only after the launcher can prove VM artifacts remain in the configured profile VM directory.",
+      },
+    );
+
+    await expect(
+      openProject({
+        projectRoot,
+        stateRoot,
+        workspaceId: "worktree-a",
+        pharoLauncherMcpClient: new FakePharoLauncherMcpClient([], launchError),
+        healthClient: new FakeHealthClient(true),
+        now: fixedNow,
+        sleep: async () => {},
+      }),
+    ).rejects.toMatchObject({
+      result: {
+        failures: [
+          {
+            imageId: "dev",
+            imageName: "MyProject-dev",
+            message:
+              "pharo-launcher-mcp tool failed: pharo_launcher_image_launch",
+            launcherToolName: "pharo_launcher_image_launch",
+            diagnostic:
+              "Profile-scoped image launch was refused because Pharo Launcher can use the default VM store.",
+            action:
+              "Launch only after the launcher can prove VM artifacts remain in the configured profile VM directory.",
+            launcherResult: {
+              ok: false,
+            },
+          },
+        ],
+      },
+    });
   });
 
   it("marks active images failed when the launched process is not visible", async () => {

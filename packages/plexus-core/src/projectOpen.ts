@@ -23,6 +23,7 @@ import {
 } from "./imagePortClaims.js";
 import {
   createStdioPharoLauncherMcpClient,
+  PharoLauncherMcpToolError,
   type PharoLauncherMcpToolClient,
 } from "./pharoLauncherMcpClient.js";
 import {
@@ -117,6 +118,10 @@ export interface ProjectOpenFailure {
   imageId: string;
   imageName: string;
   message: string;
+  launcherToolName?: string;
+  launcherResult?: unknown;
+  diagnostic?: string;
+  action?: string;
 }
 
 export interface ProjectOpenResult {
@@ -143,6 +148,31 @@ function defaultSleep(durationMs: number): Promise<void> {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function launcherFailureDetails(
+  error: unknown,
+): Pick<
+  ProjectOpenFailure,
+  "launcherToolName" | "launcherResult" | "diagnostic" | "action"
+> {
+  if (!(error instanceof PharoLauncherMcpToolError)) {
+    return {};
+  }
+
+  const result = error.result;
+  const objectResult = isObject(result) ? result : undefined;
+
+  return {
+    launcherToolName: error.toolName,
+    launcherResult: result,
+    ...(typeof objectResult?.diagnostic === "string"
+      ? { diagnostic: objectResult.diagnostic }
+      : {}),
+    ...(typeof objectResult?.action === "string"
+      ? { action: objectResult.action }
+      : {}),
+  };
 }
 
 function closeClientQuietly(client: PharoLauncherMcpToolClient): void {
@@ -912,11 +942,12 @@ export async function openProject(
             );
           }
         }
+        const loadFailure = refreshRepositoryWorkspaceLoadStatus(imageState);
         failures.push({
           imageId: imageState.id,
           imageName: imageState.imageName,
-          message:
-            refreshRepositoryWorkspaceLoadStatus(imageState) ?? errorMessage(error),
+          message: loadFailure ?? errorMessage(error),
+          ...(loadFailure ? {} : launcherFailureDetails(error)),
         });
       }
     }

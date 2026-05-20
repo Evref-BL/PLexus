@@ -26,6 +26,7 @@ import {
   formatToolFailure,
   isPathInside,
   mcpPharoTonelLoadScriptSource,
+  resolveRequestedSourceTemplate,
   smokeProjectConfig,
   usesDefaultSmokeLoadScript,
 } from "./live-smoke-runner-policy.mjs";
@@ -1621,13 +1622,24 @@ function generatedSourceImageName() {
 }
 
 async function chooseSourceTemplate(client, options) {
+  const templates = dataArray(
+    launcherData(
+      await callLauncherTool(client, "pharo_launcher_template_list", {
+        format: "ston",
+      }),
+    ),
+  );
+
   if (options.sourceTemplateName) {
-    return {
-      name: options.sourceTemplateName,
-      ...(options.sourceTemplateCategory
-        ? { category: options.sourceTemplateCategory }
-        : {}),
-    };
+    return resolveRequestedSourceTemplate(
+      {
+        name: options.sourceTemplateName,
+        ...(options.sourceTemplateCategory
+          ? { category: options.sourceTemplateCategory }
+          : {}),
+      },
+      templates,
+    );
   }
 
   const vms = dataArray(
@@ -1642,13 +1654,6 @@ async function chooseSourceTemplate(client, options) {
       typeof vm.id === "string" ? vm.id.match(/^(\d+)-/)?.[1] : undefined,
     )
     .filter(Boolean);
-  const templates = dataArray(
-    launcherData(
-      await callLauncherTool(client, "pharo_launcher_template_list", {
-        format: "ston",
-      }),
-    ),
-  );
   const template =
     templates.find((candidate) => {
       const name = typeof candidate.name === "string" ? candidate.name : "";

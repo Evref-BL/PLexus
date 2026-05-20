@@ -185,8 +185,7 @@ The initial supported create policy is a template:
       "create": {
         "kind": "template",
         "profileId": "pharo-13-default",
-        "templateName": "Pharo 13.0 - 64bit",
-        "templateCategory": "Official"
+        "templateName": "Pharo 13.0 - 64bit (stable)"
       }
     }
   ]

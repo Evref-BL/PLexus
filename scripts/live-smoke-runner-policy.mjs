@@ -210,6 +210,106 @@ export function usesDefaultSmokeLoadScript({
   return !imageLoadScriptExplicit && !loadScriptExplicit;
 }
 
+function templateName(value) {
+  return typeof value?.name === "string" && value.name.trim().length > 0
+    ? value.name.trim()
+    : undefined;
+}
+
+function templateCategory(value) {
+  return typeof value?.category === "string" && value.category.trim().length > 0
+    ? value.category.trim()
+    : undefined;
+}
+
+function templateCategoryMatches(requestedCategory, candidateCategory) {
+  if (!requestedCategory) {
+    return true;
+  }
+
+  return (
+    !candidateCategory ||
+    candidateCategory === "uncategorized" ||
+    candidateCategory === requestedCategory
+  );
+}
+
+function templateMatchesRequestedName(requestedName, candidateName) {
+  return (
+    candidateName === requestedName ||
+    candidateName.startsWith(`${requestedName} (`)
+  );
+}
+
+function describeTemplate(candidate) {
+  const name = templateName(candidate);
+  if (!name) {
+    return undefined;
+  }
+
+  const category = templateCategory(candidate);
+  return category ? `${category}/${name}` : name;
+}
+
+function sourceTemplateFromCandidate(candidate) {
+  const name = templateName(candidate);
+  if (!name) {
+    return undefined;
+  }
+
+  const category = templateCategory(candidate);
+  return {
+    name,
+    ...(category && category !== "uncategorized" ? { category } : {}),
+  };
+}
+
+export function resolveRequestedSourceTemplate(request, templates) {
+  const requestedName = requiredString(request?.name, "sourceTemplateName");
+  const requestedCategory =
+    typeof request?.category === "string" && request.category.trim().length > 0
+      ? request.category.trim()
+      : undefined;
+  const candidates = Array.isArray(templates) ? templates : [];
+  const exact = candidates.find((candidate) => {
+    const candidateName = templateName(candidate);
+    return (
+      candidateName === requestedName &&
+      templateCategoryMatches(requestedCategory, templateCategory(candidate))
+    );
+  });
+  const legacyNameMatch =
+    exact ??
+    candidates.find((candidate) => {
+      const candidateName = templateName(candidate);
+      return (
+        candidateName !== undefined &&
+        templateMatchesRequestedName(requestedName, candidateName) &&
+        templateCategoryMatches(requestedCategory, templateCategory(candidate))
+      );
+    });
+  const resolved = sourceTemplateFromCandidate(legacyNameMatch);
+  if (resolved) {
+    return resolved;
+  }
+
+  const requested = requestedCategory
+    ? `${requestedCategory}/${requestedName}`
+    : requestedName;
+  const available = candidates
+    .map(describeTemplate)
+    .filter(Boolean)
+    .join(", ");
+  throw new Error(
+    [
+      `Requested source template was not found: ${requested}`,
+      available
+        ? `Available templates: ${available}`
+        : "No named templates were returned.",
+    ].join("\n"),
+  );
+}
+
 export function defaultSmokeImageSpec(options) {
   return {
     id: options.imageId,
