@@ -63,6 +63,37 @@ export interface ProjectImagePreparedImageConfig {
   copyMode: ProjectImagePreparedCopyMode;
 }
 
+export type ProjectImageRepositoryWorkspaceMaterializationStrategy =
+  | "copy"
+  | "git-worktree"
+  | "clone";
+
+export interface ProjectImageRepositoryIdentityConfig {
+  id: string;
+  componentId?: string;
+  remoteUrl?: string;
+  originPath?: string;
+}
+
+export interface ProjectImageRepositoryWorkspaceMaterializationConfig {
+  strategy: ProjectImageRepositoryWorkspaceMaterializationStrategy;
+  path?: string;
+}
+
+export interface ProjectImageRepositoryWorkspaceConfig {
+  repository: ProjectImageRepositoryIdentityConfig;
+  sourceDirectory: string;
+  baseline: string;
+  loadGroup?: string;
+  pharoVersion?: number;
+  templateName?: string;
+  templateCategory?: string;
+  branch?: string;
+  baseBranch?: string;
+  baseCommit?: string;
+  materialization: ProjectImageRepositoryWorkspaceMaterializationConfig;
+}
+
 export interface ProjectImageConfig {
   id: string;
   imageName: string;
@@ -70,6 +101,7 @@ export interface ProjectImageConfig {
   mcp: ProjectImageMcpConfig;
   create?: ProjectImageCreateConfig;
   preparedImage?: ProjectImagePreparedImageConfig;
+  repositoryWorkspace?: ProjectImageRepositoryWorkspaceConfig;
   git?: ProjectImageGitConfig;
 }
 
@@ -334,6 +366,25 @@ function optionalPortField(
   }
 
   issues.push(`${pathPrefix}.${key} must be an integer between 1 and 65535`);
+  return undefined;
+}
+
+function optionalPositiveIntegerField(
+  object: Record<string, unknown>,
+  key: string,
+  issues: string[],
+  pathPrefix: string,
+): number | undefined {
+  const value = object[key];
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (typeof value === "number" && Number.isInteger(value) && value > 0) {
+    return value;
+  }
+
+  issues.push(`${pathPrefix}.${key} must be a positive integer`);
   return undefined;
 }
 
@@ -792,6 +843,130 @@ function parseImagePreparedImage(
   };
 }
 
+function parseImageRepositoryIdentity(
+  value: unknown,
+  issues: string[],
+  pathPrefix: string,
+): ProjectImageRepositoryIdentityConfig {
+  if (!isObject(value)) {
+    issues.push(`${pathPrefix}.repository must be an object`);
+    return { id: "" };
+  }
+
+  const componentId = optionalStringField(
+    value,
+    "componentId",
+    issues,
+    `${pathPrefix}.repository`,
+  );
+  const remoteUrl = optionalStringField(
+    value,
+    "remoteUrl",
+    issues,
+    `${pathPrefix}.repository`,
+  );
+  const originPath = optionalStringField(
+    value,
+    "originPath",
+    issues,
+    `${pathPrefix}.repository`,
+  );
+  if (!componentId && !remoteUrl && !originPath) {
+    issues.push(
+      `${pathPrefix}.repository must set at least one of componentId, remoteUrl, or originPath`,
+    );
+  }
+
+  return {
+    id: stringField(value, "id", issues, `${pathPrefix}.repository`),
+    ...(componentId ? { componentId } : {}),
+    ...(remoteUrl ? { remoteUrl } : {}),
+    ...(originPath ? { originPath } : {}),
+  };
+}
+
+function parseImageRepositoryWorkspaceMaterialization(
+  value: unknown,
+  issues: string[],
+  pathPrefix: string,
+): ProjectImageRepositoryWorkspaceMaterializationConfig {
+  const materializationPath = `${pathPrefix}.materialization`;
+  if (value === undefined) {
+    return { strategy: "copy" };
+  }
+
+  if (!isObject(value)) {
+    issues.push(`${materializationPath} must be an object`);
+    return { strategy: "copy" };
+  }
+
+  const strategyValue = value.strategy ?? "copy";
+  const strategy =
+    strategyValue === "copy" ||
+    strategyValue === "git-worktree" ||
+    strategyValue === "clone"
+      ? strategyValue
+      : "copy";
+  if (strategy !== strategyValue) {
+    issues.push(
+      `${materializationPath}.strategy must be one of copy, git-worktree, clone`,
+    );
+  }
+
+  const path = optionalStringField(value, "path", issues, materializationPath);
+
+  return {
+    strategy,
+    ...(path ? { path } : {}),
+  };
+}
+
+function parseImageRepositoryWorkspace(
+  value: unknown,
+  issues: string[],
+  pathPrefix: string,
+): ProjectImageRepositoryWorkspaceConfig | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  const workspacePath = `${pathPrefix}.repositoryWorkspace`;
+  if (!isObject(value)) {
+    issues.push(`${workspacePath} must be an object`);
+    return undefined;
+  }
+
+  const pharoVersion = optionalPositiveIntegerField(
+    value,
+    "pharoVersion",
+    issues,
+    workspacePath,
+  );
+
+  return {
+    repository: parseImageRepositoryIdentity(value.repository, issues, workspacePath),
+    sourceDirectory: stringField(value, "sourceDirectory", issues, workspacePath),
+    baseline: stringField(value, "baseline", issues, workspacePath),
+    loadGroup: optionalStringField(value, "loadGroup", issues, workspacePath),
+    ...(pharoVersion !== undefined ? { pharoVersion } : {}),
+    templateName: optionalStringField(value, "templateName", issues, workspacePath),
+    templateCategory: optionalStringField(
+      value,
+      "templateCategory",
+      issues,
+      workspacePath,
+    ),
+    branch: optionalStringField(value, "branch", issues, workspacePath),
+    baseBranch: optionalStringField(value, "baseBranch", issues, workspacePath),
+    baseCommit: optionalStringField(value, "baseCommit", issues, workspacePath),
+    materialization: parseImageRepositoryWorkspaceMaterialization(
+      value.materialization,
+      issues,
+      workspacePath,
+    ),
+  };
+}
+
 function parseImages(
   value: unknown,
   issues: string[],
@@ -821,6 +996,11 @@ function parseImages(
       create: parseImageCreate(image.create, issues, pathPrefix),
       preparedImage: parseImagePreparedImage(
         image.preparedImage,
+        issues,
+        pathPrefix,
+      ),
+      repositoryWorkspace: parseImageRepositoryWorkspace(
+        image.repositoryWorkspace,
         issues,
         pathPrefix,
       ),
@@ -1281,6 +1461,29 @@ function collectDuplicatePorts(images: ProjectImageConfig[], issues: string[]): 
   }
 }
 
+function collectDuplicateActiveRepositoryWorkspacePaths(
+  images: ProjectImageConfig[],
+  issues: string[],
+): void {
+  const seen = new Set<string>();
+  for (const image of images) {
+    if (!image.active) {
+      continue;
+    }
+
+    const path = image.repositoryWorkspace?.materialization.path;
+    if (!path) {
+      continue;
+    }
+
+    if (seen.has(path)) {
+      issues.push(`active image repository workspace paths must be unique: ${path}`);
+    } else {
+      seen.add(path);
+    }
+  }
+}
+
 function validateImagePortPolicy(config: ProjectConfig, issues: string[]): void {
   const allocation = resolveProjectRuntimePolicy(config).imagePorts.allocation;
   config.images.forEach((image, index) => {
@@ -1360,6 +1563,7 @@ export function parseProjectConfig(value: unknown): ProjectConfig {
     issues,
   );
   collectDuplicatePorts(config.images, issues);
+  collectDuplicateActiveRepositoryWorkspacePaths(config.images, issues);
   validateImagePortPolicy(config, issues);
   validatePreparedImageReferences(config, issues);
 

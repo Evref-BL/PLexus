@@ -1055,6 +1055,94 @@ describe("project lifecycle tools", () => {
     });
   });
 
+  it("reports planned repository workspaces from status diagnostics before open", async () => {
+    const projectRoot = makeTempDir("plexus-project-");
+    const stateRoot = makeTempDir("plexus-state-");
+    writeProjectConfig(projectRoot, {
+      images: [
+        {
+          id: "dev",
+          imageName: "MyProject-{workspaceId}-dev",
+          active: true,
+          mcp: {
+            port: 7123,
+            loadScript: "pharo/load-mcp.st",
+          },
+          repositoryWorkspace: {
+            repository: {
+              id: "my-project",
+              componentId: "my-project",
+            },
+            sourceDirectory: "src",
+            baseline: "MyProject",
+            branch: "task/image-workspace",
+            baseBranch: "main",
+            materialization: {
+              strategy: "copy",
+            },
+          },
+        },
+      ],
+    });
+    const lifecycle = new PlexusProjectLifecycle({
+      gateway: {
+        checks: {
+          isPortListening: async () => false,
+        },
+      },
+    });
+
+    const result = await lifecycle.handleTool("plexus_project_status", {
+      projectPath: projectRoot,
+      stateRoot,
+      workspaceId: "worktree-a",
+      includeDiagnostics: true,
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
+      data: {
+        context: {
+          images: [
+            {
+              imageId: "dev",
+              status: "declared",
+              repositoryWorkspace: {
+                path: "image-local://dev/pharo-local/iceberg/my-project",
+                materializationStrategy: "copy",
+                sourceDirectory: "src",
+                baseline: "MyProject",
+                branch: "task/image-workspace",
+                baseBranch: "main",
+                dirtyState: "unknown",
+                loadState: "not-loaded",
+              },
+            },
+          ],
+        },
+        diagnostics: {
+          repositoryWorkspaces: [
+            {
+              imageId: "dev",
+              imageName: "MyProject-worktree-a-dev",
+              status: "declared",
+              workspace: {
+                path: "image-local://dev/pharo-local/iceberg/my-project",
+                materializationStrategy: "copy",
+                sourceDirectory: "src",
+                baseline: "MyProject",
+                branch: "task/image-workspace",
+                baseBranch: "main",
+                dirtyState: "unknown",
+                loadState: "not-loaded",
+              },
+            },
+          ],
+        },
+      },
+    });
+  });
+
   it("reports unrelated other-scope claims without degrading this scope", async () => {
     const projectRoot = makeTempDir("plexus-project-");
     const stateRoot = makeTempDir("plexus-state-");

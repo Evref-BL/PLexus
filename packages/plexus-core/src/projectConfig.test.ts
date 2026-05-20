@@ -334,6 +334,129 @@ describe("project config", () => {
     });
   });
 
+  it("parses image-local repository workspace declarations", () => {
+    const baseConfig = validProjectConfig();
+    const config = {
+      ...baseConfig,
+      images: [
+        {
+          ...baseConfig.images[0],
+          repositoryWorkspace: {
+            repository: {
+              id: "my-project",
+              componentId: "my-project",
+              remoteUrl: "git@github.com:Example/MyProject.git",
+            },
+            sourceDirectory: "src",
+            baseline: "MyProject",
+            loadGroup: "dev",
+            pharoVersion: 13,
+            templateName: "Pharo 13.0 - 64bit",
+            branch: "task/image-workspace",
+            baseBranch: "main",
+            baseCommit: "abc123",
+            materialization: {
+              strategy: "git-worktree",
+              path: "image-local://{imageId}/pharo-local/iceberg/{repositoryId}",
+            },
+          },
+        },
+        baseConfig.images[1],
+      ],
+    };
+
+    expect(parseProjectConfig(config).images[0].repositoryWorkspace).toEqual(
+      config.images[0].repositoryWorkspace,
+    );
+  });
+
+  it("defaults image-local repository workspace materialization to copy", () => {
+    const baseConfig = validProjectConfig();
+    const config = {
+      ...baseConfig,
+      images: [
+        {
+          ...baseConfig.images[0],
+          repositoryWorkspace: {
+            repository: {
+              id: "my-project",
+              componentId: "my-project",
+            },
+            sourceDirectory: "src",
+            baseline: "MyProject",
+          },
+        },
+        baseConfig.images[1],
+      ],
+    };
+
+    expect(
+      parseProjectConfig(config).images[0].repositoryWorkspace?.materialization,
+    ).toEqual({
+      strategy: "copy",
+    });
+  });
+
+  it("rejects ambiguous or unsafe image-local repository workspace declarations", () => {
+    const baseConfig = validProjectConfig();
+    const config = {
+      ...baseConfig,
+      images: [
+        {
+          ...baseConfig.images[0],
+          repositoryWorkspace: {
+            repository: {
+              id: "",
+            },
+            sourceDirectory: "",
+            baseline: "",
+            loadGroup: "",
+            pharoVersion: 0,
+            materialization: {
+              strategy: "checkout",
+              path: "/tmp/shared-pharo-repo",
+            },
+          },
+        },
+        {
+          ...baseConfig.images[1],
+          active: true,
+          repositoryWorkspace: {
+            repository: {
+              id: "other",
+              remoteUrl: "git@github.com:Example/Other.git",
+            },
+            sourceDirectory: "src",
+            baseline: "Other",
+            materialization: {
+              strategy: "copy",
+              path: "/tmp/shared-pharo-repo",
+            },
+          },
+        },
+      ],
+    };
+
+    expect(() => parseProjectConfig(config)).toThrow(ProjectConfigError);
+
+    try {
+      parseProjectConfig(config);
+    } catch (error) {
+      expect((error as ProjectConfigError).issues).toEqual(
+        expect.arrayContaining([
+          "images[0].repositoryWorkspace.repository must set at least one of componentId, remoteUrl, or originPath",
+          "images[0].repositoryWorkspace.repository.id must be a non-empty string",
+          "images[0].repositoryWorkspace.sourceDirectory must be a non-empty string",
+          "images[0].repositoryWorkspace.baseline must be a non-empty string",
+          "images[0].repositoryWorkspace.loadGroup must be a non-empty string",
+          "images[0].repositoryWorkspace.pharoVersion must be a positive integer",
+          "images[0].repositoryWorkspace.materialization.strategy must be one of copy, git-worktree, clone",
+          "active image repository workspace paths must be unique: /tmp/shared-pharo-repo",
+        ]),
+      );
+    }
+  });
+
   it("rejects invalid image create policy", () => {
     const baseConfig = validProjectConfig();
     const config = {

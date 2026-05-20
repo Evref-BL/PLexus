@@ -67,10 +67,13 @@ import {
   loadProjectState,
   projectStateRootForConfig,
   projectStatePathForConfig,
+  projectImageRepositoryWorkspaceState,
+  renderProjectImageName,
   runtimeStatusForImages,
   sanitizeRuntimeId,
   saveProjectState,
   type ProjectImageMcpEndpoint,
+  type ProjectImageRepositoryWorkspaceState,
   type ProjectImageState,
   type ProjectGatewayState,
   type ProjectState,
@@ -321,6 +324,13 @@ export interface ProjectLifecycleAgentAccessDiagnostics {
   reason: string;
 }
 
+export interface ProjectLifecycleRepositoryWorkspaceDiagnostic {
+  imageId: string;
+  imageName: string;
+  status: ProjectImageState["status"] | "declared";
+  workspace: ProjectImageRepositoryWorkspaceState;
+}
+
 export interface ProjectLifecycleDiagnostics {
   toolRuntime: PlexusRuntimeIdentityDiagnostic;
   runtime: {
@@ -351,6 +361,7 @@ export interface ProjectLifecycleDiagnostics {
   imagePortPolicy: ProjectLifecycleImagePortPolicyDiagnostics;
   launcherProfile: PharoLauncherMcpProfileDiagnostic;
   agentAccess: ProjectLifecycleAgentAccessDiagnostics;
+  repositoryWorkspaces: ProjectLifecycleRepositoryWorkspaceDiagnostic[];
   imageMcpPorts: Array<{
     imageId: string;
     imageName: string;
@@ -972,6 +983,49 @@ function agentAccessDiagnostics(
     reason:
       "Normal agent Pharo MCP calls should use gateway imageId routing; image MCP ports are diagnostics only.",
   };
+}
+
+function repositoryWorkspaceDiagnostics(
+  config: ProjectConfig,
+  state: ProjectState | undefined,
+  scope: {
+    projectId: string;
+    workspaceId: string;
+    targetId: string;
+  },
+): ProjectLifecycleRepositoryWorkspaceDiagnostic[] {
+  return config.images
+    .map((imageConfig) => {
+      const imageState = state?.images.find((image) => image.id === imageConfig.id);
+      const context = {
+        projectId: scope.projectId,
+        projectName: config.name,
+        workspaceId: scope.workspaceId,
+        targetId: scope.targetId,
+        imageId: imageConfig.id,
+      };
+      const workspace =
+        imageState?.repositoryWorkspace ??
+        projectImageRepositoryWorkspaceState(imageConfig, context);
+      if (!workspace) {
+        return undefined;
+      }
+
+      return {
+        imageId: imageConfig.id,
+        imageName:
+          imageState?.imageName ??
+          renderProjectImageName(imageConfig.imageName, context),
+        status: imageState?.status ?? "declared",
+        workspace,
+      };
+    })
+    .filter(
+      (
+        item,
+      ): item is ProjectLifecycleRepositoryWorkspaceDiagnostic =>
+        item !== undefined,
+    );
 }
 
 function imageMcpPorts(
@@ -1802,6 +1856,11 @@ export class PlexusProjectLifecycle {
         env: this.gateway.env,
       }),
       agentAccess: agentAccessDiagnostics(gateway),
+      repositoryWorkspaces: repositoryWorkspaceDiagnostics(
+        config,
+        state,
+        scope,
+      ),
       imageMcpPorts: imageMcpPorts(state),
       imagePortCoordination: imagePortCoordinationDiagnostics(
         projectRoot,

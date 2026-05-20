@@ -307,6 +307,102 @@ describe("project state", () => {
     expect(state.images[0]).not.toHaveProperty("assignedPort");
   });
 
+  it("plans image-local repository workspace state without launching images", () => {
+    const state = createProjectState(
+      {
+        ...config,
+        images: [
+          {
+            ...config.images[0],
+            imageName: "MyProject-{workspaceId}-{imageId}",
+            repositoryWorkspace: {
+              repository: {
+                id: "my-project",
+                componentId: "my-project",
+                remoteUrl: "git@github.com:Example/MyProject.git",
+              },
+              sourceDirectory: "src",
+              baseline: "MyProject",
+              loadGroup: "dev",
+              pharoVersion: 13,
+              templateName: "Pharo 13.0 - 64bit",
+              branch: "task/image-workspace",
+              baseBranch: "main",
+              baseCommit: "abc123",
+              materialization: {
+                strategy: "copy",
+              },
+            },
+          },
+        ],
+      },
+      {
+        updatedAt: "2026-04-25T10:00:00.000Z",
+        workspaceId: "task-123",
+      },
+    );
+
+    expect(state.images[0]).toMatchObject({
+      id: "dev",
+      imageName: "MyProject-task-123-dev",
+      repositoryWorkspace: {
+        repository: {
+          id: "my-project",
+          componentId: "my-project",
+          remoteUrl: "git@github.com:Example/MyProject.git",
+        },
+        path: "image-local://dev/pharo-local/iceberg/my-project",
+        materializationStrategy: "copy",
+        sourceDirectory: "src",
+        baseline: "MyProject",
+        loadGroup: "dev",
+        pharoVersion: 13,
+        templateName: "Pharo 13.0 - 64bit",
+        branch: "task/image-workspace",
+        baseBranch: "main",
+        baseCommit: "abc123",
+        dirtyState: "unknown",
+        loadState: "not-loaded",
+      },
+    });
+  });
+
+  it("renders configured image-local repository workspace path templates", () => {
+    const state = createProjectState(
+      {
+        ...config,
+        images: [
+          {
+            ...config.images[0],
+            repositoryWorkspace: {
+              repository: {
+                id: "my-project",
+                originPath: "C:\\dev\\sources\\my-project",
+              },
+              sourceDirectory: "src",
+              baseline: "MyProject",
+              materialization: {
+                strategy: "git-worktree",
+                path: "C:\\dev\\plexus\\{workspaceId}\\{imageId}\\{repositoryId}",
+              },
+            },
+          },
+        ],
+      },
+      {
+        updatedAt: "2026-04-25T10:00:00.000Z",
+        workspaceId: "task-123",
+      },
+    );
+
+    expect(state.images[0].repositoryWorkspace).toMatchObject({
+      path: "C:\\dev\\plexus\\task-123\\dev\\my-project",
+      materializationStrategy: "git-worktree",
+      dirtyState: "unknown",
+      loadState: "not-loaded",
+    });
+  });
+
   it("does not let unsupported configured MCP ports reserve the dynamic range", () => {
     const state = createProjectState(
       {

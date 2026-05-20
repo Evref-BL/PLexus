@@ -4,6 +4,7 @@ import {
   resolveProjectRuntimePolicy,
   type ProjectConfig,
   type ProjectImageConfig,
+  type ProjectImageRepositoryWorkspaceMaterializationStrategy,
   type ProjectGatewayMode,
   type ProjectRuntimePortRange,
 } from "./projectConfig.js";
@@ -55,6 +56,33 @@ export interface ProjectImagePharoMcpContractState
   reason?: string;
 }
 
+export type ProjectImageRepositoryWorkspaceDirtyState = "unknown";
+export type ProjectImageRepositoryWorkspaceLoadState = "not-loaded";
+
+export interface ProjectImageRepositoryWorkspaceRepositoryState {
+  id: string;
+  componentId?: string;
+  remoteUrl?: string;
+  originPath?: string;
+}
+
+export interface ProjectImageRepositoryWorkspaceState {
+  repository: ProjectImageRepositoryWorkspaceRepositoryState;
+  path: string;
+  materializationStrategy: ProjectImageRepositoryWorkspaceMaterializationStrategy;
+  sourceDirectory: string;
+  baseline: string;
+  loadGroup?: string;
+  pharoVersion?: number;
+  templateName?: string;
+  templateCategory?: string;
+  branch?: string;
+  baseBranch?: string;
+  baseCommit?: string;
+  dirtyState: ProjectImageRepositoryWorkspaceDirtyState;
+  loadState: ProjectImageRepositoryWorkspaceLoadState;
+}
+
 export interface ProjectImageState {
   id: string;
   imageName: string;
@@ -63,6 +91,7 @@ export interface ProjectImageState {
   pid?: number;
   status: ProjectImageStatus;
   pharoMcpContract?: ProjectImagePharoMcpContractState;
+  repositoryWorkspace?: ProjectImageRepositoryWorkspaceState;
   imagePath?: string;
   imageDirectoryPath?: string;
   changesPath?: string;
@@ -494,6 +523,11 @@ export interface ProjectImageNameTemplateContext {
   imageId: string;
 }
 
+export interface ProjectImageRepositoryWorkspacePathTemplateContext
+  extends ProjectImageNameTemplateContext {
+  repositoryId: string;
+}
+
 export function renderProjectImageName(
   template: string,
   context: ProjectImageNameTemplateContext,
@@ -502,6 +536,81 @@ export function renderProjectImageName(
     /\{(projectId|projectName|workspaceId|targetId|imageId)\}/g,
     (_match, key: keyof ProjectImageNameTemplateContext) => context[key],
   );
+}
+
+export function renderProjectImageRepositoryWorkspacePath(
+  template: string,
+  context: ProjectImageRepositoryWorkspacePathTemplateContext,
+): string {
+  return template.replace(
+    /\{(projectId|projectName|workspaceId|targetId|imageId|repositoryId)\}/g,
+    (
+      _match,
+      key: keyof ProjectImageRepositoryWorkspacePathTemplateContext,
+    ) => context[key],
+  );
+}
+
+function defaultRepositoryWorkspacePath(
+  context: ProjectImageRepositoryWorkspacePathTemplateContext,
+): string {
+  return (
+    `image-local://${sanitizeRuntimeId(context.imageId)}/pharo-local/iceberg/` +
+    sanitizeRuntimeId(context.repositoryId)
+  );
+}
+
+export function projectImageRepositoryWorkspaceState(
+  image: ProjectImageConfig,
+  context: ProjectImageNameTemplateContext,
+): ProjectImageRepositoryWorkspaceState | undefined {
+  const workspace = image.repositoryWorkspace;
+  if (!workspace) {
+    return undefined;
+  }
+
+  const pathContext = {
+    ...context,
+    repositoryId: workspace.repository.id,
+  };
+  const path = workspace.materialization.path
+    ? renderProjectImageRepositoryWorkspacePath(
+        workspace.materialization.path,
+        pathContext,
+      )
+    : defaultRepositoryWorkspacePath(pathContext);
+
+  return {
+    repository: {
+      id: workspace.repository.id,
+      ...(workspace.repository.componentId
+        ? { componentId: workspace.repository.componentId }
+        : {}),
+      ...(workspace.repository.remoteUrl
+        ? { remoteUrl: workspace.repository.remoteUrl }
+        : {}),
+      ...(workspace.repository.originPath
+        ? { originPath: workspace.repository.originPath }
+        : {}),
+    },
+    path,
+    materializationStrategy: workspace.materialization.strategy,
+    sourceDirectory: workspace.sourceDirectory,
+    baseline: workspace.baseline,
+    ...(workspace.loadGroup ? { loadGroup: workspace.loadGroup } : {}),
+    ...(workspace.pharoVersion !== undefined
+      ? { pharoVersion: workspace.pharoVersion }
+      : {}),
+    ...(workspace.templateName ? { templateName: workspace.templateName } : {}),
+    ...(workspace.templateCategory
+      ? { templateCategory: workspace.templateCategory }
+      : {}),
+    ...(workspace.branch ? { branch: workspace.branch } : {}),
+    ...(workspace.baseBranch ? { baseBranch: workspace.baseBranch } : {}),
+    ...(workspace.baseCommit ? { baseCommit: workspace.baseCommit } : {}),
+    dirtyState: "unknown",
+    loadState: "not-loaded",
+  };
 }
 
 export function runtimeStatusForImages(
@@ -546,6 +655,17 @@ export function createProjectState(
     const supportState = pharoMcpSupportState(config, image);
     const canUsePharoMcpPort = imageCanUsePharoMcpPort(supportState);
     const previousPort = previousImagePort(options.previousState, image.id);
+    const imageContext = {
+      projectId: projectConfigId(config),
+      projectName: config.name,
+      workspaceId: options.workspaceId,
+      targetId,
+      imageId: image.id,
+    };
+    const repositoryWorkspace = projectImageRepositoryWorkspaceState(
+      image,
+      imageContext,
+    );
     let assignedPort = image.mcp.port;
 
     if (canUsePharoMcpPort) {
@@ -574,16 +694,11 @@ export function createProjectState(
 
     return {
       id: image.id,
-      imageName: renderProjectImageName(image.imageName, {
-        projectId: projectConfigId(config),
-        projectName: config.name,
-        workspaceId: options.workspaceId,
-        targetId,
-        imageId: image.id,
-      }),
+      imageName: renderProjectImageName(image.imageName, imageContext),
       ...(assignedPort !== undefined ? { assignedPort } : {}),
       status: image.active ? "starting" : "stopped",
       ...supportState,
+      ...(repositoryWorkspace ? { repositoryWorkspace } : {}),
     };
   });
 

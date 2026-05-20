@@ -10,9 +10,11 @@ import {
   defaultWorkspaceId,
   loadProjectState,
   projectStatePathForConfig,
+  projectImageRepositoryWorkspaceState,
   renderProjectImageName,
   sanitizeRuntimeId,
   type ProjectImageState,
+  type ProjectImageRepositoryWorkspaceState,
   type ProjectImageStatus,
   type ProjectState,
 } from "./projectState.js";
@@ -102,6 +104,7 @@ export interface ScopedImageContext {
   ownership: ScopedImageOwnership;
   affordances: ScopedImageAffordances;
   route: ScopedImageGatewayRouteMetadata;
+  repositoryWorkspace?: ProjectImageRepositoryWorkspaceState;
 }
 
 export interface ScopedProjectContext {
@@ -118,6 +121,7 @@ export interface ScopedImageDiagnosticContext {
   assignedPort?: number;
   mcpEndpoint?: ProjectImageState["mcpEndpoint"];
   pid?: number;
+  repositoryWorkspace?: ProjectImageRepositoryWorkspaceState;
   cleanup: ScopedImageCleanupMetadata;
 }
 
@@ -332,11 +336,34 @@ function renderedLauncherImageName(
   );
 }
 
+function repositoryWorkspace(
+  scope: ScopedProjectContextScope,
+  imageConfig: ProjectImageConfig,
+  imageState: ProjectImageState | undefined,
+): ProjectImageRepositoryWorkspaceState | undefined {
+  return (
+    imageState?.repositoryWorkspace ??
+    projectImageRepositoryWorkspaceState(imageConfig, {
+      projectId: scope.projectId,
+      projectName: scope.projectName,
+      workspaceId: scope.workspaceId,
+      targetId: scope.targetId,
+      imageId: imageConfig.id,
+    })
+  );
+}
+
 function scopedImageContext(
   scope: ScopedProjectContextScope,
   imageConfig: ProjectImageConfig,
   imageState: ProjectImageState | undefined,
 ): ScopedImageContext {
+  const repositoryWorkspaceState = repositoryWorkspace(
+    scope,
+    imageConfig,
+    imageState,
+  );
+
   return {
     imageId: imageConfig.id,
     active: imageConfig.active,
@@ -350,6 +377,9 @@ function scopedImageContext(
     },
     affordances: lifecycleAffordances(imageConfig, imageState),
     route: routeMetadata(scope, imageConfig.id),
+    ...(repositoryWorkspaceState
+      ? { repositoryWorkspace: repositoryWorkspaceState }
+      : {}),
   };
 }
 
@@ -359,6 +389,11 @@ function scopedImageDiagnostics(
   imageState: ProjectImageState | undefined,
 ): ScopedImageDiagnosticContext {
   const launcherImageName = renderedLauncherImageName(
+    scope,
+    imageConfig,
+    imageState,
+  );
+  const repositoryWorkspaceState = repositoryWorkspace(
     scope,
     imageConfig,
     imageState,
@@ -374,6 +409,9 @@ function scopedImageDiagnostics(
       : {}),
     ...(imageState?.mcpEndpoint ? { mcpEndpoint: imageState.mcpEndpoint } : {}),
     ...(imageState?.pid ? { pid: imageState.pid } : {}),
+    ...(repositoryWorkspaceState
+      ? { repositoryWorkspace: repositoryWorkspaceState }
+      : {}),
     cleanup: {
       disposable: true,
       statePath: scope.statePath,
