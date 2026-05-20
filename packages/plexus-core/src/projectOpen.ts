@@ -122,6 +122,7 @@ export interface ProjectOpenFailure {
   launcherResult?: unknown;
   diagnostic?: string;
   action?: string;
+  process?: LauncherProcess;
 }
 
 export interface ProjectOpenResult {
@@ -207,10 +208,25 @@ type LaunchOutcome =
   | { kind: "launch"; result: LauncherCommandResult | undefined }
   | { kind: "launchError"; error: unknown };
 
-type ProcessOutcome = {
-  kind: "process";
-  process: LauncherProcess | undefined;
-};
+type StartupProcessOutcome =
+  | { kind: "process"; process: LauncherProcess }
+  | { kind: "exited"; process: LauncherProcess };
+
+interface ImageLaunchRuntime {
+  process: LauncherProcess;
+  launcherResult: LauncherCommandResult | undefined;
+}
+
+class ImageStartupExitedBeforeHealthError extends Error {
+  constructor(
+    message: string,
+    public readonly launcherResult: LauncherCommandResult | undefined,
+    public readonly process: LauncherProcess,
+  ) {
+    super(message);
+    this.name = "ImageStartupExitedBeforeHealthError";
+  }
+}
 
 function isObject(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
@@ -254,6 +270,130 @@ function launcherImageInfo(value: unknown): LauncherImageInfo | undefined {
     ...(pharoVersion !== undefined ? { pharoVersion } : {}),
     vmId: optionalStringField(value, "vmId"),
     ...(originTemplate ? { originTemplate } : {}),
+  };
+}
+
+function logPathsFromText(value: string): string[] {
+  return value
+    .split(/\r?\n/)
+    .map((line) => line.match(/^\s*(?:stdout|stderr|log(?:Path)?):\s*(.+?)\s*$/i)?.[1])
+    .filter((path): path is string => Boolean(path));
+}
+
+function pidFromText(value: string): number | undefined {
+  const match = value.match(/\bpid\s+(\d+)\b/i);
+  if (!match) {
+    return undefined;
+  }
+
+  return Number.parseInt(match[1], 10);
+}
+
+function launcherPidFromValue(
+  value: unknown,
+  fieldName?: string,
+): number | undefined {
+  if (typeof value === "number" && Number.isInteger(value) && value > 0) {
+    const normalizedFieldName = fieldName?.toLowerCase() ?? "";
+    return normalizedFieldName === "pid" || normalizedFieldName === "processid"
+      ? value
+      : undefined;
+  }
+
+  if (typeof value === "string") {
+    const normalizedFieldName = fieldName?.toLowerCase() ?? "";
+    if (normalizedFieldName === "pid" || normalizedFieldName === "processid") {
+      const parsed = Number.parseInt(value, 10);
+      return Number.isInteger(parsed) && parsed > 0 ? parsed : undefined;
+    }
+
+    return pidFromText(value);
+  }
+
+  if (!isObject(value)) {
+    return undefined;
+  }
+
+  for (const [key, fieldValue] of Object.entries(value)) {
+    const pid = launcherPidFromValue(fieldValue, key);
+    if (pid !== undefined) {
+      return pid;
+    }
+  }
+
+  return undefined;
+}
+
+function launcherProcessFromResult(
+  result: LauncherCommandResult | undefined,
+  imageName: string,
+): LauncherProcess | undefined {
+  const pid = launcherPidFromValue(result);
+  if (pid === undefined) {
+    return undefined;
+  }
+
+  return {
+    pid,
+    imageName,
+    commandLine: `pharo_launcher_image_launch ${imageName}`,
+  };
+}
+
+function isPidAlive(pid: number): boolean {
+  try {
+    globalThis.process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return isObject(error) && error.code === "ESRCH" ? false : true;
+  }
+}
+
+function collectLauncherLogPaths(
+  value: unknown,
+  fieldName?: string,
+): string[] {
+  if (typeof value === "string") {
+    if (value.length === 0) {
+      return [];
+    }
+
+    const paths = logPathsFromText(value);
+    if (paths.length > 0) {
+      return paths;
+    }
+
+    const normalizedFieldName = fieldName?.toLowerCase() ?? "";
+    return normalizedFieldName.includes("log") ||
+      normalizedFieldName.includes("stdout") ||
+      normalizedFieldName.includes("stderr")
+      ? [value]
+      : [];
+  }
+
+  if (!isObject(value)) {
+    return [];
+  }
+
+  const paths: string[] = [];
+  for (const [key, fieldValue] of Object.entries(value)) {
+    paths.push(...collectLauncherLogPaths(fieldValue, key));
+  }
+
+  return [...new Set(paths)];
+}
+
+function startupFailureDetails(
+  error: unknown,
+): Pick<ProjectOpenFailure, "launcherToolName" | "launcherResult" | "process"> {
+  if (!(error instanceof ImageStartupExitedBeforeHealthError)) {
+    return {};
+  }
+
+  return {
+    launcherToolName: "pharo_launcher_image_launch",
+    launcherResult: error.launcherResult,
+    process: error.process,
   };
 }
 
@@ -476,17 +616,89 @@ async function pollProcessForImage(
   sleep: (durationMs: number) => Promise<void>,
 ): Promise<LauncherProcess | undefined> {
   return pollUntil(timeoutMs, intervalMs, sleep, async () => {
-    const result = await client.callTool<LauncherCommandResult<LauncherProcess[]>>(
-      "pharo_launcher_process_list",
-      {},
-    );
-    assertLauncherOk(result, "pharo_launcher_process_list");
-    const processes = launcherResultData(result) ?? [];
-
-    return processes.find((process) =>
-      processDirectlyMatchesImage(process, imageName),
-    );
+    return processForImage(client, imageName);
   });
+}
+
+async function pollStartupProcessForImage(
+  client: PharoLauncherMcpToolClient,
+  imageName: string,
+  launchedProcess: () => LauncherProcess | undefined,
+  timeoutMs: number,
+  intervalMs: number,
+  sleep: (durationMs: number) => Promise<void>,
+): Promise<StartupProcessOutcome | undefined> {
+  return pollUntil(timeoutMs, intervalMs, sleep, async () => {
+    const process = await processForImage(client, imageName);
+    if (process) {
+      return { kind: "process", process };
+    }
+
+    const knownLaunchedProcess = launchedProcess();
+    if (knownLaunchedProcess && !isPidAlive(knownLaunchedProcess.pid)) {
+      return { kind: "exited", process: knownLaunchedProcess };
+    }
+
+    return undefined;
+  });
+}
+
+async function processForImage(
+  client: PharoLauncherMcpToolClient,
+  imageName: string,
+): Promise<LauncherProcess | undefined> {
+  const result = await client.callTool<LauncherCommandResult<LauncherProcess[]>>(
+    "pharo_launcher_process_list",
+    {},
+  );
+  assertLauncherOk(result, "pharo_launcher_process_list");
+  const processes = launcherResultData(result) ?? [];
+
+  return processes.find((process) =>
+    processDirectlyMatchesImage(process, imageName),
+  );
+}
+
+function processTimeoutError(imageName: string): Error {
+  return new Error(
+    `Timed out waiting for PharoLauncher process for image ${imageName}`,
+  );
+}
+
+async function observeLaunchedProcess(options: {
+  processClient: PharoLauncherMcpToolClient;
+  imageName: string;
+  launcherResult: LauncherCommandResult | undefined;
+  timeoutMs: number;
+  intervalMs: number;
+  sleep: (durationMs: number) => Promise<void>;
+}): Promise<LauncherProcess> {
+  const launchedProcess = launcherProcessFromResult(
+    options.launcherResult,
+    options.imageName,
+  );
+  const outcome = await pollStartupProcessForImage(
+    options.processClient,
+    options.imageName,
+    () => launchedProcess,
+    options.timeoutMs,
+    options.intervalMs,
+    options.sleep,
+  );
+
+  if (outcome?.kind === "process") {
+    return outcome.process;
+  }
+
+  if (outcome?.kind === "exited") {
+    throw imageStartupExitedBeforeProcessObservedError({
+      imageName: options.imageName,
+      launcherResult: options.launcherResult,
+      process: outcome.process,
+    });
+  }
+
+  throw processTimeoutError(options.imageName);
 }
 
 async function pollEndpointHealth(
@@ -502,13 +714,16 @@ async function pollEndpointHealth(
 
 type ImageMcpReadiness =
   | { kind: "endpoint"; endpoint: ProjectImageMcpEndpoint }
-  | { kind: "assignedPort"; port: number };
+  | { kind: "assignedPort"; port: number }
+  | { kind: "processExited" };
 
 async function pollPharoMcpReadiness(options: {
   imageState: ProjectImageState;
   endpointHandoffPath: string;
   preferEndpointHandoff: boolean;
   healthClient: PharoMcpHealthClient;
+  processClient?: PharoLauncherMcpToolClient;
+  imageName?: string;
   timeoutMs: number;
   intervalMs: number;
   sleep: (durationMs: number) => Promise<void>;
@@ -544,6 +759,16 @@ async function pollPharoMcpReadiness(options: {
         };
       }
 
+      if (options.processClient && options.imageName) {
+        const process = await processForImage(
+          options.processClient,
+          options.imageName,
+        );
+        if (!process) {
+          return { kind: "processExited" };
+        }
+      }
+
       return undefined;
     },
   );
@@ -557,7 +782,7 @@ async function launchImageAndPollProcess(
   timeoutMs: number,
   intervalMs: number,
   sleep: (durationMs: number) => Promise<void>,
-): Promise<LauncherProcess> {
+): Promise<ImageLaunchRuntime> {
   const launchOutcome = launchClient
     .callTool<LauncherCommandResult>("pharo_launcher_image_launch", {
       imageName,
@@ -585,30 +810,33 @@ async function launchImageAndPollProcess(
       "pharo_launcher_image_launch",
     );
 
-    const process = await pollProcessForImage(
-      processClient,
-      imageName,
-      timeoutMs,
-      intervalMs,
-      sleep,
-    );
-    if (process) {
-      return process;
-    }
-
-    throw new Error(
-      `Timed out waiting for PharoLauncher process for image ${imageName}`,
-    );
+    return {
+      process: await observeLaunchedProcess({
+        processClient,
+        imageName,
+        launcherResult: immediateLaunch.result,
+        timeoutMs,
+        intervalMs,
+        sleep,
+      }),
+      launcherResult: immediateLaunch.result,
+    };
   }
 
-  const processOutcome = pollProcessForImage(
+  let launchedProcess: LauncherProcess | undefined;
+  const processOutcome = pollStartupProcessForImage(
     processClient,
     imageName,
+    () => launchedProcess,
     timeoutMs,
     intervalMs,
     sleep,
-  ).then<ProcessOutcome>((process) => ({ kind: "process", process }));
+  );
   const first = await Promise.race([launchOutcome, processOutcome]);
+
+  if (!first) {
+    throw processTimeoutError(imageName);
+  }
 
   if (first.kind === "launchError") {
     throw first.error;
@@ -616,17 +844,74 @@ async function launchImageAndPollProcess(
 
   if (first.kind === "launch") {
     assertLauncherOk(first.result, "pharo_launcher_image_launch");
+    launchedProcess = launcherProcessFromResult(first.result, imageName);
 
-    const { process } = await processOutcome;
-    if (process) {
-      return process;
+    const outcome = await processOutcome;
+    if (outcome?.kind === "process") {
+      return { process: outcome.process, launcherResult: first.result };
     }
-  } else if (first.process) {
-    return first.process;
+
+    if (outcome?.kind === "exited") {
+      throw imageStartupExitedBeforeProcessObservedError({
+        imageName,
+        launcherResult: first.result,
+        process: outcome.process,
+      });
+    }
+
+    throw processTimeoutError(imageName);
   }
 
-  throw new Error(
-    `Timed out waiting for PharoLauncher process for image ${imageName}`,
+  if (first.kind === "process") {
+    return { process: first.process, launcherResult: undefined };
+  }
+
+  throw imageStartupExitedBeforeProcessObservedError({
+    imageName,
+    launcherResult: undefined,
+    process: first.process,
+  });
+}
+
+function imageStartupExitedBeforeProcessObservedError(options: {
+  imageName: string;
+  launcherResult: LauncherCommandResult | undefined;
+  process: LauncherProcess;
+}): ImageStartupExitedBeforeHealthError {
+  const logPaths = collectLauncherLogPaths(options.launcherResult);
+  const logHint =
+    logPaths.length > 0 ? `. Launcher logs: ${logPaths.join(", ")}` : "";
+
+  return new ImageStartupExitedBeforeHealthError(
+    `Image ${options.imageName} process ${options.process.pid} exited before PLexus observed the launcher process${logHint}`,
+    options.launcherResult,
+    options.process,
+  );
+}
+
+function imageStartupExitedBeforeHealthError(options: {
+  imageName: string;
+  assignedPort?: number;
+  endpointHandoffPath: string;
+  preferEndpointHandoff: boolean;
+  launcherResult: LauncherCommandResult | undefined;
+  process: LauncherProcess;
+}): ImageStartupExitedBeforeHealthError {
+  const endpointHint = options.preferEndpointHandoff
+    ? ` or endpoint handoff at ${options.endpointHandoffPath}`
+    : "";
+  const portHint =
+    options.assignedPort === undefined
+      ? ""
+      : ` on port ${options.assignedPort}`;
+  const logPaths = collectLauncherLogPaths(options.launcherResult);
+  const logHint =
+    logPaths.length > 0 ? `. Launcher logs: ${logPaths.join(", ")}` : "";
+
+  return new ImageStartupExitedBeforeHealthError(
+    `Image ${options.imageName} process ${options.process.pid} exited before Pharo MCP became healthy${portHint}${endpointHint}${logHint}`,
+    options.launcherResult,
+    options.process,
   );
 }
 
@@ -854,7 +1139,7 @@ export async function openProject(
             });
         const ownsLaunchClient = !options.pharoLauncherMcpClient;
         try {
-          const process = await launchImageAndPollProcess(
+          const launchRuntime = await launchImageAndPollProcess(
             launchClient,
             client,
             imageState.imageName,
@@ -863,6 +1148,7 @@ export async function openProject(
             poll.intervalMs,
             sleep,
           );
+          const process = launchRuntime.process;
           imageState.pid = process.pid;
           if (claimsRoot) {
             const preparedClaim = preparedPortClaims.find(
@@ -885,6 +1171,8 @@ export async function openProject(
               endpointHandoffPath,
               preferEndpointHandoff,
               healthClient,
+              processClient: client,
+              imageName: imageState.imageName,
               timeoutMs: poll.healthTimeoutMs,
               intervalMs: poll.intervalMs,
               sleep,
@@ -900,6 +1188,17 @@ export async function openProject(
               throw new Error(
                 `Timed out waiting for Pharo MCP health${portHint}${endpointHint}`,
               );
+            }
+
+            if (readiness.kind === "processExited") {
+              throw imageStartupExitedBeforeHealthError({
+                imageName: imageState.imageName,
+                assignedPort: imageState.assignedPort,
+                endpointHandoffPath,
+                preferEndpointHandoff,
+                launcherResult: launchRuntime.launcherResult,
+                process,
+              });
             }
 
             if (readiness.kind === "endpoint") {
@@ -948,6 +1247,7 @@ export async function openProject(
           imageName: imageState.imageName,
           message: loadFailure ?? errorMessage(error),
           ...(loadFailure ? {} : launcherFailureDetails(error)),
+          ...(loadFailure ? {} : startupFailureDetails(error)),
         });
       }
     }

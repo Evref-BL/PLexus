@@ -46,13 +46,34 @@ interface ToolCall {
 
 class FakePharoLauncherMcpClient implements PharoLauncherMcpToolClient {
   readonly calls: ToolCall[] = [];
+  private processListCallCount = 0;
 
   constructor(
-    private readonly processes: LauncherProcess[] = [],
+    private readonly processes: LauncherProcess[] | LauncherProcess[][] = [],
     private readonly launchError?: Error,
     private readonly onLaunch?: (argumentsValue: Record<string, unknown>) => void,
     private readonly imagesDir?: string,
+    private readonly launchResult?:
+      | LauncherCommandResult
+      | Promise<LauncherCommandResult>,
   ) {}
+
+  private nextProcesses(): LauncherProcess[] {
+    if (this.processes.length === 0) {
+      this.processListCallCount += 1;
+      return [];
+    }
+
+    if (Array.isArray(this.processes[0])) {
+      const snapshots = this.processes as LauncherProcess[][];
+      const index = Math.min(this.processListCallCount, snapshots.length - 1);
+      this.processListCallCount += 1;
+      return snapshots[index] ?? [];
+    }
+
+    this.processListCallCount += 1;
+    return this.processes as LauncherProcess[];
+  }
 
   async callTool<T = unknown>(
     name: string,
@@ -66,7 +87,7 @@ class FakePharoLauncherMcpClient implements PharoLauncherMcpToolClient {
       }
 
       this.onLaunch?.(argumentsValue);
-      return { ok: true } as T;
+      return (this.launchResult ?? { ok: true }) as T;
     }
 
     if (
@@ -81,7 +102,7 @@ class FakePharoLauncherMcpClient implements PharoLauncherMcpToolClient {
     if (name === "pharo_launcher_process_list") {
       const result = {
         ok: true,
-        data: this.processes,
+        data: this.nextProcesses(),
       } satisfies LauncherCommandResult<LauncherProcess[]>;
 
       return result as T;
@@ -2205,6 +2226,188 @@ describe("project open", () => {
         ],
       },
     });
+  });
+
+  it("continues when the process is visible before launch returns", async () => {
+    const projectRoot = makeTempDir("plexus-project-");
+    const stateRoot = makeTempDir("plexus-state-");
+    writeProjectConfig(projectRoot);
+
+    const launchedProcess: LauncherProcess = {
+      pid: 1234,
+      imageName: "MyProject-dev",
+      commandLine: "PharoConsole MyProject-dev.image",
+    };
+    const pharoLauncherMcpClient = new FakePharoLauncherMcpClient(
+      [launchedProcess],
+      undefined,
+      undefined,
+      undefined,
+      new Promise<LauncherCommandResult>(() => undefined),
+    );
+
+    const result = await openProject({
+      projectRoot,
+      stateRoot,
+      workspaceId: "worktree-a",
+      pharoLauncherMcpClient,
+      healthClient: new FakeHealthClient(true),
+      now: fixedNow,
+      sleep: async () => {},
+      poll: {
+        intervalMs: 0,
+        processTimeoutMs: 60_000,
+        healthTimeoutMs: 60_000,
+      },
+    });
+
+    expect(result.state.images[0]).toMatchObject({
+      id: "dev",
+      pid: launchedProcess.pid,
+      status: "running",
+    });
+  });
+
+  it("fails fast when launch returns a pid that already exited", async () => {
+    const projectRoot = makeTempDir("plexus-project-");
+    const stateRoot = makeTempDir("plexus-state-");
+    writeProjectConfig(projectRoot);
+
+    const launchResult = {
+      ok: true,
+      raw: {
+        stdout: [
+          "Detached profile-scoped Pharo image pid 987654321.",
+          "stdout: /tmp/myproject-dev.out.log",
+          "stderr: /tmp/myproject-dev.err.log",
+        ].join("\n"),
+        stderr: "",
+      },
+    };
+    const pharoLauncherMcpClient = new FakePharoLauncherMcpClient(
+      [],
+      undefined,
+      undefined,
+      undefined,
+      launchResult,
+    );
+
+    await expect(
+      openProject({
+        projectRoot,
+        stateRoot,
+        workspaceId: "worktree-a",
+        pharoLauncherMcpClient,
+        healthClient: new FakeHealthClient(true),
+        now: fixedNow,
+        sleep: async () => {},
+        poll: {
+          intervalMs: 0,
+          processTimeoutMs: 60_000,
+          healthTimeoutMs: 60_000,
+        },
+      }),
+    ).rejects.toMatchObject({
+      result: {
+        failures: [
+          {
+            imageId: "dev",
+            imageName: "MyProject-dev",
+            message:
+              "Image MyProject-dev process 987654321 exited before PLexus observed the launcher process. Launcher logs: /tmp/myproject-dev.out.log, /tmp/myproject-dev.err.log",
+            launcherToolName: "pharo_launcher_image_launch",
+            launcherResult: launchResult,
+            process: {
+              pid: 987654321,
+              imageName: "MyProject-dev",
+              commandLine: "pharo_launcher_image_launch MyProject-dev",
+            },
+          },
+        ],
+      },
+    });
+  });
+
+  it("fails fast when a launched image exits before MCP health", async () => {
+    const projectRoot = makeTempDir("plexus-project-");
+    const stateRoot = makeTempDir("plexus-state-");
+    writeProjectConfig(projectRoot);
+
+    const launchedProcess: LauncherProcess = {
+      pid: 1234,
+      imageName: "MyProject-dev",
+      commandLine: "PharoConsole MyProject-dev.image",
+    };
+    const launchResult = {
+      ok: true,
+      raw: {
+        stdout: [
+          `Detached profile-scoped Pharo image pid ${launchedProcess.pid}.`,
+          "stdout: /tmp/myproject-dev.out.log",
+          "stderr: /tmp/myproject-dev.err.log",
+        ].join("\n"),
+        stderr: "",
+      },
+    };
+    const pharoLauncherMcpClient = new FakePharoLauncherMcpClient(
+      [[launchedProcess], []],
+      undefined,
+      undefined,
+      undefined,
+      launchResult,
+    );
+
+    await expect(
+      openProject({
+        projectRoot,
+        stateRoot,
+        workspaceId: "worktree-a",
+        pharoLauncherMcpClient,
+        healthClient: new FakeHealthClient(false),
+        now: fixedNow,
+        sleep: async () => {},
+        poll: {
+          intervalMs: 0,
+          processTimeoutMs: 60_000,
+          healthTimeoutMs: 60_000,
+        },
+      }),
+    ).rejects.toMatchObject({
+      result: {
+        failures: [
+          {
+            imageId: "dev",
+            imageName: "MyProject-dev",
+            message:
+              "Image MyProject-dev process 1234 exited before Pharo MCP became healthy on port 7123. Launcher logs: /tmp/myproject-dev.out.log, /tmp/myproject-dev.err.log",
+            launcherToolName: "pharo_launcher_image_launch",
+            launcherResult: launchResult,
+            process: launchedProcess,
+          },
+        ],
+      },
+    });
+
+    const statePath = path.join(
+      stateRoot,
+      "projects",
+      "project-123",
+      "workspaces",
+      "worktree-a",
+      "state.json",
+    );
+    expect(loadProjectState(statePath)?.images[0]).toMatchObject({
+      id: "dev",
+      imageName: "MyProject-dev",
+      pid: 1234,
+      assignedPort: 7123,
+      status: "failed",
+    });
+    expect(
+      pharoLauncherMcpClient.calls.filter(
+        (call) => call.name === "pharo_launcher_process_list",
+      ),
+    ).toHaveLength(2);
   });
 
   it("marks active images failed when the launched process is not visible", async () => {
