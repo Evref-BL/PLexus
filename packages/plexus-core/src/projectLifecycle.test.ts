@@ -530,6 +530,57 @@ describe("project lifecycle tools", () => {
     expect(JSON.stringify(result.data)).not.toContain("1234");
   });
 
+  it("reports load-script repository hints without treating them as actual repositories", async () => {
+    const projectRoot = makeTempDir("plexus-project-");
+    const stateRoot = makeTempDir("plexus-state-");
+    const loadScriptPath = path.join(projectRoot, "pharo", "load-mcp.st");
+    writeProjectConfig(projectRoot);
+    saveProjectState(statePath(stateRoot), {
+      ...runningState,
+      images: [
+        {
+          ...runningState.images[0],
+          pharoMcpLoad: {
+            state: "loaded",
+            statusPath: path.join(
+              stateRoot,
+              "projects",
+              "project-123",
+              "workspaces",
+              "worktree-a",
+              "scripts",
+              "pharo-mcp-load-dev.properties",
+            ),
+            source: "loadScript",
+            loadScript: loadScriptPath,
+            configuredRepositoryHint: "github://Evref-BL/MCP:main/src",
+            baseline: "MCP",
+          },
+        },
+      ],
+    });
+    const lifecycle = new PlexusProjectLifecycle({
+      routeRegistry: new FakeRouteRegistry(),
+    });
+
+    const result = await lifecycle.handleTool("plexus_project_status", {
+      projectPath: projectRoot,
+      stateRoot,
+      workspaceId: "worktree-a",
+      includeDiagnostics: true,
+    });
+
+    const pharoMcpLoad = result.data.state?.images[0].pharoMcpLoad;
+    expect(pharoMcpLoad).toMatchObject({
+      state: "loaded",
+      source: "loadScript",
+      loadScript: loadScriptPath,
+      configuredRepositoryHint: "github://Evref-BL/MCP:main/src",
+      baseline: "MCP",
+    });
+    expect(pharoMcpLoad).not.toHaveProperty("repository");
+  });
+
   it("uses PLEXUS_STATE_ROOT as the lifecycle default state root", async () => {
     const projectRoot = makeTempDir("plexus-project-");
     const envStateRoot = makeTempDir("plexus-env-state-");

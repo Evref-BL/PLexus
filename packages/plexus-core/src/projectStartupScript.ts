@@ -459,10 +459,17 @@ pharoMcpLoadStatusWriter := [ :status :message |
       nextPutAll: 'loadScript=';
       nextPutAll: ${smalltalkPath(options.loadScriptPath)};
       cr.
-    stream
-      nextPutAll: 'repository=';
-      nextPutAll: ${smalltalkString(repositoryLabel)};
-      cr.
+    pharoMcpLoadSource = 'metacello'
+      ifTrue: [
+        stream
+          nextPutAll: 'repository=';
+          nextPutAll: ${smalltalkString(repositoryLabel)};
+          cr ]
+      ifFalse: [
+        stream
+          nextPutAll: 'configuredRepositoryHint=';
+          nextPutAll: ${smalltalkString(repositoryLabel)};
+          cr ].
     stream
       nextPutAll: 'baseline=';
       nextPutAll: ${smalltalkString(options.repository.baseline)};
