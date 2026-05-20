@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
+import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import { loadPlexusGatewayConfig } from "./config.js";
 import {
   claimPort,
@@ -18,7 +19,11 @@ import {
   type ProjectRuntimePortRange,
   type ProjectSharedGatewayPolicy,
 } from "./projectConfig.js";
-import type { ProjectGatewayState, ProjectState } from "./projectState.js";
+import type {
+  PharoMcpContractReference,
+  ProjectGatewayState,
+  ProjectState,
+} from "./projectState.js";
 
 export const defaultGatewayPortClaimsDirectoryName = "plexus-port-claims";
 export const gatewayPortClaimPurpose = "gateway";
@@ -30,6 +35,8 @@ export interface ProjectGatewayProcessStartOptions {
   routePath: string;
   controlPath: string;
   state: ProjectState;
+  pharoTools?: readonly Tool[];
+  pharoMcpContract?: PharoMcpContractReference;
 }
 
 export interface ProjectGatewayProcessStartResult {
@@ -54,6 +61,8 @@ export interface ProjectGatewayRuntimeOptions {
   checks?: PortClaimChecks;
   processManager?: ProjectGatewayProcessManager;
   env?: NodeJS.ProcessEnv;
+  pharoTools?: readonly Tool[];
+  pharoMcpContract?: PharoMcpContractReference;
   now?: () => Date;
   fetch?: typeof fetch;
   healthTimeoutMs?: number;
@@ -91,6 +100,34 @@ export class ProjectGatewayDeploymentError extends Error {
   }
 }
 
+export interface ProjectGatewayChildEnvironmentOptions {
+  env?: NodeJS.ProcessEnv;
+  pharoTools?: readonly Tool[];
+  pharoMcpContract?: PharoMcpContractReference;
+}
+
+export function projectGatewayChildEnvironment(
+  options: ProjectGatewayChildEnvironmentOptions = {},
+): NodeJS.ProcessEnv {
+  const childEnv: NodeJS.ProcessEnv = {
+    ...process.env,
+    ...options.env,
+    PLEXUS_GATEWAY_SURFACE: "gateway",
+  };
+
+  if (options.pharoTools !== undefined) {
+    childEnv.PLEXUS_PHARO_TOOLS_JSON = JSON.stringify(options.pharoTools);
+  }
+
+  if (options.pharoMcpContract !== undefined) {
+    childEnv.PLEXUS_PHARO_MCP_CONTRACT_JSON = JSON.stringify(
+      options.pharoMcpContract,
+    );
+  }
+
+  return childEnv;
+}
+
 export class DetachedProjectGatewayProcessManager
   implements ProjectGatewayProcessManager
 {
@@ -119,11 +156,11 @@ export class DetachedProjectGatewayProcessManager
         detached: true,
         stdio: "ignore",
         windowsHide: true,
-        env: {
-          ...process.env,
-          ...this.env,
-          PLEXUS_GATEWAY_SURFACE: "gateway",
-        },
+        env: projectGatewayChildEnvironment({
+          env: this.env,
+          pharoTools: options.pharoTools,
+          pharoMcpContract: options.pharoMcpContract,
+        }),
       },
     );
 
@@ -520,6 +557,8 @@ async function ensureProjectLocalGateway(
   }
 
   let started: ProjectGatewayProcessStartResult;
+  const pharoMcpContract =
+    options.pharoMcpContract ?? options.state.pharoMcpContract;
   try {
     started = await processManager.start({
       projectRoot: options.projectRoot,
@@ -528,6 +567,10 @@ async function ensureProjectLocalGateway(
       routePath: policy.agentMcpPath,
       controlPath: policy.routeControlMcpPath,
       state: options.state,
+      ...(options.pharoTools !== undefined
+        ? { pharoTools: options.pharoTools }
+        : {}),
+      ...(pharoMcpContract !== undefined ? { pharoMcpContract } : {}),
     });
   } catch (error) {
     await releasePortClaim({ claimsRoot, claim });

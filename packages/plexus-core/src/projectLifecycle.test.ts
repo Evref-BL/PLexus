@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   createProjectLifecycleFromEnvironment,
@@ -53,6 +54,19 @@ const runningState: ProjectState = {
       status: "running",
     },
   ],
+};
+
+const pharoEvalTool: Tool = {
+  name: "pharo_eval",
+  description: "Evaluate Smalltalk code in a routed Pharo image.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      code: { type: "string" },
+    },
+    required: ["code"],
+    additionalProperties: false,
+  },
 };
 
 class FakeRouteRegistry implements ProjectLifecycleRouteRegistry {
@@ -1700,6 +1714,11 @@ describe("project lifecycle tools", () => {
       gateway: {
         claimsRoot,
         processManager,
+        pharoTools: [pharoEvalTool],
+        pharoMcpContract: {
+          id: "mcp-pharo",
+          hash: "sha256:expected",
+        },
         fetch: makeGatewayFetch(requests),
         skipHealthCheck: true,
         checks: {
@@ -1762,6 +1781,11 @@ describe("project lifecycle tools", () => {
       port: 8134,
       routePath: "/gateway-mcp",
       controlPath: "/gateway-control",
+      pharoTools: [pharoEvalTool],
+      pharoMcpContract: {
+        id: "mcp-pharo",
+        hash: "sha256:expected",
+      },
     });
     expect(requests.map((request) => request.url)).toEqual([
       "http://127.0.0.1:8134/gateway-control",
