@@ -605,7 +605,7 @@ describe("project open", () => {
             "baseline=MCP",
             `message=${statusMessage}`,
             "",
-          ].join("\n"),
+          ].join("\r"),
           "utf8",
         );
       },

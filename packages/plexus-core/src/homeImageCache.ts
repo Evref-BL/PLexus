@@ -1124,7 +1124,7 @@ function preparationStatusProperties(
   return Object.fromEntries(
     fs
       .readFileSync(filePath, "utf8")
-      .split(/\r?\n/)
+      .split(/\r\n|\n|\r/)
       .map((line): [string, string] | undefined => {
         if (!line || line.startsWith("#")) {
           return undefined;

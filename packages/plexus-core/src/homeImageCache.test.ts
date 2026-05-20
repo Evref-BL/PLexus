@@ -572,7 +572,7 @@ describe("home image cache", () => {
               "baseline=MCP",
               `message=${statusMessage}`,
               "",
-            ].join("\n"),
+            ].join("\r"),
             "utf8",
           );
           return { ok: false };
