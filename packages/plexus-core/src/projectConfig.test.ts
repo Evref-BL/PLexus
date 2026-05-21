@@ -141,6 +141,42 @@ describe("project config", () => {
     });
   });
 
+  it("parses explicit Pharo MCP startup modes", () => {
+    const config = validProjectConfig();
+    (config.images[0].mcp as { startupMode?: string }).startupMode = "optional";
+    (config.images[1].mcp as { startupMode?: string }).startupMode = "disabled";
+
+    expect(parseProjectConfig(config).images.map((image) => image.mcp)).toEqual([
+      {
+        port: 7123,
+        loadScript: "pharo/load-mcp.st",
+        startupMode: "optional",
+      },
+      {
+        port: 7124,
+        loadScript: "pharo/load-mcp.st",
+        startupMode: "disabled",
+      },
+    ]);
+  });
+
+  it("rejects invalid Pharo MCP startup modes", () => {
+    const config = validProjectConfig();
+    (config.images[0].mcp as { startupMode?: string }).startupMode = "plain";
+
+    expect(() => parseProjectConfig(config)).toThrow(ProjectConfigError);
+
+    try {
+      parseProjectConfig(config);
+    } catch (error) {
+      expect((error as ProjectConfigError).issues).toEqual(
+        expect.arrayContaining([
+          "images[0].mcp.startupMode must be one of required, optional, disabled",
+        ]),
+      );
+    }
+  });
+
   it("allows projects with no declared images", () => {
     const config = {
       ...validProjectConfig(),
