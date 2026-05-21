@@ -140,6 +140,7 @@ export interface ProjectImagePharoMcpLoadStatus {
   source?: string;
   loadScript?: string;
   repository?: string;
+  configuredRepositoryHint?: string;
   baseline?: string;
   error?: string;
 }

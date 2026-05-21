@@ -676,6 +676,7 @@ describe("project open", () => {
       ],
     });
     const statusMessage = "Metacello could not resolve BaselineOfMCP";
+
     const pharoLauncherMcpClient = new FakePharoLauncherMcpClient(
       [
         {
@@ -731,6 +732,73 @@ describe("project open", () => {
     });
     expect(result.state.images[0]).not.toHaveProperty("assignedPort");
     expect(result.state.images[0]).not.toHaveProperty("mcpEndpoint");
+  });
+
+  it("does not persist inferred repository metadata for script-provided Pharo MCP loads", async () => {
+    const projectRoot = makeTempDir("plexus-project-");
+    const stateRoot = makeTempDir("plexus-state-");
+    writeProjectConfig(projectRoot);
+    const loadScriptPath = path.join(projectRoot, "pharo", "load-mcp.st");
+    const pharoLauncherMcpClient = new FakePharoLauncherMcpClient(
+      [
+        {
+          pid: 1234,
+          imageName: "MyProject-dev",
+          commandLine: "PharoConsole.exe MyProject-dev.image",
+        },
+      ],
+      undefined,
+      (argumentsValue) => {
+        const scriptPath = argumentsValue.script as string;
+        fs.writeFileSync(
+          path.join(path.dirname(scriptPath), "pharo-mcp-load-dev.properties"),
+          [
+            "status=loaded",
+            "imageId=dev",
+            "source=loadScript",
+            `loadScript=${loadScriptPath}`,
+            "configuredRepositoryHint=github://Evref-BL/MCP:main/src",
+            "baseline=MCP",
+            "",
+          ].join("\n"),
+          "utf8",
+        );
+      },
+    );
+
+    const result = await openProject({
+      projectRoot,
+      stateRoot,
+      workspaceId: "worktree-a",
+      pharoLauncherMcpClient,
+      healthClient: new FakeHealthClient(true),
+      now: fixedNow,
+      sleep: async () => {},
+      poll: {
+        intervalMs: 0,
+      },
+    });
+
+    const pharoMcpLoad = result.state.images[0].pharoMcpLoad;
+    expect(pharoMcpLoad).toMatchObject({
+      state: "loaded",
+      source: "loadScript",
+      loadScript: loadScriptPath,
+      configuredRepositoryHint: "github://Evref-BL/MCP:main/src",
+      baseline: "MCP",
+    });
+    expect(pharoMcpLoad).not.toHaveProperty("repository");
+    const savedState = loadProjectState(
+      path.join(
+        stateRoot,
+        "projects",
+        "project-123",
+        "workspaces",
+        "worktree-a",
+        "state.json",
+      ),
+    );
+    expect(savedState?.images[0].pharoMcpLoad).toEqual(pharoMcpLoad);
   });
 
   it("records an auto-bound MCP endpoint and releases the fallback port claim", async () => {
@@ -2550,6 +2618,65 @@ describe("project open", () => {
         ],
       },
     });
+  });
+
+  it("accepts a profile-scoped direct image pid when process list does not report it", async () => {
+    const projectRoot = makeTempDir("plexus-project-");
+    const stateRoot = makeTempDir("plexus-state-");
+    writeProjectConfig(projectRoot);
+
+    const launchResult = {
+      ok: true,
+      raw: {
+        stdout: [
+          `Detached profile-scoped Pharo image pid ${process.pid}.`,
+          "stdout: /tmp/myproject-dev.out.log",
+          "stderr: /tmp/myproject-dev.err.log",
+        ].join("\n"),
+        stderr: "",
+      },
+    };
+    const pharoLauncherMcpClient = new FakePharoLauncherMcpClient(
+      [],
+      undefined,
+      undefined,
+      undefined,
+      launchResult,
+    );
+    let healthChecks = 0;
+    const healthClient: PharoMcpHealthClient = {
+      async check(): Promise<boolean> {
+        healthChecks += 1;
+        return healthChecks > 1;
+      },
+    };
+
+    const result = await openProject({
+      projectRoot,
+      stateRoot,
+      workspaceId: "worktree-a",
+      pharoLauncherMcpClient,
+      healthClient,
+      now: fixedNow,
+      sleep: async () => {},
+      poll: {
+        intervalMs: 0,
+        processTimeoutMs: 60_000,
+        healthTimeoutMs: 60_000,
+      },
+    });
+
+    expect(result.state.images[0]).toMatchObject({
+      id: "dev",
+      pid: process.pid,
+      status: "running",
+    });
+    expect(healthChecks).toBe(2);
+    expect(
+      pharoLauncherMcpClient.calls.filter(
+        (call) => call.name === "pharo_launcher_process_list",
+      ),
+    ).toHaveLength(2);
   });
 
   it("fails fast when a launched image exits before MCP health", async () => {

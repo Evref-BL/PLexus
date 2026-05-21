@@ -1,0 +1,96 @@
+name: Publish to npm
+
+on:
+  workflow_dispatch:
+    inputs:
+      package:
+        description: Package to publish
+        required: true
+        default: all
+        type: choice
+        options:
+          - all
+          - "@evref-bl/plexus-core"
+          - "@evref-bl/plexus-gateway"
+      dist_tag:
+        description: npm dist-tag to publish under
+        required: true
+        default: dogfood
+        type: choice
+        options:
+          - dogfood
+          - latest
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Publish package
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: npm-publish
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+
+      - name: Check @evref-bl/plexus-core version is not published
+        if: ${{ inputs.package == 'all' || inputs.package == '@evref-bl/plexus-core' }}
+        run: |
+          package_name=$(node -p "require('./packages/plexus-core/package.json').name")
+          package_version=$(node -p "require('./packages/plexus-core/package.json').version")
+          if npm view "$package_name@$package_version" version --json > /tmp/npm-version.json 2>/dev/null; then
+            echo "::error::$package_name@$package_version is already published"
+            exit 1
+          fi
+
+      - name: Check @evref-bl/plexus-gateway version is not published
+        if: ${{ inputs.package == 'all' || inputs.package == '@evref-bl/plexus-gateway' }}
+        run: |
+          package_name=$(node -p "require('./packages/plexus-gateway/package.json').name")
+          package_version=$(node -p "require('./packages/plexus-gateway/package.json').version")
+          if npm view "$package_name@$package_version" version --json > /tmp/npm-version.json 2>/dev/null; then
+            echo "::error::$package_name@$package_version is already published"
+            exit 1
+          fi
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run checks
+        run: npm run check
+
+      - name: Verify @evref-bl/plexus-core package contents
+        if: ${{ inputs.package == 'all' || inputs.package == '@evref-bl/plexus-core' }}
+        run: npm pack --workspace @evref-bl/plexus-core --dry-run
+
+      - name: Verify @evref-bl/plexus-gateway package contents
+        if: ${{ inputs.package == 'all' || inputs.package == '@evref-bl/plexus-gateway' }}
+        run: npm pack --workspace @evref-bl/plexus-gateway --dry-run
+
+      - name: Publish @evref-bl/plexus-core
+        if: ${{ inputs.package == 'all' || inputs.package == '@evref-bl/plexus-core' }}
+        env:
+          NPM_DIST_TAG: ${{ inputs.dist_tag }}
+        run: npm publish --workspace @evref-bl/plexus-core --access public --tag "$NPM_DIST_TAG"
+
+      - name: Publish @evref-bl/plexus-gateway
+        if: ${{ inputs.package == 'all' || inputs.package == '@evref-bl/plexus-gateway' }}
+        env:
+          NPM_DIST_TAG: ${{ inputs.dist_tag }}
+        run: npm publish --workspace @evref-bl/plexus-gateway --access public --tag "$NPM_DIST_TAG"

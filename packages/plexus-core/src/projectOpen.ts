@@ -281,8 +281,10 @@ function logPathsFromText(value: string): string[] {
     .filter((path): path is string => Boolean(path));
 }
 
-function pidFromText(value: string): number | undefined {
-  const match = value.match(/\bpid\s+(\d+)\b/i);
+function profileScopedImagePidFromText(value: string): number | undefined {
+  const match = value.match(
+    /\bDetached\s+profile-scoped\s+Pharo\s+image\s+pid\s+(\d+)\b/i,
+  );
   if (!match) {
     return undefined;
   }
@@ -308,7 +310,7 @@ function launcherPidFromValue(
       return Number.isInteger(parsed) && parsed > 0 ? parsed : undefined;
     }
 
-    return pidFromText(value);
+    return profileScopedImagePidFromText(value);
   }
 
   if (!isObject(value)) {
@@ -526,6 +528,9 @@ function pharoMcpLoadStatusDetails(
     ...(properties.source ? { source: properties.source } : {}),
     ...(properties.loadScript ? { loadScript: properties.loadScript } : {}),
     ...(properties.repository ? { repository: properties.repository } : {}),
+    ...(properties.configuredRepositoryHint
+      ? { configuredRepositoryHint: properties.configuredRepositoryHint }
+      : {}),
     ...(properties.baseline ? { baseline: properties.baseline } : {}),
   };
 }
@@ -705,6 +710,10 @@ async function pollStartupProcessForImage(
       return { kind: "exited", process: knownLaunchedProcess };
     }
 
+    if (knownLaunchedProcess) {
+      return { kind: "process", process: knownLaunchedProcess };
+    }
+
     return undefined;
   });
 }
@@ -791,6 +800,7 @@ async function pollPharoMcpReadiness(options: {
   healthClient: PharoMcpHealthClient;
   processClient?: PharoLauncherMcpToolClient;
   imageName?: string;
+  launchedProcess?: LauncherProcess;
   pharoMcpLoadStatusPath?: string;
   failOnLoadFailure: boolean;
   timeoutMs: number;
@@ -846,7 +856,13 @@ async function pollPharoMcpReadiness(options: {
           options.imageName,
         );
         if (!process) {
-          return { kind: "processExited" };
+          if (!options.launchedProcess) {
+            return { kind: "processExited" };
+          }
+
+          if (!isPidAlive(options.launchedProcess.pid)) {
+            return { kind: "processExited" };
+          }
         }
       }
 
@@ -1297,6 +1313,7 @@ export async function openProject(
               healthClient,
               processClient: client,
               imageName: imageState.imageName,
+              launchedProcess: process,
               pharoMcpLoadStatusPath,
               failOnLoadFailure: requiresHealth,
               timeoutMs: requiresHealth ? poll.healthTimeoutMs : 0,
