@@ -12,7 +12,13 @@ pharo/
   worker/                 In-image worker bootstrap notes/scripts
 docs/
   architecture.md
-  kanban-agent-pharo-access.md
+  user/
+    getting-started.md
+    runtime-model.md
+    agent-pharo-access.md
+  reference/
+    mcp.md
+  troubleshooting.md
   package-boundaries.md
   project-model.md
   vibe-kanban-setup.md
@@ -99,7 +105,7 @@ Windows PowerShell example:
 
 ```powershell
 $env:PHARO_LAUNCHER_MCP_COMMAND = "node"
-$env:PHARO_LAUNCHER_MCP_ENTRY = "C:\dev\code\git\pharo-launcher-mcp\dist\index.js"
+$env:PHARO_LAUNCHER_MCP_ENTRY = "C:\work\src\pharo-launcher-mcp\dist\index.js"
 ```
 
 PLexus-generated runtime paths and agent MCP config preserve the caller's native
@@ -133,9 +139,9 @@ state:
 ```
 
 The script configures image-local Iceberg Git transport, loads the configured
-`mcp.loadScript` when present, falls back to the `Evref-BL/MCP` Metacello load,
-starts MCP on the assigned runtime port, and registers the server in
-`Smalltalk globals` as `#PLexusMCPServer`.
+`mcp.loadScript` when present, falls back to the configured default Pharo MCP
+Metacello load, starts MCP on the assigned runtime port, and registers the
+server in `Smalltalk globals` as `#PLexusMCPServer`.
 
 Prepared image caches use a separate generated script:
 
@@ -163,7 +169,7 @@ Run one real-image lifecycle check after building:
 
 ```sh
 npm run build
-npm run prototype:open-close -- --imageName MyExistingImage --workspaceId task-123
+npm run prototype:open-close -- --imageName ExistingSampleImage --workspaceId task-a
 ```
 
 The prototype script creates a disposable `plexus.project.json`, verifies the
@@ -263,9 +269,14 @@ npm run smoke:open-route-close -- \
 ## Useful Docs
 
 - `docs/architecture.md`: runtime architecture and target registry model.
+- `docs/user/getting-started.md`: first-use PLexus setup.
+- `docs/user/runtime-model.md`: user-facing project/workspace/target/image
+  model.
+- `docs/user/agent-pharo-access.md`: scoped launcher and routed Pharo facade.
+- `docs/reference/mcp.md`: MCP server and tool ownership reference.
+- `docs/troubleshooting.md`: common runtime and routing failures.
 - `docs/live-smoke-runner-boundary.md`: disposable live-smoke approval,
   timeout, artifact, and cleanup boundary.
 - `docs/project-model.md`: project/workspace/target/image arity.
-- `docs/kanban-agent-pharo-access.md`: scoped launcher and routed Pharo facade.
-- `docs/vibe-kanban-setup.md`: workspace and agent setup.
+- `docs/vibe-kanban-setup.md`: optional Vibe workspace and agent setup.
 - `docs/roadmap.md`: planned work.

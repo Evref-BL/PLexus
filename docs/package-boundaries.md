@@ -65,7 +65,7 @@ Project/workspace/image orchestration and lifecycle.
 - The scoped project/workspace/target/image context model handed to DevNexus
   plugins and subagents
 - Port allocation, startup script generation, image health polling
-- Policy around targets/workspaces (how to map Kanban/worktrees/images)
+- Policy around targets/workspaces (how to map agent worktrees/images)
 - Calling pharo-launcher-mcp for PharoLauncher operations
 - Registering and unregistering routes through the gateway route-control API
 - Exposing the scoped agent-facing `pharo-launcher` facade, because only PLexus has workspace state and image naming policy
@@ -116,7 +116,7 @@ Raw gateway escape hatch:
   explicitly enabled for route-control/debug use with
   `PLEXUS_EXPOSE_RAW_ROUTING_TOOL=true`.
 
-Agent-facing Kanban MCP surfaces:
+Agent-facing MCP surfaces:
 
 - `pharo-launcher`: belongs to PLexus orchestration. It is a scoped facade over pharo-launcher-mcp and must not expose raw host-wide PharoLauncher mutation.
 - `gateway`: belongs to the routing layer. It is a stable facade over the
@@ -127,7 +127,7 @@ normal agent-facing MCP config. Normal HTTP deployments expose the agent-facing
 `gateway` surface at `/mcp` and the trusted route-control surface at
 `/control-mcp`.
 
-See `docs/kanban-agent-pharo-access.md` for the scoped launcher design.
+See `docs/user/agent-pharo-access.md` for the scoped launcher design.
 
 ## Where Does A New Feature Belong?
 

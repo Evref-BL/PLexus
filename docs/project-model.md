@@ -1,6 +1,7 @@
 # Project Model
 
-This document defines the PLexus runtime vocabulary and arity. It is developer documentation, not end-user setup guidance.
+This document defines the detailed PLexus runtime vocabulary and arity. For a
+shorter user-facing version, see `docs/user/runtime-model.md`.
 
 ## Arity
 
@@ -20,8 +21,8 @@ The project id comes from:
 
 ```json
 {
-  "id": "project-123",
-  "name": "my-project"
+  "id": "sample-project",
+  "name": "SampleProject"
 }
 ```
 
@@ -81,7 +82,7 @@ For parallel worktrees, image names should include workspace identity:
 ```json
 {
   "id": "dev",
-  "imageName": "MyProject-{workspaceId}-dev",
+  "imageName": "SampleProject-{workspaceId}-dev",
   "active": true,
   "git": {
     "transport": "ssh"
@@ -142,7 +143,7 @@ images remain reusable inside that project-owned launcher profile.
   "preparedImages": [
     {
       "id": "pharo-13-mcp",
-      "imageName": "MyProject-{projectId}-{cacheId}",
+      "imageName": "SampleProject-{projectId}-{cacheId}",
       "source": {
         "kind": "template",
         "profileId": "pharo-13-default",
@@ -151,8 +152,8 @@ images remain reusable inside that project-owned launcher profile.
       "mcp": {
         "loadScript": "pharo/load-mcp.st",
         "repository": {
-          "githubUser": "Evref-BL",
-          "project": "MCP",
+          "githubUser": "ExampleOrg",
+          "project": "SampleMCP",
           "commitish": "main",
           "path": "",
           "baseline": "MCP"
@@ -163,7 +164,7 @@ images remain reusable inside that project-owned launcher profile.
   "images": [
     {
       "id": "dev",
-      "imageName": "MyProject-{workspaceId}-dev",
+      "imageName": "SampleProject-{workspaceId}-dev",
       "active": true,
       "preparedImage": {
         "cacheId": "pharo-13-mcp",
@@ -208,7 +209,7 @@ the image cache for one project:
 ```json
 {
   "home": {
-    "path": "/Users/ada/.plexus",
+    "path": "/home/user/.plexus",
     "imageCache": {
       "enabled": true
     }
@@ -241,7 +242,7 @@ profile under:
 Runtime workspace images must remain copies of home cache bases; agents must
 not operate directly on home cache images. If a template's Pharo version is not
 supported by the image-side Pharo MCP, PLexus may still cache the base image,
-but it must skip the MCP load step and mark the manifest as not Pharo-MCP
+but it must skip the MCP load step and mark the manifest as not Pharo MCP
 routable.
 
 Because runtime images stay in project-owned launcher profiles while home cache
@@ -280,7 +281,8 @@ projectId + workspaceId
 
 `targetId` is the most precise route key and should be preferred when a caller already knows it.
 
-`projectId + workspaceId` is the stable pair to use when starting from Kanban project identity and worktree identity.
+`projectId + workspaceId` is the stable pair to use when starting from agent
+runner project identity and worktree identity.
 
 ### PLexus Gateway (Routing Only)
 
@@ -303,7 +305,9 @@ For the fixed-port fallback, PLexus handles dynamic ports by scanning sibling wo
 
 Fixed `mcp.port` values are allowed, but they are not parallel-friendly. If another active workspace for the same project already reserves the configured port, `project open` fails instead of starting two workers on the same port.
 
-PLexus does not create naming conventions on behalf of projects. It only renders the configured image-name template. The project owns conventions like `MyProject-{workspaceId}-dev`.
+PLexus does not create naming conventions on behalf of projects. It only
+renders the configured image-name template. The project owns conventions like
+`SampleProject-{workspaceId}-dev`.
 
 ## Scoped Context For Plugins
 
@@ -346,16 +350,16 @@ Those details are diagnostic data, not agent mutation handles.
 ## Example
 
 ```text
-PLexus project: Pharo MCP Orchestration
-  projectId: pharo-mcp-orchestration
-    workspaceId: task-123
-      targetId: pharo-mcp-orchestration--task-123
+PLexus project: Sample Project
+  projectId: sample-project
+    workspaceId: task-a
+      targetId: sample-project--task-a
       images:
-        dev -> Pharo-MCP-task-123-dev via registered endpoint
-        baseline -> Pharo-MCP-task-123-baseline via registered endpoint
-    workspaceId: task-456
-      targetId: pharo-mcp-orchestration--task-456
+        dev -> SampleProject-task-a-dev via registered endpoint
+        baseline -> SampleProject-task-a-baseline via registered endpoint
+    workspaceId: task-b
+      targetId: sample-project--task-b
       images:
-        dev -> Pharo-MCP-task-456-dev via registered endpoint
-        baseline -> Pharo-MCP-task-456-baseline via registered endpoint
+        dev -> SampleProject-task-b-dev via registered endpoint
+        baseline -> SampleProject-task-b-baseline via registered endpoint
 ```
