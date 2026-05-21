@@ -2480,6 +2480,65 @@ describe("project open", () => {
     });
   });
 
+  it("accepts a profile-scoped direct image pid when process list does not report it", async () => {
+    const projectRoot = makeTempDir("plexus-project-");
+    const stateRoot = makeTempDir("plexus-state-");
+    writeProjectConfig(projectRoot);
+
+    const launchResult = {
+      ok: true,
+      raw: {
+        stdout: [
+          `Detached profile-scoped Pharo image pid ${process.pid}.`,
+          "stdout: /tmp/myproject-dev.out.log",
+          "stderr: /tmp/myproject-dev.err.log",
+        ].join("\n"),
+        stderr: "",
+      },
+    };
+    const pharoLauncherMcpClient = new FakePharoLauncherMcpClient(
+      [],
+      undefined,
+      undefined,
+      undefined,
+      launchResult,
+    );
+    let healthChecks = 0;
+    const healthClient: PharoMcpHealthClient = {
+      async check(): Promise<boolean> {
+        healthChecks += 1;
+        return healthChecks > 1;
+      },
+    };
+
+    const result = await openProject({
+      projectRoot,
+      stateRoot,
+      workspaceId: "worktree-a",
+      pharoLauncherMcpClient,
+      healthClient,
+      now: fixedNow,
+      sleep: async () => {},
+      poll: {
+        intervalMs: 0,
+        processTimeoutMs: 60_000,
+        healthTimeoutMs: 60_000,
+      },
+    });
+
+    expect(result.state.images[0]).toMatchObject({
+      id: "dev",
+      pid: process.pid,
+      status: "running",
+    });
+    expect(healthChecks).toBe(2);
+    expect(
+      pharoLauncherMcpClient.calls.filter(
+        (call) => call.name === "pharo_launcher_process_list",
+      ),
+    ).toHaveLength(2);
+  });
+
   it("fails fast when a launched image exits before MCP health", async () => {
     const projectRoot = makeTempDir("plexus-project-");
     const stateRoot = makeTempDir("plexus-state-");
