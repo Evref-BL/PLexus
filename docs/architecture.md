@@ -2,36 +2,40 @@
 
 ## Short Version
 
-PLexus is the agentic orchestration layer that coordinates pharo-launcher-mcp, the PLexus Gateway, and image-scoped Pharo MCP workers.
+PLexus is the outside-image runtime control plane that coordinates
+pharo-launcher-mcp, PLexus Gateway, and image-scoped Pharo MCP workers.
 
 The project/worktree/target arity is defined in `docs/project-model.md`.
 
 ```text
-Codex in Vibe Kanban
+Agent workspace or runner
   -> PLexus orchestration tools
       -> target registry
       -> pharo-launcher-mcp
-          -> PharoLauncher CLI
+          -> Pharo Launcher
       -> PLexus Gateway (routing)
           -> /control-mcp route-control
           -> /mcp agent gateway
           -> Pharo image worker per worktree
 ```
 
-The orchestration and PharoLauncher control layers must not run inside a project Pharo image. They exist specifically to recover from broken images, route between versions, and keep worktree state separate.
+The orchestration and Pharo Launcher control layers must not run inside a
+project Pharo image. They exist specifically to recover from broken images,
+route between versions, and keep worktree state separate.
 
 ## Components
 
-### Vibe Kanban
+### Agent Runner
 
-Owns issues, workspaces, worktree creation, agent sessions, diffs, and review flow.
+Owns task selection, worktree creation, agent sessions, diffs, and review flow.
+DevNexus, Vibe Kanban, Codex, or another runner can sit above PLexus.
 
 ### PLexus
 
 Owns workflow policy and project/workspace/image orchestration:
 
 - maintain a target registry
-- map Vibe Kanban tasks to worktrees and images
+- map agent workspaces to runtime targets and images
 - isolate runtime state by `projectId` and `workspaceId`
 - choose when to create, copy, restart, or retire a target
 - call pharo-launcher-mcp for PharoLauncher operations
@@ -60,9 +64,9 @@ without creating two independent gateway route tables.
 
 ### pharo-launcher-mcp
 
-Owns the PharoLauncher boundary:
+Owns the Pharo Launcher boundary:
 
-- discover PharoLauncher installation
+- discover Pharo Launcher installation
 - list images, VMs, templates, and processes
 - create or copy images for a worktree
 - start and stop PharoLauncher-managed processes
@@ -70,7 +74,7 @@ Owns the PharoLauncher boundary:
 
 ## Agent-Facing MCP Surfaces
 
-Kanban-spawned agents should not receive raw host-wide image access. PLexus
+Agent workers should not receive raw host-wide image access. PLexus
 exposes clean MCP surfaces with separate ownership:
 
 - `plexus_project`: PLexus project lifecycle tools such as
@@ -83,7 +87,7 @@ exposes clean MCP surfaces with separate ownership:
   status, and cleanup for PLexus core or operators.
 
 The detailed contract for the scoped launcher facade is in
-`docs/kanban-agent-pharo-access.md`.
+`docs/user/agent-pharo-access.md`.
 
 Route registration, route status, stale-route cleanup, and raw
 `plexus_route_to_image` calls are route-control gateway plumbing. They are not
@@ -115,7 +119,9 @@ The registry and runtime state are external to Pharo. The current prototype stor
 <state-root>/projects/<project-id>/workspaces/<workspace-id>/state.json
 ```
 
-Use one shared state root across parallel Vibe Kanban worktrees so PLexus can avoid port collisions. A later implementation can move this to SQLite when locking and richer queries are needed.
+Use one shared state root across parallel agent worktrees so PLexus can avoid
+port collisions. A later implementation can move this to SQLite when locking
+and richer queries are needed.
 
 Required fields:
 

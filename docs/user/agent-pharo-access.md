@@ -1,43 +1,45 @@
-# Kanban Agent Pharo Access
+# Agent Pharo Access
 
 This document defines the agent-facing MCP surface for Pharo image access from
-Vibe Kanban workspaces. It is a design contract for PLexus; it is not the raw
-pharo-launcher-mcp tool catalog.
+one PLexus-scoped workspace. It is a design contract for PLexus; it is not the
+raw pharo-launcher-mcp tool catalog.
 
 ## Goal
 
-A Kanban-spawned agent should see two stable MCP servers:
+An agent working inside a PLexus-scoped workspace should see stable MCP
+surfaces:
 
+- `plexus_project`: project lifecycle tools for opening, closing, and
+  inspecting the current PLexus runtime target.
 - `pharo-launcher`: scoped image lifecycle tools for the current PLexus
   project/workspace.
 - `gateway`: typed Pharo code tools for a selected image, exposed through a
   stable project-wide Pharo MCP contract.
 
-The agent uses `pharo-launcher` to list, create, start, and stop images. It then
-passes the returned `imageId` to `gateway` tool calls. The gateway facade strips
-routing-only fields such as `imageId` before forwarding the call to the selected
-image MCP server.
+The agent uses `pharo-launcher` to list, create, start, and stop scoped images.
+It then passes the returned `imageId` to `gateway` tool calls. The gateway
+facade strips routing-only fields such as `imageId` before forwarding the call
+to the selected image MCP server.
 
 Route registration, route status, and stale-route cleanup are not part of this
-agent-facing contract. They belong to the trusted route-control or
-gateway-control surface used by PLexus lifecycle code or operators.
+agent-facing contract. They belong to the trusted route-control surface used by
+PLexus lifecycle code or operators.
 
 ## Agent Workflow
 
-When Vibe Kanban starts an agent for a PLexus-managed workspace, the agent should
-follow this sequence:
+For a Pharo code task, an agent should follow this sequence:
 
-1. Inspect the issue and worktree.
-2. Use `pharo-launcher` to list workspace images.
-3. Create or start the needed image through `pharo-launcher` if no suitable
+1. Inspect the task and worktree.
+2. Use `plexus_project_status` to inspect the runtime target.
+3. Use `pharo-launcher` to list workspace images.
+4. Create or start the needed image through `pharo-launcher` if no suitable
    image is running.
-4. Load or pull the project in that image using the project-specific Pharo tools
+5. Load or pull the project in that image using the project-specific Pharo tools
    exposed by `gateway`.
-5. Pass the selected `imageId` into every `gateway` call.
-6. Use `gateway` for normal code work: inspect classes, edit methods, run tests,
+6. Pass the selected `imageId` into every `gateway` call.
+7. Use `gateway` for normal code work: inspect classes, edit methods, run tests,
    and evaluate Smalltalk.
-7. Stop or leave images according to the workspace policy; do not use raw
-   host-wide launcher operations.
+8. Stop or leave images according to the workspace policy.
 
 Example flow:
 
@@ -45,9 +47,9 @@ Example flow:
 pharo-launcher.image_list()
   -> [{ imageId: "dev", status: "running", health: { routable: true } }]
 
-gateway.find_classes({ imageId: "dev", pattern: "MyPackage*" })
-gateway.compile_method({ imageId: "dev", className: "MyClass", selector: "foo", source: "foo ^ 42" })
-gateway.run_tests({ imageId: "dev", packageName: "MyPackage-Tests" })
+gateway.find_classes({ imageId: "dev", pattern: "SamplePackage*" })
+gateway.compile_method({ imageId: "dev", className: "SampleClass", selector: "example", source: "example ^ 42" })
+gateway.run_tests({ imageId: "dev", packageName: "SamplePackage-Tests" })
 ```
 
 If no image is running:
@@ -64,9 +66,9 @@ before forwarding to the image MCP server.
 
 ## Scope Boundary
 
-The `pharo-launcher` MCP visible to a Kanban agent is a PLexus-scoped facade over
-pharo-launcher-mcp. It can reuse pharo-launcher-mcp operations and naming where useful, but it must not
-be raw host-wide PharoLauncher access.
+The `pharo-launcher` MCP visible to an agent is a PLexus-scoped facade over
+pharo-launcher-mcp. It can reuse pharo-launcher-mcp operations and naming where
+useful, but it must not be raw host-wide Pharo Launcher access.
 
 Each agent session is scoped by PLexus before tools are exposed:
 
@@ -80,8 +82,8 @@ allowed image profiles/specs
 ```
 
 Tool calls must resolve images through that scope. A caller must not be able to
-operate on an arbitrary PharoLauncher image by providing a raw image name, image
-path, VM id, process id, or filesystem location.
+operate on an arbitrary Pharo Launcher image by providing a raw image name,
+image path, VM id, process id, or filesystem location.
 
 PLexus generates the workspace MCP entries for this scope. The managed server
 names are `pharo-launcher` and `gateway`; unrelated user MCP entries should be
@@ -94,17 +96,17 @@ roots stay in `/...` form.
 ## Image Handles
 
 `imageId` is the public handle for agents. It is a PLexus runtime handle, not a
-PharoLauncher image name and not a path.
+Pharo Launcher image name and not a path.
 
 PLexus maps each handle to runtime state:
 
 ```json
 {
-  "projectId": "project-123",
-  "workspaceId": "task-456",
-  "targetId": "project-123--task-456",
+  "projectId": "sample-project",
+  "workspaceId": "task-a",
+  "targetId": "sample-project--task-a",
   "imageId": "dev",
-  "launcherImageName": "MyProject-task-456-dev",
+  "launcherImageName": "SampleProject-task-a-dev",
   "mcpEndpoint": {
     "transport": "http",
     "host": "127.0.0.1",
@@ -132,11 +134,11 @@ The exact record can grow, but it should keep these properties:
 - `launcherImageName` is trusted diagnostic output, not normal agent-facing
   context and not a caller-controlled route key.
 - `pharoMcpContract.status` is explicit so agents can tell whether an image can
-  be used through the `pharo` facade.
+  be used through the `gateway` facade.
 
 ## Agent-Facing Tools
 
-The initial `pharo-launcher` surface should be deliberately small.
+The scoped `pharo-launcher` surface is deliberately small.
 
 | Intent | Tool | Scope rule |
 | --- | --- | --- |
@@ -162,7 +164,7 @@ is a separate, scoped, reviewable workflow for destructive image removal.
 ## Create Policy
 
 `pharo_launcher_image_create` must not accept arbitrary `newImageName`. PLexus
-owns rendered image names so sibling Kanban workspaces cannot collide.
+owns rendered image names so sibling workspaces cannot collide.
 
 Valid creation inputs are policy-driven:
 
@@ -181,7 +183,7 @@ The initial supported create policy is a template:
   "images": [
     {
       "id": "dev",
-      "imageName": "MyProject-{workspaceId}-dev",
+      "imageName": "SampleProject-{workspaceId}-dev",
       "create": {
         "kind": "template",
         "profileId": "pharo-13-default",
@@ -198,8 +200,8 @@ source names are chosen by PLexus policy, not by the agent.
 
 ## Status Values
 
-The scoped facade should normalize image status so agents do not need to infer
-state from PharoLauncher output:
+The scoped facade normalizes image status so agents do not need to infer state
+from Pharo Launcher output:
 
 ```text
 declared       configured in the workspace but not created yet
@@ -225,7 +227,7 @@ Errors should be returned as MCP tool errors with stable codes and context:
 | `image_not_found` | The `imageId` is not known in the current workspace. |
 | `image_outside_workspace` | The requested image exists somewhere else but is not owned by this workspace. |
 | `policy_rejected` | The requested creation/start/stop action is outside the project policy. |
-| `launcher_unavailable` | pharo-launcher-mcp or PharoLauncher cannot be reached. |
+| `launcher_unavailable` | pharo-launcher-mcp or Pharo Launcher cannot be reached. |
 | `image_already_exists` | Create would overwrite an existing scoped image. |
 | `image_creation_failed` | pharo-launcher-mcp returned a creation failure. |
 | `image_unavailable` | The mapped image cannot currently be inspected, launched, or stopped. |
@@ -236,8 +238,8 @@ host-wide pharo-launcher-mcp call.
 
 ## Package Ownership
 
-pharo-launcher-mcp remains the low-level PharoLauncher adapter. It accepts raw launcher names
-and does not know about Kanban, workspaces, or PLexus policy.
+pharo-launcher-mcp remains the low-level Pharo Launcher adapter. It accepts raw
+launcher names and does not know about workspaces or PLexus policy.
 
 PLexus owns the scoped `pharo-launcher` facade because it owns workspace state,
 image naming policy, startup script generation, port allocation, and contract
@@ -260,7 +262,7 @@ surface consumes those handles:
 ```json
 {
   "imageId": "dev",
-  "className": "MyClass",
+  "className": "SampleClass",
   "selector": "example",
   "source": "example ^ 42"
 }
@@ -279,9 +281,10 @@ Pharo tool calls.
 
 ## Why The Tool List Is Stable
 
-The gateway must not rewrite `gateway.tools/list` when images appear, disappear,
-or restart. MCP clients can cache tool lists, and dynamically changing tool names
-or schemas based on runtime image topology makes agent behavior brittle.
+The gateway must not rewrite `gateway.tools/list` when images appear,
+disappear, or restart. MCP clients can cache tool lists, and dynamically
+changing tool names or schemas based on runtime image topology makes agent
+behavior brittle.
 
 Instead, `gateway.tools/list` is generated from the project-wide Pharo MCP
 contract. Runtime image state is represented in data:
