@@ -290,11 +290,11 @@ Gateway proxy calls should route using the gateway's in-memory registrations key
 
 `projectId` alone can list all registered targets for that project. It must not be used for image routing when more than one workspace is registered, because the image id may exist in several workspaces.
 
-Project/workspace lifecycle tools (`plexus_project_open`, `plexus_project_close`, `plexus_project_status`) belong to PLexus and are exposed as the `plexus_project` lifecycle surface. Gateway route registration/status/cleanup tools belong to PLexus Gateway route-control plumbing for PLexus core or operators. The normal agent-facing Pharo MCP proxy is the `gateway` server; raw `plexus_route_to_image` is an explicit opt-in escape hatch, not part of default agent config. See `docs/package-boundaries.md`.
+Project/workspace lifecycle tools (`plexus_project_open`, `plexus_project_close`, `plexus_project_status`) belong to PLexus and are exposed as the `plexus_project` lifecycle surface. Gateway route registration/status/cleanup tools belong to PLexus Gateway route-control plumbing for PLexus core or operators. The normal agent-facing Pharo MCP proxy is the `pharo_gateway` server; raw `plexus_route_to_image` is an explicit opt-in escape hatch, not part of default agent config. See `docs/package-boundaries.md`.
 
 In HTTP service mode, route-control should not require a second route table.
 Run one gateway process and expose separate MCP paths, such as `/mcp` for
-agent-facing `gateway` tools and `/control-mcp` for route-control. Both paths
+agent-facing `pharo_gateway` tools and `/control-mcp` for route-control. Both paths
 share the in-memory registrations keyed by `targetId`.
 
 ## Port And Image Isolation
@@ -330,7 +330,7 @@ The scoped context includes:
 - safe create/start/stop/delete affordance descriptions that use scoped
   `imageId` arguments only
 - gateway route metadata telling subagents to pass the selected `imageId` to
-  `gateway` tools
+  `pharo_gateway` tools
 
 The context validator rejects runtime state from a different project, workspace,
 or target. It also rejects state images that are not declared in the project

@@ -71,7 +71,7 @@ export interface GatewayImageRoutability {
 }
 
 export interface GatewayImageRouteMetadata {
-  serverName: "gateway";
+  serverName: "pharo_gateway";
   requiredArgument: "imageId";
   imageId: string;
   routeReference: {
@@ -258,7 +258,7 @@ function imageRouteMetadata(
   imageId: string,
 ): GatewayImageRouteMetadata {
   return {
-    serverName: "gateway",
+    serverName: "pharo_gateway",
     requiredArgument: "imageId",
     imageId,
     routeReference: {
@@ -269,7 +269,7 @@ function imageRouteMetadata(
     imageIdSource:
       "Read images[].imageId from PLexus scoped context, pharo-launcher image list, or gateway status",
     recordHint:
-      "Record the selected imageId with the scoped project/workspace/target before calling gateway tools",
+      "Record the selected imageId with the scoped project/workspace/target before calling pharo_gateway tools",
   };
 }
 

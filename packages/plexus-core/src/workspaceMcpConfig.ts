@@ -13,7 +13,7 @@ import {
 } from "./projectState.js";
 
 export const defaultPharoLauncherMcpServerName = "pharo-launcher";
-export const defaultPharoMcpServerName = "gateway";
+export const defaultPharoMcpServerName = "pharo_gateway";
 
 export interface WorkspaceMcpServerConfig {
   command: string;
@@ -47,8 +47,6 @@ export interface BuildPlexusWorkspaceMcpConfigOptions {
   pharoLauncherServerName?: string;
   pharoServerName?: string;
 }
-
-const retiredPharoGatewayServerName = "pharo";
 
 function optionalJsonEnv(value: unknown): string | undefined {
   if (value === undefined) {
@@ -128,48 +126,10 @@ export function mergeWorkspaceMcpServers(
   existingServers: Record<string, WorkspaceMcpServerConfig>,
   generatedServers: Record<string, WorkspaceMcpServerConfig>,
 ): Record<string, WorkspaceMcpServerConfig> {
-  const retainedExistingServers = Object.fromEntries(
-    Object.entries(existingServers).filter(
-      ([name, server]) => !isRetiredGatewayServer(name, server),
-    ),
-  );
-
   return {
-    ...retainedExistingServers,
+    ...existingServers,
     ...generatedServers,
   };
-}
-
-function isRetiredGatewayServer(
-  name: string,
-  server: WorkspaceMcpServerConfig,
-): boolean {
-  if (name !== retiredPharoGatewayServerName) {
-    return false;
-  }
-
-  return isPlexusGatewayCommand(server.command);
-}
-
-function pathBasename(value: string): string {
-  return value.split(/[\\/]/).pop()?.toLowerCase() ?? value.toLowerCase();
-}
-
-function isPlexusGatewayCommand(value: string): boolean {
-  const command = pathBasename(value);
-  return (
-    command === "plexus-gateway" ||
-    command === "plexus-gateway.cmd" ||
-    command === "plexus-gateway.exe"
-  );
-}
-
-function normalizedPharoServerName(name: string | undefined): string {
-  if (name === retiredPharoGatewayServerName) {
-    throw new Error("pharoServerName=pharo has been removed; use gateway");
-  }
-
-  return name ?? defaultPharoMcpServerName;
 }
 
 export function buildPlexusWorkspaceMcpConfig(
@@ -179,7 +139,7 @@ export function buildPlexusWorkspaceMcpConfig(
 ): WorkspaceMcpConfig {
   const pharoLauncherServerName =
     options.pharoLauncherServerName ?? defaultPharoLauncherMcpServerName;
-  const pharoServerName = normalizedPharoServerName(options.pharoServerName);
+  const pharoServerName = options.pharoServerName ?? defaultPharoMcpServerName;
   const generatedServers = {
     [pharoLauncherServerName]: buildPharoLauncherMcpServerConfig(options),
     [pharoServerName]: buildPharoMcpServerConfig(options),

@@ -78,15 +78,15 @@ Use the clean MCP surfaces when adding docs, generated config, or examples:
 
 - `plexus_project` for PLexus project lifecycle.
 - `pharo-launcher` for scoped image lifecycle within one PLexus target.
-- `gateway` for agent-facing Pharo code tools routed by explicit `imageId`.
+- `pharo_gateway` for agent-facing Pharo code tools routed by explicit `imageId`.
 - `route-control` or `gateway-control` for trusted route registration, route
   status, and cleanup.
 
 Use route-control terminology for private/trusted gateway controls. In HTTP
 service mode, the normal shape is one `plexus-gateway` process with `/mcp`
-serving the agent-facing `gateway` surface and `/control-mcp` serving
+serving the agent-facing `pharo_gateway` server and `/control-mcp` serving
 route-control. Both paths share the same in-memory route table.
-Generated workspace MCP config writes `gateway` for the agent-facing Pharo MCP
+Generated workspace MCP config writes `pharo_gateway` for the agent-facing Pharo MCP
 proxy and keeps route-control separate.
 
 ## pharo-launcher-mcp Resolution

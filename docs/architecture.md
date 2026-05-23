@@ -55,7 +55,7 @@ The gateway must not depend on PLexus or pharo-launcher-mcp, and it should not r
 When served over HTTP, PLexus should run one gateway process with separate MCP
 paths over the same in-memory route table:
 
-- `/mcp` exposes the agent-facing `gateway` facade.
+- `/mcp` exposes the agent-facing `pharo_gateway` server.
 - `/control-mcp` exposes trusted route-control operations used by PLexus core or
   operators.
 
@@ -81,7 +81,7 @@ exposes clean MCP surfaces with separate ownership:
   `plexus_project_open`, `plexus_project_close`, and `plexus_project_status`.
 - `pharo-launcher`: a PLexus-scoped facade over pharo-launcher-mcp for image lifecycle
   operations in the current project/workspace.
-- `gateway`: a stable project-wide Pharo MCP proxy that adds an explicit
+- `pharo_gateway`: a stable project-wide Pharo MCP proxy that adds an explicit
   `imageId` routing argument to each typed image tool.
 - `route-control` or `gateway-control`: private/trusted route registration,
   status, and cleanup for PLexus core or operators.
