@@ -7,6 +7,7 @@ import {
 } from "./projectStartupScript.js";
 import {
   projectConfigId,
+  projectMcpStartupMode,
   resolveProjectRuntimePolicy,
   type ProjectConfig,
   type ProjectImageConfig,
@@ -108,7 +109,8 @@ export interface HomeImageCachePharoMcpSupport {
 export interface HomeImageCacheKeyMaterial {
   schemaVersion: number;
   projectCachePolicy: {
-    pharoMcpPreparation: "load-when-supported";
+    pharoMcpPreparation: "load-when-supported" | "disabled";
+    pharoMcpStartupMode: "required" | "optional" | "disabled";
   };
   source: HomeImageCacheSource;
   templateMetadata?: HomeImageCacheTemplateMetadata;
@@ -632,10 +634,13 @@ export function homeImageCacheKeyMaterial(options: {
     source: options.source,
     templateMetadata: options.templateMetadata,
   });
+  const startupMode = projectMcpStartupMode(options.mcp);
   return {
     schemaVersion: homeImageCacheSchemaVersion,
     projectCachePolicy: {
-      pharoMcpPreparation: "load-when-supported",
+      pharoMcpPreparation:
+        startupMode === "disabled" ? "disabled" : "load-when-supported",
+      pharoMcpStartupMode: startupMode,
     },
     source: options.source,
     ...(options.templateMetadata ? { templateMetadata: options.templateMetadata } : {}),
@@ -816,8 +821,12 @@ export function flushHomeImageCache(plan: HomeImageCacheFlushPlan): void {
 
 function manifestPreparationStatus(
   support: HomeImageCachePharoMcpSupport,
+  mcp: ProjectPreparedImageMcpConfig | ProjectImageMcpConfig,
 ): HomeImageCachePreparationStatus {
-  return support.status === "supported" ? "pending" : "skipped";
+  return support.status === "supported" &&
+    projectMcpStartupMode(mcp) !== "disabled"
+    ? "pending"
+    : "skipped";
 }
 
 function planStatus(
@@ -909,6 +918,7 @@ function localOnlyReadiness(options: {
     );
   };
   const loadScriptPath = resolveMcpLoadScriptPath(options.projectRoot, options.mcp);
+  const startupMode = projectMcpStartupMode(options.mcp);
 
   requireInput(
     "templateSource",
@@ -918,7 +928,7 @@ function localOnlyReadiness(options: {
   requireInput("baseImage", "The selected Pharo base image artifact");
   requireInput("vm", "The selected Pharo VM");
 
-  if (options.support.status === "supported") {
+  if (options.support.status === "supported" && startupMode !== "disabled") {
     requireInput(
       "pharoMcpLoadScript",
       "The Pharo MCP load script",
@@ -1095,7 +1105,10 @@ export function buildHomeImageCachePlan(
     ...(options.templateMetadata ? { templateMetadata: options.templateMetadata } : {}),
     pharoMcp: {
       support: keyMaterial.pharoMcp.support,
-      preparationStatus: manifestPreparationStatus(keyMaterial.pharoMcp.support),
+      preparationStatus: manifestPreparationStatus(
+        keyMaterial.pharoMcp.support,
+        mcp,
+      ),
       diagnostics,
     },
     paths: {
@@ -1143,7 +1156,9 @@ export function buildHomeImageCachePlan(
         }
       : undefined;
   const prepareCacheImage =
-    canPrepareCacheEntry && keyMaterial.pharoMcp.support.status === "supported"
+    canPrepareCacheEntry &&
+    keyMaterial.pharoMcp.support.status === "supported" &&
+    projectMcpStartupMode(mcp) !== "disabled"
       ? {
           toolName: "pharo_launcher_image_launch",
           profileEnvironment: profileEnvironmentFromPaths(homeProfile),

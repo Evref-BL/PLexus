@@ -174,6 +174,10 @@ describe("home image cache", () => {
       status: "supported",
       actualMajorVersion: 13,
     });
+    expect(material.projectCachePolicy).toEqual({
+      pharoMcpPreparation: "load-when-supported",
+      pharoMcpStartupMode: "required",
+    });
     expect(deriveHomeImageCacheKey(material)).toMatch(/^[a-f0-9]{64}$/);
     expect(deriveHomeImageCacheKey(material)).toBe(
       deriveHomeImageCacheKey({
@@ -202,6 +206,15 @@ describe("home image cache", () => {
       deriveHomeImageCacheKey({
         ...material,
         git: { transport: "https" },
+      }),
+    ).not.toBe(deriveHomeImageCacheKey(material));
+    expect(
+      deriveHomeImageCacheKey({
+        ...material,
+        projectCachePolicy: {
+          pharoMcpPreparation: "disabled",
+          pharoMcpStartupMode: "disabled",
+        },
       }),
     ).not.toBe(deriveHomeImageCacheKey(material));
   });
@@ -534,6 +547,76 @@ describe("home image cache", () => {
         "The selected Pharo base image artifact has not been proven local for local-only home image cache preparation.",
       ]),
     );
+  });
+
+  it("does not require Pharo MCP inputs or preparation when startup is disabled", () => {
+    const projectRoot = makeTempDir("plexus-project-");
+    const projectConfig = config({
+      home: {
+        imageCache: {
+          enabled: true,
+          networkPolicy: "local-only",
+        },
+      },
+      images: [
+        {
+          id: "plain",
+          imageName: "MyProject-{workspaceId}-plain",
+          active: true,
+          create: {
+            kind: "template",
+            templateName: "Moose 13 64bit",
+            templateCategory: "Moose",
+          },
+          mcp: {
+            loadScript: "pharo/missing-load-mcp.st",
+            startupMode: "disabled",
+          },
+        },
+      ],
+    });
+
+    const plan = buildHomeImageCachePlan({
+      projectRoot,
+      config: projectConfig,
+      imageConfig: projectConfig.images[0]!,
+      imageState: {
+        id: "plain",
+        imageName: "MyProject-worktree-a-plain",
+        status: "starting",
+      },
+      workspaceId: "worktree-a",
+      targetId: "project-123--worktree-a",
+      homeDirectory: makeTempDir("plexus-user-home-"),
+      templateMetadata: {
+        pharoVersion: "130",
+        sourceFile: {
+          path: "/home-cache/templates/moose-13.ston",
+          sha256: "abc123",
+        },
+      },
+      localInputs: {
+        baseImage: "available",
+        vm: "available",
+      },
+    });
+
+    expect(plan.offlineReadiness).toMatchObject({
+      status: "ready",
+      missingInputs: [],
+    });
+    expect(plan.expectedManifest.pharoMcp.preparationStatus).toBe("skipped");
+    expect(plan.keyMaterial.projectCachePolicy).toEqual({
+      pharoMcpPreparation: "disabled",
+      pharoMcpStartupMode: "disabled",
+    });
+    expect(plan.prepareCacheImage).toBeUndefined();
+    expect(plan.createCacheImage).toMatchObject({
+      toolName: "pharo_launcher_image_create",
+    });
+    expect(plan.runtimeCopy).toMatchObject({
+      toolName: "pharo_launcher_image_copy_between_profiles",
+    });
   });
 
   it("plans local-only cache misses from proven local template, image, VM, and MCP inputs", () => {

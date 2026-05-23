@@ -3,6 +3,7 @@ import path from "node:path";
 import {
   loadProjectConfig,
   projectConfigId,
+  projectMcpStartupMode,
   resolveProjectRuntimePolicy,
   type ProjectImageConfig,
 } from "./projectConfig.js";
@@ -789,6 +790,7 @@ async function pollEndpointHealth(
 type ImageMcpReadiness =
   | { kind: "endpoint"; endpoint: ProjectImageMcpEndpoint }
   | { kind: "assignedPort"; port: number }
+  | { kind: "loadFailed"; message: string }
   | { kind: "processExited" };
 
 async function pollPharoMcpReadiness(options: {
@@ -800,6 +802,7 @@ async function pollPharoMcpReadiness(options: {
   imageName?: string;
   launchedProcess?: LauncherProcess;
   pharoMcpLoadStatusPath?: string;
+  failOnLoadFailure: boolean;
   timeoutMs: number;
   intervalMs: number;
   sleep: (durationMs: number) => Promise<void>;
@@ -814,7 +817,11 @@ async function pollPharoMcpReadiness(options: {
         options.pharoMcpLoadStatusPath,
       );
       if (loadFailure) {
-        throw new Error(loadFailure);
+        if (options.failOnLoadFailure) {
+          throw new Error(loadFailure);
+        }
+
+        return { kind: "loadFailed", message: loadFailure };
       }
 
       if (options.preferEndpointHandoff) {
@@ -1010,8 +1017,43 @@ function activeStateImages(state: ProjectState): ProjectImageState[] {
   return state.images.filter((image) => image.status === "starting");
 }
 
-function imageRequiresPharoMcpHealth(image: ProjectImageState): boolean {
-  return image.pharoMcpContract?.status !== "unsupported";
+function imageRequiresPharoMcpHealth(
+  imageConfig: ProjectImageConfig,
+  image: ProjectImageState,
+): boolean {
+  return (
+    projectMcpStartupMode(imageConfig.mcp) === "required" &&
+    image.pharoMcpContract?.status !== "unsupported"
+  );
+}
+
+function imageCanRouteToPharoMcp(
+  imageConfig: ProjectImageConfig,
+  image: ProjectImageState,
+): boolean {
+  return (
+    projectMcpStartupMode(imageConfig.mcp) !== "disabled" &&
+    image.pharoMcpContract?.status !== "unsupported"
+  );
+}
+
+async function releaseOptionalPharoMcpRoute(options: {
+  state: ProjectState;
+  imageState: ProjectImageState;
+  claimsRoot: string | undefined;
+  checks: PortClaimChecks;
+}): Promise<void> {
+  if (options.claimsRoot && options.imageState.assignedPort !== undefined) {
+    await releaseImagePortClaimIfOwned({
+      state: options.state,
+      image: options.imageState,
+      claimsRoot: options.claimsRoot,
+      checks: options.checks,
+    });
+  }
+
+  delete options.imageState.assignedPort;
+  delete options.imageState.mcpEndpoint;
 }
 
 function applyScopedImageSelection(
@@ -1258,8 +1300,12 @@ export async function openProject(
             }
           }
 
-          if (imageRequiresPharoMcpHealth(imageState)) {
+          if (imageCanRouteToPharoMcp(imageConfig, imageState)) {
             const preferEndpointHandoff = imageConfig.mcp.port === undefined;
+            const requiresHealth = imageRequiresPharoMcpHealth(
+              imageConfig,
+              imageState,
+            );
             const readiness = await pollPharoMcpReadiness({
               imageState,
               endpointHandoffPath,
@@ -1269,24 +1315,37 @@ export async function openProject(
               imageName: imageState.imageName,
               launchedProcess: process,
               pharoMcpLoadStatusPath,
-              timeoutMs: poll.healthTimeoutMs,
+              failOnLoadFailure: requiresHealth,
+              timeoutMs: requiresHealth ? poll.healthTimeoutMs : 0,
               intervalMs: poll.intervalMs,
               sleep,
             });
             if (!readiness) {
-              const endpointHint = preferEndpointHandoff
-                ? ` or endpoint handoff at ${endpointHandoffPath}`
-                : "";
-              const portHint =
-                imageState.assignedPort === undefined
-                  ? ""
-                  : ` on port ${imageState.assignedPort}`;
-              throw new Error(
-                `Timed out waiting for Pharo MCP health${portHint}${endpointHint}`,
-              );
+              if (!requiresHealth) {
+                await releaseOptionalPharoMcpRoute({
+                  state,
+                  imageState,
+                  claimsRoot,
+                  checks: portClaimChecks,
+                });
+                preparedPortClaims = preparedPortClaims.filter(
+                  (candidate) => candidate.imageId !== imageState.id,
+                );
+              } else {
+                const endpointHint = preferEndpointHandoff
+                  ? ` or endpoint handoff at ${endpointHandoffPath}`
+                  : "";
+                const portHint =
+                  imageState.assignedPort === undefined
+                    ? ""
+                    : ` on port ${imageState.assignedPort}`;
+                throw new Error(
+                  `Timed out waiting for Pharo MCP health${portHint}${endpointHint}`,
+                );
+              }
             }
 
-            if (readiness.kind === "processExited") {
+            if (readiness?.kind === "processExited") {
               throw imageStartupExitedBeforeHealthError({
                 imageName: imageState.imageName,
                 assignedPort: imageState.assignedPort,
@@ -1297,7 +1356,19 @@ export async function openProject(
               });
             }
 
-            if (readiness.kind === "endpoint") {
+            if (readiness?.kind === "loadFailed") {
+              await releaseOptionalPharoMcpRoute({
+                state,
+                imageState,
+                claimsRoot,
+                checks: portClaimChecks,
+              });
+              preparedPortClaims = preparedPortClaims.filter(
+                (candidate) => candidate.imageId !== imageState.id,
+              );
+            }
+
+            if (readiness?.kind === "endpoint") {
               imageState.mcpEndpoint = readiness.endpoint;
               if (claimsRoot && imageState.assignedPort !== undefined) {
                 await releaseImagePortClaimIfOwned({
@@ -1317,7 +1388,10 @@ export async function openProject(
             imageState,
             pharoMcpLoadStatusPath,
           );
-          if (pharoMcpLoadFailure) {
+          if (
+            pharoMcpLoadFailure &&
+            imageRequiresPharoMcpHealth(imageConfig, imageState)
+          ) {
             throw new Error(pharoMcpLoadFailure);
           }
           const loadFailure = refreshRepositoryWorkspaceLoadStatus(imageState);

@@ -11,7 +11,10 @@ export interface ProjectKanbanConfig {
 export interface ProjectImageMcpConfig {
   port?: number;
   loadScript: string;
+  startupMode?: ProjectPharoMcpStartupMode;
 }
+
+export type ProjectPharoMcpStartupMode = "required" | "optional" | "disabled";
 
 export interface ProjectPharoMcpRepositoryConfig {
   githubUser: string;
@@ -24,6 +27,7 @@ export interface ProjectPharoMcpRepositoryConfig {
 export interface ProjectPreparedImageMcpConfig {
   loadScript: string;
   repository?: ProjectPharoMcpRepositoryConfig;
+  startupMode?: ProjectPharoMcpStartupMode;
 }
 
 export type ProjectImageGitTransport = "ssh" | "https" | "http";
@@ -283,6 +287,12 @@ export function projectConfigId(config: Pick<ProjectConfig, "id">): string {
   return config.id;
 }
 
+export function projectMcpStartupMode(
+  mcp: Pick<ProjectImageMcpConfig, "startupMode">,
+): ProjectPharoMcpStartupMode {
+  return mcp.startupMode ?? "required";
+}
+
 function stringField(
   object: Record<string, unknown>,
   key: string,
@@ -369,6 +379,25 @@ function optionalPortField(
   }
 
   issues.push(`${pathPrefix}.${key} must be an integer between 1 and 65535`);
+  return undefined;
+}
+
+function optionalPharoMcpStartupModeField(
+  object: Record<string, unknown>,
+  key: string,
+  issues: string[],
+  pathPrefix: string,
+): ProjectPharoMcpStartupMode | undefined {
+  const value = object[key];
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (value === "required" || value === "optional" || value === "disabled") {
+    return value;
+  }
+
+  issues.push(`${pathPrefix}.${key} must be one of required, optional, disabled`);
   return undefined;
 }
 
@@ -632,6 +661,12 @@ function parseImageMcp(
   return {
     port: optionalPortField(value, "port", issues, `${pathPrefix}.mcp`),
     loadScript: stringField(value, "loadScript", issues, `${pathPrefix}.mcp`),
+    startupMode: optionalPharoMcpStartupModeField(
+      value,
+      "startupMode",
+      issues,
+      `${pathPrefix}.mcp`,
+    ),
   };
 }
 
@@ -676,6 +711,12 @@ function parsePreparedImageMcp(
   return {
     loadScript: stringField(value, "loadScript", issues, `${pathPrefix}.mcp`),
     repository: parsePharoMcpRepository(value.repository, issues, `${pathPrefix}.mcp`),
+    startupMode: optionalPharoMcpStartupModeField(
+      value,
+      "startupMode",
+      issues,
+      `${pathPrefix}.mcp`,
+    ),
   };
 }
 
@@ -1462,6 +1503,10 @@ function collectDuplicates(
 function collectDuplicatePorts(images: ProjectImageConfig[], issues: string[]): void {
   const seen = new Set<number>();
   for (const image of images) {
+    if (projectMcpStartupMode(image.mcp) === "disabled") {
+      continue;
+    }
+
     const port = image.mcp.port;
     if (!port) {
       continue;
@@ -1501,6 +1546,10 @@ function collectDuplicateActiveRepositoryWorkspacePaths(
 function validateImagePortPolicy(config: ProjectConfig, issues: string[]): void {
   const allocation = resolveProjectRuntimePolicy(config).imagePorts.allocation;
   config.images.forEach((image, index) => {
+    if (projectMcpStartupMode(image.mcp) === "disabled") {
+      return;
+    }
+
     if (allocation === "dynamic-only" && image.mcp.port !== undefined) {
       issues.push(
         `images[${index}].mcp.port cannot be used when ` +
