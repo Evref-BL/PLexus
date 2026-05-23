@@ -473,6 +473,7 @@ describe("scoped pharo launcher facade", () => {
       projectRoot,
       stateRoot,
       workspaceId: "worktree-a",
+      now: () => new Date("2026-05-23T12:00:00.000Z"),
       fetch: async (url, init) => {
         calls.push("snapshot");
         expect(url).toBe("http://127.0.0.1:7432/mcp");
@@ -484,12 +485,26 @@ describe("scoped pharo launcher facade", () => {
             };
           };
         };
+        const code = body.params.arguments.code;
         expect(body.params).toEqual({
           name: "evaluate",
           arguments: {
-            code: "Smalltalk snapshot: true andQuit: false.",
+            code,
           },
         });
+        expect(code).toContain("forkAt: Processor userBackgroundPriority");
+        expect(code).toContain("server stop");
+        expect(code).toContain(
+          "Smalltalk globals removeKey: #PLexusMCPServer",
+        );
+        expect(code).toContain("Smalltalk snapshot: true andQuit: false.");
+        const statusPathMatch = code.match(
+          /snapshotStatusFile := '([^']+)' asFileReference/,
+        );
+        expect(statusPathMatch?.[1]).toContain(
+          "display-mode-snapshot-dev-1779537600000.properties",
+        );
+        fs.writeFileSync(statusPathMatch![1]!, "status=saved\r", "utf8");
         return new Response(
           JSON.stringify({
             jsonrpc: "2.0",

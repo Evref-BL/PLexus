@@ -1,3 +1,5 @@
+import fs from "node:fs";
+
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import {
@@ -38,16 +40,21 @@ import {
   projectStateRootForConfig,
   renderProjectImageName,
   runtimeStatusForImages,
+  sanitizeRuntimeId,
   saveProjectState,
   type ProjectImageState,
   type ProjectState,
 } from "./projectState.js";
+import { projectScriptsDirectoryPath } from "./projectStartupScript.js";
+import { dirnamePathLike, joinPathLike } from "./pathStyle.js";
 
 const stringSchema = { type: "string", minLength: 1 } as const;
 const displayModeSchema = {
   type: "string",
   enum: ["headless", "interactive"],
 } as const;
+const displayModeSnapshotTimeoutMs = 60_000;
+const displayModeSnapshotPollIntervalMs = 100;
 
 function objectSchema(
   properties: Record<string, unknown>,
@@ -332,8 +339,96 @@ function endpointUrl(endpoint: NonNullable<ProjectImageState["mcpEndpoint"]>): s
   return `http://${host}:${endpoint.port}${endpoint.path}`;
 }
 
+function smalltalkString(value: string): string {
+  return `'${value.replaceAll("'", "''")}'`;
+}
+
+function smalltalkPath(value: string): string {
+  return smalltalkString(value.replace(/\\/g, "/"));
+}
+
 function isObject(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function defaultSleep(durationMs: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, durationMs));
+}
+
+function displayModeSnapshotStatusPath(
+  scope: ResolvedScope,
+  imageId: string,
+  now: Date,
+): string {
+  const scriptsDirectory = projectScriptsDirectoryPath({
+    projectRoot: scope.projectRoot,
+    projectId: scope.projectId,
+    workspaceId: scope.workspaceId,
+    stateRoot: scope.stateRoot,
+  });
+  return joinPathLike(
+    scriptsDirectory,
+    `display-mode-snapshot-${sanitizeRuntimeId(imageId)}-${now.getTime()}.properties`,
+  );
+}
+
+function displayModeSnapshotScript(statusPath: string): string {
+  return `| snapshotStatusFile |
+snapshotStatusFile := ${smalltalkPath(statusPath)} asFileReference.
+[
+  (Delay forMilliseconds: 500) wait.
+  [
+    | server |
+    server := Smalltalk globals at: #PLexusMCPServer ifAbsent: [ nil ].
+    server ifNotNil: [
+      [ server stop ] on: Error do: [ :error | nil ].
+      Smalltalk globals removeKey: #PLexusMCPServer ifAbsent: [ nil ] ].
+    Smalltalk snapshot: true andQuit: false.
+    snapshotStatusFile writeStreamDo: [ :stream |
+      stream nextPutAll: 'status=saved'; cr ]
+  ] on: Error do: [ :error |
+    snapshotStatusFile writeStreamDo: [ :stream |
+      stream nextPutAll: 'status=error'; cr.
+      stream nextPutAll: 'message='; nextPutAll: error asString; cr ] ]
+] forkAt: Processor userBackgroundPriority.
+'display mode snapshot scheduled'.`;
+}
+
+function parseProperties(contents: string): Record<string, string> {
+  const result: Record<string, string> = {};
+  for (const line of contents.split(/\r\n|\r|\n/)) {
+    const separator = line.indexOf("=");
+    if (separator < 0) {
+      continue;
+    }
+    result[line.slice(0, separator)] = line.slice(separator + 1);
+  }
+  return result;
+}
+
+async function waitForDisplayModeSnapshotStatus(
+  imageId: string,
+  statusPath: string,
+): Promise<void> {
+  const deadline = Date.now() + displayModeSnapshotTimeoutMs;
+  while (Date.now() <= deadline) {
+    if (fs.existsSync(statusPath)) {
+      const status = parseProperties(fs.readFileSync(statusPath, "utf8"));
+      if (status.status === "saved") {
+        return;
+      }
+      if (status.status === "error") {
+        throw new ScopedPharoLauncherError(
+          `Image ${imageId} snapshot failed: ${status.message ?? "unknown error"}`,
+        );
+      }
+    }
+    await defaultSleep(displayModeSnapshotPollIntervalMs);
+  }
+
+  throw new ScopedPharoLauncherError(
+    `Image ${imageId} snapshot did not finish within ${displayModeSnapshotTimeoutMs}ms`,
+  );
 }
 
 function stateWithCreatedImage(
@@ -390,6 +485,7 @@ export class ScopedPharoLauncher {
   }
 
   private async snapshotImageBeforeDisplayModeRestart(
+    scope: ResolvedScope,
     imageState: ProjectImageState,
   ): Promise<DisplayModeRestartSnapshot> {
     const endpoint = imageMcpSnapshotEndpoint(imageState);
@@ -399,8 +495,19 @@ export class ScopedPharoLauncher {
       );
     }
 
+    const statusPath = displayModeSnapshotStatusPath(
+      scope,
+      imageState.id,
+      this.options.now?.() ?? new Date(),
+    );
+    fs.mkdirSync(dirnamePathLike(statusPath), { recursive: true });
+    fs.rmSync(statusPath, { force: true });
+
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 60_000);
+    const timeout = setTimeout(
+      () => controller.abort(),
+      displayModeSnapshotTimeoutMs,
+    );
     try {
       const response = await (this.options.fetch ?? fetch)(endpointUrl(endpoint), {
         method: "POST",
@@ -415,7 +522,7 @@ export class ScopedPharoLauncher {
           params: {
             name: "evaluate",
             arguments: {
-              code: "Smalltalk snapshot: true andQuit: false.",
+              code: displayModeSnapshotScript(statusPath),
             },
           },
         }),
@@ -444,6 +551,8 @@ export class ScopedPharoLauncher {
           `Image ${imageState.id} snapshot tool returned an error`,
         );
       }
+
+      await waitForDisplayModeSnapshotStatus(imageState.id, statusPath);
 
       return {
         attempted: true,
@@ -688,7 +797,7 @@ export class ScopedPharoLauncher {
     if (before.image.status === "running") {
       if (imageState) {
         snapshotBeforeRestart =
-          await this.snapshotImageBeforeDisplayModeRestart(imageState);
+          await this.snapshotImageBeforeDisplayModeRestart(scope, imageState);
       }
       await this.stopImage(imageId);
     }
