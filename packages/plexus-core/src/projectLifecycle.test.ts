@@ -512,7 +512,7 @@ describe("project lifecycle tools", () => {
               imageId: "dev",
               status: "running",
               route: {
-                serverName: "gateway",
+                serverName: "pharo_gateway",
                 requiredArgument: "imageId",
                 imageId: "dev",
               },
@@ -1301,7 +1301,7 @@ describe("project lifecycle tools", () => {
             ),
           },
           agentAccess: {
-            expectedSurface: "gateway",
+            expectedSurface: "pharo_gateway",
             gatewayRouted: true,
             portsHiddenFromAgents: true,
           },

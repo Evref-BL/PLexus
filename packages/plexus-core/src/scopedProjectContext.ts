@@ -95,7 +95,7 @@ export interface ScopedImageCleanupMetadata {
 }
 
 export interface ScopedImageGatewayRouteMetadata {
-  serverName: "gateway";
+  serverName: "pharo_gateway";
   requiredArgument: "imageId";
   imageId: string;
   routeReference: {
@@ -310,7 +310,7 @@ function routeMetadata(
   imageId: string,
 ): ScopedImageGatewayRouteMetadata {
   return {
-    serverName: "gateway",
+    serverName: "pharo_gateway",
     requiredArgument: "imageId",
     imageId,
     routeReference: {
@@ -321,7 +321,7 @@ function routeMetadata(
     imageIdSource:
       "Read images[].imageId from this scoped context",
     recordHint:
-      "Store the selected imageId with the scoped project/workspace/target before calling gateway tools",
+      "Store the selected imageId with the scoped project/workspace/target before calling pharo_gateway tools",
   };
 }
 

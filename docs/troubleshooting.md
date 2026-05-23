@@ -68,7 +68,7 @@ If scoped launcher tools fail, check:
 
 ## Image MCP Unhealthy
 
-If an image starts but `gateway` cannot route to it, check the image-local MCP
+If an image starts but `pharo_gateway` cannot route to it, check the image-local MCP
 worker load path and generated startup script under the workspace runtime state:
 
 ```text

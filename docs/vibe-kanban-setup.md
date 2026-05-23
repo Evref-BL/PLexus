@@ -93,7 +93,7 @@ PHARO_LAUNCHER_MCP_ENTRY=/srv/git/pharo-launcher-mcp/dist/index.js
 PLexus-managed Kanban agents should see two Pharo-facing MCP surfaces:
 
 - `pharo-launcher` for workspace-scoped image lifecycle.
-- `gateway` for routed image-local code tools.
+- `pharo_gateway` for routed image-local code tools.
 
 PLexus/operator route-control is a separate trusted surface.
 It is for route registration, route status, and stale-route cleanup, and should
@@ -104,11 +104,11 @@ The agent workflow is:
 ```text
 list/create/start an image with pharo-launcher
 load or pull the project in that image
-pass imageId to every gateway code tool call
-run tests and inspect/edit code through gateway
+pass imageId to every pharo_gateway code tool call
+run tests and inspect/edit code through pharo_gateway
 ```
 
-`gateway.tools/list` is stable for the project and is not rewritten when images
+`pharo_gateway.tools/list` is stable for the project and is not rewritten when images
 start or stop. Image selection is data, carried by the `imageId` argument.
 
 See `docs/user/agent-pharo-access.md` for the full workflow and routing error
@@ -133,7 +133,7 @@ these managed server names. This Windows example keeps Windows path values:
         "PLEXUS_STATE_ROOT": "C:\\work\\.plexus-state"
       }
     },
-    "gateway": {
+    "pharo_gateway": {
       "command": "plexus-gateway",
       "args": ["--stdio"],
       "env": {
@@ -163,7 +163,7 @@ paths:
         "PLEXUS_STATE_ROOT": "/srv/git/.plexus-state"
       }
     },
-    "gateway": {
+    "pharo_gateway": {
       "env": {
         "PLEXUS_PROJECT_ROOT": "/srv/git/worktree",
         "PLEXUS_STATE_ROOT": "/srv/git/.plexus-state"
@@ -174,7 +174,7 @@ paths:
 ```
 
 The `pharo-launcher` entry starts the PLexus-scoped launcher facade, not raw
-pharo-launcher-mcp. The `gateway` entry starts the gateway in agent-facing Pharo
+pharo-launcher-mcp. The `pharo_gateway` entry starts the gateway in agent-facing Pharo
 proxy mode with the project tool contract serialized in
 `PLEXUS_PHARO_TOOLS_JSON`; the gateway adds the required `imageId` routing field
 to those tools.
@@ -183,7 +183,7 @@ Raw `plexus_route_to_image` is not part of this normal agent config and remains
 behind explicit raw-routing opt-in for route-control/debug use.
 
 When the gateway is deployed as an HTTP service, use one gateway process with
-two MCP paths over the same route table: `/mcp` for the agent-facing `gateway`
+two MCP paths over the same route table: `/mcp` for the agent-facing `pharo_gateway`
 surface and `/control-mcp` for trusted route-control.
 
 ## Repository Scripts

@@ -13,11 +13,11 @@ surfaces:
   inspecting the current PLexus runtime target.
 - `pharo-launcher`: scoped image lifecycle tools for the current PLexus
   project/workspace.
-- `gateway`: typed Pharo code tools for a selected image, exposed through a
+- `pharo_gateway`: typed Pharo code tools for a selected image, exposed through a
   stable project-wide Pharo MCP contract.
 
 The agent uses `pharo-launcher` to list, create, start, and stop scoped images.
-It then passes the returned `imageId` to `gateway` tool calls. The gateway
+It then passes the returned `imageId` to `pharo_gateway` tool calls. The gateway
 facade strips routing-only fields such as `imageId` before forwarding the call
 to the selected image MCP server.
 
@@ -35,9 +35,9 @@ For a Pharo code task, an agent should follow this sequence:
 4. Create or start the needed image through `pharo-launcher` if no suitable
    image is running.
 5. Load or pull the project in that image using the project-specific Pharo tools
-   exposed by `gateway`.
-6. Pass the selected `imageId` into every `gateway` call.
-7. Use `gateway` for normal code work: inspect classes, edit methods, run tests,
+   exposed by `pharo_gateway`.
+6. Pass the selected `imageId` into every `pharo_gateway` call.
+7. Use `pharo_gateway` for normal code work: inspect classes, edit methods, run tests,
    and evaluate Smalltalk.
 8. Stop or leave images according to the workspace policy.
 
@@ -47,9 +47,9 @@ Example flow:
 pharo-launcher.image_list()
   -> [{ imageId: "dev", status: "running", health: { routable: true } }]
 
-gateway.find_classes({ imageId: "dev", pattern: "SamplePackage*" })
-gateway.compile_method({ imageId: "dev", className: "SampleClass", selector: "example", source: "example ^ 42" })
-gateway.run_tests({ imageId: "dev", packageName: "SamplePackage-Tests" })
+pharo_gateway.find_classes({ imageId: "dev", pattern: "SamplePackage*" })
+pharo_gateway.compile_method({ imageId: "dev", className: "SampleClass", selector: "example", source: "example ^ 42" })
+pharo_gateway.run_tests({ imageId: "dev", packageName: "SamplePackage-Tests" })
 ```
 
 If no image is running:
@@ -57,7 +57,7 @@ If no image is running:
 ```text
 pharo-launcher.image_create({ imageId: "dev", profileId: "pharo-13-default" })
 pharo-launcher.image_start({ imageId: "dev" })
-gateway.project_load({ imageId: "dev" })
+pharo_gateway.project_load({ imageId: "dev" })
 ```
 
 The exact Pharo tool names come from the project Pharo MCP contract. The routing
@@ -86,8 +86,8 @@ operate on an arbitrary Pharo Launcher image by providing a raw image name,
 image path, VM id, process id, or filesystem location.
 
 PLexus generates the workspace MCP entries for this scope. The managed server
-names are `pharo-launcher` and `gateway`; unrelated user MCP entries should be
-preserved when those managed entries are updated.
+names are `pharo-launcher` and `pharo_gateway`; unrelated user MCP entries
+should be preserved when those managed entries are updated.
 
 Generated path environment values preserve the path style supplied by the
 caller. Windows worktree and state roots stay in `C:\...` form, while POSIX
@@ -134,7 +134,7 @@ The exact record can grow, but it should keep these properties:
 - `launcherImageName` is trusted diagnostic output, not normal agent-facing
   context and not a caller-controlled route key.
 - `pharoMcpContract.status` is explicit so agents can tell whether an image can
-  be used through the `gateway` facade.
+  be used through the `pharo_gateway` facade.
 
 ## Agent-Facing Tools
 
@@ -245,19 +245,20 @@ PLexus owns the scoped `pharo-launcher` facade because it owns workspace state,
 image naming policy, startup script generation, port allocation, and contract
 compatibility.
 
-PLexus Gateway remains routing-only. Its agent-facing `gateway` surface routes
-typed Pharo MCP calls to image MCP servers, but it must not gain a dependency on
-pharo-launcher-mcp to implement image lifecycle operations.
+PLexus Gateway remains routing-only. Its agent-facing `pharo_gateway` server
+routes typed Pharo MCP calls to image MCP servers, but it must not gain a
+dependency on pharo-launcher-mcp to implement image lifecycle operations.
 
 The gateway also has a trusted route-control surface for registering,
 unregistering, inspecting, and cleaning up routes. That control surface should
-share the same in-memory route table as the agent-facing `gateway` surface, for
-example through `/control-mcp` and `/mcp` paths in one HTTP gateway process.
+share the same in-memory route table as the agent-facing `pharo_gateway`
+server, for example through `/control-mcp` and `/mcp` paths in one HTTP gateway
+process.
 
-## Relationship To `gateway`
+## Relationship To `pharo_gateway`
 
-The `pharo-launcher` surface returns `imageId` handles. The separate `gateway`
-surface consumes those handles:
+The `pharo-launcher` surface returns `imageId` handles. The separate
+`pharo_gateway` server consumes those handles:
 
 ```json
 {
@@ -274,23 +275,23 @@ server. Its `tools/list` must remain stable while images are added, stopped, or
 restarted.
 
 Gateway status and the PLexus scoped context both include route metadata for
-each image. That metadata names the `gateway` server, the required `imageId`
-argument, the route reference (`projectId`, `workspaceId`, and `targetId`), and
-the place a subagent should record the selected image handle before making
-Pharo tool calls.
+each image. That metadata names the `pharo_gateway` server, the required
+`imageId` argument, the route reference (`projectId`, `workspaceId`, and
+`targetId`), and the place a subagent should record the selected image handle
+before making Pharo tool calls.
 
 ## Why The Tool List Is Stable
 
-The gateway must not rewrite `gateway.tools/list` when images appear,
+The gateway must not rewrite `pharo_gateway.tools/list` when images appear,
 disappear, or restart. MCP clients can cache tool lists, and dynamically
 changing tool names or schemas based on runtime image topology makes agent
 behavior brittle.
 
-Instead, `gateway.tools/list` is generated from the project-wide Pharo MCP
+Instead, `pharo_gateway.tools/list` is generated from the project-wide Pharo MCP
 contract. Runtime image state is represented in data:
 
 - `pharo-launcher` reports which images exist and whether they are routable.
-- Each `gateway` call carries `imageId`.
+- Each `pharo_gateway` call carries `imageId`.
 - PLexus rejects unavailable images, images outside the workspace, and contract
   mismatches before forwarding.
 
@@ -311,4 +312,4 @@ Agents should treat routing errors as runtime state, not as missing tools:
 
 The invariant is strict: one PLexus project equals one Pharo MCP contract. If an
 image has a different contract, it must not become routable through the project
-`gateway` facade.
+`pharo_gateway` facade.

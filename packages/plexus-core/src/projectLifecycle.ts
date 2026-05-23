@@ -328,7 +328,7 @@ export interface ProjectLifecycleImagePortPolicyDiagnostics {
 }
 
 export interface ProjectLifecycleAgentAccessDiagnostics {
-  expectedSurface: "gateway";
+  expectedSurface: "pharo_gateway";
   gatewayRouted: boolean;
   portsHiddenFromAgents: boolean;
   reason: string;
@@ -995,11 +995,11 @@ function agentAccessDiagnostics(
   gateway: ProjectGatewayState,
 ): ProjectLifecycleAgentAccessDiagnostics {
   return {
-    expectedSurface: "gateway",
+    expectedSurface: "pharo_gateway",
     gatewayRouted: Boolean(gateway.endpoint),
     portsHiddenFromAgents: true,
     reason:
-      "Normal agent Pharo MCP calls should use gateway imageId routing; image MCP ports are diagnostics only.",
+      "Normal agent Pharo MCP calls should use pharo_gateway imageId routing; image MCP ports are diagnostics only.",
   };
 }
 

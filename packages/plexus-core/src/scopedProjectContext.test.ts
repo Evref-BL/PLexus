@@ -306,7 +306,7 @@ describe("scoped project context", () => {
     });
 
     expect(context.images[0].route).toEqual({
-      serverName: "gateway",
+      serverName: "pharo_gateway",
       requiredArgument: "imageId",
       imageId: "dev",
       routeReference: {
@@ -317,7 +317,7 @@ describe("scoped project context", () => {
       imageIdSource:
         "Read images[].imageId from this scoped context",
       recordHint:
-        "Store the selected imageId with the scoped project/workspace/target before calling gateway tools",
+        "Store the selected imageId with the scoped project/workspace/target before calling pharo_gateway tools",
     });
   });
 

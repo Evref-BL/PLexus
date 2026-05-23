@@ -30,10 +30,10 @@ Routing-only MCP server.
 - Explicit stale-route cleanup for routes whose runtime state file is gone
 - Forwarding MCP calls to image-scoped MCP servers through registered image
   endpoints, with fixed ports retained only as compatibility fallback
-- The stable project-wide `gateway` facade that routes typed Pharo MCP calls by
+- The stable project-wide `pharo_gateway` facade that routes typed Pharo MCP calls by
   explicit `imageId`
 - Route metadata that tells subagents where the scoped `imageId` comes from and
-  how to carry it into gateway tool calls
+  how to carry it into pharo_gateway tool calls
 
 **Must not depend on**
 
@@ -45,7 +45,7 @@ The gateway does not read `plexus.project.json` or workspace state from disk to 
 In HTTP service mode, this should be one gateway process with two MCP paths that
 share the same in-memory route table:
 
-- `/mcp`: agent-facing `gateway` tools for typed Pharo MCP calls with
+- `/mcp`: agent-facing `pharo_gateway` tools for typed Pharo MCP calls with
   explicit `imageId`.
 - `/control-mcp`: trusted route-control tools for PLexus/operator route
   registration, status, and cleanup.
@@ -119,12 +119,12 @@ Raw gateway escape hatch:
 Agent-facing MCP surfaces:
 
 - `pharo-launcher`: belongs to PLexus orchestration. It is a scoped facade over pharo-launcher-mcp and must not expose raw host-wide PharoLauncher mutation.
-- `gateway`: belongs to the routing layer. It is a stable facade over the
+- `pharo_gateway`: belongs to the routing layer. It is a stable facade over the
   project-wide Pharo MCP contract and routes calls by explicit `imageId`.
 
-Generated agent config exposes `gateway`; route-control tools stay out of
+Generated agent config exposes `pharo_gateway`; route-control tools stay out of
 normal agent-facing MCP config. Normal HTTP deployments expose the agent-facing
-`gateway` surface at `/mcp` and the trusted route-control surface at
+`pharo_gateway` server at `/mcp` and the trusted route-control surface at
 `/control-mcp`.
 
 See `docs/user/agent-pharo-access.md` for the scoped launcher design.
@@ -136,4 +136,4 @@ Use these rules of thumb:
 - **Touches PharoLauncher or its CLI contract** -> pharo-launcher-mcp
 - **Scopes PharoLauncher operations to a PLexus project/workspace, opens/closes a project/workspace, manages state, allocates ports, writes scripts, polls health** -> PLexus core
 - **Registers routes, reports registered targets, prunes stale routes** -> PLexus Gateway route-control surface
-- **Forwards typed Pharo tool calls to an image MCP server by explicit `imageId`** -> PLexus Gateway agent-facing `gateway` surface
+- **Forwards typed Pharo tool calls to an image MCP server by explicit `imageId`** -> PLexus Gateway agent-facing `pharo_gateway` server

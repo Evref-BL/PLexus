@@ -39,7 +39,7 @@ PLexus owns:
 - project open, close, status, image-cache, and rescue workflows
 - startup script generation for image-local MCP workers
 - route registration through PLexus Gateway route-control
-- scoped `pharo-launcher` and `gateway` MCP surfaces for agents
+- scoped `pharo-launcher` and `pharo_gateway` MCP surfaces for agents
 
 PLexus does not own:
 
@@ -65,7 +65,7 @@ runner.
   use the same state root so PLexus can avoid image-name and port collisions.
 - **Route-control** is the trusted gateway surface used by PLexus or operators
   to register, inspect, and clean up routes.
-- **Gateway** is the agent-facing Pharo MCP proxy. It routes typed image-local
+- **Pharo gateway** is the agent-facing Pharo MCP proxy. It routes typed image-local
   tool calls by explicit `imageId`.
 
 ## Requirements
@@ -169,9 +169,9 @@ Start one gateway process with separate MCP paths:
 plexus-gateway
 ```
 
-In HTTP service mode, `/mcp` is the agent-facing `gateway` surface and
-`/control-mcp` is the trusted route-control surface. Both paths share the same
-in-memory route table.
+In HTTP service mode, `/mcp` serves the agent-facing `pharo_gateway` MCP server
+and `/control-mcp` is the trusted route-control surface. Both paths share the
+same in-memory route table.
 
 ## Safety Notes
 
@@ -185,8 +185,8 @@ cleanup plan.
 
 Do not expose route-control tools to normal implementation workers. Agents
 should receive `plexus_project`, scoped `pharo-launcher`, and agent-facing
-`gateway` surfaces; route registration and cleanup belong to PLexus core or a
-trusted operator.
+`pharo_gateway` surfaces; route registration and cleanup belong to PLexus core
+or a trusted operator.
 
 Use native absolute paths for the host running PLexus. Generated PLexus and
 agent MCP configuration preserves Windows-style paths such as

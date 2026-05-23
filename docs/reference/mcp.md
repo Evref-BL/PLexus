@@ -26,7 +26,7 @@ plexus-gateway
 In HTTP service mode, one gateway process exposes:
 
 ```text
-/mcp          agent-facing gateway tools
+/mcp          agent-facing pharo_gateway tools
 /control-mcp trusted route-control tools
 ```
 
@@ -65,9 +65,9 @@ pharo_launcher_image_stop
 These tools must not provide raw host-wide image, VM, template, or process
 mutation unless project policy explicitly allows it.
 
-## Gateway Tools
+## Pharo Gateway Tools
 
-The `gateway` surface is the agent-facing Pharo MCP proxy.
+The `pharo_gateway` server is the agent-facing Pharo MCP proxy.
 
 Its tools come from the project-wide Pharo MCP contract. Each routed call adds
 an explicit `imageId` argument at the PLexus facade boundary:
@@ -104,4 +104,4 @@ default and exposed only when explicitly enabled with:
 PLEXUS_EXPOSE_RAW_ROUTING_TOOL=true
 ```
 
-Normal agents should use typed `gateway` tools with `imageId`.
+Normal agents should use typed `pharo_gateway` tools with `imageId`.
