@@ -1,4 +1,5 @@
 import http from "node:http";
+import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 
 export type ImageMcpEndpointTransport = "http";
 
@@ -20,6 +21,7 @@ export interface ImageMcpRoute {
 }
 
 export interface ImageMcpToolRouter {
+  listTools?(route: ImageMcpRoute): Promise<Tool[]>;
   callTool(
     route: ImageMcpRoute,
     toolName: string,
@@ -42,6 +44,25 @@ export class StreamableHttpImageMcpToolRouter implements ImageMcpToolRouter {
     this.host = options.host ?? "127.0.0.1";
     this.path = options.path ?? "/";
     this.timeoutMs = options.timeoutMs ?? 60_000;
+  }
+
+  async listTools(route: ImageMcpRoute): Promise<Tool[]> {
+    const response = await this.postJsonRpc(this.endpointForRoute(route), {
+      jsonrpc: "2.0",
+      id: `plexus-${route.targetId}-${route.imageId}-tools-${Date.now()}`,
+      method: "tools/list",
+    });
+
+    if ("error" in response) {
+      throw new Error(`MCP error ${jsonRpcErrorText(response.error)}`);
+    }
+
+    const result = response.result;
+    if (!isRecord(result) || !Array.isArray(result.tools)) {
+      throw new Error("MCP tools/list response did not include result.tools");
+    }
+
+    return result.tools.map(toolFromMcpListItem);
   }
 
   async callTool(
@@ -173,6 +194,20 @@ export class StreamableHttpImageMcpToolRouter implements ImageMcpToolRouter {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function toolFromMcpListItem(value: unknown, index: number): Tool {
+  if (!isRecord(value) || typeof value.name !== "string") {
+    throw new Error(`MCP tools/list returned an invalid tool at index ${index}`);
+  }
+
+  if (!isRecord(value.inputSchema)) {
+    throw new Error(
+      `MCP tools/list returned tool ${value.name} without an inputSchema object`,
+    );
+  }
+
+  return value as Tool;
 }
 
 function jsonRpcErrorText(value: unknown): string {

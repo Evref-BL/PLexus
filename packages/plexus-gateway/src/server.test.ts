@@ -1,8 +1,13 @@
 import http from "node:http";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import { afterEach, describe, expect, it } from "vitest";
 import { PlexusGateway, type GatewayToolResult } from "./gateway.js";
+import type {
+  ImageMcpRoute,
+  ImageMcpToolRouter,
+} from "./imageMcpRouter.js";
 import {
   createGatewayServerWithOptions,
   createGatewayFromEnvironment,
@@ -76,6 +81,40 @@ class DirectRouteGateway extends PlexusGateway {
       },
     };
   }
+}
+
+class MutableToolListImageRouter implements ImageMcpToolRouter {
+  readonly listCalls: ImageMcpRoute[] = [];
+
+  constructor(public tools: Tool[]) {}
+
+  async listTools(route: ImageMcpRoute): Promise<Tool[]> {
+    this.listCalls.push(route);
+    return this.tools;
+  }
+
+  async callTool(): Promise<unknown> {
+    return {
+      content: [{ type: "text" as const, text: "routed output" }],
+    };
+  }
+}
+
+function repositoryOperationTool(operations: string[]): Tool {
+  return {
+    name: "edit-repository",
+    inputSchema: {
+      type: "object",
+      properties: {
+        operation: {
+          type: "string",
+          enum: operations,
+        },
+      },
+      required: ["operation"],
+      additionalProperties: false,
+    },
+  };
 }
 
 async function postMcp(port: number, method: string): Promise<unknown> {
@@ -229,6 +268,94 @@ describe("gateway server", () => {
       expect(toolList.tools.map((tool) => tool.name)).not.toContain(
         "plexus_gateway_status",
       );
+    } finally {
+      await client.close();
+      await server.close();
+    }
+  });
+
+  it("refreshes agent-facing Pharo tool schemas from registered image routes", async () => {
+    const imageRouter = new MutableToolListImageRouter([
+      repositoryOperationTool(["create"]),
+    ]);
+    const gateway = new PlexusGateway({
+      imageRouter,
+      pharoTools: [repositoryOperationTool(["create", "update", "pull"])],
+      pharoScope: {
+        targetId: runningState.targetId,
+      },
+    });
+    const server = createGatewayServerWithOptions(gateway, {
+      surface: "gateway",
+    });
+    const client = new Client(
+      {
+        name: "plexus-gateway-test",
+        version: "0.0.0",
+      },
+      {
+        capabilities: {},
+      },
+    );
+    const [clientTransport, serverTransport] =
+      InMemoryTransport.createLinkedPair();
+
+    await expect(
+      gateway.handleTool("plexus_gateway_register_target", {
+        projectRoot: "C:/dev/code/project-123",
+        statePath: "state.json",
+        state: runningState,
+      }),
+    ).resolves.toMatchObject({ ok: true });
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+
+    try {
+      await expect(client.listTools()).resolves.toMatchObject({
+        tools: [
+          expect.objectContaining({
+            name: "edit-repository",
+            inputSchema: expect.objectContaining({
+              properties: expect.objectContaining({
+                operation: expect.objectContaining({
+                  enum: ["create"],
+                }),
+              }),
+              required: ["imageId", "operation"],
+            }),
+          }),
+        ],
+      });
+
+      imageRouter.tools = [repositoryOperationTool(["create", "fetch"])];
+
+      await expect(client.listTools()).resolves.toMatchObject({
+        tools: [
+          expect.objectContaining({
+            name: "edit-repository",
+            inputSchema: expect.objectContaining({
+              properties: expect.objectContaining({
+                operation: expect.objectContaining({
+                  enum: ["create", "fetch"],
+                }),
+              }),
+              required: ["imageId", "operation"],
+            }),
+          }),
+        ],
+      });
+      expect(imageRouter.listCalls).toEqual([
+        expect.objectContaining({
+          targetId: "project-123--worktree-a",
+          imageId: "dev",
+          port: 7123,
+        }),
+        expect.objectContaining({
+          targetId: "project-123--worktree-a",
+          imageId: "dev",
+          port: 7123,
+        }),
+      ]);
     } finally {
       await client.close();
       await server.close();
