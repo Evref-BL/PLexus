@@ -160,6 +160,31 @@ describe("project config", () => {
     ]);
   });
 
+  it("parses image display mode defaults", () => {
+    const config = validProjectConfig();
+    (config.images[0] as { displayMode?: string }).displayMode = "interactive";
+
+    expect(parseProjectConfig(config).images.map((image) => image.displayMode))
+      .toEqual(["interactive", undefined]);
+  });
+
+  it("rejects invalid image display mode defaults", () => {
+    const config = validProjectConfig();
+    (config.images[0] as { displayMode?: string }).displayMode = "visible";
+
+    expect(() => parseProjectConfig(config)).toThrow(ProjectConfigError);
+
+    try {
+      parseProjectConfig(config);
+    } catch (error) {
+      expect((error as ProjectConfigError).issues).toEqual(
+        expect.arrayContaining([
+          "images[0].displayMode must be one of headless, interactive",
+        ]),
+      );
+    }
+  });
+
   it("rejects invalid Pharo MCP startup modes", () => {
     const config = validProjectConfig();
     (config.images[0].mcp as { startupMode?: string }).startupMode = "plain";

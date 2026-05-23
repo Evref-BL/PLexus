@@ -8,7 +8,7 @@ import { startProjectLifecycleServer } from "./server.js";
 function usage(): string {
   return [
     "Usage:",
-    "  plexus project open <path> [--workspace-id <id>] [--target-id <id>] [--state-root <path>]",
+    "  plexus project open <path> [--workspace-id <id>] [--target-id <id>] [--state-root <path>] [--display-mode <headless|interactive>]",
     "  plexus project close <path> [--workspace-id <id>] [--state-root <path>] [--repository-workspace-cleanup-policy <preserve|archive|delete-disposable>] [--repository-workspace-archive-root <path>]",
     "  plexus project status <path> [--workspace-id <id>] [--state-root <path>]",
     "  plexus mcp project",
@@ -29,6 +29,7 @@ interface ParsedCommand {
   stateRoot?: string;
   workspaceId?: string;
   targetId?: string;
+  displayMode?: "headless" | "interactive";
   repositoryWorkspaceCleanupPolicy?: "preserve" | "archive" | "delete-disposable";
   repositoryWorkspaceArchiveRoot?: string;
 }
@@ -61,6 +62,12 @@ function parseCommand(argv: string[]): ParsedCommand {
         break;
       case "--target-id":
         parsed.targetId = value;
+        break;
+      case "--display-mode":
+        if (value !== "headless" && value !== "interactive") {
+          throw new Error("--display-mode must be headless or interactive");
+        }
+        parsed.displayMode = value;
         break;
       case "--repository-workspace-cleanup-policy":
         if (
@@ -140,6 +147,7 @@ async function main(argv: string[]): Promise<number> {
         stateRoot,
         workspaceId,
         targetId: parsed.targetId ?? process.env.PLEXUS_TARGET_ID,
+        displayMode: parsed.displayMode,
       });
       if (!lifecycleResult.ok || !lifecycleResult.data) {
         console.error(JSON.stringify(lifecycleResult, null, 2));

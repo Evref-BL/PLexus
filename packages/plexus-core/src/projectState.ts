@@ -1,9 +1,11 @@
 import fs from "node:fs";
 import {
+  projectImageDisplayMode,
   projectConfigId,
   projectMcpStartupMode,
   resolveProjectRuntimePolicy,
   type ProjectConfig,
+  type ProjectImageDisplayMode,
   type ProjectImageConfig,
   type ProjectImageRepositoryWorkspaceMaterializationStrategy,
   type ProjectGatewayMode,
@@ -148,6 +150,7 @@ export interface ProjectImagePharoMcpLoadStatus {
 export interface ProjectImageState {
   id: string;
   imageName: string;
+  displayMode?: ProjectImageDisplayMode;
   assignedPort?: number;
   mcpEndpoint?: ProjectImageMcpEndpoint;
   pid?: number;
@@ -766,6 +769,9 @@ export function createProjectState(
     return {
       id: image.id,
       imageName: renderProjectImageName(image.imageName, imageContext),
+      ...(image.displayMode !== undefined
+        ? { displayMode: projectImageDisplayMode(image) }
+        : {}),
       ...(assignedPort !== undefined ? { assignedPort } : {}),
       status: image.active ? "starting" : "stopped",
       ...supportState,

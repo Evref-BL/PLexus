@@ -247,6 +247,27 @@ describe("project state", () => {
     });
   });
 
+  it("records configured image display mode in runtime image state", () => {
+    const state = createProjectState(
+      {
+        ...config,
+        images: [
+          {
+            ...config.images[0],
+            displayMode: "interactive",
+          },
+          config.images[1],
+        ],
+      },
+      "2026-04-25T10:00:00.000Z",
+    );
+
+    expect(state.images[0]).toMatchObject({
+      id: "dev",
+      displayMode: "interactive",
+    });
+  });
+
   it("records Pharo MCP support state from known template versions", () => {
     const state = createProjectState(
       {
