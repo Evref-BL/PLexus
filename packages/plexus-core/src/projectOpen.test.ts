@@ -658,6 +658,82 @@ describe("project open", () => {
     });
   });
 
+  it("keeps optional Pharo MCP startup images running without a route after load failure", async () => {
+    const projectRoot = makeTempDir("plexus-project-");
+    const stateRoot = makeTempDir("plexus-state-");
+    writeProjectConfig(projectRoot, {
+      images: [
+        {
+          id: "dev",
+          imageName: "MyProject-dev",
+          active: true,
+          mcp: {
+            port: 7123,
+            loadScript: "pharo/load-mcp.st",
+            startupMode: "optional",
+          },
+        },
+      ],
+    });
+    const statusMessage = "Metacello could not resolve BaselineOfMCP";
+
+    const pharoLauncherMcpClient = new FakePharoLauncherMcpClient(
+      [
+        {
+          pid: 1234,
+          imageName: "MyProject-dev",
+          commandLine: "PharoConsole.exe MyProject-dev.image",
+        },
+      ],
+      undefined,
+      (argumentsValue) => {
+        const scriptPath = argumentsValue.script as string;
+        fs.writeFileSync(
+          path.join(path.dirname(scriptPath), "pharo-mcp-load-dev.properties"),
+          [
+            "status=failed",
+            "imageId=dev",
+            "source=metacello",
+            "repository=github://Evref-BL/MCP:main/src",
+            "baseline=MCP",
+            `message=${statusMessage}`,
+            "",
+          ].join("\n"),
+          "utf8",
+        );
+      },
+    );
+    const healthClient = new FakeHealthClient(false);
+
+    const result = await openProject({
+      projectRoot,
+      stateRoot,
+      workspaceId: "worktree-a",
+      pharoLauncherMcpClient,
+      healthClient,
+      now: fixedNow,
+      sleep: async () => {},
+      poll: {
+        intervalMs: 0,
+      },
+    });
+
+    expect(result.ok).toBe(true);
+    expect(healthClient.ports).toEqual([]);
+    expect(result.state.images[0]).toMatchObject({
+      id: "dev",
+      pid: 1234,
+      status: "running",
+      pharoMcpLoad: {
+        state: "failed",
+        source: "metacello",
+        error: statusMessage,
+      },
+    });
+    expect(result.state.images[0]).not.toHaveProperty("assignedPort");
+    expect(result.state.images[0]).not.toHaveProperty("mcpEndpoint");
+  });
+
   it("does not persist inferred repository metadata for script-provided Pharo MCP loads", async () => {
     const projectRoot = makeTempDir("plexus-project-");
     const stateRoot = makeTempDir("plexus-state-");
@@ -1498,6 +1574,70 @@ describe("project open", () => {
       },
     });
     expect(result.state.images[0]).not.toHaveProperty("assignedPort");
+  });
+
+  it("opens images with Pharo MCP startup disabled without waiting for health", async () => {
+    const projectRoot = makeTempDir("plexus-project-");
+    const stateRoot = makeTempDir("plexus-state-");
+    writeProjectConfig(projectRoot, {
+      images: [
+        {
+          id: "plain",
+          imageName: "MyProject-plain",
+          active: true,
+          mcp: {
+            port: 7123,
+            loadScript: "pharo/load-mcp.st",
+            startupMode: "disabled",
+          },
+        },
+      ],
+    });
+    const pharoLauncherMcpClient = new FakePharoLauncherMcpClient([
+      {
+        pid: 1234,
+        imageName: "MyProject-plain",
+        commandLine: "PharoConsole.exe MyProject-plain.image",
+      },
+    ]);
+    const healthClient = new FakeHealthClient(false);
+
+    const result = await openProject({
+      projectRoot,
+      stateRoot,
+      workspaceId: "worktree-a",
+      pharoLauncherMcpClient,
+      healthClient,
+      now: fixedNow,
+      sleep: async () => {},
+      poll: {
+        intervalMs: 0,
+      },
+    });
+
+    const scriptPath = path.join(
+      stateRoot,
+      "projects",
+      "project-123",
+      "workspaces",
+      "worktree-a",
+      "scripts",
+      "start-plain.st",
+    );
+
+    expect(result.ok).toBe(true);
+    expect(healthClient.ports).toEqual([]);
+    expect(fs.readFileSync(scriptPath, "utf8")).toContain(
+      "Project image mcp.startupMode is disabled.",
+    );
+    expect(result.state.images[0]).toMatchObject({
+      id: "plain",
+      imageName: "MyProject-plain",
+      pid: 1234,
+      status: "running",
+    });
+    expect(result.state.images[0]).not.toHaveProperty("assignedPort");
+    expect(result.state.images[0]).not.toHaveProperty("mcpEndpoint");
   });
 
   it("does not claim host-local image MCP ports for known unsupported Pharo versions", async () => {

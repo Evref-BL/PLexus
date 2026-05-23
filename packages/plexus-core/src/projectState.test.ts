@@ -462,6 +462,51 @@ describe("project state", () => {
     expect(state.images[0]).not.toHaveProperty("assignedPort");
   });
 
+  it("does not allocate or reserve image MCP ports when startup is disabled", () => {
+    const state = createProjectState(
+      {
+        ...config,
+        images: [
+          {
+            id: "plain",
+            imageName: "MyProject-plain",
+            active: true,
+            mcp: {
+              port: 7100,
+              loadScript: "pharo/load-mcp.st",
+              startupMode: "disabled",
+            },
+          },
+          {
+            id: "current",
+            imageName: "MyProject-current",
+            active: true,
+            create: {
+              kind: "template",
+              templateName: "Pharo 13.0 - 64bit",
+            },
+            mcp: {
+              loadScript: "pharo/load-mcp.st",
+            },
+          },
+        ],
+      },
+      {
+        updatedAt: "2026-04-25T10:00:00.000Z",
+        portRange: {
+          start: 7100,
+          end: 7100,
+        },
+      },
+    );
+
+    expect(state.images[0]).not.toHaveProperty("assignedPort");
+    expect(state.images[1]).toMatchObject({
+      id: "current",
+      assignedPort: 7100,
+    });
+  });
+
   it("creates idle runtime state for projects with no images", () => {
     const zeroImageConfig: ProjectConfig = {
       ...config,

@@ -210,6 +210,14 @@ export function usesDefaultSmokeLoadScript({
   return !imageLoadScriptExplicit && !loadScriptExplicit;
 }
 
+export function resolvePharoLauncherMcpRepoDirOption(options, env = process.env) {
+  return (
+    options.pharoLauncherMcpRepoDir ??
+    env.PLEXUS_SMOKE_PHARO_LAUNCHER_MCP_REPO_DIR ??
+    env.PHARO_LAUNCHER_MCP_REPO_DIR
+  );
+}
+
 function templateName(value) {
   return typeof value?.name === "string" && value.name.trim().length > 0
     ? value.name.trim()

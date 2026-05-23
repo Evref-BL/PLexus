@@ -2,6 +2,7 @@ import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import {
+  projectMcpStartupMode,
   resolveProjectRuntimePolicy,
   type ProjectConfig,
   type ProjectImageConfig,
@@ -173,8 +174,14 @@ function previousImagePort(
     ?.assignedPort;
 }
 
-function imageCanUsePharoMcpPort(image: ProjectImageState): boolean {
-  return image.pharoMcpContract?.status !== "unsupported";
+function imageCanUsePharoMcpPort(
+  imageConfig: ProjectImageConfig,
+  image: ProjectImageState,
+): boolean {
+  return (
+    projectMcpStartupMode(imageConfig.mcp) !== "disabled" &&
+    image.pharoMcpContract?.status !== "unsupported"
+  );
 }
 
 function portInRange(port: number, range: ProjectPortRange): boolean {
@@ -405,7 +412,9 @@ export async function prepareImagePortClaims(
   const projectReservedPorts = new Set(projectOwnersByPort.keys());
   const imageIdsThatCanUsePharoMcpPort = new Set(
     options.images
-      .filter((image) => imageCanUsePharoMcpPort(image))
+      .filter((image) =>
+        imageCanUsePharoMcpPort(imageConfigForState(options.config, image), image),
+      )
       .map((image) => image.id),
   );
   const configuredPorts = new Set(
@@ -418,12 +427,12 @@ export async function prepareImagePortClaims(
 
   try {
     for (const image of options.images) {
-      if (!imageCanUsePharoMcpPort(image)) {
+      const imageConfig = imageConfigForState(options.config, image);
+      if (!imageCanUsePharoMcpPort(imageConfig, image)) {
         delete image.assignedPort;
         continue;
       }
 
-      const imageConfig = imageConfigForState(options.config, image);
       const scope = claimScopeForImage(options.state, image);
       const configuredPort = imageConfig.mcp.port;
 

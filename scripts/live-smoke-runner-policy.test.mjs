@@ -18,6 +18,7 @@ import {
   mcpPharoTonelLoadScriptSource,
   parseTimeoutBudget,
   resolveRequestedSourceTemplate,
+  resolvePharoLauncherMcpRepoDirOption,
   smokeProjectConfig,
   usesDefaultSmokeLoadScript,
 } from "./live-smoke-runner-policy.mjs";
@@ -421,6 +422,38 @@ test("only replaces implicit smoke load scripts with generated local MCP-Pharo l
       loadScriptExplicit: false,
     }),
     false,
+  );
+});
+
+test("resolves pharo-launcher-mcp component source from the general launcher environment", () => {
+  assert.equal(
+    resolvePharoLauncherMcpRepoDirOption(
+      {},
+      {
+        PHARO_LAUNCHER_MCP_REPO_DIR: "C:/work/pharo-launcher-mcp",
+      },
+    ),
+    "C:/work/pharo-launcher-mcp",
+  );
+  assert.equal(
+    resolvePharoLauncherMcpRepoDirOption(
+      {},
+      {
+        PLEXUS_SMOKE_PHARO_LAUNCHER_MCP_REPO_DIR:
+          "C:/work/smoke/pharo-launcher-mcp",
+        PHARO_LAUNCHER_MCP_REPO_DIR: "C:/work/pharo-launcher-mcp",
+      },
+    ),
+    "C:/work/smoke/pharo-launcher-mcp",
+  );
+  assert.equal(
+    resolvePharoLauncherMcpRepoDirOption(
+      { pharoLauncherMcpRepoDir: "C:/work/explicit/pharo-launcher-mcp" },
+      {
+        PHARO_LAUNCHER_MCP_REPO_DIR: "C:/work/pharo-launcher-mcp",
+      },
+    ),
+    "C:/work/explicit/pharo-launcher-mcp",
   );
 });
 

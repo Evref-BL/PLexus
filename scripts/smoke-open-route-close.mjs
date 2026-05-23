@@ -27,6 +27,7 @@ import {
   isPathInside,
   mcpPharoTonelLoadScriptSource,
   resolveRequestedSourceTemplate,
+  resolvePharoLauncherMcpRepoDirOption,
   smokeProjectConfig,
   usesDefaultSmokeLoadScript,
 } from "./live-smoke-runner-policy.mjs";
@@ -201,8 +202,7 @@ function parseArgs(argv) {
   options.launcherProfileRoot ??=
     process.env.PLEXUS_SMOKE_LAUNCHER_PROFILE_ROOT ??
     process.env.PHARO_LAUNCHER_MCP_STATE_ROOT;
-  options.pharoLauncherMcpRepoDir ??=
-    process.env.PLEXUS_SMOKE_PHARO_LAUNCHER_MCP_REPO_DIR;
+  options.pharoLauncherMcpRepoDir = resolvePharoLauncherMcpRepoDirOption(options);
   options.mcpPharoRepoDir ??= process.env.PLEXUS_SMOKE_MCP_PHARO_REPO_DIR;
   options.artifactRoot ??= process.env.PLEXUS_SMOKE_ARTIFACT_ROOT;
   options.runId ??= process.env.PLEXUS_SMOKE_RUN_ID;
