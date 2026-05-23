@@ -146,9 +146,25 @@ describe("scoped project context", () => {
         reason: "Image is already running",
       },
       openInteractive: {
-        allowed: false,
-        reason:
-          "Stop the headless runtime before interactive open to avoid two processes using the same image",
+        allowed: true,
+        toolName: "pharo_launcher_image_open_interactive",
+        arguments: {
+          imageId: "dev",
+        },
+      },
+      show: {
+        allowed: true,
+        toolName: "pharo_launcher_image_show",
+        arguments: {
+          imageId: "dev",
+        },
+      },
+      hide: {
+        allowed: true,
+        toolName: "pharo_launcher_image_hide",
+        arguments: {
+          imageId: "dev",
+        },
       },
       stop: {
         allowed: true,

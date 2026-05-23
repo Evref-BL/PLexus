@@ -19,6 +19,7 @@ import {
   ProjectConfigError,
   resolveProjectRuntimePolicy,
   type ProjectConfig,
+  type ProjectImageDisplayMode,
   type ProjectImagePortAllocationPolicy,
   type ProjectImagePortCoordinationMode,
   type ProjectRuntimePortRange,
@@ -158,6 +159,7 @@ export interface ProjectOpenToolInput {
   stateRoot?: string;
   workspaceId?: string;
   targetId?: string;
+  displayMode?: ProjectImageDisplayMode;
 }
 
 export interface ProjectCloseToolInput {
@@ -383,6 +385,7 @@ export interface ProjectLifecycleDiagnostics {
   imageMcpPorts: Array<{
     imageId: string;
     imageName: string;
+    displayMode?: ProjectImageDisplayMode;
     port?: number;
     mcpEndpoint?: ProjectImageState["mcpEndpoint"];
     routingMode: "endpoint" | "fixed-port" | "none";
@@ -494,6 +497,22 @@ function optionalBooleanValue(
   }
 
   return value;
+}
+
+function optionalDisplayMode(
+  input: Record<string, unknown>,
+  key: string,
+): ProjectImageDisplayMode | undefined {
+  const value = input[key];
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (value === "headless" || value === "interactive") {
+    return value;
+  }
+
+  throw new ProjectLifecycleInputError(`${key} must be headless or interactive`);
 }
 
 function optionalNumber(
@@ -1147,6 +1166,7 @@ function imageMcpPorts(
   return (state?.images ?? []).map((image) => ({
     imageId: image.id,
     imageName: image.imageName,
+    ...(image.displayMode ? { displayMode: image.displayMode } : {}),
     ...(image.assignedPort !== undefined ? { port: image.assignedPort } : {}),
     ...(image.mcpEndpoint !== undefined ? { mcpEndpoint: image.mcpEndpoint } : {}),
     routingMode:
@@ -1674,6 +1694,7 @@ export class PlexusProjectLifecycle {
         stateRoot: this.effectiveStateRoot(input.stateRoot),
         workspaceId: input.workspaceId,
         targetId: input.targetId,
+        displayMode: input.displayMode,
         preparedImageCacheApproval: {
           approved: true,
           runnerId: "plexus-project-open",
@@ -2016,6 +2037,7 @@ export class PlexusProjectLifecycle {
             stateRoot: optionalString(input, "stateRoot"),
             workspaceId: optionalString(input, "workspaceId"),
             targetId: optionalString(input, "targetId"),
+            displayMode: optionalDisplayMode(input, "displayMode"),
           });
 
         case "plexus_project_close":

@@ -6,9 +6,11 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import {
   loadProjectConfig,
+  projectImageDisplayMode,
   projectConfigId,
   resolveProjectRuntimePolicy,
   type ProjectConfig,
+  type ProjectImageDisplayMode,
   type ProjectImageConfig,
 } from "./projectConfig.js";
 import { closeProject } from "./projectClose.js";
@@ -42,6 +44,10 @@ import {
 } from "./projectState.js";
 
 const stringSchema = { type: "string", minLength: 1 } as const;
+const displayModeSchema = {
+  type: "string",
+  enum: ["headless", "interactive"],
+} as const;
 
 function objectSchema(
   properties: Record<string, unknown>,
@@ -65,6 +71,7 @@ export interface ScopedPharoLauncherOptions {
   homeImageCacheApproval?: HomeImageCacheMutationApproval;
   projectOpen?: typeof openProject;
   projectClose?: typeof closeProject;
+  fetch?: typeof fetch;
   now?: () => Date;
 }
 
@@ -93,11 +100,22 @@ interface WorkspaceImageSummary {
   imageId: string;
   active: boolean;
   status: ProjectImageState["status"] | "declared";
+  displayMode: ProjectImageDisplayMode;
   displayModes: {
-    runtimeStart: "headless";
+    default: ProjectImageDisplayMode;
+    current?: ProjectImageDisplayMode;
+    start: ProjectImageDisplayMode;
     interactiveOpen: "interactive";
+    show: "interactive";
+    hide: "headless";
   };
   pharoMcpContract?: ProjectImageState["pharoMcpContract"];
+}
+
+interface DisplayModeRestartSnapshot {
+  attempted: boolean;
+  status: "saved";
+  endpoint?: ProjectImageState["mcpEndpoint"];
 }
 
 interface LauncherCommandResult<T = unknown> {
@@ -150,6 +168,22 @@ function optionalString(
   }
 
   return value;
+}
+
+function optionalDisplayMode(
+  input: Record<string, unknown>,
+  key: string,
+): ProjectImageDisplayMode | undefined {
+  const value = input[key];
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (value === "headless" || value === "interactive") {
+    return value;
+  }
+
+  throw new ScopedPharoLauncherError(`${key} must be headless or interactive`);
 }
 
 function requireConfirm(input: Record<string, unknown>): void {
@@ -211,13 +245,20 @@ function imageSummary(
   imageConfig: ProjectImageConfig,
   imageState: ProjectImageState | undefined,
 ): WorkspaceImageSummary {
+  const defaultDisplayMode = projectImageDisplayMode(imageConfig);
+  const displayMode = imageState?.displayMode ?? defaultDisplayMode;
   return {
     imageId: imageConfig.id,
     active: imageConfig.active,
     status: imageState?.status ?? "declared",
+    displayMode,
     displayModes: {
-      runtimeStart: "headless",
+      default: defaultDisplayMode,
+      ...(imageState?.displayMode ? { current: imageState.displayMode } : {}),
+      start: defaultDisplayMode,
       interactiveOpen: "interactive",
+      show: "interactive",
+      hide: "headless",
     },
     ...(imageState?.pharoMcpContract
       ? { pharoMcpContract: imageState.pharoMcpContract }
@@ -264,6 +305,37 @@ function renderedImageName(
   });
 }
 
+function imageMcpSnapshotEndpoint(
+  imageState: ProjectImageState,
+): ProjectImageState["mcpEndpoint"] | undefined {
+  if (imageState.mcpEndpoint) {
+    return imageState.mcpEndpoint;
+  }
+
+  if (imageState.assignedPort !== undefined) {
+    return {
+      transport: "http",
+      host: "127.0.0.1",
+      port: imageState.assignedPort,
+      path: "/",
+    };
+  }
+
+  return undefined;
+}
+
+function endpointUrl(endpoint: NonNullable<ProjectImageState["mcpEndpoint"]>): string {
+  const host =
+    endpoint.host.includes(":") && !endpoint.host.startsWith("[")
+      ? `[${endpoint.host}]`
+      : endpoint.host;
+  return `http://${host}:${endpoint.port}${endpoint.path}`;
+}
+
+function isObject(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
 function stateWithCreatedImage(
   projectConfig: ProjectConfig,
   scope: ResolvedScope,
@@ -307,6 +379,81 @@ function stateWithCreatedImage(
 
 export class ScopedPharoLauncher {
   constructor(private readonly options: ScopedPharoLauncherOptions) {}
+
+  private currentImageState(
+    scope: ResolvedScope,
+    projectConfig: ProjectConfig,
+    imageId: string,
+  ): ProjectImageState | undefined {
+    const state = loadProjectState(statePathForScope(scope, projectConfig));
+    return state?.images.find((image) => image.id === imageId);
+  }
+
+  private async snapshotImageBeforeDisplayModeRestart(
+    imageState: ProjectImageState,
+  ): Promise<DisplayModeRestartSnapshot> {
+    const endpoint = imageMcpSnapshotEndpoint(imageState);
+    if (!endpoint) {
+      throw new ScopedPharoLauncherError(
+        `Image ${imageState.id} has no routable Pharo MCP endpoint; display mode restart cannot snapshot before close`,
+      );
+    }
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 60_000);
+    try {
+      const response = await (this.options.fetch ?? fetch)(endpointUrl(endpoint), {
+        method: "POST",
+        headers: {
+          accept: "application/json, text/event-stream",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: `plexus-display-mode-snapshot-${imageState.id}-${Date.now()}`,
+          method: "tools/call",
+          params: {
+            name: "evaluate",
+            arguments: {
+              code: "Smalltalk snapshot: true andQuit: false.",
+            },
+          },
+        }),
+        signal: controller.signal,
+      });
+      if (!response.ok) {
+        throw new ScopedPharoLauncherError(
+          `Image ${imageState.id} snapshot failed with HTTP ${response.status}`,
+        );
+      }
+
+      const payload = (await response.json()) as unknown;
+      if (!isObject(payload)) {
+        throw new ScopedPharoLauncherError(
+          `Image ${imageState.id} snapshot returned a non-object response`,
+        );
+      }
+      if ("error" in payload) {
+        throw new ScopedPharoLauncherError(
+          `Image ${imageState.id} snapshot failed: ${JSON.stringify(payload.error)}`,
+        );
+      }
+      const result = payload.result;
+      if (isObject(result) && result.isError === true) {
+        throw new ScopedPharoLauncherError(
+          `Image ${imageState.id} snapshot tool returned an error`,
+        );
+      }
+
+      return {
+        attempted: true,
+        status: "saved",
+        endpoint,
+      };
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
 
   listImages(): {
     scope: WorkspaceScopeSummary;
@@ -457,7 +604,10 @@ export class ScopedPharoLauncher {
     return this.imageInfo(imageId);
   }
 
-  async startImage(imageId: string): Promise<{
+  async startImage(
+    imageId: string,
+    displayMode?: ProjectImageDisplayMode,
+  ): Promise<{
     scope: WorkspaceScopeSummary;
     launcherProfile: LauncherProfileSummary;
     image: WorkspaceImageSummary;
@@ -468,6 +618,11 @@ export class ScopedPharoLauncher {
         `Image ${imageId} is not active in project config; scoped start is rejected`,
       );
     }
+    if (before.image.status === "running" || before.image.status === "starting") {
+      throw new ScopedPharoLauncherError(
+        `Image ${imageId} is already ${before.image.status}; scoped start is rejected`,
+      );
+    }
 
     const scope = resolveScope(this.options);
     await (this.options.projectOpen ?? openProject)({
@@ -476,6 +631,7 @@ export class ScopedPharoLauncher {
       targetId: scope.targetId,
       stateRoot: scope.stateRoot,
       imageIds: [imageId],
+      ...(displayMode ? { displayMode } : {}),
       homeImageCacheApproval: scopedMutationApproval(
         this.options.homeImageCacheApproval,
         "scoped-pharo-launcher-start",
@@ -487,67 +643,83 @@ export class ScopedPharoLauncher {
     return this.imageInfo(imageId);
   }
 
-  async openImageInteractive(imageId: string): Promise<{
+  async setImageDisplayMode(
+    imageId: string,
+    displayMode: ProjectImageDisplayMode,
+  ): Promise<{
     scope: WorkspaceScopeSummary;
     launcherProfile: LauncherProfileSummary;
     image: WorkspaceImageSummary;
-    displayMode: "interactive";
-    launcherToolName: "pharo_launcher_image_launch";
-    launcherResult?: LauncherCommandResult;
-    runtimeStateUnchanged: true;
+    previousDisplayMode: ProjectImageDisplayMode;
+    displayMode: ProjectImageDisplayMode;
+    restarted: boolean;
+    runtimeStateUnchanged: boolean;
+    snapshotBeforeRestart?: DisplayModeRestartSnapshot;
   }> {
-    const before = this.imageInfo(imageId);
-    if (!before.image.active) {
-      throw new ScopedPharoLauncherError(
-        `Image ${imageId} is not active in project config; interactive open is rejected`,
-      );
-    }
-    if (before.image.status === "running" || before.image.status === "starting") {
-      throw new ScopedPharoLauncherError(
-        `Image ${imageId} is already ${before.image.status}; stop the runtime before interactive open`,
-      );
-    }
-
     const scope = resolveScope(this.options);
     const projectConfig = loadProjectConfig(scope.projectRoot);
     const imageConfig = findImageConfig(projectConfig, imageId);
-    const imageName = renderedImageName(scope, imageConfig);
-    const client =
-      this.options.pharoLauncherMcpClient ??
-      (await createStdioPharoLauncherMcpClient(undefined, {
-        profileEnvironment: pharoLauncherMcpProfileEnvironment({
-          projectRoot: scope.projectRoot,
-          config: projectConfig,
-          workspaceId: scope.workspaceId,
-          targetId: scope.targetId,
-          stateRoot: scope.stateRoot,
-        }),
-      }));
-    const ownsClient = !this.options.pharoLauncherMcpClient;
-
-    try {
-      const launcherResult = await client.callTool<LauncherCommandResult>(
-        "pharo_launcher_image_launch",
-        {
-          imageName,
-          detached: true,
-          displayMode: "interactive",
-        },
+    const before = this.imageInfo(imageId);
+    const imageState = this.currentImageState(scope, projectConfig, imageId);
+    const previousDisplayMode =
+      imageState?.displayMode ?? projectImageDisplayMode(imageConfig);
+    if (!before.image.active) {
+      throw new ScopedPharoLauncherError(
+        `Image ${imageId} is not active in project config; display mode change is rejected`,
       );
-      assertLauncherOk(launcherResult, "pharo_launcher_image_launch");
+    }
+    if (before.image.status === "starting") {
+      throw new ScopedPharoLauncherError(
+        `Image ${imageId} is starting; wait for startup to finish before changing display mode`,
+      );
+    }
 
+    if (before.image.status === "running" && previousDisplayMode === displayMode) {
       return {
         ...before,
-        displayMode: "interactive",
-        launcherToolName: "pharo_launcher_image_launch",
-        launcherResult,
+        previousDisplayMode,
+        displayMode,
+        restarted: false,
         runtimeStateUnchanged: true,
       };
-    } finally {
-      if (ownsClient) {
-        await client.close?.();
-      }
     }
+
+    let snapshotBeforeRestart: DisplayModeRestartSnapshot | undefined;
+    if (before.image.status === "running") {
+      if (imageState) {
+        snapshotBeforeRestart =
+          await this.snapshotImageBeforeDisplayModeRestart(imageState);
+      }
+      await this.stopImage(imageId);
+    }
+
+    await this.startImage(imageId, displayMode);
+    return {
+      ...this.imageInfo(imageId),
+      previousDisplayMode,
+      displayMode,
+      restarted: before.image.status === "running",
+      runtimeStateUnchanged: false,
+      ...(snapshotBeforeRestart ? { snapshotBeforeRestart } : {}),
+    };
+  }
+
+  async openImageInteractive(
+    imageId: string,
+  ): Promise<Awaited<ReturnType<ScopedPharoLauncher["setImageDisplayMode"]>>> {
+    return this.setImageDisplayMode(imageId, "interactive");
+  }
+
+  async showImage(
+    imageId: string,
+  ): Promise<Awaited<ReturnType<ScopedPharoLauncher["setImageDisplayMode"]>>> {
+    return this.setImageDisplayMode(imageId, "interactive");
+  }
+
+  async hideImage(
+    imageId: string,
+  ): Promise<Awaited<ReturnType<ScopedPharoLauncher["setImageDisplayMode"]>>> {
+    return this.setImageDisplayMode(imageId, "headless");
   }
 
   async stopImage(imageId: string): Promise<{
@@ -596,13 +768,28 @@ export const scopedPharoLauncherTools = [
   {
     name: "pharo_launcher_image_start",
     description:
-      "Start a workspace-scoped active image headlessly through PLexus project open policy.",
-    inputSchema: objectSchema({ imageId: stringSchema }, ["imageId"]),
+      "Start a workspace-scoped active image through PLexus project open policy.",
+    inputSchema: objectSchema(
+      { imageId: stringSchema, displayMode: displayModeSchema },
+      ["imageId"],
+    ),
   },
   {
     name: "pharo_launcher_image_open_interactive",
     description:
       "Explicitly open a workspace-scoped active image in interactive display mode for human image work.",
+    inputSchema: objectSchema({ imageId: stringSchema }, ["imageId"]),
+  },
+  {
+    name: "pharo_launcher_image_show",
+    description:
+      "Switch a workspace-scoped active image to interactive display mode through PLexus lifecycle policy.",
+    inputSchema: objectSchema({ imageId: stringSchema }, ["imageId"]),
+  },
+  {
+    name: "pharo_launcher_image_hide",
+    description:
+      "Switch a workspace-scoped active image to headless display mode through PLexus lifecycle policy.",
     inputSchema: objectSchema({ imageId: stringSchema }, ["imageId"]),
   },
   {
@@ -659,13 +846,22 @@ export function createScopedPharoLauncherServer(
 
         case "pharo_launcher_image_start":
           return textResult(
-            await facade.startImage(requireString(input, "imageId")),
+            await facade.startImage(
+              requireString(input, "imageId"),
+              optionalDisplayMode(input, "displayMode"),
+            ),
           );
 
         case "pharo_launcher_image_open_interactive":
           return textResult(
             await facade.openImageInteractive(requireString(input, "imageId")),
           );
+
+        case "pharo_launcher_image_show":
+          return textResult(await facade.showImage(requireString(input, "imageId")));
+
+        case "pharo_launcher_image_hide":
+          return textResult(await facade.hideImage(requireString(input, "imageId")));
 
         case "pharo_launcher_image_stop":
           requireConfirm(input);

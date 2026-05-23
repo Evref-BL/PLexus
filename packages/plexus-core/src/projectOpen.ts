@@ -2,9 +2,11 @@ import fs from "node:fs";
 import path from "node:path";
 import {
   loadProjectConfig,
+  projectImageDisplayMode,
   projectConfigId,
   projectMcpStartupMode,
   resolveProjectRuntimePolicy,
+  type ProjectImageDisplayMode,
   type ProjectImageConfig,
 } from "./projectConfig.js";
 import {
@@ -103,6 +105,7 @@ export interface ProjectOpenOptions {
   workspaceId?: string;
   targetId?: string;
   imageIds?: string[];
+  displayMode?: ProjectImageDisplayMode;
   pharoLauncherMcpClient?: PharoLauncherMcpToolClient;
   healthClient?: PharoMcpHealthClient;
   portRange?: ProjectPortRange;
@@ -875,6 +878,7 @@ async function launchImageAndPollProcess(
   launchClient: PharoLauncherMcpToolClient,
   processClient: PharoLauncherMcpToolClient,
   imageName: string,
+  displayMode: ProjectImageDisplayMode,
   startupScriptPath: string,
   timeoutMs: number,
   intervalMs: number,
@@ -884,7 +888,7 @@ async function launchImageAndPollProcess(
     .callTool<LauncherCommandResult>("pharo_launcher_image_launch", {
       imageName,
       detached: true,
-      displayMode: "headless",
+      displayMode,
       script: startupScriptPath,
     })
     .then(
@@ -1199,6 +1203,14 @@ export async function openProject(
       if (!imageConfig) {
         continue;
       }
+      const displayMode = options.displayMode ?? projectImageDisplayMode(imageConfig);
+      if (
+        options.displayMode !== undefined ||
+        imageConfig.displayMode !== undefined ||
+        imageState.displayMode !== undefined
+      ) {
+        imageState.displayMode = displayMode;
+      }
       let pharoMcpLoadStatusPath: string | undefined;
 
       try {
@@ -1279,6 +1291,7 @@ export async function openProject(
             launchClient,
             client,
             imageState.imageName,
+            displayMode,
             startupScript.filePath,
             poll.processTimeoutMs,
             poll.intervalMs,

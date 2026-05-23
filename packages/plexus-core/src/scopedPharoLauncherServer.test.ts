@@ -152,6 +152,8 @@ describe("scoped pharo launcher facade", () => {
       "pharo_launcher_image_create",
       "pharo_launcher_image_start",
       "pharo_launcher_image_open_interactive",
+      "pharo_launcher_image_show",
+      "pharo_launcher_image_hide",
       "pharo_launcher_image_stop",
     ]);
     expect(
@@ -175,6 +177,21 @@ describe("scoped pharo launcher facade", () => {
         ),
       ),
     ).not.toContain("newImageName");
+    expect(
+      scopedPharoLauncherTools.find(
+        (tool) => tool.name === "pharo_launcher_image_start",
+      ),
+    ).toMatchObject({
+      inputSchema: {
+        properties: {
+          imageId: { type: "string" },
+          displayMode: {
+            type: "string",
+            enum: ["headless", "interactive"],
+          },
+        },
+      },
+    });
   });
 
   it("creates only declared images from an approved project template policy", async () => {
@@ -351,7 +368,7 @@ describe("scoped pharo launcher facade", () => {
       },
     });
 
-    await launcher.startImage("dev");
+    await launcher.startImage("dev", "interactive");
     await launcher.stopImage("dev");
 
     expect(starts).toEqual([
@@ -361,6 +378,7 @@ describe("scoped pharo launcher facade", () => {
         targetId: "project-123--worktree-a",
         stateRoot,
         imageIds: ["dev"],
+        displayMode: "interactive",
       }),
     ]);
     expect(stops).toEqual([
@@ -373,41 +391,189 @@ describe("scoped pharo launcher facade", () => {
     ]);
   });
 
-  it("opens declared images interactively only through explicit display mode", async () => {
+  it("opens declared images interactively through PLexus runtime state", async () => {
     const projectRoot = makeTempDir("plexus-project-");
     const stateRoot = makeTempDir("plexus-state-");
-    const { client, calls } = fakeLauncherClient();
+    const starts: unknown[] = [];
     writeProjectConfig(projectRoot);
 
     const result = await new ScopedPharoLauncher({
       projectRoot,
       stateRoot,
       workspaceId: "worktree-a",
-      pharoLauncherMcpClient: client,
+      projectOpen: async (options) => {
+        starts.push(options);
+        const state = runningState();
+        state.images[0] = {
+          ...state.images[0],
+          displayMode: "interactive",
+        };
+        saveProjectState(statePath(projectRoot, stateRoot), state);
+        return {
+          ok: true,
+          projectRoot,
+          statePath: statePath(projectRoot, stateRoot),
+          state,
+          failures: [],
+        };
+      },
     }).openImageInteractive("dev");
 
-    expect(calls).toEqual([
-      {
-        name: "pharo_launcher_image_launch",
-        argumentsValue: {
-          imageName: "MyProject-worktree-a-dev",
-          detached: true,
-          displayMode: "interactive",
-        },
-      },
+    expect(starts).toEqual([
+      expect.objectContaining({
+        projectRoot,
+        workspaceId: "worktree-a",
+        targetId: "project-123--worktree-a",
+        stateRoot,
+        imageIds: ["dev"],
+        displayMode: "interactive",
+      }),
     ]);
     expect(result).toMatchObject({
       image: {
         imageId: "dev",
-        status: "declared",
+        status: "running",
+        displayMode: "interactive",
         displayModes: {
-          runtimeStart: "headless",
-          interactiveOpen: "interactive",
+          default: "headless",
+          show: "interactive",
+          hide: "headless",
         },
       },
       displayMode: "interactive",
-      launcherToolName: "pharo_launcher_image_launch",
-      runtimeStateUnchanged: true,
+      runtimeStateUnchanged: false,
+    });
+  });
+
+  it("switches running images between display modes without launching twice", async () => {
+    const projectRoot = makeTempDir("plexus-project-");
+    const stateRoot = makeTempDir("plexus-state-");
+    const calls: string[] = [];
+    writeProjectConfig(projectRoot);
+    saveProjectState(statePath(projectRoot, stateRoot), {
+      ...runningState(),
+      images: [
+        {
+          id: "dev",
+          imageName: "MyProject-worktree-a-dev",
+          mcpEndpoint: {
+            transport: "http",
+            host: "127.0.0.1",
+            port: 7432,
+            path: "/mcp",
+          },
+          pid: 1234,
+          status: "running",
+          displayMode: "headless",
+        },
+      ],
+    });
+
+    const launcher = new ScopedPharoLauncher({
+      projectRoot,
+      stateRoot,
+      workspaceId: "worktree-a",
+      fetch: async (url, init) => {
+        calls.push("snapshot");
+        expect(url).toBe("http://127.0.0.1:7432/mcp");
+        const body = JSON.parse(String(init?.body)) as {
+          params: {
+            name: string;
+            arguments: {
+              code: string;
+            };
+          };
+        };
+        expect(body.params).toEqual({
+          name: "evaluate",
+          arguments: {
+            code: "Smalltalk snapshot: true andQuit: false.",
+          },
+        });
+        return new Response(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            id: "snapshot",
+            result: {
+              content: [],
+            },
+          }),
+          { status: 200 },
+        );
+      },
+      projectClose: async (options) => {
+        calls.push("close");
+        expect(options).toMatchObject({
+          imageIds: ["dev"],
+        });
+        const state = {
+          ...runningState(),
+          runtimeStatus: "idle" as const,
+          images: [
+            {
+              id: "dev",
+              imageName: "MyProject-worktree-a-dev",
+              status: "stopped" as const,
+              displayMode: "headless" as const,
+            },
+          ],
+        };
+        saveProjectState(statePath(projectRoot, stateRoot), state);
+        return {
+          ok: true,
+          projectRoot,
+          statePath: statePath(projectRoot, stateRoot),
+          state,
+          stoppedImages: state.images,
+          repositoryWorkspaceCleanups: [],
+          failures: [],
+        };
+      },
+      projectOpen: async (options) => {
+        calls.push("open");
+        expect(options).toMatchObject({
+          imageIds: ["dev"],
+          displayMode: "interactive",
+        });
+        const state = {
+          ...runningState(),
+          images: [
+            {
+              id: "dev",
+              imageName: "MyProject-worktree-a-dev",
+              pid: 5678,
+              status: "running" as const,
+              displayMode: "interactive" as const,
+            },
+          ],
+        };
+        saveProjectState(statePath(projectRoot, stateRoot), state);
+        return {
+          ok: true,
+          projectRoot,
+          statePath: statePath(projectRoot, stateRoot),
+          state,
+          failures: [],
+        };
+      },
+    });
+
+    const result = await launcher.showImage("dev");
+
+    expect(calls).toEqual(["snapshot", "close", "open"]);
+    expect(result).toMatchObject({
+      image: {
+        imageId: "dev",
+        status: "running",
+        displayMode: "interactive",
+      },
+      previousDisplayMode: "headless",
+      displayMode: "interactive",
+      restarted: true,
+      snapshotBeforeRestart: {
+        attempted: true,
+        status: "saved",
+      },
     });
   });
 });

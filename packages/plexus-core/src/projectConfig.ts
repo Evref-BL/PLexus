@@ -15,6 +15,7 @@ export interface ProjectImageMcpConfig {
 }
 
 export type ProjectPharoMcpStartupMode = "required" | "optional" | "disabled";
+export type ProjectImageDisplayMode = "headless" | "interactive";
 
 export interface ProjectPharoMcpRepositoryConfig {
   githubUser: string;
@@ -102,6 +103,7 @@ export interface ProjectImageConfig {
   id: string;
   imageName: string;
   active: boolean;
+  displayMode?: ProjectImageDisplayMode;
   mcp: ProjectImageMcpConfig;
   create?: ProjectImageCreateConfig;
   preparedImage?: ProjectImagePreparedImageConfig;
@@ -293,6 +295,12 @@ export function projectMcpStartupMode(
   return mcp.startupMode ?? "required";
 }
 
+export function projectImageDisplayMode(
+  image: Pick<ProjectImageConfig, "displayMode">,
+): ProjectImageDisplayMode {
+  return image.displayMode ?? "headless";
+}
+
 function stringField(
   object: Record<string, unknown>,
   key: string,
@@ -398,6 +406,25 @@ function optionalPharoMcpStartupModeField(
   }
 
   issues.push(`${pathPrefix}.${key} must be one of required, optional, disabled`);
+  return undefined;
+}
+
+function optionalImageDisplayModeField(
+  object: Record<string, unknown>,
+  key: string,
+  issues: string[],
+  pathPrefix: string,
+): ProjectImageDisplayMode | undefined {
+  const value = object[key];
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (value === "headless" || value === "interactive") {
+    return value;
+  }
+
+  issues.push(`${pathPrefix}.${key} must be one of headless, interactive`);
   return undefined;
 }
 
@@ -1047,6 +1074,12 @@ function parseImages(
       id: stringField(image, "id", issues, pathPrefix),
       imageName: stringField(image, "imageName", issues, pathPrefix),
       active: booleanField(image, "active", issues, pathPrefix),
+      displayMode: optionalImageDisplayModeField(
+        image,
+        "displayMode",
+        issues,
+        pathPrefix,
+      ),
       mcp: parseImageMcp(image.mcp, issues, pathPrefix),
       create: parseImageCreate(image.create, issues, pathPrefix),
       preparedImage: parseImagePreparedImage(

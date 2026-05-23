@@ -12,6 +12,10 @@ import {
 
 const stringSchema = { type: "string", minLength: 1 } as const;
 const optionalStringSchema = { type: "string", minLength: 1 } as const;
+const displayModeSchema = {
+  type: "string",
+  enum: ["headless", "interactive"],
+} as const;
 
 function objectSchema(
   properties: Record<string, unknown>,
@@ -73,6 +77,7 @@ export const projectLifecycleTools = [
         workspaceId: optionalStringSchema,
         targetId: optionalStringSchema,
         stateRoot: optionalStringSchema,
+        displayMode: displayModeSchema,
       },
       ["projectPath"],
     ),

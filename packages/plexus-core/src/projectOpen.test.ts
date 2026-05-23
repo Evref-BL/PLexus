@@ -366,6 +366,93 @@ describe("project open", () => {
     });
   });
 
+  it("launches active images with the configured display mode", async () => {
+    const projectRoot = makeTempDir("plexus-project-");
+    const stateRoot = makeTempDir("plexus-state-");
+    writeProjectConfig(projectRoot, {
+      images: [
+        {
+          id: "dev",
+          imageName: "MyProject-dev",
+          active: true,
+          displayMode: "interactive",
+          mcp: {
+            port: 7123,
+            loadScript: "pharo/load-mcp.st",
+          },
+        },
+      ],
+    });
+    const pharoLauncherMcpClient = new FakePharoLauncherMcpClient([
+      {
+        pid: 1234,
+        imageName: "MyProject-dev",
+        commandLine: "Pharo.exe MyProject-dev.image",
+      },
+    ]);
+
+    const result = await openProject({
+      projectRoot,
+      stateRoot,
+      workspaceId: "worktree-a",
+      pharoLauncherMcpClient,
+      healthClient: new FakeHealthClient(true),
+      now: fixedNow,
+      sleep: async () => {},
+      poll: {
+        intervalMs: 0,
+      },
+    });
+
+    expect(pharoLauncherMcpClient.calls[0]).toMatchObject({
+      name: "pharo_launcher_image_launch",
+      argumentsValue: {
+        imageName: "MyProject-dev",
+        displayMode: "interactive",
+      },
+    });
+    expect(result.state.images[0]).toMatchObject({
+      id: "dev",
+      status: "running",
+      displayMode: "interactive",
+    });
+  });
+
+  it("allows project open callers to override image display mode", async () => {
+    const projectRoot = makeTempDir("plexus-project-");
+    const stateRoot = makeTempDir("plexus-state-");
+    writeProjectConfig(projectRoot);
+    const pharoLauncherMcpClient = new FakePharoLauncherMcpClient([
+      {
+        pid: 1234,
+        imageName: "MyProject-dev",
+        commandLine: "Pharo.exe MyProject-dev.image",
+      },
+    ]);
+
+    const result = await openProject({
+      projectRoot,
+      stateRoot,
+      workspaceId: "worktree-a",
+      displayMode: "interactive",
+      pharoLauncherMcpClient,
+      healthClient: new FakeHealthClient(true),
+      now: fixedNow,
+      sleep: async () => {},
+      poll: {
+        intervalMs: 0,
+      },
+    });
+
+    expect(pharoLauncherMcpClient.calls[0]).toMatchObject({
+      name: "pharo_launcher_image_launch",
+      argumentsValue: {
+        displayMode: "interactive",
+      },
+    });
+    expect(result.state.images[0]?.displayMode).toBe("interactive");
+  });
+
   it("materializes image-local repository workspaces before startup launch", async () => {
     const projectRoot = makeTempDir("plexus-project-");
     const stateRoot = makeTempDir("plexus-state-");

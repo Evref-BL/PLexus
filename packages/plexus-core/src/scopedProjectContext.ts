@@ -1,7 +1,9 @@
 import {
   loadProjectConfig,
+  projectImageDisplayMode,
   projectConfigId,
   resolveProjectRuntimePolicy,
+  type ProjectImageDisplayMode,
   type ProjectConfig,
   type ProjectImageConfig,
 } from "./projectConfig.js";
@@ -65,6 +67,8 @@ export interface ScopedImageAffordances {
   create: ScopedImageAffordance;
   start: ScopedImageAffordance;
   openInteractive: ScopedImageAffordance;
+  show: ScopedImageAffordance;
+  hide: ScopedImageAffordance;
   stop: ScopedImageAffordance;
   delete: ScopedImageAffordanceDenied;
 }
@@ -111,6 +115,7 @@ export interface ScopedImageContext {
   imageId: string;
   active: boolean;
   status: ScopedImageStatus;
+  displayMode: ProjectImageDisplayMode;
   ownership: ScopedImageOwnership;
   affordances: ScopedImageAffordances;
   route: ScopedImageGatewayRouteMetadata;
@@ -128,6 +133,7 @@ export interface ScopedImageDiagnosticContext {
   launcherImageName: string;
   active: boolean;
   status: ScopedImageStatus;
+  displayMode: ProjectImageDisplayMode;
   assignedPort?: number;
   mcpEndpoint?: ProjectImageState["mcpEndpoint"];
   pid?: number;
@@ -253,7 +259,10 @@ function startAffordance(
     return denied("Image is already starting");
   }
 
-  return allowed("pharo_launcher_image_start", { imageId: imageConfig.id });
+  return allowed("pharo_launcher_image_start", {
+    imageId: imageConfig.id,
+    ...(imageConfig.displayMode ? { displayMode: imageConfig.displayMode } : {}),
+  });
 }
 
 function openInteractiveAffordance(
@@ -264,15 +273,29 @@ function openInteractiveAffordance(
     return denied("Image is inactive in project config");
   }
 
-  if (status === "running" || status === "starting") {
-    return denied(
-      "Stop the headless runtime before interactive open to avoid two processes using the same image",
-    );
+  if (status === "starting") {
+    return denied("Image is already starting");
   }
 
   return allowed("pharo_launcher_image_open_interactive", {
     imageId: imageConfig.id,
   });
+}
+
+function displayModeAffordance(
+  imageConfig: ProjectImageConfig,
+  status: ScopedImageStatus,
+  toolName: "pharo_launcher_image_show" | "pharo_launcher_image_hide",
+): ScopedImageAffordance {
+  if (!imageConfig.active) {
+    return denied("Image is inactive in project config");
+  }
+
+  if (status === "starting") {
+    return denied("Image is already starting");
+  }
+
+  return allowed(toolName, { imageId: imageConfig.id });
 }
 
 function stopAffordance(
@@ -298,6 +321,16 @@ function lifecycleAffordances(
     create: createAffordance(imageConfig, imageState),
     start: startAffordance(imageConfig, status),
     openInteractive: openInteractiveAffordance(imageConfig, status),
+    show: displayModeAffordance(
+      imageConfig,
+      status,
+      "pharo_launcher_image_show",
+    ),
+    hide: displayModeAffordance(
+      imageConfig,
+      status,
+      "pharo_launcher_image_hide",
+    ),
     stop: stopAffordance(imageConfig.id, status),
     delete: denied(
       "Deletion is reserved for PLexus workspace cleanup policy, not the agent launcher surface",
@@ -416,6 +449,7 @@ function scopedImageContext(
     imageId: imageConfig.id,
     active: imageConfig.active,
     status: imageStatus(imageState),
+    displayMode: imageState?.displayMode ?? projectImageDisplayMode(imageConfig),
     ownership: {
       projectId: scope.projectId,
       workspaceId: scope.workspaceId,
@@ -454,6 +488,7 @@ function scopedImageDiagnostics(
     launcherImageName,
     active: imageConfig.active,
     status: imageStatus(imageState),
+    displayMode: imageState?.displayMode ?? projectImageDisplayMode(imageConfig),
     ...(imageState?.assignedPort
       ? { assignedPort: imageState.assignedPort }
       : {}),
