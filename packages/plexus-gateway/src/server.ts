@@ -128,11 +128,15 @@ function visibleRawRoutingTools(exposeRawRoutingTool: boolean): Tool[] {
   return (exposeRawRoutingTool ? [rawRoutingTool] : []) as Tool[];
 }
 
-function visibleTools(
+async function visibleTools(
   gateway: PlexusGateway,
   surface: GatewaySurface,
   exposeRawRoutingTool: boolean,
-): Tool[] {
+): Promise<Tool[]> {
+  const pharoTools = pharoToolsVisible(surface)
+    ? await gateway.refreshPharoTools()
+    : [];
+
   return [
     ...(routeControlToolsVisible(surface)
       ? visibleRouteControlTools(exposeRawRoutingTool)
@@ -140,7 +144,7 @@ function visibleTools(
     ...(!routeControlToolsVisible(surface) && exposeRawRoutingTool
       ? visibleRawRoutingTools(exposeRawRoutingTool)
       : []),
-    ...(pharoToolsVisible(surface) ? gateway.listPharoTools() : []),
+    ...pharoTools,
   ];
 }
 
@@ -263,7 +267,7 @@ export function createGatewayServerWithOptions(
   );
 
   server.setRequestHandler(ListToolsRequestSchema, async () => ({
-    tools: visibleTools(gateway, surface, exposeRawRoutingTool),
+    tools: await visibleTools(gateway, surface, exposeRawRoutingTool),
   }));
 
   server.setRequestHandler(CallToolRequestSchema, async (request) => {

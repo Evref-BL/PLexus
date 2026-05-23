@@ -430,8 +430,8 @@ export class PlexusGateway {
   private readonly routingTable: PlexusRoutingTable;
   private readonly imageRouter: ImageMcpToolRouter;
   private readonly healthClient: GatewayImageHealthClient;
-  private readonly pharoTools: Tool[];
-  private readonly pharoToolNames: Set<string>;
+  private pharoTools: Tool[];
+  private pharoToolNames: Set<string>;
   private readonly pharoScope: GatewayRouteReferenceInput;
 
   constructor(options: PlexusGatewayOptions = {}) {
@@ -440,13 +440,33 @@ export class PlexusGateway {
       options.imageRouter ?? new StreamableHttpImageMcpToolRouter();
     this.healthClient =
       options.healthClient ?? new HttpGatewayImageHealthClient();
-    this.pharoTools = buildPharoFacadeTools(options.pharoTools ?? []);
-    this.pharoToolNames = new Set(this.pharoTools.map((tool) => tool.name));
+    this.pharoTools = [];
+    this.pharoToolNames = new Set();
     this.pharoScope = options.pharoScope ?? {};
+    this.setPharoTools(options.pharoTools ?? []);
   }
 
   listPharoTools(): Tool[] {
     return this.pharoTools.map((tool) => ({ ...tool }));
+  }
+
+  async refreshPharoTools(): Promise<Tool[]> {
+    let tools: Tool[] | undefined;
+    try {
+      tools = await this.fetchCurrentPharoTools();
+    } catch (error) {
+      if (this.pharoTools.length === 0) {
+        throw error;
+      }
+
+      return this.listPharoTools();
+    }
+
+    if (tools !== undefined) {
+      this.setPharoTools(tools);
+    }
+
+    return this.listPharoTools();
   }
 
   isPharoTool(name: string): boolean {
@@ -755,6 +775,67 @@ export class PlexusGateway {
       route,
       result: toolResult,
     };
+  }
+
+  private setPharoTools(tools: readonly Tool[]): void {
+    this.pharoTools = buildPharoFacadeTools(tools);
+    this.pharoToolNames = new Set(this.pharoTools.map((tool) => tool.name));
+  }
+
+  private async fetchCurrentPharoTools(): Promise<Tool[] | undefined> {
+    if (!this.imageRouter.listTools) {
+      return undefined;
+    }
+
+    let routes: GatewayProjectRoute[];
+    try {
+      routes = await this.resolveProjectRoutes(this.pharoScope);
+    } catch {
+      return undefined;
+    }
+
+    const errors: string[] = [];
+    let attempted = false;
+    for (const project of routes) {
+      for (const image of project.images) {
+        if (!image.routable.ok) {
+          continue;
+        }
+
+        attempted = true;
+        const route = {
+          projectId: project.projectId,
+          workspaceId: project.workspaceId,
+          targetId: project.targetId,
+          imageId: image.id,
+          imageName: image.imageName,
+          ...(image.port !== undefined ? { port: image.port } : {}),
+          ...(image.mcpEndpoint ? { mcpEndpoint: image.mcpEndpoint } : {}),
+        };
+
+        try {
+          const tools = await this.imageRouter.listTools(route);
+          if (tools.length > 0) {
+            return tools;
+          }
+          errors.push(`${project.targetId}/${image.id}: MCP tools/list returned no tools`);
+        } catch (error) {
+          errors.push(
+            `${project.targetId}/${image.id}: ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+          );
+        }
+      }
+    }
+
+    if (attempted) {
+      throw new GatewayInputError(
+        `Unable to refresh Pharo tool schemas from registered image routes: ${errors.join("; ")}`,
+      );
+    }
+
+    return undefined;
   }
 
   private resolveImageRoute(
