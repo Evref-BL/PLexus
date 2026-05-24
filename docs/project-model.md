@@ -327,7 +327,7 @@ The scoped context includes:
 - each declared image's public `imageId`
 - ownership metadata showing that the image belongs to the current
   project/workspace/target and is disposable with the workspace
-- safe create/start/stop/delete affordance descriptions that use scoped
+- safe create/start/stop/reset affordance descriptions that use scoped
   `imageId` arguments only
 - gateway route metadata telling subagents to pass the selected `imageId` to
   `pharo_gateway` tools
@@ -337,9 +337,11 @@ or target. It also rejects state images that are not declared in the project
 config, so a plugin cannot smuggle arbitrary host images into the scoped agent
 surface.
 
-Deletion remains a workspace cleanup policy. Normal agent-facing context must
-not expose host-wide image delete, VM delete, raw process kill, launcher image
-names, image MCP ports, or filesystem paths.
+Deletion remains a workspace cleanup policy. Scoped reset is the destructive
+workflow for disposable verification images and should report lifecycle plus
+`pharo_gateway` route status for the resulting `imageId`. Normal agent-facing
+context must not expose host-wide image delete, VM delete, raw process kill,
+launcher image names, image MCP ports, or filesystem paths.
 
 Operators can request the trusted diagnostic surface when debugging lifecycle
 failures. For `plexus_project_status`, pass `includeDiagnostics: true` to include
