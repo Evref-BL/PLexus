@@ -10,6 +10,7 @@ import {
   defaultTargetId,
   defaultWorkspaceId,
   type PharoMcpContractReference,
+  type ProjectImageLeaseOwnerKind,
 } from "./projectState.js";
 
 export const defaultPharoLauncherMcpServerName = "pharo-launcher";
@@ -40,6 +41,15 @@ export interface BuildPlexusWorkspaceMcpConfigOptions {
   workspaceId?: string;
   targetId?: string;
   stateRoot?: string;
+  imageLease?: {
+    ownerId?: string;
+    ownerKind?: ProjectImageLeaseOwnerKind;
+    purpose?: string;
+    repositoryPath?: string;
+    branch?: string;
+    ttlMs?: number;
+    cleanupCommand?: string;
+  };
   plexusCommand?: string;
   plexusGatewayCommand?: string;
   pharoTools: readonly Tool[];
@@ -89,6 +99,28 @@ function scopeEnv(scope: PlexusWorkspaceMcpScope): Record<string, string> {
   };
 }
 
+function imageLeaseEnv(
+  scope: PlexusWorkspaceMcpScope,
+  lease: BuildPlexusWorkspaceMcpConfigOptions["imageLease"],
+): Record<string, string> {
+  return {
+    PLEXUS_IMAGE_LEASE_OWNER_ID: lease?.ownerId ?? scope.targetId,
+    PLEXUS_IMAGE_LEASE_OWNER_KIND: lease?.ownerKind ?? "target",
+    PLEXUS_IMAGE_LEASE_PURPOSE:
+      lease?.purpose ?? "PLexus scoped Pharo image lifecycle",
+    ...(lease?.repositoryPath
+      ? { PLEXUS_IMAGE_LEASE_REPOSITORY_PATH: lease.repositoryPath }
+      : {}),
+    ...(lease?.branch ? { PLEXUS_IMAGE_LEASE_BRANCH: lease.branch } : {}),
+    ...(lease?.ttlMs !== undefined
+      ? { PLEXUS_IMAGE_LEASE_TTL_MS: String(lease.ttlMs) }
+      : {}),
+    ...(lease?.cleanupCommand
+      ? { PLEXUS_IMAGE_LEASE_CLEANUP_COMMAND: lease.cleanupCommand }
+      : {}),
+  };
+}
+
 export function buildPharoLauncherMcpServerConfig(
   options: BuildPlexusWorkspaceMcpConfigOptions,
 ): WorkspaceMcpServerConfig {
@@ -100,6 +132,7 @@ export function buildPharoLauncherMcpServerConfig(
     env: {
       ...scopeEnv(scope),
       PLEXUS_AGENT_MCP_SURFACE: "pharo-launcher",
+      ...imageLeaseEnv(scope, options.imageLease),
     },
   };
 }

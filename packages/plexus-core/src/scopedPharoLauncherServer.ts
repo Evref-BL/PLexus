@@ -46,6 +46,9 @@ import {
   runtimeStatusForImages,
   sanitizeRuntimeId,
   saveProjectState,
+  type ProjectImageLeaseMode,
+  type ProjectImageLeaseOwnerKind,
+  type ProjectImageLeaseState,
   type ProjectImageState,
   type ProjectState,
 } from "./projectState.js";
@@ -77,6 +80,7 @@ export interface ScopedPharoLauncherOptions {
   workspaceId?: string;
   targetId?: string;
   stateRoot?: string;
+  imageLease?: ScopedImageLeaseOptions;
   pharoLauncherMcpClient?: PharoLauncherMcpToolClient;
   homeImageCacheClient?: PharoLauncherMcpToolClient;
   homeImageCacheApproval?: HomeImageCacheMutationApproval;
@@ -84,6 +88,16 @@ export interface ScopedPharoLauncherOptions {
   projectClose?: typeof closeProject;
   fetch?: typeof fetch;
   now?: () => Date;
+}
+
+export interface ScopedImageLeaseOptions {
+  ownerId?: string;
+  ownerKind?: ProjectImageLeaseOwnerKind;
+  purpose?: string;
+  repositoryPath?: string;
+  branch?: string;
+  ttlMs?: number;
+  cleanupCommand?: string;
 }
 
 interface ResolvedScope {
@@ -121,6 +135,7 @@ interface WorkspaceImageSummary {
     hide: "headless";
   };
   pharoMcpContract?: ProjectImageState["pharoMcpContract"];
+  lease?: ProjectImageLeaseState;
 }
 
 interface ScopedImageLifecycleStatus {
@@ -265,6 +280,88 @@ function requireConfirm(input: Record<string, unknown>): void {
   }
 }
 
+const leaseOwnerKinds = new Set<ProjectImageLeaseOwnerKind>([
+  "target",
+  "workspace",
+  "thread",
+  "session",
+  "workItem",
+  "agent",
+  "human",
+  "unknown",
+]);
+
+function nonEmptyEnv(value: string | undefined): string | undefined {
+  const trimmed = value?.trim();
+  return trimmed && trimmed.length > 0 ? trimmed : undefined;
+}
+
+function leaseOwnerKindFromText(
+  value: string | undefined,
+): ProjectImageLeaseOwnerKind | undefined {
+  const normalized = value === "work-item" ? "workItem" : value;
+  if (!normalized) {
+    return undefined;
+  }
+  if (!leaseOwnerKinds.has(normalized as ProjectImageLeaseOwnerKind)) {
+    throw new ScopedPharoLauncherError(
+      `PLEXUS_IMAGE_LEASE_OWNER_KIND must be one of ${[...leaseOwnerKinds].join(", ")}`,
+    );
+  }
+
+  return normalized as ProjectImageLeaseOwnerKind;
+}
+
+function leaseTtlMsFromText(value: string | undefined): number | undefined {
+  if (!value) {
+    return undefined;
+  }
+  const ttlMs = Number(value);
+  if (!Number.isInteger(ttlMs) || ttlMs <= 0) {
+    throw new ScopedPharoLauncherError(
+      "PLEXUS_IMAGE_LEASE_TTL_MS must be a positive integer",
+    );
+  }
+
+  return ttlMs;
+}
+
+export function scopedImageLeaseOptionsFromEnvironment(
+  env: Record<string, string | undefined>,
+): ScopedImageLeaseOptions | undefined {
+  const ownerId = nonEmptyEnv(env.PLEXUS_IMAGE_LEASE_OWNER_ID);
+  const ownerKind = leaseOwnerKindFromText(
+    nonEmptyEnv(env.PLEXUS_IMAGE_LEASE_OWNER_KIND),
+  );
+  const purpose = nonEmptyEnv(env.PLEXUS_IMAGE_LEASE_PURPOSE);
+  const repositoryPath = nonEmptyEnv(env.PLEXUS_IMAGE_LEASE_REPOSITORY_PATH);
+  const branch = nonEmptyEnv(env.PLEXUS_IMAGE_LEASE_BRANCH);
+  const ttlMs = leaseTtlMsFromText(nonEmptyEnv(env.PLEXUS_IMAGE_LEASE_TTL_MS));
+  const cleanupCommand = nonEmptyEnv(env.PLEXUS_IMAGE_LEASE_CLEANUP_COMMAND);
+
+  if (
+    !ownerId &&
+    !ownerKind &&
+    !purpose &&
+    !repositoryPath &&
+    !branch &&
+    ttlMs === undefined &&
+    !cleanupCommand
+  ) {
+    return undefined;
+  }
+
+  return {
+    ...(ownerId ? { ownerId } : {}),
+    ...(ownerKind ? { ownerKind } : {}),
+    ...(purpose ? { purpose } : {}),
+    ...(repositoryPath ? { repositoryPath } : {}),
+    ...(branch ? { branch } : {}),
+    ...(ttlMs !== undefined ? { ttlMs } : {}),
+    ...(cleanupCommand ? { cleanupCommand } : {}),
+  };
+}
+
 function assertLauncherOk(
   result: LauncherCommandResult | undefined,
   toolName: string,
@@ -336,6 +433,7 @@ function imageSummary(
     ...(imageState?.pharoMcpContract
       ? { pharoMcpContract: imageState.pharoMcpContract }
       : {}),
+    ...(imageState?.lease ? { lease: imageState.lease } : {}),
   };
 }
 
@@ -349,6 +447,110 @@ function statePathForScope(
     workspaceId: scope.workspaceId,
     stateRoot: scope.stateRoot,
   });
+}
+
+function leaseOwnerDescription(lease: ProjectImageLeaseState): string {
+  return `${lease.ownerKind} ${lease.ownerId}`;
+}
+
+function leaseExpired(lease: ProjectImageLeaseState, now: Date): boolean {
+  if (!lease.expiresAt) {
+    return false;
+  }
+  const expiresAt = Date.parse(lease.expiresAt);
+  return Number.isFinite(expiresAt) && expiresAt <= now.getTime();
+}
+
+function sameLeaseOwner(
+  left: ProjectImageLeaseState,
+  right: ProjectImageLeaseState,
+): boolean {
+  return left.ownerKind === right.ownerKind && left.ownerId === right.ownerId;
+}
+
+function imageLeaseForMutation(
+  scope: ResolvedScope,
+  options: ScopedImageLeaseOptions | undefined,
+  now: Date,
+  existingLease?: ProjectImageLeaseState,
+  mode: ProjectImageLeaseMode = "mutable",
+): ProjectImageLeaseState {
+  const ownerId = options?.ownerId ?? scope.targetId;
+  const ownerKind = options?.ownerKind ?? "target";
+  const retainedLease =
+    existingLease?.ownerId === ownerId && existingLease.ownerKind === ownerKind
+      ? existingLease
+      : undefined;
+  const createdAt = retainedLease?.createdAt ?? now.toISOString();
+  const expiresAt =
+    options?.ttlMs !== undefined
+      ? new Date(now.getTime() + options.ttlMs).toISOString()
+      : retainedLease?.expiresAt;
+
+  return {
+    ownerId,
+    ownerKind,
+    mode,
+    purpose:
+      options?.purpose ??
+      retainedLease?.purpose ??
+      "Scoped Pharo image lifecycle",
+    createdAt,
+    heartbeatAt: now.toISOString(),
+    ...(expiresAt ? { expiresAt } : {}),
+    ...(options?.repositoryPath ?? retainedLease?.repositoryPath
+      ? {
+          repositoryPath:
+            options?.repositoryPath ?? retainedLease?.repositoryPath,
+        }
+      : {}),
+    ...(options?.branch ?? retainedLease?.branch
+      ? { branch: options?.branch ?? retainedLease?.branch }
+      : {}),
+    ...(options?.cleanupCommand ?? retainedLease?.cleanupCommand
+      ? {
+          cleanupCommand:
+            options?.cleanupCommand ?? retainedLease?.cleanupCommand,
+        }
+      : {}),
+  };
+}
+
+function assertImageLeaseAllowsMutation(
+  imageId: string,
+  existingLease: ProjectImageLeaseState | undefined,
+  requestedLease: ProjectImageLeaseState,
+  now: Date,
+): void {
+  if (
+    !existingLease ||
+    leaseExpired(existingLease, now) ||
+    sameLeaseOwner(existingLease, requestedLease)
+  ) {
+    return;
+  }
+
+  const expiry = existingLease.expiresAt
+    ? ` until ${existingLease.expiresAt}`
+    : "";
+  throw new ScopedPharoLauncherError(
+    `Image ${imageId} is leased to ${leaseOwnerDescription(existingLease)} for ${existingLease.purpose}${expiry}; mutation requires ${leaseOwnerDescription(requestedLease)}`,
+  );
+}
+
+function stateWithImageLease(
+  state: ProjectState,
+  imageId: string,
+  lease: ProjectImageLeaseState,
+  updatedAt: Date,
+): ProjectState {
+  return {
+    ...state,
+    images: state.images.map((image) =>
+      image.id === imageId ? { ...image, lease } : image,
+    ),
+    updatedAt: updatedAt.toISOString(),
+  };
 }
 
 function findImageConfig(
@@ -659,6 +861,39 @@ export class ScopedPharoLauncher {
     return state?.images.find((image) => image.id === imageId);
   }
 
+  private imageLeaseForMutation(
+    scope: ResolvedScope,
+    projectConfig: ProjectConfig,
+    imageId: string,
+    now: Date,
+  ): ProjectImageLeaseState {
+    const imageState = this.currentImageState(scope, projectConfig, imageId);
+    const lease = imageLeaseForMutation(
+      scope,
+      this.options.imageLease,
+      now,
+      imageState?.lease,
+    );
+    assertImageLeaseAllowsMutation(imageId, imageState?.lease, lease, now);
+    return lease;
+  }
+
+  private recordImageLease(
+    scope: ResolvedScope,
+    projectConfig: ProjectConfig,
+    imageId: string,
+    lease: ProjectImageLeaseState,
+    now: Date,
+  ): void {
+    const statePath = statePathForScope(scope, projectConfig);
+    const state = loadProjectState(statePath);
+    if (!state?.images.some((image) => image.id === imageId)) {
+      return;
+    }
+
+    saveProjectState(statePath, stateWithImageLease(state, imageId, lease, now));
+  }
+
   private async snapshotImageBeforeDisplayModeRestart(
     scope: ResolvedScope,
     imageState: ProjectImageState,
@@ -816,6 +1051,8 @@ export class ScopedPharoLauncher {
         `Image ${imageId} already has runtime state`,
       );
     }
+    const now = this.options.now?.() ?? new Date();
+    const lease = this.imageLeaseForMutation(scope, projectConfig, imageId, now);
 
     const client =
       this.options.pharoLauncherMcpClient ??
@@ -836,7 +1073,7 @@ export class ScopedPharoLauncher {
         scope,
         previousState,
         imageId,
-        this.options.now?.() ?? new Date(),
+        now,
       );
       const imageState = state.images.find((image) => image.id === imageId);
       if (!imageState) {
@@ -878,7 +1115,7 @@ export class ScopedPharoLauncher {
         assertLauncherOk(result, "pharo_launcher_image_create");
       }
 
-      saveProjectState(statePath, state);
+      saveProjectState(statePath, stateWithImageLease(state, imageId, lease, now));
     } finally {
       if (ownsClient) {
         await client.close?.();
@@ -909,6 +1146,9 @@ export class ScopedPharoLauncher {
     }
 
     const scope = resolveScope(this.options);
+    const projectConfig = loadProjectConfig(scope.projectRoot);
+    const now = this.options.now?.() ?? new Date();
+    const lease = this.imageLeaseForMutation(scope, projectConfig, imageId, now);
     await (this.options.projectOpen ?? openProject)({
       projectRoot: scope.projectRoot,
       workspaceId: scope.workspaceId,
@@ -923,6 +1163,7 @@ export class ScopedPharoLauncher {
       homeImageCacheClient: this.options.homeImageCacheClient ??
         this.options.pharoLauncherMcpClient,
     });
+    this.recordImageLease(scope, projectConfig, imageId, lease, now);
 
     return this.imageInfo(imageId);
   }
@@ -967,6 +1208,13 @@ export class ScopedPharoLauncher {
         runtimeStateUnchanged: true,
       };
     }
+
+    this.imageLeaseForMutation(
+      scope,
+      projectConfig,
+      imageId,
+      this.options.now?.() ?? new Date(),
+    );
 
     let snapshotBeforeRestart: DisplayModeRestartSnapshot | undefined;
     if (before.image.status === "running") {
@@ -1013,12 +1261,16 @@ export class ScopedPharoLauncher {
   }> {
     this.imageInfo(imageId);
     const scope = resolveScope(this.options);
+    const projectConfig = loadProjectConfig(scope.projectRoot);
+    const now = this.options.now?.() ?? new Date();
+    const lease = this.imageLeaseForMutation(scope, projectConfig, imageId, now);
     await (this.options.projectClose ?? closeProject)({
       projectRoot: scope.projectRoot,
       workspaceId: scope.workspaceId,
       stateRoot: scope.stateRoot,
       imageIds: [imageId],
     });
+    this.recordImageLease(scope, projectConfig, imageId, lease, now);
 
     return this.imageInfo(imageId);
   }
@@ -1051,6 +1303,14 @@ export class ScopedPharoLauncher {
     const previousImage = previousState?.images.find(
       (image) => image.id === imageId,
     );
+    if (previousImage) {
+      this.imageLeaseForMutation(
+        scope,
+        projectConfig,
+        imageId,
+        this.options.now?.() ?? new Date(),
+      );
+    }
     if (previousImage?.status === "starting") {
       throw new ScopedPharoLauncherError(
         `Image ${imageId} is starting; wait for startup to finish before resetting`,

@@ -122,7 +122,42 @@ describe("workspace MCP config", () => {
         VIBE_KANBAN_WORKSPACE_ID: "task-123",
         PLEXUS_TARGET_ID: "target-123",
         PLEXUS_STATE_ROOT: path.win32.resolve("C:\\dev\\code\\git\\.plexus-state"),
+        PLEXUS_IMAGE_LEASE_OWNER_ID: "target-123",
+        PLEXUS_IMAGE_LEASE_OWNER_KIND: "target",
+        PLEXUS_IMAGE_LEASE_PURPOSE: "PLexus scoped Pharo image lifecycle",
       },
+    });
+  });
+
+  it("allows generated pharo-launcher entries to carry explicit image lease ownership", () => {
+    expect(
+      buildPharoLauncherMcpServerConfig({
+        projectRoot: "C:\\dev\\code\\git\\Project-worktree",
+        projectConfig,
+        workspaceId: "task-123",
+        targetId: "target-123",
+        stateRoot: "C:\\dev\\code\\git\\.plexus-state",
+        pharoTools: [pharoEvalTool],
+        imageLease: {
+          ownerId: "thread-456",
+          ownerKind: "thread",
+          purpose: "Work on PLexus issue 24",
+          repositoryPath: "C:\\dev\\code\\git\\Project-worktree",
+          branch: "codex/plexus-24-image-leases",
+          ttlMs: 3_600_000,
+          cleanupCommand: "plexus project close C:\\dev\\code\\git\\Project-worktree",
+        },
+      }).env,
+    ).toMatchObject({
+      PLEXUS_IMAGE_LEASE_OWNER_ID: "thread-456",
+      PLEXUS_IMAGE_LEASE_OWNER_KIND: "thread",
+      PLEXUS_IMAGE_LEASE_PURPOSE: "Work on PLexus issue 24",
+      PLEXUS_IMAGE_LEASE_REPOSITORY_PATH:
+        "C:\\dev\\code\\git\\Project-worktree",
+      PLEXUS_IMAGE_LEASE_BRANCH: "codex/plexus-24-image-leases",
+      PLEXUS_IMAGE_LEASE_TTL_MS: "3600000",
+      PLEXUS_IMAGE_LEASE_CLEANUP_COMMAND:
+        "plexus project close C:\\dev\\code\\git\\Project-worktree",
     });
   });
 

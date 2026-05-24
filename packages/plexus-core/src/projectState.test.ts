@@ -661,6 +661,45 @@ describe("project state", () => {
     });
   });
 
+  it("preserves previous image leases when rebuilding runtime state", () => {
+    expect(
+      createProjectState(config, {
+        updatedAt: "2026-04-25T10:00:00.000Z",
+        workspaceId: "worktree-a",
+        previousState: {
+          projectId: "project-123",
+          projectName: "my-project",
+          workspaceId: "worktree-a",
+          targetId: "project-123--worktree-a",
+          updatedAt: "2026-04-25T09:00:00.000Z",
+          images: [
+            {
+              id: "dev",
+              imageName: "MyProject-dev",
+              assignedPort: 7123,
+              status: "running",
+              lease: {
+                ownerId: "thread-a",
+                ownerKind: "thread",
+                mode: "mutable",
+                purpose: "Work on issue 24",
+                createdAt: "2026-04-25T09:00:00.000Z",
+                heartbeatAt: "2026-04-25T09:30:00.000Z",
+              },
+            },
+          ],
+        },
+      }).images[0].lease,
+    ).toEqual({
+      ownerId: "thread-a",
+      ownerKind: "thread",
+      mode: "mutable",
+      purpose: "Work on issue 24",
+      createdAt: "2026-04-25T09:00:00.000Z",
+      heartbeatAt: "2026-04-25T09:30:00.000Z",
+    });
+  });
+
   it("fails when dynamic port allocation exhausts the range", () => {
     const dynamicConfig: ProjectConfig = {
       ...config,

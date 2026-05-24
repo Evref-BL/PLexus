@@ -69,6 +69,12 @@ before forwarding to the image MCP server.
 The `pharo-launcher` MCP visible to an agent is a PLexus-scoped facade over
 pharo-launcher-mcp. It can reuse pharo-launcher-mcp operations and naming where
 useful, but it must not be raw host-wide Pharo Launcher access.
+Mutable image operations are guarded by a local image lease stored in PLexus
+runtime state. The generated launcher entry leases images to the current target
+by default. A runner can set `PLEXUS_IMAGE_LEASE_OWNER_ID`,
+`PLEXUS_IMAGE_LEASE_OWNER_KIND`, and `PLEXUS_IMAGE_LEASE_PURPOSE` to make a
+thread, session, or work item the explicit owner. A different active owner
+blocks create/start/stop/display-mode/reset mutations until the lease expires.
 
 Each agent session is scoped by PLexus before tools are exposed:
 
@@ -142,8 +148,8 @@ The scoped `pharo-launcher` surface is deliberately small.
 
 | Intent | Tool | Scope rule |
 | --- | --- | --- |
-| List workspace images | `pharo_launcher_image_list` | Return only images declared in, created by, or registered to the current PLexus workspace. Do not list all host images. |
-| Inspect one workspace image | `pharo_launcher_image_info({ imageId })` | Resolve `imageId` through PLexus state, then call pharo-launcher-mcp only with the mapped launcher image name if needed. |
+| List workspace images | `pharo_launcher_image_list` | Return only images declared in, created by, or registered to the current PLexus workspace, including image lease metadata when present. Do not list all host images. |
+| Inspect one workspace image | `pharo_launcher_image_info({ imageId })` | Resolve `imageId` through PLexus state and report any image lease, then call pharo-launcher-mcp only with the mapped launcher image name if needed. |
 | Create a workspace image | `pharo_launcher_image_create({ imageId, profileId? })` | Create only from a project-approved image spec/profile. PLexus renders the launcher image name and records the handle before exposing it. |
 | Start a workspace image | `pharo_launcher_image_start({ imageId })` | Start only a scoped image. PLexus supplies the generated startup script and records the image MCP endpoint. |
 | Stop a workspace image | `pharo_launcher_image_stop({ imageId, confirm: true })` | Stop only a scoped image. PLexus resolves the process; callers cannot kill by arbitrary pid. |
