@@ -155,6 +155,7 @@ describe("scoped pharo launcher facade", () => {
       "pharo_launcher_image_show",
       "pharo_launcher_image_hide",
       "pharo_launcher_image_stop",
+      "pharo_launcher_image_reset",
     ]);
     expect(
       scopedPharoLauncherTools.find(
@@ -190,6 +191,25 @@ describe("scoped pharo launcher facade", () => {
             enum: ["headless", "interactive"],
           },
         },
+      },
+    });
+    expect(
+      scopedPharoLauncherTools.find(
+        (tool) => tool.name === "pharo_launcher_image_reset",
+      ),
+    ).toMatchObject({
+      inputSchema: {
+        properties: {
+          imageId: { type: "string" },
+          confirm: { type: "boolean" },
+          start: { type: "boolean" },
+          displayMode: {
+            type: "string",
+            enum: ["headless", "interactive"],
+          },
+        },
+        required: ["imageId", "confirm"],
+        additionalProperties: false,
       },
     });
   });
@@ -331,6 +351,17 @@ describe("scoped pharo launcher facade", () => {
         pharoLauncherMcpClient: client,
       }).createImage("dev"),
     ).rejects.toThrow("Image dev has no approved create policy");
+
+    await expect(
+      new ScopedPharoLauncher({
+        projectRoot,
+        stateRoot,
+        workspaceId: "worktree-a",
+        pharoLauncherMcpClient: client,
+      }).resetImage("dev"),
+    ).rejects.toThrow(
+      "Image dev has no approved create policy in project config; scoped reset is rejected",
+    );
   });
 
   it("starts and stops declared images through PLexus scoped lifecycle calls", async () => {
@@ -388,6 +419,221 @@ describe("scoped pharo launcher facade", () => {
         stateRoot,
         imageIds: ["dev"],
       }),
+    ]);
+  });
+
+  it("resets disposable images through scoped close, delete, create, and reopen policy", async () => {
+    const projectRoot = makeTempDir("plexus-project-");
+    const stateRoot = makeTempDir("plexus-state-");
+    const { client, calls } = fakeLauncherClient();
+    const starts: unknown[] = [];
+    const stops: unknown[] = [];
+    const devImageState = runningState().images[0];
+    const previewImageState = {
+      id: "preview",
+      imageName: "MyProject-worktree-a-preview",
+      assignedPort: 7124,
+      pid: 2345,
+      status: "running" as const,
+      displayMode: "interactive" as const,
+    };
+    writeProjectConfig(projectRoot, {
+      home: {
+        imageCache: {
+          enabled: false,
+          networkPolicy: "online",
+        },
+      },
+      images: [
+        projectConfig().images[0],
+        {
+          id: "preview",
+          imageName: "MyProject-{workspaceId}-preview",
+          active: true,
+          displayMode: "interactive",
+          mcp: {
+            port: 7124,
+            loadScript: "pharo/load-mcp.st",
+          },
+          create: {
+            kind: "template",
+            profileId: "pharo-13-default",
+            templateName: "Pharo 13.0 - 64bit",
+            templateCategory: "Official",
+          },
+        },
+      ],
+    });
+    saveProjectState(statePath(projectRoot, stateRoot), {
+      ...runningState(),
+      images: [devImageState, previewImageState],
+    });
+
+    const result = await new ScopedPharoLauncher({
+      projectRoot,
+      stateRoot,
+      workspaceId: "worktree-a",
+      pharoLauncherMcpClient: client,
+      now: () => new Date("2026-05-18T12:00:00.000Z"),
+      projectClose: async (options) => {
+        stops.push(options);
+        const state = {
+          ...runningState(),
+          runtimeStatus: "idle" as const,
+          updatedAt: "2026-05-18T12:00:00.000Z",
+          images: [
+            {
+              id: "dev",
+              imageName: "MyProject-worktree-a-dev",
+              status: "stopped" as const,
+            },
+            previewImageState,
+          ],
+        };
+        saveProjectState(statePath(projectRoot, stateRoot), state);
+        return {
+          ok: true,
+          projectRoot,
+          statePath: statePath(projectRoot, stateRoot),
+          state,
+          stoppedImages: state.images,
+          repositoryWorkspaceCleanups: [
+            {
+              policy: "delete-disposable" as const,
+              decision: "deleted" as const,
+              imageId: "dev",
+              repositoryId: "my-project",
+              path: "/private/plexus/repository-workspace",
+              dirtyState: "clean" as const,
+              recordedAt: "2026-05-18T12:00:00.000Z",
+            },
+          ],
+          failures: [],
+        };
+      },
+      projectOpen: async (options) => {
+        starts.push(options);
+        const state = {
+          ...runningState(),
+          images: [
+            {
+              ...devImageState,
+              mcpEndpoint: {
+                transport: "http" as const,
+                host: "127.0.0.1",
+                port: 7123,
+                path: "/mcp",
+              },
+              pharoMcpContract: {
+                status: "matching" as const,
+                expectedId: "project-contract",
+              },
+              displayMode: "interactive" as const,
+            },
+            previewImageState,
+          ],
+        };
+        saveProjectState(statePath(projectRoot, stateRoot), state);
+        return {
+          ok: true,
+          projectRoot,
+          statePath: statePath(projectRoot, stateRoot),
+          state,
+          failures: [],
+        };
+      },
+    }).resetImage("dev", { displayMode: "interactive" });
+
+    expect(stops).toEqual([
+      expect.objectContaining({
+        projectRoot,
+        workspaceId: "worktree-a",
+        stateRoot,
+        imageIds: ["dev"],
+        pharoLauncherMcpClient: client,
+        repositoryWorkspaceCleanupPolicy: "delete-disposable",
+      }),
+    ]);
+    expect(calls).toEqual([
+      {
+        name: "pharo_launcher_image_delete",
+        argumentsValue: {
+          imageName: "MyProject-worktree-a-dev",
+          force: true,
+          confirm: true,
+        },
+      },
+      {
+        name: "pharo_launcher_image_create",
+        argumentsValue: {
+          newImageName: "MyProject-worktree-a-dev",
+          templateName: "Pharo 13.0 - 64bit",
+          templateCategory: "Official",
+          noLaunch: true,
+        },
+      },
+    ]);
+    expect(starts).toEqual([
+      expect.objectContaining({
+        projectRoot,
+        workspaceId: "worktree-a",
+        targetId: "project-123--worktree-a",
+        stateRoot,
+        imageIds: ["dev"],
+        displayMode: "interactive",
+      }),
+    ]);
+    expect(result).toMatchObject({
+      image: {
+        imageId: "dev",
+        status: "running",
+        displayMode: "interactive",
+      },
+      reset: {
+        imageId: "dev",
+        closed: true,
+        deleted: true,
+        created: true,
+        started: true,
+        lifecycle: {
+          imageId: "dev",
+          status: "running",
+          displayMode: "interactive",
+        },
+        route: {
+          serverName: "pharo_gateway",
+          requiredArgument: "imageId",
+          imageId: "dev",
+          status: "routable",
+          routable: true,
+          endpointRecorded: true,
+          contractStatus: "matching",
+        },
+        repositoryWorkspaceCleanupPolicy: "delete-disposable",
+        repositoryWorkspaceCleanup: {
+          attempted: true,
+          decisions: [
+            {
+              repositoryId: "my-project",
+              decision: "deleted",
+              dirtyState: "clean",
+            },
+          ],
+        },
+      },
+    });
+    const serialized = JSON.stringify(result);
+    expect(serialized).not.toContain("MyProject-worktree-a-dev");
+    expect(serialized).not.toContain("MyProject-worktree-a-preview");
+    expect(serialized).not.toContain(stateRoot);
+    expect(serialized).not.toContain("/private/plexus/repository-workspace");
+
+    const savedState = JSON.parse(
+      fs.readFileSync(statePath(projectRoot, stateRoot), "utf8"),
+    ) as ProjectState;
+    expect(savedState.images).toEqual([
+      expect.objectContaining({ id: "dev", status: "running" }),
+      previewImageState,
     ]);
   });
 

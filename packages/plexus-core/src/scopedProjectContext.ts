@@ -70,6 +70,7 @@ export interface ScopedImageAffordances {
   show: ScopedImageAffordance;
   hide: ScopedImageAffordance;
   stop: ScopedImageAffordance;
+  reset: ScopedImageAffordance;
   delete: ScopedImageAffordanceDenied;
 }
 
@@ -312,6 +313,28 @@ function stopAffordance(
   });
 }
 
+function resetAffordance(
+  imageConfig: ProjectImageConfig,
+  status: ScopedImageStatus,
+): ScopedImageAffordance {
+  if (!imageConfig.active) {
+    return denied("Image is inactive in project config");
+  }
+
+  if (status === "starting") {
+    return denied("Image is already starting");
+  }
+
+  if (!imageConfig.create) {
+    return denied("Image has no approved create policy");
+  }
+
+  return allowed("pharo_launcher_image_reset", {
+    imageId: imageConfig.id,
+    confirm: true,
+  });
+}
+
 function lifecycleAffordances(
   imageConfig: ProjectImageConfig,
   imageState: ProjectImageState | undefined,
@@ -332,6 +355,7 @@ function lifecycleAffordances(
       "pharo_launcher_image_hide",
     ),
     stop: stopAffordance(imageConfig.id, status),
+    reset: resetAffordance(imageConfig, status),
     delete: denied(
       "Deletion is reserved for PLexus workspace cleanup policy, not the agent launcher surface",
     ),

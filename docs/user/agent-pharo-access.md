@@ -16,14 +16,14 @@ surfaces:
 - `pharo_gateway`: typed Pharo code tools for a selected image, exposed through a
   stable project-wide Pharo MCP contract.
 
-The agent uses `pharo-launcher` to list, create, start, and stop scoped images.
-It then passes the returned `imageId` to `pharo_gateway` tool calls. The gateway
-facade strips routing-only fields such as `imageId` before forwarding the call
-to the selected image MCP server.
+The agent uses `pharo-launcher` to list, create, start, stop, and reset scoped
+images. It then passes the returned `imageId` to `pharo_gateway` tool calls. The
+gateway facade strips routing-only fields such as `imageId` before forwarding
+the call to the selected image MCP server.
 
-Route registration, route status, and stale-route cleanup are not part of this
-agent-facing contract. They belong to the trusted route-control surface used by
-PLexus lifecycle code or operators.
+Route-control mutation and stale-route cleanup belong to PLexus lifecycle code.
+Scoped lifecycle tools may report route status for their selected `imageId`, but
+agents still do not mutate routes directly.
 
 ## Agent Workflow
 
@@ -147,6 +147,7 @@ The scoped `pharo-launcher` surface is deliberately small.
 | Create a workspace image | `pharo_launcher_image_create({ imageId, profileId? })` | Create only from a project-approved image spec/profile. PLexus renders the launcher image name and records the handle before exposing it. |
 | Start a workspace image | `pharo_launcher_image_start({ imageId })` | Start only a scoped image. PLexus supplies the generated startup script and records the image MCP endpoint. |
 | Stop a workspace image | `pharo_launcher_image_stop({ imageId, confirm: true })` | Stop only a scoped image. PLexus resolves the process; callers cannot kill by arbitrary pid. |
+| Reset a disposable workspace image | `pharo_launcher_image_reset({ imageId, confirm: true, start?, displayMode? })` | Close only the scoped image, clean disposable repository state, delete the owned launcher image internally, recreate it from project policy, reopen by default, and report lifecycle plus `pharo_gateway` route status. |
 
 Do not expose these through the scoped surface by default:
 
@@ -158,8 +159,9 @@ Do not expose these through the scoped surface by default:
 - arbitrary image package/export locations
 - template or VM mutation tools unless a project policy explicitly allows them
 
-Deletion and cleanup should remain a PLexus workspace cleanup policy until there
-is a separate, scoped, reviewable workflow for destructive image removal.
+Deletion and cleanup should remain PLexus workspace policy. The scoped reset
+workflow is the reviewable destructive path for disposable verification images;
+agents must still not call host-wide launcher delete or recreate directly.
 
 ## Create Policy
 

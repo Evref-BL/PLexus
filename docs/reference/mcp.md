@@ -59,11 +59,18 @@ pharo_launcher_image_list
 pharo_launcher_image_info
 pharo_launcher_image_create
 pharo_launcher_image_start
+pharo_launcher_image_open_interactive
+pharo_launcher_image_show
+pharo_launcher_image_hide
 pharo_launcher_image_stop
+pharo_launcher_image_reset
 ```
 
 These tools must not provide raw host-wide image, VM, template, or process
 mutation unless project policy explicitly allows it.
+`pharo_launcher_image_reset` is the scoped destructive recreate workflow for a
+declared image id and reports the resulting lifecycle and `pharo_gateway` route
+status without exposing raw launcher names or endpoint ports.
 
 ## Pharo Gateway Tools
 

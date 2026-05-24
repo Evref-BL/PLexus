@@ -19,6 +19,12 @@ const projectConfig: ProjectConfig = {
       mcp: {
         loadScript: "pharo/load-mcp.st",
       },
+      create: {
+        kind: "template",
+        profileId: "pharo-13-default",
+        templateName: "Pharo 13.0 - 64bit",
+        templateCategory: "Official",
+      },
     },
     {
       id: "baseline",
@@ -174,6 +180,14 @@ describe("scoped project context", () => {
           confirm: true,
         },
       },
+      reset: {
+        allowed: true,
+        toolName: "pharo_launcher_image_reset",
+        arguments: {
+          imageId: "dev",
+          confirm: true,
+        },
+      },
       delete: {
         allowed: false,
         reason:
@@ -181,6 +195,10 @@ describe("scoped project context", () => {
       },
     });
     expect(context.images[1].affordances.start).toEqual({
+      allowed: false,
+      reason: "Image is inactive in project config",
+    });
+    expect(context.images[1].affordances.reset).toEqual({
       allowed: false,
       reason: "Image is inactive in project config",
     });

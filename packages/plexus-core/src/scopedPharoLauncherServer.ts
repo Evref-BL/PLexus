@@ -15,7 +15,11 @@ import {
   type ProjectImageDisplayMode,
   type ProjectImageConfig,
 } from "./projectConfig.js";
-import { closeProject } from "./projectClose.js";
+import {
+  closeProject,
+  ProjectCloseError,
+  type ProjectCloseResult,
+} from "./projectClose.js";
 import { openProject } from "./projectOpen.js";
 import {
   materializeProjectImageFromHomeCache,
@@ -119,6 +123,52 @@ interface WorkspaceImageSummary {
   pharoMcpContract?: ProjectImageState["pharoMcpContract"];
 }
 
+interface ScopedImageLifecycleStatus {
+  imageId: string;
+  status: WorkspaceImageSummary["status"];
+  displayMode: ProjectImageDisplayMode;
+}
+
+type ScopedImageRouteStatusCode =
+  | "routable"
+  | "image_unavailable"
+  | "contract_unknown"
+  | "contract_mismatch";
+
+interface ScopedImageRouteStatus {
+  serverName: "pharo_gateway";
+  requiredArgument: "imageId";
+  imageId: string;
+  status: ScopedImageRouteStatusCode;
+  routable: boolean;
+  endpointRecorded: boolean;
+  contractStatus?: NonNullable<ProjectImageState["pharoMcpContract"]>["status"];
+}
+
+interface ScopedImageResetSummary {
+  imageId: string;
+  closed: boolean;
+  deleted: boolean;
+  created: boolean;
+  started: boolean;
+  lifecycle: ScopedImageLifecycleStatus;
+  route: ScopedImageRouteStatus;
+  repositoryWorkspaceCleanupPolicy: "delete-disposable";
+  repositoryWorkspaceCleanup: {
+    attempted: boolean;
+    decisions: Array<{
+      repositoryId: string;
+      decision: string;
+      dirtyState: string;
+    }>;
+  };
+}
+
+interface ResetImageOptions {
+  start?: boolean;
+  displayMode?: ProjectImageDisplayMode;
+}
+
 interface DisplayModeRestartSnapshot {
   attempted: boolean;
   status: "saved";
@@ -172,6 +222,22 @@ function optionalString(
 
   if (typeof value !== "string" || value.length === 0) {
     throw new ScopedPharoLauncherError(`${key} must be a non-empty string`);
+  }
+
+  return value;
+}
+
+function optionalBoolean(
+  input: Record<string, unknown>,
+  key: string,
+): boolean | undefined {
+  const value = input[key];
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (typeof value !== "boolean") {
+    throw new ScopedPharoLauncherError(`${key} must be a boolean`);
   }
 
   return value;
@@ -429,6 +495,115 @@ async function waitForDisplayModeSnapshotStatus(
   throw new ScopedPharoLauncherError(
     `Image ${imageId} snapshot did not finish within ${displayModeSnapshotTimeoutMs}ms`,
   );
+}
+
+function projectStateWithoutImage(
+  state: ProjectState,
+  imageId: string,
+  updatedAt: Date,
+): ProjectState {
+  const images = state.images.filter((image) => image.id !== imageId);
+  return {
+    ...state,
+    images,
+    runtimeStatus: runtimeStatusForImages(images),
+    updatedAt: updatedAt.toISOString(),
+  };
+}
+
+function lifecycleStatus(image: WorkspaceImageSummary): ScopedImageLifecycleStatus {
+  return {
+    imageId: image.imageId,
+    status: image.status,
+    displayMode: image.displayMode,
+  };
+}
+
+function routeStatus(
+  image: WorkspaceImageSummary,
+  imageState: ProjectImageState | undefined,
+): ScopedImageRouteStatus {
+  const endpointRecorded = Boolean(
+    imageState?.mcpEndpoint || imageState?.assignedPort !== undefined,
+  );
+  const contractStatus = imageState?.pharoMcpContract?.status;
+  let status: ScopedImageRouteStatusCode;
+
+  if (image.status !== "running" || !endpointRecorded) {
+    status = "image_unavailable";
+  } else if (contractStatus === "mismatched" || contractStatus === "unsupported") {
+    status = "contract_mismatch";
+  } else if (contractStatus === undefined || contractStatus === "unknown") {
+    status = "contract_unknown";
+  } else {
+    status = "routable";
+  }
+
+  return {
+    serverName: "pharo_gateway",
+    requiredArgument: "imageId",
+    imageId: image.imageId,
+    status,
+    routable: status === "routable",
+    endpointRecorded,
+    ...(contractStatus ? { contractStatus } : {}),
+  };
+}
+
+function resetCloseError(
+  imageId: string,
+  error: ProjectCloseError,
+): ScopedPharoLauncherError {
+  const cleanup = error.result.repositoryWorkspaceCleanups.find(
+    (record) => record.imageId === imageId,
+  );
+  if (cleanup) {
+    return new ScopedPharoLauncherError(
+      `Image ${imageId} reset could not clean its disposable repository workspace: ${cleanup.decision} (${cleanup.dirtyState})`,
+    );
+  }
+
+  const failure = error.result.failures.find(
+    (record) => record.imageId === imageId,
+  );
+  if (failure) {
+    return new ScopedPharoLauncherError(
+      `Image ${imageId} reset could not close the scoped image`,
+    );
+  }
+
+  return new ScopedPharoLauncherError(
+    `Image ${imageId} reset could not close the scoped image cleanly`,
+  );
+}
+
+function resetSummary(
+  imageId: string,
+  closeResult: ProjectCloseResult | undefined,
+  deleted: boolean,
+  started: boolean,
+  image: WorkspaceImageSummary,
+  imageState: ProjectImageState | undefined,
+): ScopedImageResetSummary {
+  return {
+    imageId,
+    closed: Boolean(closeResult),
+    deleted,
+    created: true,
+    started,
+    lifecycle: lifecycleStatus(image),
+    route: routeStatus(image, imageState),
+    repositoryWorkspaceCleanupPolicy: "delete-disposable",
+    repositoryWorkspaceCleanup: {
+      attempted: Boolean(closeResult),
+      decisions:
+        closeResult?.repositoryWorkspaceCleanups.map((record) => ({
+          repositoryId: record.repositoryId,
+          decision: record.decision,
+          dirtyState: record.dirtyState,
+        })) ?? [],
+    },
+  };
 }
 
 function stateWithCreatedImage(
@@ -847,6 +1022,124 @@ export class ScopedPharoLauncher {
 
     return this.imageInfo(imageId);
   }
+
+  async resetImage(
+    imageId: string,
+    options: ResetImageOptions = {},
+  ): Promise<{
+    scope: WorkspaceScopeSummary;
+    launcherProfile: LauncherProfileSummary;
+    image: WorkspaceImageSummary;
+    reset: ScopedImageResetSummary;
+  }> {
+    const scope = resolveScope(this.options);
+    const projectConfig = loadProjectConfig(scope.projectRoot);
+    const imageConfig = findImageConfig(projectConfig, imageId);
+    if (!imageConfig.active) {
+      throw new ScopedPharoLauncherError(
+        `Image ${imageId} is not active in project config; scoped reset is rejected`,
+      );
+    }
+    if (!imageConfig.create) {
+      throw new ScopedPharoLauncherError(
+        `Image ${imageId} has no approved create policy in project config; scoped reset is rejected`,
+      );
+    }
+
+    const statePath = statePathForScope(scope, projectConfig);
+    const previousState = loadProjectState(statePath);
+    const previousImage = previousState?.images.find(
+      (image) => image.id === imageId,
+    );
+    if (previousImage?.status === "starting") {
+      throw new ScopedPharoLauncherError(
+        `Image ${imageId} is starting; wait for startup to finish before resetting`,
+      );
+    }
+
+    let closeResult: ProjectCloseResult | undefined;
+    if (previousImage) {
+      try {
+        closeResult = await (this.options.projectClose ?? closeProject)({
+          projectRoot: scope.projectRoot,
+          workspaceId: scope.workspaceId,
+          stateRoot: scope.stateRoot,
+          imageIds: [imageId],
+          pharoLauncherMcpClient: this.options.pharoLauncherMcpClient,
+          repositoryWorkspaceCleanupPolicy: "delete-disposable",
+        });
+      } catch (error) {
+        if (error instanceof ProjectCloseError) {
+          throw resetCloseError(imageId, error);
+        }
+        throw error;
+      }
+    }
+
+    let deleted = false;
+    if (previousImage) {
+      const client =
+        this.options.pharoLauncherMcpClient ??
+        (await createStdioPharoLauncherMcpClient(undefined, {
+          profileEnvironment: pharoLauncherMcpProfileEnvironment({
+            projectRoot: scope.projectRoot,
+            config: projectConfig,
+            workspaceId: scope.workspaceId,
+            targetId: scope.targetId,
+            stateRoot: scope.stateRoot,
+          }),
+        }));
+      const ownsClient = !this.options.pharoLauncherMcpClient;
+
+      try {
+        const deleteResult = await client.callTool<LauncherCommandResult>(
+          "pharo_launcher_image_delete",
+          {
+            imageName: previousImage.imageName,
+            force: true,
+            confirm: true,
+          },
+        );
+        assertLauncherOk(deleteResult, "pharo_launcher_image_delete");
+        deleted = true;
+      } finally {
+        if (ownsClient) {
+          await client.close?.();
+        }
+      }
+
+      const currentState = loadProjectState(statePath);
+      if (currentState) {
+        saveProjectState(
+          statePath,
+          projectStateWithoutImage(
+            currentState,
+            imageId,
+            this.options.now?.() ?? new Date(),
+          ),
+        );
+      }
+    }
+
+    await this.createImage(imageId, imageConfig.create.profileId);
+    const shouldStart = options.start ?? true;
+    if (shouldStart) {
+      await this.startImage(imageId, options.displayMode);
+    }
+
+    const finalInfo = this.imageInfo(imageId);
+    return {
+      ...finalInfo,
+      reset: resetSummary(
+        imageId,
+        closeResult,
+        deleted,
+        shouldStart,
+        finalInfo.image,
+        this.currentImageState(scope, projectConfig, imageId),
+      ),
+    };
+  }
 }
 
 export const scopedPharoLauncherTools = [
@@ -913,6 +1206,20 @@ export const scopedPharoLauncherTools = [
       ["imageId", "confirm"],
     ),
   },
+  {
+    name: "pharo_launcher_image_reset",
+    description:
+      "Reset a disposable workspace-scoped image by closing it, deleting the owned launcher image, recreating it from approved project policy, and reopening unless start is false. Requires confirm: true.",
+    inputSchema: objectSchema(
+      {
+        imageId: stringSchema,
+        confirm: { type: "boolean" },
+        start: { type: "boolean" },
+        displayMode: displayModeSchema,
+      },
+      ["imageId", "confirm"],
+    ),
+  },
 ] as const;
 
 export function createScopedPharoLauncherServer(
@@ -975,6 +1282,15 @@ export function createScopedPharoLauncherServer(
         case "pharo_launcher_image_stop":
           requireConfirm(input);
           return textResult(await facade.stopImage(requireString(input, "imageId")));
+
+        case "pharo_launcher_image_reset":
+          requireConfirm(input);
+          return textResult(
+            await facade.resetImage(requireString(input, "imageId"), {
+              start: optionalBoolean(input, "start"),
+              displayMode: optionalDisplayMode(input, "displayMode"),
+            }),
+          );
 
         default:
           return textResult(
