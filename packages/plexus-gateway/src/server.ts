@@ -59,10 +59,11 @@ export const gatewayTools = [
   {
     name: "plexus_gateway_status",
     description:
-      "Return gateway route status for registered targets/images.",
+      "Return gateway route status for registered targets/images. Optionally refresh route health or the project-wide Pharo tool schema fingerprint.",
     inputSchema: objectSchema({
       ...routeReferenceProperties,
       refreshHealth: { type: "boolean" },
+      refreshTools: { type: "boolean" },
     }),
   },
   {

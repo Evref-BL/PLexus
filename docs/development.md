@@ -208,6 +208,12 @@ into every active image, closes the images, checks that the processes are gone,
 checks that the closed target is unregistered from gateway status, then deletes
 copied images, temporary source images, and temp directories.
 
+Use `plexus_gateway_status` with `refreshTools: true` when checking whether a
+long-running gateway has caught up to image-side MCP changes. The gateway keeps
+one advertised Pharo facade schema per target/scope; mixed upstream tool
+fingerprints are reported as a degraded schema state instead of being merged or
+silently selected from one image.
+
 For a deliberate showcase/debug run, pass `--keepOpen` or `--showcase`. That
 mode still requires copied or template-created disposable images and a
 project-owned launcher profile under the smoke state root. It starts and

@@ -89,6 +89,13 @@ an explicit `imageId` argument at the PLexus facade boundary:
 The gateway validates route ownership and removes `imageId` before forwarding
 the call to the selected image-local MCP server.
 
+The gateway advertises one Pharo tool schema for the selected target/scope. It
+can refresh that schema from routable images and records a stable fingerprint in
+`plexus_gateway_status` when called with `refreshTools: true`. If routable images
+return different tool schemas, the gateway reports a mismatched schema state and
+refuses typed Pharo facade calls until the images are brought back to one MCP
+contract.
+
 ## Route-Control Tools
 
 Route-control tools are trusted PLexus/operator controls:
