@@ -867,6 +867,160 @@ describe("project lifecycle tools", () => {
     );
   });
 
+  it("reconciles dead project-local gateway state during health refresh", async () => {
+    const projectRoot = makeTempDir("plexus-project-");
+    const stateRoot = makeTempDir("plexus-state-");
+    const claimsRoot = makeTempDir("plexus-claims-");
+    const stateFilePath = statePath(stateRoot);
+    const gatewayClaim = await claimPort({
+      claimsRoot,
+      projectId: "project-123",
+      projectName: "my-project",
+      workspaceId: "worktree-a",
+      targetId: "project-123--worktree-a",
+      purpose: "gateway",
+      requestedPort: 8133,
+      pid: 987654321,
+      claimId: "gateway-claim",
+    });
+    const staleGateway = {
+      mode: "project-local" as const,
+      endpoint: "http://127.0.0.1:8133/mcp",
+      controlEndpoint: "http://127.0.0.1:8133/control-mcp",
+      host: "127.0.0.1",
+      port: 8133,
+      portRange: {
+        start: 8133,
+        end: 8133,
+      },
+      routePath: "/mcp",
+      controlPath: "/control-mcp",
+      owningProjectId: "project-123",
+      managedByProject: true,
+      pid: 987654321,
+      claim: {
+        claimsRoot,
+        claimId: gatewayClaim.claimId,
+        assignedPort: gatewayClaim.assignedPort,
+      },
+    };
+    writeProjectConfig(projectRoot, {
+      runtime: {
+        gateway: {
+          mode: "project-local",
+          host: "127.0.0.1",
+          portRange: {
+            start: 8133,
+            end: 8133,
+          },
+          agentMcpPath: "/mcp",
+          routeControlMcpPath: "/control-mcp",
+        },
+      },
+    });
+    saveProjectState(stateFilePath, {
+      ...runningState,
+      gateway: staleGateway,
+    });
+    const lifecycle = new PlexusProjectLifecycle({
+      gateway: {
+        now: () => new Date("2026-05-24T11:50:00.000Z"),
+        checks: {
+          isProcessAlive: async () => false,
+          isPortListening: async () => false,
+        },
+      },
+    });
+
+    const result = await lifecycle.handleTool("plexus_project_status", {
+      projectPath: projectRoot,
+      stateRoot,
+      workspaceId: "worktree-a",
+      refreshHealth: true,
+      includeDiagnostics: true,
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
+      data: {
+        gateway: {
+          mode: "project-local",
+          host: "127.0.0.1",
+          portRange: {
+            start: 8133,
+            end: 8133,
+          },
+          managedByProject: true,
+        },
+        diagnostics: {
+          runtime: {
+            status: "degraded",
+            health: "degraded",
+            reason: expect.stringContaining("gateway is dead"),
+          },
+          gateway: {
+            mode: "project-local",
+            status: "dead",
+            health: "degraded",
+            reason: expect.stringContaining("gateway state is dead"),
+            managedByProject: true,
+            stale: {
+              endpoint: "http://127.0.0.1:8133/mcp",
+              controlEndpoint: "http://127.0.0.1:8133/control-mcp",
+              port: 8133,
+              pid: 987654321,
+              claim: {
+                claimsRoot,
+                claimId: gatewayClaim.claimId,
+                assignedPort: gatewayClaim.assignedPort,
+              },
+            },
+            repair: {
+              allowed: true,
+              toolName: "plexus_project_open",
+              arguments: {
+                projectPath: projectRoot,
+                stateRoot,
+                workspaceId: "worktree-a",
+                targetId: "project-123--worktree-a",
+              },
+            },
+          },
+          routeTable: {
+            status: "gateway-dead",
+            targetId: "project-123--worktree-a",
+            routableImages: [],
+            error: expect.stringContaining("gateway state is dead"),
+          },
+          agentAccess: {
+            expectedSurface: "pharo_gateway",
+            gatewayRouted: false,
+            portsHiddenFromAgents: true,
+            reason: expect.stringContaining("Reopen the project"),
+          },
+        },
+      },
+    });
+    expect(result.data?.gateway).not.toHaveProperty("endpoint");
+    expect(result.data?.gateway).not.toHaveProperty("controlEndpoint");
+    expect(result.data?.gateway).not.toHaveProperty("pid");
+    expect(result.data?.state.gateway).toBeUndefined();
+    expect(loadProjectState(stateFilePath)?.gateway).toBeUndefined();
+    await expect(
+      inspectPortClaim({
+        claimsRoot,
+        port: 8133,
+        checks: {
+          isProcessAlive: async () => false,
+          isPortListening: async () => false,
+        },
+      }),
+    ).resolves.toMatchObject({
+      status: "available",
+      port: 8133,
+    });
+  });
+
   it("re-registers stale gateway routes that point at a different state path", async () => {
     const projectRoot = makeTempDir("plexus-project-");
     const stateRoot = makeTempDir("plexus-state-");

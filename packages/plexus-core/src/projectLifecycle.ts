@@ -35,6 +35,7 @@ import {
 import {
   inspectPortClaim,
   listPortClaims,
+  releasePortClaim,
   type PortClaimChecks,
   type PortClaimInspection,
   type PortClaimRecord,
@@ -299,7 +300,12 @@ export interface ProjectLifecyclePortListenerDiagnostic {
 
 export interface ProjectLifecycleRouteTableDiagnostics {
   targetId?: string;
-  status: "registered" | "missing" | "unavailable" | "not-configured";
+  status:
+    | "registered"
+    | "missing"
+    | "unavailable"
+    | "not-configured"
+    | "gateway-dead";
   statePath?: string;
   expectedStatePath?: string;
   routableImages: Array<{
@@ -336,6 +342,40 @@ export interface ProjectLifecycleAgentAccessDiagnostics {
   reason: string;
 }
 
+export interface ProjectLifecycleGatewayRepairAffordance {
+  allowed: true;
+  toolName: "plexus_project_open";
+  arguments: {
+    projectPath: string;
+    stateRoot: string;
+    workspaceId: string;
+    targetId: string;
+  };
+  reason: string;
+}
+
+export interface ProjectLifecycleGatewayDiagnostics {
+  mode: ProjectGatewayState["mode"];
+  status: "shared" | "running" | "dead" | "not-started";
+  health: ProjectLifecycleRuntimeDiagnosticHealth;
+  reason: string;
+  endpoint?: string;
+  controlEndpoint?: string;
+  host?: string;
+  port?: number;
+  portRange?: ProjectGatewayState["portRange"];
+  managedByProject: boolean;
+  pid?: number;
+  stale?: {
+    endpoint?: string;
+    controlEndpoint?: string;
+    port?: number;
+    pid?: number;
+    claim?: ProjectGatewayState["claim"];
+  };
+  repair?: ProjectLifecycleGatewayRepairAffordance;
+}
+
 export interface ProjectLifecycleRepositoryWorkspaceDiagnostic {
   imageId: string;
   imageName: string;
@@ -367,16 +407,7 @@ export interface ProjectLifecycleDiagnostics {
     workspaceId: string;
     targetId: string;
   };
-  gateway: {
-    mode: ProjectGatewayState["mode"];
-    endpoint?: string;
-    controlEndpoint?: string;
-    host?: string;
-    port?: number;
-    portRange?: ProjectGatewayState["portRange"];
-    managedByProject: boolean;
-    pid?: number;
-  };
+  gateway: ProjectLifecycleGatewayDiagnostics;
   runtimePolicy: ProjectRuntimePolicy;
   imagePortPolicy: ProjectLifecycleImagePortPolicyDiagnostics;
   launcherProfile: PharoLauncherMcpProfileDiagnostic;
@@ -1012,7 +1043,18 @@ function imagePortCoordinationDiagnostics(
 
 function agentAccessDiagnostics(
   gateway: ProjectGatewayState,
+  reconciliation?: ProjectLifecycleGatewayReconciliation,
 ): ProjectLifecycleAgentAccessDiagnostics {
+  if (reconciliation?.status === "dead") {
+    return {
+      expectedSurface: "pharo_gateway",
+      gatewayRouted: false,
+      portsHiddenFromAgents: true,
+      reason:
+        "The scoped pharo_gateway is expected, but the recorded project-local gateway is dead. Reopen the project instead of using direct image ports.",
+    };
+  }
+
   return {
     expectedSurface: "pharo_gateway",
     gatewayRouted: Boolean(gateway.endpoint),
@@ -1199,11 +1241,21 @@ function routeTableDiagnostics(
   route: unknown,
   routeError: unknown,
   expectedStatePath?: string,
+  gatewayReconciliation?: ProjectLifecycleGatewayReconciliation,
 ): ProjectLifecycleRouteTableDiagnostics {
   if (!targetId) {
     return {
       status: "not-configured",
       routableImages: [],
+    };
+  }
+
+  if (gatewayReconciliation?.status === "dead") {
+    return {
+      targetId,
+      status: "gateway-dead",
+      routableImages: [],
+      error: gatewayReconciliation.reason,
     };
   }
 
@@ -1282,11 +1334,87 @@ function routeTableDiagnostics(
   };
 }
 
+interface ProjectLifecycleGatewayReconciliation {
+  status: "dead";
+  reason: string;
+  staleGateway: ProjectGatewayState;
+  releasedClaim: boolean;
+}
+
+function gatewayRepairAffordance(input: {
+  projectRoot: string;
+  stateRoot: string;
+  workspaceId: string;
+  targetId: string;
+}): ProjectLifecycleGatewayRepairAffordance {
+  return {
+    allowed: true,
+    toolName: "plexus_project_open",
+    arguments: {
+      projectPath: input.projectRoot,
+      stateRoot: input.stateRoot,
+      workspaceId: input.workspaceId,
+      targetId: input.targetId,
+    },
+    reason: "Reopen the scoped project to start a fresh project-local gateway and re-register routes.",
+  };
+}
+
+function gatewayWithoutRuntimeIdentity(
+  gateway: ProjectGatewayState,
+): ProjectGatewayState {
+  if (gateway.mode !== "project-local" || !gateway.managedByProject) {
+    return gateway;
+  }
+
+  const result: ProjectGatewayState = { ...gateway };
+  delete result.endpoint;
+  delete result.controlEndpoint;
+  delete result.pid;
+  delete result.claim;
+  return result;
+}
+
 function gatewayDiagnostic(
   gateway: ProjectGatewayState,
-): ProjectLifecycleDiagnostics["gateway"] {
+  reconciliation: ProjectLifecycleGatewayReconciliation | undefined,
+  repair: ProjectLifecycleGatewayRepairAffordance,
+): ProjectLifecycleGatewayDiagnostics {
+  if (reconciliation) {
+    const stale = reconciliation.staleGateway;
+    return {
+      mode: stale.mode,
+      status: "dead",
+      health: "degraded",
+      reason: reconciliation.reason,
+      host: stale.host,
+      portRange: stale.portRange,
+      managedByProject: stale.managedByProject,
+      stale: {
+        ...(stale.endpoint ? { endpoint: stale.endpoint } : {}),
+        ...(stale.controlEndpoint ? { controlEndpoint: stale.controlEndpoint } : {}),
+        ...(stale.port !== undefined ? { port: stale.port } : {}),
+        ...(stale.pid !== undefined ? { pid: stale.pid } : {}),
+        ...(stale.claim ? { claim: stale.claim } : {}),
+      },
+      repair,
+    };
+  }
+
+  const status: ProjectLifecycleGatewayDiagnostics["status"] =
+    gateway.mode === "shared"
+      ? "shared"
+      : gateway.endpoint && gateway.controlEndpoint
+        ? "running"
+        : "not-started";
   return {
     mode: gateway.mode,
+    status,
+    health: status === "not-started" ? "unknown" : "operational",
+    reason:
+      status === "not-started"
+        ? "No project-local gateway endpoint is recorded for this scope yet."
+        : "Gateway state is available for this scope.",
     endpoint: gateway.endpoint,
     controlEndpoint: gateway.controlEndpoint,
     host: gateway.host,
@@ -1294,6 +1422,7 @@ function gatewayDiagnostic(
     portRange: gateway.portRange,
     managedByProject: gateway.managedByProject,
     pid: gateway.pid,
+    ...(status === "not-started" ? { repair } : {}),
   };
 }
 
@@ -1383,12 +1512,82 @@ async function conflictingListenerDiagnostics(
   return diagnostics;
 }
 
+async function reconcileDeadProjectGatewayState(input: {
+  state: ProjectState | undefined;
+  statePath: string;
+  checks: PortClaimChecks;
+  now: () => Date;
+}): Promise<ProjectLifecycleGatewayReconciliation | undefined> {
+  const gateway = input.state?.gateway;
+  if (
+    !input.state ||
+    !gateway ||
+    gateway.mode !== "project-local" ||
+    !gateway.managedByProject
+  ) {
+    return undefined;
+  }
+
+  const port = gateway.port ?? gateway.claim?.assignedPort;
+  const portListening =
+    port === undefined ? false : Boolean(await input.checks.isPortListening?.(port));
+  let claimInspection: PortClaimInspection | undefined;
+  if (gateway.claim) {
+    claimInspection = await inspectPortClaim({
+      claimsRoot: gateway.claim.claimsRoot,
+      port: gateway.claim.assignedPort,
+      checks: input.checks,
+    });
+  }
+
+  const claimShowsDeadProcess =
+    claimInspection?.status === "stale" &&
+    claimInspection.reason === "process-dead";
+  const claimMissingOrStale =
+    claimInspection?.status === "available" ||
+    claimInspection?.status === "stale";
+  const gatewayIsDead =
+    !portListening &&
+    (claimShowsDeadProcess ||
+      (gateway.pid === undefined && port !== undefined) ||
+      claimMissingOrStale);
+
+  if (!gatewayIsDead) {
+    return undefined;
+  }
+
+  let releasedClaim = false;
+  if (gateway.claim) {
+    const release = await releasePortClaim({
+      claimsRoot: gateway.claim.claimsRoot,
+      claim: {
+        claimId: gateway.claim.claimId,
+        assignedPort: gateway.claim.assignedPort,
+      },
+    });
+    releasedClaim = release.released;
+  }
+
+  delete input.state.gateway;
+  input.state.updatedAt = input.now().toISOString();
+  saveProjectState(input.statePath, input.state);
+
+  return {
+    status: "dead",
+    reason:
+      "Recorded project-local gateway state is dead: the owned gateway port is not listening and its managed claim is stale or missing.",
+    staleGateway: gateway,
+    releasedClaim,
+  };
+}
+
 function runtimeDiagnostics(
   state: ProjectState | undefined,
   gateway: ProjectGatewayState,
   portClaims: ProjectLifecyclePortClaimsDiagnostics,
   conflictingListeners: ProjectLifecyclePortListenerDiagnostic[],
   routeTable: ProjectLifecycleRouteTableDiagnostics,
+  gatewayReconciliation: ProjectLifecycleGatewayReconciliation | undefined,
 ): ProjectLifecycleDiagnostics["runtime"] {
   if (!state) {
     return {
@@ -1398,12 +1597,22 @@ function runtimeDiagnostics(
     };
   }
 
+  if (gatewayReconciliation?.status === "dead") {
+    return {
+      status: "degraded",
+      health: "degraded",
+      reason:
+        "Runtime state exists, but the recorded project-local gateway is dead. Reopen the project to repair gateway routing.",
+    };
+  }
+
   if (
     portClaims.stale.length > 0 ||
     portClaims.conflicts.length > 0 ||
     conflictingListeners.length > 0 ||
     routeTable.status === "missing" ||
     routeTable.status === "unavailable" ||
+    routeTable.status === "gateway-dead" ||
     !gateway.endpoint ||
     !gateway.controlEndpoint
   ) {
@@ -2142,9 +2351,25 @@ export class PlexusProjectLifecycle {
       workspaceId,
       stateRoot,
     });
-    const state = loadProjectState(statePath);
-    const gateway = projectGatewayStatus(config, state);
-    const routeRegistry = this.routeRegistryForProject(config, state);
+    let state = loadProjectState(statePath);
+    const checks = mergePortClaimChecks(this.gateway);
+    const gatewayReconciliation = input.refreshHealth
+      ? await reconcileDeadProjectGatewayState({
+          state,
+          statePath,
+          checks,
+          now: this.gateway.now ?? (() => new Date()),
+        })
+      : undefined;
+    if (gatewayReconciliation) {
+      state = loadProjectState(statePath);
+    }
+    const gateway = gatewayReconciliation
+      ? gatewayWithoutRuntimeIdentity(projectGatewayStatus(config, state))
+      : projectGatewayStatus(config, state);
+    const routeRegistry = gatewayReconciliation
+      ? undefined
+      : this.routeRegistryForProject(config, state);
     let route: unknown;
     let routeError: unknown;
     if (state) {
@@ -2190,6 +2415,12 @@ export class PlexusProjectLifecycle {
       workspaceId: state?.workspaceId ?? workspaceId,
       targetId,
     };
+    const gatewayRepair = gatewayRepairAffordance({
+      projectRoot,
+      stateRoot,
+      workspaceId: scope.workspaceId,
+      targetId: scope.targetId,
+    });
     const context = buildScopedProjectContext({
       projectRoot,
       projectConfig: config,
@@ -2198,7 +2429,6 @@ export class PlexusProjectLifecycle {
       stateRoot,
       projectState: state,
     });
-    const checks = mergePortClaimChecks(this.gateway);
     const imageClaimsRoot = imagePortClaimsRootForConfig(projectRoot, config);
     const portClaims = await inspectClaimRoots(
       configuredClaimRoots(projectRoot, config, state),
@@ -2211,6 +2441,7 @@ export class PlexusProjectLifecycle {
       route,
       routeError,
       statePath,
+      gatewayReconciliation,
     );
     const conflictingListeners = await conflictingListenerDiagnostics(
       state,
@@ -2226,6 +2457,7 @@ export class PlexusProjectLifecycle {
         portClaims,
         conflictingListeners,
         routeTable,
+        gatewayReconciliation,
       ),
       project: projectDiagnostics(config, state),
       scope: {
@@ -2236,7 +2468,7 @@ export class PlexusProjectLifecycle {
         workspaceId: scope.workspaceId,
         targetId: scope.targetId,
       },
-      gateway: gatewayDiagnostic(gateway),
+      gateway: gatewayDiagnostic(gateway, gatewayReconciliation, gatewayRepair),
       runtimePolicy: runtime,
       imagePortPolicy: imagePortPolicyDiagnostics(
         runtime,
@@ -2251,7 +2483,10 @@ export class PlexusProjectLifecycle {
         stateRoot,
         env: this.gateway.env,
       }),
-      agentAccess: agentAccessDiagnostics(gateway),
+      agentAccess: agentAccessDiagnostics(
+        gateway,
+        gatewayReconciliation,
+      ),
       repositoryWorkspaces: repositoryWorkspaceDiagnostics(
         projectRoot,
         config,

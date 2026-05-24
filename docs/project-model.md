@@ -348,6 +348,10 @@ failures. For `plexus_project_status`, pass `includeDiagnostics: true` to includ
 raw runtime state, gateway endpoints, registered image MCP endpoints, route
 status, port claims, process ids, launcher profile paths, and cleanup paths.
 Those details are diagnostic data, not agent mutation handles.
+When `refreshHealth: true` finds a managed project-local gateway whose owned
+process/port claim is dead, status clears the stale gateway state, reports
+`diagnostics.routeTable.status: "gateway-dead"`, and exposes a scoped
+`plexus_project_open` repair affordance.
 
 ## Example
 
