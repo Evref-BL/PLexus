@@ -1530,10 +1530,11 @@ async function reconcileDeadProjectGatewayState(input: {
     return undefined;
   }
 
-  const runtimeStateIsRunning =
+  const runtimeStateNeedsGateway =
     input.state.runtimeStatus === "running" ||
-    runtimeStatusForImages(input.state.images) === "running";
-  if (!stateGateway && !runtimeStateIsRunning) {
+    runtimeStatusForImages(input.state.images) === "running" ||
+    stateHasRunningRoutableImage(input.state);
+  if (!stateGateway && !runtimeStateNeedsGateway) {
     return undefined;
   }
 
@@ -1770,6 +1771,14 @@ function imageMcpEndpointForToolDiscovery(
   return undefined;
 }
 
+function stateHasRunningRoutableImage(state: ProjectState): boolean {
+  return state.images.some(
+    (image) =>
+      image.status === "running" &&
+      (image.mcpEndpoint !== undefined || image.assignedPort !== undefined),
+  );
+}
+
 function hostForUrl(host: string): string {
   return host.includes(":") && !host.startsWith("[") ? `[${host}]` : host;
 }
@@ -1924,50 +1933,68 @@ export class PlexusProjectLifecycle {
           runnerId: "plexus-project-open",
         },
       });
-      let routeRegistry = this.routeRegistry;
-      let startedProjectGateway = false;
-
-      if (!routeRegistry) {
-        const config = loadProjectConfig(openResult.projectRoot);
-        const discoveredPharoTools =
-          await this.discoverGatewayPharoTools(openResult.state);
-        const gatewayResult = await ensureProjectGateway({
-          ...this.gateway,
-          ...(discoveredPharoTools !== undefined
-            ? { pharoTools: discoveredPharoTools }
-            : {}),
-          projectRoot: openResult.projectRoot,
-          config,
-          state: openResult.state,
-        });
-        startedProjectGateway = gatewayResult.started;
-        saveProjectState(openResult.statePath, openResult.state);
-        routeRegistry = this.routeRegistryFromControlUrl(
-          gatewayResult.routeControlUrl,
-        );
-      }
-
-      try {
-        await this.registerRoute({
-          projectRoot: openResult.projectRoot,
-          statePath: openResult.statePath,
-          state: openResult.state,
-        }, routeRegistry);
-      } catch (error) {
-        if (startedProjectGateway) {
-          await closeProjectGateway({
-            ...this.gateway,
-            state: openResult.state,
-          });
-          saveProjectState(openResult.statePath, openResult.state);
-        }
-
-        throw error;
-      }
+      await this.ensureGatewayRouteForOpenResult(openResult);
 
       return result(openResult);
     } catch (error) {
+      if (
+        error instanceof ProjectOpenError &&
+        stateHasRunningRoutableImage(error.result.state)
+      ) {
+        try {
+          await this.ensureGatewayRouteForOpenResult(error.result);
+        } catch {
+          // Preserve the project-open failure; diagnostics already carry the
+          // image startup failures that made this repair path partial.
+        }
+      }
       return failure(error);
+    }
+  }
+
+  private async ensureGatewayRouteForOpenResult(
+    openResult: ProjectOpenResult,
+  ): Promise<void> {
+    let routeRegistry = this.routeRegistry;
+    let startedProjectGateway = false;
+
+    if (!routeRegistry) {
+      const config = loadProjectConfig(openResult.projectRoot);
+      const discoveredPharoTools =
+        await this.discoverGatewayPharoTools(openResult.state);
+      const gatewayResult = await ensureProjectGateway({
+        ...this.gateway,
+        ...(discoveredPharoTools !== undefined
+          ? { pharoTools: discoveredPharoTools }
+          : {}),
+        projectRoot: openResult.projectRoot,
+        config,
+        state: openResult.state,
+      });
+      startedProjectGateway = gatewayResult.started;
+      saveProjectState(openResult.statePath, openResult.state);
+      routeRegistry = this.routeRegistryFromControlUrl(gatewayResult.routeControlUrl);
+    }
+
+    try {
+      await this.registerRoute(
+        {
+          projectRoot: openResult.projectRoot,
+          statePath: openResult.statePath,
+          state: openResult.state,
+        },
+        routeRegistry,
+      );
+    } catch (error) {
+      if (startedProjectGateway) {
+        await closeProjectGateway({
+          ...this.gateway,
+          state: openResult.state,
+        });
+        saveProjectState(openResult.statePath, openResult.state);
+      }
+
+      throw error;
     }
   }
 
