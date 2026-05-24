@@ -8,8 +8,10 @@ export * from "./imageMcpRouter.js";
 export * from "./pharoFacade.js";
 export * from "./routingTable.js";
 export * from "./server.js";
+export * from "./sourceBuildPreflight.js";
 
 import { startGatewayServerFromCli } from "./server.js";
+import { assertFreshSourceBuildForEntrypoint } from "./sourceBuildPreflight.js";
 
 function comparablePath(filePath: string): string {
   const resolvedPath = path.resolve(filePath);
@@ -26,6 +28,11 @@ const entrypointPath = process.argv[1]
 const modulePath = comparablePath(fileURLToPath(import.meta.url));
 
 if (entrypointPath && modulePath === entrypointPath) {
+  assertFreshSourceBuildForEntrypoint(modulePath, {
+    packageName: "@evref-bl/plexus-gateway",
+    buildCommand: "npm run build",
+  });
+
   startGatewayServerFromCli().catch((error: unknown) => {
     console.error(error instanceof Error ? error.message : String(error));
     process.exitCode = 1;
