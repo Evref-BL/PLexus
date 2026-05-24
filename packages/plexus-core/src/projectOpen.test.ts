@@ -2772,7 +2772,7 @@ describe("project open", () => {
     writeProjectConfig(projectRoot);
 
     const launchedProcess: LauncherProcess = {
-      pid: 1234,
+      pid: 987654321,
       imageName: "MyProject-dev",
       commandLine: "PharoConsole MyProject-dev.image",
     };
@@ -2817,7 +2817,7 @@ describe("project open", () => {
             imageId: "dev",
             imageName: "MyProject-dev",
             message:
-              "Image MyProject-dev process 1234 exited before Pharo MCP became healthy on port 7123. Launcher logs: /tmp/myproject-dev.out.log, /tmp/myproject-dev.err.log",
+              "Image MyProject-dev process 987654321 exited before Pharo MCP became healthy on port 7123. Launcher logs: /tmp/myproject-dev.out.log, /tmp/myproject-dev.err.log",
             launcherToolName: "pharo_launcher_image_launch",
             launcherResult: launchResult,
             process: launchedProcess,
@@ -2837,7 +2837,7 @@ describe("project open", () => {
     expect(loadProjectState(statePath)?.images[0]).toMatchObject({
       id: "dev",
       imageName: "MyProject-dev",
-      pid: 1234,
+      pid: 987654321,
       assignedPort: 7123,
       status: "failed",
     });
