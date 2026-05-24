@@ -166,6 +166,50 @@ class FakeHealthClient implements PharoMcpHealthClient {
   }
 }
 
+type FakeImageMcpFailure = Error | { result: unknown };
+
+class FakeImageMcpClient {
+  readonly calls: ToolCall[] = [];
+
+  constructor(
+    private readonly repositories: Record<string, unknown>[] = [],
+    private readonly failure?: FakeImageMcpFailure,
+    private readonly failureTool?: string,
+  ) {}
+
+  async callTool(
+    _image: { id: string },
+    name: string,
+    argumentsValue: Record<string, unknown> = {},
+  ): Promise<unknown> {
+    this.calls.push({ name, argumentsValue });
+    if (this.failure && (!this.failureTool || this.failureTool === name)) {
+      if (this.failure instanceof Error) {
+        throw this.failure;
+      }
+      return this.failure.result;
+    }
+
+    if (name === "find-repositories") {
+      return {
+        structuredContent: {
+          status: "ok",
+          data: {
+            repositories: this.repositories,
+          },
+        },
+      };
+    }
+
+    return {
+      structuredContent: {
+        status: "ok",
+        data: {},
+      },
+    };
+  }
+}
+
 function makeTempDir(prefix: string): string {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
   tempDirs.push(tempDir);
@@ -184,7 +228,7 @@ function git(cwd: string, args: string[]): string {
   }).trim();
 }
 
-function initRepository(sourceRoot: string): string {
+function initRepository(sourceRoot: string, packageNames: string[] = []): string {
   git(sourceRoot, ["init", "--initial-branch=main"]);
   fs.mkdirSync(path.join(sourceRoot, "src"), { recursive: true });
   fs.writeFileSync(
@@ -192,6 +236,14 @@ function initRepository(sourceRoot: string): string {
     "baseline",
     "utf8",
   );
+  for (const packageName of packageNames) {
+    fs.mkdirSync(path.join(sourceRoot, "src", packageName), { recursive: true });
+    fs.writeFileSync(
+      path.join(sourceRoot, "src", packageName, "package.st"),
+      `Package { #name : #'${packageName}' }\n`,
+      "utf8",
+    );
+  }
   git(sourceRoot, ["add", "."]);
   git(sourceRoot, ["commit", "-m", "Initial"]);
   return git(sourceRoot, ["rev-parse", "HEAD"]);
@@ -458,7 +510,10 @@ describe("project open", () => {
     const stateRoot = makeTempDir("plexus-state-");
     const sourceRoot = makeTempDir("plexus-source-");
     const imagesDir = makeTempDir("plexus-images-");
-    const sourceCommit = initRepository(sourceRoot);
+    const sourceCommit = initRepository(sourceRoot, [
+      "MyProject-Core",
+      "MyProject-Tests",
+    ]);
     writeProjectConfig(projectRoot, {
       images: [
         {
@@ -520,11 +575,13 @@ describe("project open", () => {
       "iceberg",
       "my-project",
     );
+    const imageMcpClient = new FakeImageMcpClient();
     const result = await openProject({
       projectRoot,
       stateRoot,
       workspaceId: "worktree-a",
       pharoLauncherMcpClient,
+      imageMcpClient,
       healthClient: new FakeHealthClient(true),
       now: fixedNow,
       sleep: async () => {},
@@ -543,6 +600,35 @@ describe("project open", () => {
     expect(infoIndex).toBeGreaterThanOrEqual(0);
     expect(launchIndex).toBeGreaterThan(infoIndex);
     expect(git(repositoryPath, ["rev-parse", "HEAD"])).toBe(sourceCommit);
+    expect(imageMcpClient.calls).toEqual([
+      {
+        name: "find-repositories",
+        argumentsValue: {
+          directoryPaths: [repositoryPath],
+          limit: 1000,
+        },
+      },
+      {
+        name: "edit-repository",
+        argumentsValue: {
+          operation: "attach",
+          name: "my-project",
+          location: repositoryPath,
+          subdirectory: "src",
+          packageNames: ["MyProject-Core", "MyProject-Tests"],
+        },
+      },
+      {
+        name: "edit-repository",
+        argumentsValue: {
+          operation: "verifyIdentity",
+          repositoryName: "my-project",
+          location: repositoryPath,
+          subdirectory: "src",
+          packageNames: ["MyProject-Core", "MyProject-Tests"],
+        },
+      },
+    ]);
     expect(result.state.images[0].repositoryWorkspace).toMatchObject({
       path: repositoryPath,
       sourcePath: sourceRoot,
@@ -551,6 +637,7 @@ describe("project open", () => {
       materializationState: "ready",
       dirtyState: "clean",
       loadState: "loaded",
+      registrationState: "registered",
       loadSourcePath: `${repositoryPath}/src`,
       loadStatusPath: path.join(
         stateRoot,
@@ -561,6 +648,247 @@ describe("project open", () => {
         "scripts",
         "repository-workspace-load-dev.properties",
       ),
+    });
+  });
+
+  it("updates and verifies an already registered repository workspace", async () => {
+    const projectRoot = makeTempDir("plexus-project-");
+    const stateRoot = makeTempDir("plexus-state-");
+    const sourceRoot = makeTempDir("plexus-source-");
+    const imagesDir = makeTempDir("plexus-images-");
+    initRepository(sourceRoot, ["MyProject-Core"]);
+    writeProjectConfig(projectRoot, {
+      images: [
+        {
+          id: "dev",
+          imageName: "MyProject-dev",
+          active: true,
+          mcp: {
+            port: 7123,
+            loadScript: "pharo/load-mcp.st",
+          },
+          repositoryWorkspace: {
+            repository: {
+              id: "my-project",
+              originPath: sourceRoot,
+            },
+            sourceDirectory: "src",
+            baseline: "MyProject",
+            materialization: {
+              strategy: "copy",
+            },
+          },
+        },
+      ],
+    });
+    const pharoLauncherMcpClient = new FakePharoLauncherMcpClient(
+      [
+        {
+          pid: 1234,
+          imageName: "MyProject-dev",
+          commandLine: "PharoConsole.exe MyProject-dev.image",
+        },
+      ],
+      undefined,
+      (argumentsValue) => {
+        const scriptPath = argumentsValue.script as string;
+        fs.writeFileSync(
+          path.join(
+            path.dirname(scriptPath),
+            "repository-workspace-load-dev.properties",
+          ),
+          [
+            "status=loaded",
+            `sourcePath=${repositoryPath}/src`,
+            "sourceDirectory=src",
+            "baseline=MyProject",
+            "",
+          ].join("\n"),
+          "utf8",
+        );
+      },
+      imagesDir,
+    );
+
+    const repositoryPath = path.join(
+      imagesDir,
+      "MyProject-dev",
+      "pharo-local",
+      "iceberg",
+      "my-project",
+    );
+    const imageMcpClient = new FakeImageMcpClient([
+      {
+        name: "Existing Repository",
+        location: repositoryPath,
+      },
+    ]);
+
+    const result = await openProject({
+      projectRoot,
+      stateRoot,
+      workspaceId: "worktree-a",
+      pharoLauncherMcpClient,
+      imageMcpClient,
+      healthClient: new FakeHealthClient(true),
+      now: fixedNow,
+      sleep: async () => {},
+      poll: {
+        intervalMs: 0,
+      },
+    });
+
+    expect(imageMcpClient.calls.map((call) => call.name)).toEqual([
+      "find-repositories",
+      "edit-repository",
+      "edit-repository",
+    ]);
+    expect(imageMcpClient.calls[1]).toMatchObject({
+      name: "edit-repository",
+      argumentsValue: {
+        operation: "update",
+        repositoryName: "Existing Repository",
+        location: repositoryPath,
+        subdirectory: "src",
+        packageNames: ["MyProject-Core"],
+      },
+    });
+    expect(imageMcpClient.calls[2]).toMatchObject({
+      name: "edit-repository",
+      argumentsValue: {
+        operation: "verifyIdentity",
+        repositoryName: "Existing Repository",
+        location: repositoryPath,
+        subdirectory: "src",
+        packageNames: ["MyProject-Core"],
+      },
+    });
+    expect(result.state.images[0].repositoryWorkspace).toMatchObject({
+      registrationState: "registered",
+      registeredRepositoryName: "Existing Repository",
+    });
+  });
+
+  it("fails project open when repository workspace registration fails", async () => {
+    const projectRoot = makeTempDir("plexus-project-");
+    const stateRoot = makeTempDir("plexus-state-");
+    const sourceRoot = makeTempDir("plexus-source-");
+    const imagesDir = makeTempDir("plexus-images-");
+    initRepository(sourceRoot, ["MyProject-Core"]);
+    writeProjectConfig(projectRoot, {
+      images: [
+        {
+          id: "dev",
+          imageName: "MyProject-dev",
+          active: true,
+          mcp: {
+            port: 7123,
+            loadScript: "pharo/load-mcp.st",
+          },
+          repositoryWorkspace: {
+            repository: {
+              id: "my-project",
+              originPath: sourceRoot,
+            },
+            sourceDirectory: "src",
+            baseline: "MyProject",
+            materialization: {
+              strategy: "copy",
+            },
+          },
+        },
+      ],
+    });
+    const pharoLauncherMcpClient = new FakePharoLauncherMcpClient(
+      [
+        {
+          pid: 1234,
+          imageName: "MyProject-dev",
+          commandLine: "PharoConsole.exe MyProject-dev.image",
+        },
+      ],
+      undefined,
+      (argumentsValue) => {
+        const scriptPath = argumentsValue.script as string;
+        fs.writeFileSync(
+          path.join(
+            path.dirname(scriptPath),
+            "repository-workspace-load-dev.properties",
+          ),
+          [
+            "status=loaded",
+            `sourcePath=${repositoryPath}/src`,
+            "sourceDirectory=src",
+            "baseline=MyProject",
+            "",
+          ].join("\n"),
+          "utf8",
+        );
+      },
+      imagesDir,
+    );
+    const repositoryPath = path.join(
+      imagesDir,
+      "MyProject-dev",
+      "pharo-local",
+      "iceberg",
+      "my-project",
+    );
+    const imageMcpClient = new FakeImageMcpClient(
+      [],
+      {
+        result: {
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text: "Iceberg refused the repository",
+            },
+          ],
+        },
+      },
+      "edit-repository",
+    );
+
+    await expect(
+      openProject({
+        projectRoot,
+        stateRoot,
+        workspaceId: "worktree-a",
+        pharoLauncherMcpClient,
+        imageMcpClient,
+        healthClient: new FakeHealthClient(true),
+        now: fixedNow,
+        sleep: async () => {},
+        poll: {
+          intervalMs: 0,
+        },
+      }),
+    ).rejects.toMatchObject({
+      result: {
+        ok: false,
+        failures: [
+          {
+            imageId: "dev",
+            message:
+              "Repository workspace registration failed for image dev: Iceberg refused the repository",
+          },
+        ],
+      },
+    });
+    const failedState = loadProjectState(
+      path.join(
+        stateRoot,
+        "projects",
+        "project-123",
+        "workspaces",
+        "worktree-a",
+        "state.json",
+      ),
+    );
+    expect(failedState?.images[0].repositoryWorkspace).toMatchObject({
+      registrationState: "failed",
+      registrationError: "Iceberg refused the repository",
     });
   });
 
