@@ -335,7 +335,8 @@ The scoped context includes:
 - the project id, project name, workspace id, and target id
 - each declared image's public `imageId`
 - ownership metadata showing that the image belongs to the current
-  project/workspace/target and is disposable with the workspace
+  project/workspace/target, is disposable with the workspace, and may carry a
+  host-local mutable image lease
 - safe create/start/stop/reset affordance descriptions that use scoped
   `imageId` arguments only
 - gateway route metadata telling subagents to pass the selected `imageId` to
@@ -351,6 +352,9 @@ workflow for disposable verification images and should report lifecycle plus
 `pharo_gateway` route status for the resulting `imageId`. Normal agent-facing
 context must not expose host-wide image delete, VM delete, raw process kill,
 launcher image names, image MCP ports, or filesystem paths.
+Scoped launcher mutations write leases into the same runtime state file. An
+active lease from another owner blocks lifecycle mutation locally; expired
+leases can be reclaimed by the current target, thread, session, or work item.
 
 Operators can request the trusted diagnostic surface when debugging lifecycle
 failures. For `plexus_project_status`, pass `includeDiagnostics: true` to include

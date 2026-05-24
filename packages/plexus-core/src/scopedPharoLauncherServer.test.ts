@@ -7,10 +7,12 @@ import {
   defaultTargetId,
   projectStatePathForConfig,
   saveProjectState,
+  type ProjectImageLeaseState,
   type ProjectState,
 } from "./projectState.js";
 import {
   ScopedPharoLauncher,
+  scopedImageLeaseOptionsFromEnvironment,
   scopedPharoLauncherTools,
 } from "./scopedPharoLauncherServer.js";
 
@@ -87,6 +89,20 @@ function runningState(): ProjectState {
   };
 }
 
+function imageLease(
+  overrides: Partial<ProjectImageLeaseState> = {},
+): ProjectImageLeaseState {
+  return {
+    ownerId: "thread-a",
+    ownerKind: "thread",
+    mode: "mutable",
+    purpose: "Investigate issue 24",
+    createdAt: "2026-05-18T09:00:00.000Z",
+    heartbeatAt: "2026-05-18T09:30:00.000Z",
+    ...overrides,
+  };
+}
+
 function fakeLauncherClient() {
   const calls: Array<{ name: string; argumentsValue: Record<string, unknown> }> =
     [];
@@ -107,6 +123,29 @@ afterEach(() => {
 });
 
 describe("scoped pharo launcher facade", () => {
+  it("reads image lease ownership from scoped launcher environment", () => {
+    expect(
+      scopedImageLeaseOptionsFromEnvironment({
+        PLEXUS_IMAGE_LEASE_OWNER_ID: "thread-456",
+        PLEXUS_IMAGE_LEASE_OWNER_KIND: "work-item",
+        PLEXUS_IMAGE_LEASE_PURPOSE: "Work on issue 24",
+        PLEXUS_IMAGE_LEASE_REPOSITORY_PATH: "/worktrees/project-a",
+        PLEXUS_IMAGE_LEASE_BRANCH: "codex/project-a-24",
+        PLEXUS_IMAGE_LEASE_TTL_MS: "3600000",
+        PLEXUS_IMAGE_LEASE_CLEANUP_COMMAND:
+          "plexus project close /worktrees/project-a",
+      }),
+    ).toEqual({
+      ownerId: "thread-456",
+      ownerKind: "workItem",
+      purpose: "Work on issue 24",
+      repositoryPath: "/worktrees/project-a",
+      branch: "codex/project-a-24",
+      ttlMs: 3_600_000,
+      cleanupCommand: "plexus project close /worktrees/project-a",
+    });
+  });
+
   it("reports scoped image listings without raw launcher mutation handles", () => {
     const projectRoot = makeTempDir("plexus-project-");
     const stateRoot = makeTempDir("plexus-state-");
@@ -137,6 +176,49 @@ describe("scoped pharo launcher facade", () => {
           status: "running",
         },
       ],
+    });
+    const serialized = JSON.stringify(result);
+    expect(serialized).not.toContain("MyProject-worktree-a-dev");
+    expect(serialized).not.toContain("7123");
+    expect(serialized).not.toContain("1234");
+    expect(serialized).not.toContain(stateRoot);
+  });
+
+  it("reports image lease metadata from scoped runtime state", () => {
+    const projectRoot = makeTempDir("plexus-project-");
+    const stateRoot = makeTempDir("plexus-state-");
+    writeProjectConfig(projectRoot);
+    saveProjectState(statePath(projectRoot, stateRoot), {
+      ...runningState(),
+      images: [
+        {
+          ...runningState().images[0],
+          lease: imageLease({
+            repositoryPath: "/worktrees/project-a",
+            branch: "codex/project-a-24",
+            cleanupCommand: "plexus project close /worktrees/project-a",
+          }),
+        },
+      ],
+    });
+
+    const result = new ScopedPharoLauncher({
+      projectRoot,
+      stateRoot,
+      workspaceId: "worktree-a",
+    }).listImages();
+
+    expect(result.images[0]).toMatchObject({
+      imageId: "dev",
+      lease: {
+        ownerId: "thread-a",
+        ownerKind: "thread",
+        mode: "mutable",
+        purpose: "Investigate issue 24",
+        repositoryPath: "/worktrees/project-a",
+        branch: "codex/project-a-24",
+        cleanupCommand: "plexus project close /worktrees/project-a",
+      },
     });
     const serialized = JSON.stringify(result);
     expect(serialized).not.toContain("MyProject-worktree-a-dev");
@@ -304,6 +386,14 @@ describe("scoped pharo launcher facade", () => {
         imageName: "MyProject-worktree-a-dev",
         assignedPort: 7123,
         status: "stopped",
+        lease: {
+          ownerId: "project-123--worktree-a",
+          ownerKind: "target",
+          mode: "mutable",
+          purpose: "Scoped Pharo image lifecycle",
+          createdAt: "2026-05-18T12:00:00.000Z",
+          heartbeatAt: "2026-05-18T12:00:00.000Z",
+        },
       }),
     ]);
   });
@@ -420,6 +510,119 @@ describe("scoped pharo launcher facade", () => {
         imageIds: ["dev"],
       }),
     ]);
+  });
+
+  it("blocks scoped mutations when an active image lease belongs to another owner", async () => {
+    const projectRoot = makeTempDir("plexus-project-");
+    const stateRoot = makeTempDir("plexus-state-");
+    const stops: unknown[] = [];
+    writeProjectConfig(projectRoot);
+    saveProjectState(statePath(projectRoot, stateRoot), {
+      ...runningState(),
+      images: [
+        {
+          ...runningState().images[0],
+          lease: imageLease({
+            expiresAt: "2026-05-18T13:00:00.000Z",
+          }),
+        },
+      ],
+    });
+
+    await expect(
+      new ScopedPharoLauncher({
+        projectRoot,
+        stateRoot,
+        workspaceId: "worktree-a",
+        imageLease: {
+          ownerId: "thread-b",
+          ownerKind: "thread",
+          purpose: "Work on a different issue",
+        },
+        now: () => new Date("2026-05-18T12:00:00.000Z"),
+        projectClose: async (options) => {
+          stops.push(options);
+          return {
+            ok: true,
+            projectRoot,
+            statePath: statePath(projectRoot, stateRoot),
+            state: runningState(),
+            stoppedImages: [],
+            repositoryWorkspaceCleanups: [],
+            failures: [],
+          };
+        },
+      }).stopImage("dev"),
+    ).rejects.toThrow(
+      "Image dev is leased to thread thread-a for Investigate issue 24 until 2026-05-18T13:00:00.000Z",
+    );
+    expect(stops).toEqual([]);
+  });
+
+  it("allows expired image leases to be reclaimed by the current owner", async () => {
+    const projectRoot = makeTempDir("plexus-project-");
+    const stateRoot = makeTempDir("plexus-state-");
+    writeProjectConfig(projectRoot);
+    saveProjectState(statePath(projectRoot, stateRoot), {
+      ...runningState(),
+      images: [
+        {
+          ...runningState().images[0],
+          lease: imageLease({
+            expiresAt: "2026-05-18T11:00:00.000Z",
+          }),
+        },
+      ],
+    });
+
+    await new ScopedPharoLauncher({
+      projectRoot,
+      stateRoot,
+      workspaceId: "worktree-a",
+      imageLease: {
+        ownerId: "thread-b",
+        ownerKind: "thread",
+        purpose: "Continue issue 24",
+      },
+      now: () => new Date("2026-05-18T12:00:00.000Z"),
+      projectClose: async () => {
+        const state: ProjectState = {
+          ...runningState(),
+          runtimeStatus: "idle",
+          updatedAt: "2026-05-18T12:00:00.000Z",
+          images: [
+            {
+              id: "dev",
+              imageName: "MyProject-worktree-a-dev",
+              assignedPort: 7123,
+              status: "stopped",
+            },
+          ],
+        };
+        saveProjectState(statePath(projectRoot, stateRoot), state);
+        return {
+          ok: true,
+          projectRoot,
+          statePath: statePath(projectRoot, stateRoot),
+          state,
+          stoppedImages: state.images,
+          repositoryWorkspaceCleanups: [],
+          failures: [],
+        };
+      },
+    }).stopImage("dev");
+
+    const savedState = JSON.parse(
+      fs.readFileSync(statePath(projectRoot, stateRoot), "utf8"),
+    ) as ProjectState;
+    expect(savedState.images[0].lease).toEqual({
+      ownerId: "thread-b",
+      ownerKind: "thread",
+      mode: "mutable",
+      purpose: "Continue issue 24",
+      createdAt: "2026-05-18T12:00:00.000Z",
+      heartbeatAt: "2026-05-18T12:00:00.000Z",
+    });
   });
 
   it("resets disposable images through scoped close, delete, create, and reopen policy", async () => {

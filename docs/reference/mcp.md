@@ -51,6 +51,12 @@ rescue, and inspecting or flushing PLexus home image cache entries.
 The scoped `pharo-launcher` surface is a PLexus facade over
 pharo-launcher-mcp. It resolves `imageId` through the current project,
 workspace, and target before calling raw launcher operations.
+Mutable lifecycle calls record a local image lease in PLexus runtime state.
+The default lease owner is the current target id; `PLEXUS_IMAGE_LEASE_*`
+environment variables can provide a thread, session, work item, repository
+path, branch, TTL, and cleanup command. Active leases owned by a different
+caller block scoped mutations until they expire or the owning caller continues.
+This is host-local runtime coordination, not a multi-host lock service.
 
 Expected agent-facing tools include:
 

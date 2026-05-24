@@ -46,6 +46,7 @@ export interface ScopedImageOwnership {
   targetId: string;
   owned: true;
   disposable: true;
+  lease?: ProjectImageState["lease"];
 }
 
 export interface ScopedImageAffordanceAllowed {
@@ -480,6 +481,7 @@ function scopedImageContext(
       targetId: scope.targetId,
       owned: true,
       disposable: true,
+      ...(imageState?.lease ? { lease: imageState.lease } : {}),
     },
     affordances: lifecycleAffordances(imageConfig, imageState),
     route: routeMetadata(scope, imageConfig.id),

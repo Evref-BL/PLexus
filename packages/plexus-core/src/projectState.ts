@@ -89,6 +89,29 @@ export type ProjectImageRepositoryWorkspaceCleanupDecision =
   | "refused"
   | "missing"
   | "failed";
+export type ProjectImageLeaseOwnerKind =
+  | "target"
+  | "workspace"
+  | "thread"
+  | "session"
+  | "workItem"
+  | "agent"
+  | "human"
+  | "unknown";
+export type ProjectImageLeaseMode = "mutable" | "read-only";
+
+export interface ProjectImageLeaseState {
+  ownerId: string;
+  ownerKind: ProjectImageLeaseOwnerKind;
+  mode: ProjectImageLeaseMode;
+  purpose: string;
+  createdAt: string;
+  heartbeatAt: string;
+  expiresAt?: string;
+  repositoryPath?: string;
+  branch?: string;
+  cleanupCommand?: string;
+}
 
 export interface ProjectImageRepositoryWorkspaceRepositoryState {
   id: string;
@@ -157,6 +180,7 @@ export interface ProjectImageState {
   mcpEndpoint?: ProjectImageMcpEndpoint;
   pid?: number;
   status: ProjectImageStatus;
+  lease?: ProjectImageLeaseState;
   pharoMcpContract?: ProjectImagePharoMcpContractState;
   pharoMcpLoad?: ProjectImagePharoMcpLoadStatus;
   repositoryWorkspace?: ProjectImageRepositoryWorkspaceState;
@@ -381,14 +405,6 @@ function nextAvailablePort(
   throw new PortAllocationError(
     `No available port in range ${range.start}-${range.end}`,
   );
-}
-
-function previousImagePort(
-  previousState: ProjectState | undefined,
-  imageId: string,
-): number | undefined {
-  return previousState?.images.find((image) => image.id === imageId)
-    ?.assignedPort;
 }
 
 function pharoMajorVersionFromText(value: string | undefined): number | undefined {
@@ -730,7 +746,10 @@ export function createProjectState(
   const images: ProjectImageState[] = config.images.map((image) => {
     const supportState = pharoMcpSupportState(config, image);
     const canUsePharoMcpPort = imageCanUsePharoMcpPort(supportState, image);
-    const previousPort = previousImagePort(options.previousState, image.id);
+    const previousImage = options.previousState?.images.find(
+      (candidate) => candidate.id === image.id,
+    );
+    const previousPort = previousImage?.assignedPort;
     const imageContext = {
       projectId: projectConfigId(config),
       projectName: config.name,
@@ -776,6 +795,7 @@ export function createProjectState(
         : {}),
       ...(assignedPort !== undefined ? { assignedPort } : {}),
       status: image.active ? "starting" : "stopped",
+      ...(previousImage?.lease ? { lease: previousImage.lease } : {}),
       ...supportState,
       ...(repositoryWorkspace ? { repositoryWorkspace } : {}),
     };

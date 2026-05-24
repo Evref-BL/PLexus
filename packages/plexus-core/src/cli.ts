@@ -2,7 +2,10 @@
 import { ProjectCloseError } from "./projectClose.js";
 import { PlexusProjectLifecycle } from "./projectLifecycle.js";
 import { ProjectOpenError } from "./projectOpen.js";
-import { startScopedPharoLauncherServer } from "./scopedPharoLauncherServer.js";
+import {
+  scopedImageLeaseOptionsFromEnvironment,
+  startScopedPharoLauncherServer,
+} from "./scopedPharoLauncherServer.js";
 import { startProjectLifecycleServer } from "./server.js";
 
 function usage(): string {
@@ -19,6 +22,9 @@ function usage(): string {
     "  PLEXUS_WORKSPACE_ID     Optional runtime workspace id.",
     "  VIBE_KANBAN_WORKSPACE_ID Optional runtime workspace id.",
     "  PLEXUS_TARGET_ID        Optional runtime target id.",
+    "  PLEXUS_IMAGE_LEASE_OWNER_ID Optional scoped image lease owner id.",
+    "  PLEXUS_IMAGE_LEASE_OWNER_KIND Optional lease owner kind.",
+    "  PLEXUS_IMAGE_LEASE_PURPOSE Optional lease purpose.",
   ].join("\n");
 }
 
@@ -119,6 +125,7 @@ async function main(argv: string[]): Promise<number> {
       stateRoot,
       workspaceId,
       targetId: parsed.targetId ?? process.env.PLEXUS_TARGET_ID,
+      imageLease: scopedImageLeaseOptionsFromEnvironment(process.env),
     });
     return 0;
   }
