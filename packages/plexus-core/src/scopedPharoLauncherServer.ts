@@ -20,6 +20,10 @@ import {
   ProjectCloseError,
   type ProjectCloseResult,
 } from "./projectClose.js";
+import {
+  HttpGatewayRouteRegistry,
+  type ProjectLifecycleRouteRegistry,
+} from "./projectLifecycle.js";
 import { openProject } from "./projectOpen.js";
 import {
   materializeProjectImageFromHomeCache,
@@ -86,6 +90,7 @@ export interface ScopedPharoLauncherOptions {
   homeImageCacheApproval?: HomeImageCacheMutationApproval;
   projectOpen?: typeof openProject;
   projectClose?: typeof closeProject;
+  routeRegistry?: ProjectLifecycleRouteRegistry;
   fetch?: typeof fetch;
   now?: () => Date;
 }
@@ -884,14 +889,53 @@ export class ScopedPharoLauncher {
     imageId: string,
     lease: ProjectImageLeaseState,
     now: Date,
-  ): void {
+  ): ProjectState | undefined {
     const statePath = statePathForScope(scope, projectConfig);
     const state = loadProjectState(statePath);
     if (!state?.images.some((image) => image.id === imageId)) {
+      return undefined;
+    }
+
+    const nextState = stateWithImageLease(state, imageId, lease, now);
+    saveProjectState(statePath, nextState);
+    return nextState;
+  }
+
+  private routeRegistryForState(
+    state: ProjectState,
+  ): ProjectLifecycleRouteRegistry | undefined {
+    if (this.options.routeRegistry) {
+      return this.options.routeRegistry;
+    }
+
+    const controlEndpoint = state.gateway?.controlEndpoint;
+    return controlEndpoint
+      ? new HttpGatewayRouteRegistry({
+          url: controlEndpoint,
+          fetch: this.options.fetch,
+        })
+      : undefined;
+  }
+
+  private async refreshRegisteredProjectRoute(
+    scope: ResolvedScope,
+    statePath: string,
+    state: ProjectState | undefined,
+  ): Promise<void> {
+    if (!state) {
       return;
     }
 
-    saveProjectState(statePath, stateWithImageLease(state, imageId, lease, now));
+    const routeRegistry = this.routeRegistryForState(state);
+    if (!routeRegistry) {
+      return;
+    }
+
+    await routeRegistry.registerProjectRoute({
+      projectRoot: scope.projectRoot,
+      statePath,
+      state,
+    });
   }
 
   private async snapshotImageBeforeDisplayModeRestart(
@@ -1115,7 +1159,9 @@ export class ScopedPharoLauncher {
         assertLauncherOk(result, "pharo_launcher_image_create");
       }
 
-      saveProjectState(statePath, stateWithImageLease(state, imageId, lease, now));
+      const nextState = stateWithImageLease(state, imageId, lease, now);
+      saveProjectState(statePath, nextState);
+      await this.refreshRegisteredProjectRoute(scope, statePath, nextState);
     } finally {
       if (ownsClient) {
         await client.close?.();
@@ -1149,7 +1195,7 @@ export class ScopedPharoLauncher {
     const projectConfig = loadProjectConfig(scope.projectRoot);
     const now = this.options.now?.() ?? new Date();
     const lease = this.imageLeaseForMutation(scope, projectConfig, imageId, now);
-    await (this.options.projectOpen ?? openProject)({
+    const openResult = await (this.options.projectOpen ?? openProject)({
       projectRoot: scope.projectRoot,
       workspaceId: scope.workspaceId,
       targetId: scope.targetId,
@@ -1163,7 +1209,19 @@ export class ScopedPharoLauncher {
       homeImageCacheClient: this.options.homeImageCacheClient ??
         this.options.pharoLauncherMcpClient,
     });
-    this.recordImageLease(scope, projectConfig, imageId, lease, now);
+    const statePath = statePathForScope(scope, projectConfig);
+    const leasedState = this.recordImageLease(
+      scope,
+      projectConfig,
+      imageId,
+      lease,
+      now,
+    );
+    await this.refreshRegisteredProjectRoute(
+      scope,
+      statePath,
+      leasedState ?? openResult.state,
+    );
 
     return this.imageInfo(imageId);
   }
@@ -1264,13 +1322,25 @@ export class ScopedPharoLauncher {
     const projectConfig = loadProjectConfig(scope.projectRoot);
     const now = this.options.now?.() ?? new Date();
     const lease = this.imageLeaseForMutation(scope, projectConfig, imageId, now);
-    await (this.options.projectClose ?? closeProject)({
+    const closeResult = await (this.options.projectClose ?? closeProject)({
       projectRoot: scope.projectRoot,
       workspaceId: scope.workspaceId,
       stateRoot: scope.stateRoot,
       imageIds: [imageId],
     });
-    this.recordImageLease(scope, projectConfig, imageId, lease, now);
+    const statePath = statePathForScope(scope, projectConfig);
+    const leasedState = this.recordImageLease(
+      scope,
+      projectConfig,
+      imageId,
+      lease,
+      now,
+    );
+    await this.refreshRegisteredProjectRoute(
+      scope,
+      statePath,
+      leasedState ?? closeResult.state,
+    );
 
     return this.imageInfo(imageId);
   }
