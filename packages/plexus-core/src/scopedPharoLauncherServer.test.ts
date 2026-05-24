@@ -3,6 +3,10 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type { PharoLauncherMcpToolClient } from "./pharoLauncherMcpClient.js";
+import type {
+  ProjectLifecycleRouteRegistration,
+  ProjectLifecycleRouteRegistry,
+} from "./projectLifecycle.js";
 import {
   defaultTargetId,
   projectStatePathForConfig,
@@ -89,6 +93,22 @@ function runningState(): ProjectState {
   };
 }
 
+function stoppedState(): ProjectState {
+  return {
+    ...runningState(),
+    runtimeStatus: "idle",
+    updatedAt: "2026-05-18T12:00:00.000Z",
+    images: [
+      {
+        id: "dev",
+        imageName: "MyProject-worktree-a-dev",
+        assignedPort: 7123,
+        status: "stopped",
+      },
+    ],
+  };
+}
+
 function imageLease(
   overrides: Partial<ProjectImageLeaseState> = {},
 ): ProjectImageLeaseState {
@@ -114,6 +134,17 @@ function fakeLauncherClient() {
   };
 
   return { client, calls };
+}
+
+function recordingRouteRegistry(
+  registrations: ProjectLifecycleRouteRegistration[],
+): ProjectLifecycleRouteRegistry {
+  return {
+    registerProjectRoute(input) {
+      registrations.push(input);
+    },
+    unregisterProjectRoute() {},
+  };
 }
 
 afterEach(() => {
@@ -459,6 +490,7 @@ describe("scoped pharo launcher facade", () => {
     const stateRoot = makeTempDir("plexus-state-");
     const starts: unknown[] = [];
     const stops: unknown[] = [];
+    const routeRegistrations: ProjectLifecycleRouteRegistration[] = [];
     writeProjectConfig(projectRoot);
 
     const launcher = new ScopedPharoLauncher({
@@ -477,16 +509,18 @@ describe("scoped pharo launcher facade", () => {
       },
       projectClose: async (options) => {
         stops.push(options);
+        const state = stoppedState();
         return {
           ok: true,
           projectRoot,
           statePath: statePath(projectRoot, stateRoot),
-          state: runningState(),
+          state,
           stoppedImages: [],
           repositoryWorkspaceCleanups: [],
           failures: [],
         };
       },
+      routeRegistry: recordingRouteRegistry(routeRegistrations),
     });
 
     await launcher.startImage("dev", "interactive");
@@ -508,6 +542,24 @@ describe("scoped pharo launcher facade", () => {
         workspaceId: "worktree-a",
         stateRoot,
         imageIds: ["dev"],
+      }),
+    ]);
+    expect(routeRegistrations).toEqual([
+      expect.objectContaining({
+        projectRoot,
+        statePath: statePath(projectRoot, stateRoot),
+        state: expect.objectContaining({
+          targetId: "project-123--worktree-a",
+          images: [expect.objectContaining({ id: "dev", status: "running" })],
+        }),
+      }),
+      expect.objectContaining({
+        projectRoot,
+        statePath: statePath(projectRoot, stateRoot),
+        state: expect.objectContaining({
+          targetId: "project-123--worktree-a",
+          images: [expect.objectContaining({ id: "dev", status: "stopped" })],
+        }),
       }),
     ]);
   });
