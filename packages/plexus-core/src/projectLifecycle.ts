@@ -1515,16 +1515,25 @@ async function conflictingListenerDiagnostics(
 async function reconcileDeadProjectGatewayState(input: {
   state: ProjectState | undefined;
   statePath: string;
+  gateway: ProjectGatewayState;
   checks: PortClaimChecks;
   now: () => Date;
 }): Promise<ProjectLifecycleGatewayReconciliation | undefined> {
-  const gateway = input.state?.gateway;
+  const stateGateway = input.state?.gateway;
+  const gateway = stateGateway ?? input.gateway;
   if (
     !input.state ||
     !gateway ||
     gateway.mode !== "project-local" ||
     !gateway.managedByProject
   ) {
+    return undefined;
+  }
+
+  const runtimeStateIsRunning =
+    input.state.runtimeStatus === "running" ||
+    runtimeStatusForImages(input.state.images) === "running";
+  if (!stateGateway && !runtimeStateIsRunning) {
     return undefined;
   }
 
@@ -1557,20 +1566,22 @@ async function reconcileDeadProjectGatewayState(input: {
   }
 
   let releasedClaim = false;
-  if (gateway.claim) {
+  if (stateGateway?.claim) {
     const release = await releasePortClaim({
-      claimsRoot: gateway.claim.claimsRoot,
+      claimsRoot: stateGateway.claim.claimsRoot,
       claim: {
-        claimId: gateway.claim.claimId,
-        assignedPort: gateway.claim.assignedPort,
+        claimId: stateGateway.claim.claimId,
+        assignedPort: stateGateway.claim.assignedPort,
       },
     });
     releasedClaim = release.released;
   }
 
-  delete input.state.gateway;
-  input.state.updatedAt = input.now().toISOString();
-  saveProjectState(input.statePath, input.state);
+  if (stateGateway) {
+    delete input.state.gateway;
+    input.state.updatedAt = input.now().toISOString();
+    saveProjectState(input.statePath, input.state);
+  }
 
   return {
     status: "dead",
@@ -2353,10 +2364,12 @@ export class PlexusProjectLifecycle {
     });
     let state = loadProjectState(statePath);
     const checks = mergePortClaimChecks(this.gateway);
+    const observedGateway = projectGatewayStatus(config, state);
     const gatewayReconciliation = input.refreshHealth
       ? await reconcileDeadProjectGatewayState({
           state,
           statePath,
+          gateway: observedGateway,
           checks,
           now: this.gateway.now ?? (() => new Date()),
         })
