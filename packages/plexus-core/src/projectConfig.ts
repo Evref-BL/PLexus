@@ -12,9 +12,11 @@ export interface ProjectImageMcpConfig {
   port?: number;
   loadScript: string;
   startupMode?: ProjectPharoMcpStartupMode;
+  loadPolicy?: ProjectPharoMcpLoadPolicy;
 }
 
 export type ProjectPharoMcpStartupMode = "required" | "optional" | "disabled";
+export type ProjectPharoMcpLoadPolicy = "ifMissing" | "always" | "never";
 export type ProjectImageDisplayMode = "headless" | "interactive";
 
 export interface ProjectPharoMcpRepositoryConfig {
@@ -295,6 +297,12 @@ export function projectMcpStartupMode(
   return mcp.startupMode ?? "required";
 }
 
+export function projectMcpLoadPolicy(
+  mcp: Pick<ProjectImageMcpConfig, "loadPolicy">,
+): ProjectPharoMcpLoadPolicy {
+  return mcp.loadPolicy ?? "ifMissing";
+}
+
 export function projectImageDisplayMode(
   image: Pick<ProjectImageConfig, "displayMode">,
 ): ProjectImageDisplayMode {
@@ -407,6 +415,39 @@ function optionalPharoMcpStartupModeField(
 
   issues.push(`${pathPrefix}.${key} must be one of required, optional, disabled`);
   return undefined;
+}
+
+function optionalPharoMcpLoadPolicyField(
+  object: Record<string, unknown>,
+  key: string,
+  issues: string[],
+  pathPrefix: string,
+): ProjectPharoMcpLoadPolicy | undefined {
+  const value = object[key];
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (value === "ifMissing" || value === "always" || value === "never") {
+    return value;
+  }
+
+  issues.push(`${pathPrefix}.${key} must be one of ifMissing, always, never`);
+  return undefined;
+}
+
+function imageMcpLoadScriptField(
+  object: Record<string, unknown>,
+  key: string,
+  issues: string[],
+  pathPrefix: string,
+  loadPolicy: ProjectPharoMcpLoadPolicy | undefined,
+): string {
+  if (loadPolicy === "never" && object[key] === undefined) {
+    return "";
+  }
+
+  return stringField(object, key, issues, pathPrefix);
 }
 
 function optionalImageDisplayModeField(
@@ -685,15 +726,29 @@ function parseImageMcp(
     return { loadScript: "" };
   }
 
+  const loadPolicy = optionalPharoMcpLoadPolicyField(
+    value,
+    "loadPolicy",
+    issues,
+    `${pathPrefix}.mcp`,
+  );
+
   return {
     port: optionalPortField(value, "port", issues, `${pathPrefix}.mcp`),
-    loadScript: stringField(value, "loadScript", issues, `${pathPrefix}.mcp`),
+    loadScript: imageMcpLoadScriptField(
+      value,
+      "loadScript",
+      issues,
+      `${pathPrefix}.mcp`,
+      loadPolicy,
+    ),
     startupMode: optionalPharoMcpStartupModeField(
       value,
       "startupMode",
       issues,
       `${pathPrefix}.mcp`,
     ),
+    loadPolicy,
   };
 }
 

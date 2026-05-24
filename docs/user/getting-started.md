@@ -46,7 +46,8 @@ Create `plexus.project.json` at the project root:
         "transport": "ssh"
       },
       "mcp": {
-        "loadScript": "pharo/load-mcp.st"
+        "loadScript": "pharo/load-mcp.st",
+        "loadPolicy": "ifMissing"
       }
     }
   ]
@@ -56,6 +57,12 @@ Create `plexus.project.json` at the project root:
 Use image-name templates such as `{workspaceId}` when several worktrees can run
 in parallel. Avoid fixed `mcp.port` values unless the project intentionally has
 only one local runtime.
+
+`mcp.loadPolicy` defaults to `ifMissing`, which keeps an MCP already present in
+the image and otherwise loads `mcp.loadScript`. Set it to `always` when the
+configured script must replace preloaded MCP code, or `never` when the image
+must provide MCP without PLexus loading it. With `never`, `mcp.loadScript` may
+be omitted.
 
 Supported image-name tokens are:
 

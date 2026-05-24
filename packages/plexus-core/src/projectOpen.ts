@@ -530,6 +530,7 @@ function pharoMcpLoadStatusDetails(
     statusPath,
     ...(properties.source ? { source: properties.source } : {}),
     ...(properties.loadScript ? { loadScript: properties.loadScript } : {}),
+    ...(properties.loadPolicy ? { loadPolicy: properties.loadPolicy } : {}),
     ...(properties.repository ? { repository: properties.repository } : {}),
     ...(properties.configuredRepositoryHint
       ? { configuredRepositoryHint: properties.configuredRepositoryHint }

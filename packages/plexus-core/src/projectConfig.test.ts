@@ -141,21 +141,25 @@ describe("project config", () => {
     });
   });
 
-  it("parses explicit Pharo MCP startup modes", () => {
+  it("parses explicit Pharo MCP startup modes and load policies", () => {
     const config = validProjectConfig();
     (config.images[0].mcp as { startupMode?: string }).startupMode = "optional";
     (config.images[1].mcp as { startupMode?: string }).startupMode = "disabled";
+    (config.images[0].mcp as { loadPolicy?: string }).loadPolicy = "always";
+    (config.images[1].mcp as { loadPolicy?: string }).loadPolicy = "never";
 
     expect(parseProjectConfig(config).images.map((image) => image.mcp)).toEqual([
       {
         port: 7123,
         loadScript: "pharo/load-mcp.st",
         startupMode: "optional",
+        loadPolicy: "always",
       },
       {
         port: 7124,
         loadScript: "pharo/load-mcp.st",
         startupMode: "disabled",
+        loadPolicy: "never",
       },
     ]);
   });
@@ -200,6 +204,36 @@ describe("project config", () => {
         ]),
       );
     }
+  });
+
+  it("rejects invalid Pharo MCP load policies", () => {
+    const config = validProjectConfig();
+    (config.images[0].mcp as { loadPolicy?: string }).loadPolicy = "sometimes";
+
+    expect(() => parseProjectConfig(config)).toThrow(ProjectConfigError);
+
+    try {
+      parseProjectConfig(config);
+    } catch (error) {
+      expect((error as ProjectConfigError).issues).toEqual(
+        expect.arrayContaining([
+          "images[0].mcp.loadPolicy must be one of ifMissing, always, never",
+        ]),
+      );
+    }
+  });
+
+  it("allows Pharo MCP load scripts to be omitted when configured loading is skipped", () => {
+    const config = validProjectConfig();
+    delete (config.images[0].mcp as { loadScript?: string }).loadScript;
+    (config.images[0].mcp as { loadPolicy?: string }).loadPolicy = "never";
+
+    expect(parseProjectConfig(config).images[0].mcp).toEqual({
+      port: 7123,
+      loadScript: "",
+      loadPolicy: "never",
+      startupMode: undefined,
+    });
   });
 
   it("allows projects with no declared images", () => {

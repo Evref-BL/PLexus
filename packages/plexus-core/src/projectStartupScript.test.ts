@@ -140,12 +140,105 @@ describe("project startup scripts", () => {
     expect(source).toContain("nextPutAll: 'imageId=';");
     expect(source).toContain("nextPutAll: 'source=';");
     expect(source).toContain("nextPutAll: 'loadScript=';");
+    expect(source).toContain("nextPutAll: 'loadPolicy=';");
+    expect(source).toContain("pharoMcpLoadPolicy := 'ifMissing'.");
     expect(source).toContain("pharoMcpLoadSource = 'metacello'");
     expect(source).toContain("nextPutAll: 'repository=';");
     expect(source).toContain("nextPutAll: 'configuredRepositoryHint=';");
     expect(source).toContain("pharoMcpLoadStatusWriter value: 'loaded' value: nil");
     expect(source).toContain("pharoMcpLoadStatusWriter value: 'failed' value: error description.");
     expect(source).toContain("error pass");
+  });
+
+  it("can force loading the configured Pharo MCP source over an image-provided MCP", () => {
+    const projectRoot = path.join("C:", "dev", "code", "git", "my-project");
+    const source = generateImageStartupScript({
+      projectRoot,
+      imageConfig: {
+        ...config.images[0],
+        mcp: {
+          ...config.images[0].mcp,
+          loadPolicy: "always",
+        },
+      },
+      imageState,
+      pharoMcpLoadStatusPath: path.join(
+        "C:",
+        "dev",
+        "code",
+        "git",
+        "my-project",
+        ".plexus",
+        "projects",
+        "project-123",
+        "workspaces",
+        "worktree-a",
+        "scripts",
+        "pharo-mcp-load-dev.properties",
+      ),
+    });
+
+    expect(source).toContain("pharoMcpLoadPolicy := 'always'.");
+    expect(source).toContain("pharoMcpLoadPolicy = 'ifMissing'");
+    expect(source).toContain("loadScript fileIn");
+    expect(source).toContain("pharoMcpLoadStatusWriter value: 'loaded' value: nil");
+  });
+
+  it("can skip configured Pharo MCP loading and require an image-provided MCP", () => {
+    const projectRoot = path.join("C:", "dev", "code", "git", "my-project");
+    const source = generateImageStartupScript({
+      projectRoot,
+      imageConfig: {
+        ...config.images[0],
+        mcp: {
+          port: config.images[0].mcp.port,
+          loadScript: "",
+          loadPolicy: "never",
+        },
+      },
+      imageState,
+    });
+
+    expect(source).toContain("Use the Pharo MCP project already present in the image.");
+    expect(source).toContain(
+      "MCP class is not available because mcp.loadPolicy is never.",
+    );
+    expect(source).not.toContain("Metacello new");
+    expect(source).not.toContain("loadScript fileIn");
+    expect(source).not.toContain("pharo/load-mcp.st");
+    expect(source).toContain("mcp start.");
+
+    const statusSource = generateImageStartupScript({
+      projectRoot,
+      imageConfig: {
+        ...config.images[0],
+        mcp: {
+          port: config.images[0].mcp.port,
+          loadScript: "",
+          loadPolicy: "never",
+        },
+      },
+      imageState,
+      pharoMcpLoadStatusPath: path.join(
+        "C:",
+        "dev",
+        "code",
+        "git",
+        "my-project",
+        ".plexus",
+        "projects",
+        "project-123",
+        "workspaces",
+        "worktree-a",
+        "scripts",
+        "pharo-mcp-load-dev.properties",
+      ),
+    });
+
+    expect(statusSource).toContain("pharoMcpLoadPolicy := 'never'.");
+    expect(statusSource).toContain("nextPutAll: 'loadPolicy=';");
+    expect(statusSource).not.toContain("nextPutAll: 'loadScript=';");
+    expect(statusSource).not.toContain("loadScript :=");
   });
 
   it("skips MCP load and startup for known unsupported Pharo versions", () => {

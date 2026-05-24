@@ -844,6 +844,7 @@ describe("project open", () => {
             "imageId=dev",
             "source=loadScript",
             `loadScript=${loadScriptPath}`,
+            "loadPolicy=always",
             "configuredRepositoryHint=github://Evref-BL/MCP:main/src",
             "baseline=MCP",
             "",
@@ -871,6 +872,7 @@ describe("project open", () => {
       state: "loaded",
       source: "loadScript",
       loadScript: loadScriptPath,
+      loadPolicy: "always",
       configuredRepositoryHint: "github://Evref-BL/MCP:main/src",
       baseline: "MCP",
     });

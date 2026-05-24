@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import {
   projectConfigId,
+  projectMcpLoadPolicy,
   projectMcpStartupMode,
   type ProjectConfig,
   type ProjectImageConfig,
@@ -415,21 +416,37 @@ ${loadCommand}.
 
 function generatePharoMcpLoadScript(options: {
   imageId: string;
-  loadScriptPath: string;
+  loadScriptPath?: string;
   repository: PharoMcpMetacelloRepository;
   statusPath?: string;
   failureBehavior?: "throw" | "record";
+  loadPolicy?: "ifMissing" | "always" | "never";
 }): string {
   const repositoryLabel = `github://${options.repository.githubUser}/${options.repository.project}:${options.repository.commitish}/${options.repository.path}`;
   const shouldThrowOnFailure = options.failureBehavior !== "record";
   const failureHandler = shouldThrowOnFailure
     ? `    error pass`
     : `    "Optional Pharo MCP startup records the failure and leaves the image process alive."`;
+  const loadPolicy = options.loadPolicy ?? "ifMissing";
+  const loadScriptPath = options.loadScriptPath;
+
+  if (loadPolicy !== "never" && loadScriptPath === undefined) {
+    throw new ProjectStartupScriptError(
+      `Project image ${options.imageId} requires mcp.loadScript unless mcp.loadPolicy is never`,
+    );
+  }
 
   if (!options.statusPath) {
-    const loadScript = `"Load the Pharo MCP project if the image does not already provide it."
-(Smalltalk globals includesKey: #MCP) ifFalse: [
-  loadScript := ${smalltalkPath(options.loadScriptPath)} asFileReference.
+    const loadScript =
+      loadPolicy === "never"
+        ? `"Use the Pharo MCP project already present in the image."
+(Smalltalk globals includesKey: #MCP)
+  ifFalse: [ Error signal: 'MCP class is not available because mcp.loadPolicy is never.' ].`
+        : `"Load the Pharo MCP project if configured policy requires it."
+pharoMcpLoadPolicy := ${smalltalkString(loadPolicy)}.
+(pharoMcpLoadPolicy = 'always' or: [
+  (Smalltalk globals includesKey: #MCP) not ]) ifTrue: [
+  loadScript := ${smalltalkPath(loadScriptPath!)} asFileReference.
   loadScript exists
     ifTrue: [ loadScript fileIn ]
     ifFalse: [
@@ -449,9 +466,43 @@ ${loadScript}
 ].`;
   }
 
-  return `"Load the Pharo MCP project if the image does not already provide it."
+  const loadScriptStatusLines =
+    loadScriptPath === undefined
+      ? ""
+      : `    stream
+      nextPutAll: 'loadScript=';
+      nextPutAll: ${smalltalkPath(loadScriptPath)};
+      cr.`;
+  const loadAction =
+    loadPolicy === "never"
+      ? `  pharoMcpLoadSource := 'provided'.
+  (Smalltalk globals includesKey: #MCP)
+    ifTrue: [ pharoMcpLoadStatusWriter value: 'provided' value: nil ]
+    ifFalse: [ Error signal: 'MCP class is not available because mcp.loadPolicy is never.' ]`
+      : `  (pharoMcpLoadPolicy = 'ifMissing' and: [ Smalltalk globals includesKey: #MCP ])
+    ifTrue: [
+      pharoMcpLoadSource := 'provided'.
+      pharoMcpLoadStatusWriter value: 'provided' value: nil ]
+    ifFalse: [
+      loadScript := ${smalltalkPath(loadScriptPath!)} asFileReference.
+      loadScript exists
+        ifTrue: [
+          pharoMcpLoadSource := 'loadScript'.
+          loadScript fileIn ]
+        ifFalse: [
+          pharoMcpLoadSource := 'metacello'.
+          Metacello new
+            githubUser: ${smalltalkString(options.repository.githubUser)} project: ${smalltalkString(options.repository.project)} commitish: ${smalltalkString(options.repository.commitish)} path: ${smalltalkString(options.repository.path)};
+            baseline: ${smalltalkString(options.repository.baseline)};
+            load ].
+      (Smalltalk globals includesKey: #MCP)
+        ifFalse: [ Error signal: 'MCP class is not available after loading.' ].
+      pharoMcpLoadStatusWriter value: 'loaded' value: nil ]`;
+
+  return `"Load the Pharo MCP project according to mcp.loadPolicy."
 pharoMcpLoadStatusFile := ${smalltalkPath(options.statusPath)} asFileReference.
 pharoMcpLoadStatusFile exists ifTrue: [ pharoMcpLoadStatusFile delete ].
+pharoMcpLoadPolicy := ${smalltalkString(loadPolicy)}.
 pharoMcpLoadSource := 'pending'.
 pharoMcpLoadStatusWriter := [ :status :message |
   pharoMcpLoadStatusFile parent ensureCreateDirectory.
@@ -468,9 +519,10 @@ pharoMcpLoadStatusWriter := [ :status :message |
       nextPutAll: 'source=';
       nextPutAll: (pharoMcpLoadSource ifNil: [ 'unknown' ]);
       cr.
+${loadScriptStatusLines}
     stream
-      nextPutAll: 'loadScript=';
-      nextPutAll: ${smalltalkPath(options.loadScriptPath)};
+      nextPutAll: 'loadPolicy=';
+      nextPutAll: pharoMcpLoadPolicy;
       cr.
     pharoMcpLoadSource = 'metacello'
       ifTrue: [
@@ -493,25 +545,8 @@ pharoMcpLoadStatusWriter := [ :status :message |
         nextPutAll: message asString;
         cr ] ] ].
 [
-  (Smalltalk globals includesKey: #MCP)
-    ifTrue: [
-      pharoMcpLoadSource := 'provided'.
-      pharoMcpLoadStatusWriter value: 'provided' value: nil ]
-    ifFalse: [
-      loadScript := ${smalltalkPath(options.loadScriptPath)} asFileReference.
-      loadScript exists
-        ifTrue: [
-          pharoMcpLoadSource := 'loadScript'.
-          loadScript fileIn ]
-        ifFalse: [
-          pharoMcpLoadSource := 'metacello'.
-          Metacello new
-            githubUser: ${smalltalkString(options.repository.githubUser)} project: ${smalltalkString(options.repository.project)} commitish: ${smalltalkString(options.repository.commitish)} path: ${smalltalkString(options.repository.path)};
-            baseline: ${smalltalkString(options.repository.baseline)};
-            load ].
-      (Smalltalk globals includesKey: #MCP)
-        ifFalse: [ Error signal: 'MCP class is not available after loading.' ].
-      pharoMcpLoadStatusWriter value: 'loaded' value: nil ] ]
+${loadAction}
+]
   on: Error do: [ :error |
     pharoMcpLoadStatusWriter value: 'failed' value: error description.
 ${failureHandler} ].`;
@@ -562,10 +597,11 @@ Semaphore new wait.
   }
 
   const repository = options.repository ?? defaultPharoMcpMetacelloRepository;
-  const loadScriptPath = resolveLoadScriptPath(
-    options.projectRoot,
-    options.imageConfig,
-  );
+  const loadPolicy = projectMcpLoadPolicy(options.imageConfig.mcp);
+  const loadScriptPath =
+    loadPolicy === "never"
+      ? undefined
+      : resolveLoadScriptPath(options.projectRoot, options.imageConfig);
   const gitConfiguration = generateGitConfigurationScript(options.imageConfig);
   const pharoMcpLoadScript = generatePharoMcpLoadScript({
     imageId: options.imageState.id,
@@ -573,6 +609,7 @@ Semaphore new wait.
     repository,
     statusPath: options.pharoMcpLoadStatusPath,
     failureBehavior: startupMode === "optional" ? "record" : "throw",
+    loadPolicy,
   });
 
   const requiredMcpStartup = preferEndpointHandoff
@@ -604,7 +641,7 @@ Semaphore new wait.
 
   return `"Generated by PLexus. Do not edit."
 
-| loadScript mcp endpointFile endpoint endpointValue endpointTransport endpointHost endpointPort endpointPath pharoMcpLoadStatusFile pharoMcpLoadStatusWriter pharoMcpLoadSource repositoryLoadStatusFile repositorySourcePath repositorySourceDirectory repositoryLoadStatusWriter |
+| loadScript mcp endpointFile endpoint endpointValue endpointTransport endpointHost endpointPort endpointPath pharoMcpLoadStatusFile pharoMcpLoadStatusWriter pharoMcpLoadSource pharoMcpLoadPolicy repositoryLoadStatusFile repositorySourcePath repositorySourceDirectory repositoryLoadStatusWriter |
 
 ${gitConfiguration}
 
