@@ -1102,6 +1102,106 @@ describe("project lifecycle tools", () => {
     expect(loadProjectState(stateFilePath)?.gateway).toBeUndefined();
   });
 
+  it("reports partially failed project state with running images and missing project-local gateway state as repairable", async () => {
+    const projectRoot = makeTempDir("plexus-project-");
+    const stateRoot = makeTempDir("plexus-state-");
+    const stateFilePath = statePath(stateRoot);
+    writeProjectConfig(projectRoot, {
+      images: [
+        {
+          id: "dev",
+          imageName: "MyProject-dev",
+          active: true,
+          mcp: {
+            port: 7123,
+            loadScript: "pharo/load-mcp.st",
+          },
+        },
+        {
+          id: "stale-feature",
+          imageName: "MyProject-stale-feature",
+          active: true,
+          mcp: {
+            port: 7124,
+            loadScript: "pharo/load-mcp.st",
+          },
+        },
+      ],
+      runtime: {
+        gateway: {
+          mode: "project-local",
+          host: "127.0.0.1",
+          port: 8133,
+          agentMcpPath: "/mcp",
+          routeControlMcpPath: "/control-mcp",
+        },
+      },
+    });
+    saveProjectState(stateFilePath, {
+      ...runningState,
+      runtimeStatus: "failed",
+      images: [
+        ...clonedRunningState().images,
+        {
+          id: "stale-feature",
+          imageName: "MyProject-stale-feature",
+          status: "failed",
+        },
+      ],
+    });
+    const lifecycle = new PlexusProjectLifecycle({
+      gateway: {
+        now: () => new Date("2026-05-24T11:50:00.000Z"),
+        checks: {
+          isPortListening: async () => false,
+        },
+        fetch: async () => {
+          throw new Error("gateway fetch should not be attempted");
+        },
+      },
+    });
+
+    const result = await lifecycle.handleTool("plexus_project_status", {
+      projectPath: projectRoot,
+      stateRoot,
+      workspaceId: "worktree-a",
+      refreshHealth: true,
+      includeDiagnostics: true,
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
+      data: {
+        diagnostics: {
+          runtime: {
+            status: "degraded",
+            health: "degraded",
+            reason: expect.stringContaining("gateway is dead"),
+          },
+          gateway: {
+            status: "dead",
+            health: "degraded",
+            repair: {
+              allowed: true,
+              toolName: "plexus_project_open",
+            },
+          },
+          routeTable: {
+            status: "gateway-dead",
+            targetId: "project-123--worktree-a",
+          },
+          agentAccess: {
+            expectedSurface: "pharo_gateway",
+            gatewayRouted: false,
+          },
+        },
+      },
+    });
+    expect(result.data?.gateway).not.toHaveProperty("endpoint");
+    expect(result.data?.gateway).not.toHaveProperty("controlEndpoint");
+    expect(loadProjectState(stateFilePath)?.gateway).toBeUndefined();
+  });
+
   it("re-registers stale gateway routes that point at a different state path", async () => {
     const projectRoot = makeTempDir("plexus-project-");
     const stateRoot = makeTempDir("plexus-state-");
@@ -1272,6 +1372,118 @@ describe("project lifecycle tools", () => {
           images: failureResult.state.images,
         },
       },
+    });
+  });
+
+  it("keeps gateway routes available for running images when another image fails to open", async () => {
+    const projectRoot = makeTempDir("plexus-project-");
+    const stateRoot = makeTempDir("plexus-state-");
+    const claimsRoot = makeTempDir("plexus-claims-");
+    const requests: CapturedGatewayRequest[] = [];
+    const processManager = new FakeGatewayProcessManager(9030);
+    const partialState: ProjectState = {
+      ...runningState,
+      runtimeStatus: "failed",
+      images: [
+        ...clonedRunningState().images,
+        {
+          id: "stale-feature",
+          imageName: "MyProject-stale-feature",
+          status: "failed",
+        },
+      ],
+    };
+    const failureResult: ProjectOpenResult = {
+      ok: false,
+      projectRoot: path.resolve(projectRoot),
+      statePath: statePath(stateRoot),
+      state: partialState,
+      failures: [
+        {
+          imageId: "stale-feature",
+          imageName: "MyProject-stale-feature",
+          message: "Image exited before PLexus observed the launcher process",
+        },
+      ],
+    };
+    writeProjectConfig(projectRoot, {
+      images: [
+        {
+          id: "dev",
+          imageName: "MyProject-dev",
+          active: true,
+          mcp: {
+            port: 7123,
+            loadScript: "pharo/load-mcp.st",
+          },
+        },
+        {
+          id: "stale-feature",
+          imageName: "MyProject-stale-feature",
+          active: true,
+          mcp: {
+            port: 7124,
+            loadScript: "pharo/load-mcp.st",
+          },
+        },
+      ],
+      runtime: {
+        gateway: {
+          mode: "project-local",
+          host: "127.0.0.1",
+          port: 8137,
+          agentMcpPath: "/mcp",
+          routeControlMcpPath: "/control-mcp",
+        },
+      },
+    });
+    const lifecycle = new PlexusProjectLifecycle({
+      projectOpen: async () => {
+        throw new ProjectOpenError(
+          "One or more project images failed to open",
+          failureResult,
+        );
+      },
+      gateway: {
+        claimsRoot,
+        processManager,
+        pharoTools: [pharoEvalTool],
+        fetch: makeGatewayFetch(requests),
+        skipHealthCheck: true,
+        checks: {
+          isPortListening: async () => false,
+        },
+      },
+    });
+
+    const result = await lifecycle.handleTool("plexus_project_open", {
+      projectPath: projectRoot,
+      stateRoot,
+      workspaceId: "worktree-a",
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: "One or more project images failed to open",
+      diagnostics: {
+        projectOpen: {
+          failures: failureResult.failures,
+        },
+      },
+    });
+    expect(processManager.starts).toHaveLength(1);
+    expect(processManager.starts[0]).toMatchObject({
+      port: 8137,
+      pharoTools: [pharoEvalTool],
+    });
+    expect(requests.map((request) => request.url)).toEqual([
+      "http://127.0.0.1:8137/control-mcp",
+    ]);
+    expect(loadProjectState(statePath(stateRoot))?.gateway).toMatchObject({
+      mode: "project-local",
+      endpoint: "http://127.0.0.1:8137/mcp",
+      controlEndpoint: "http://127.0.0.1:8137/control-mcp",
+      pid: 9030,
     });
   });
 
