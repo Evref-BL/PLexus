@@ -46,6 +46,237 @@ afterEach(async () => {
 });
 
 describe("StreamableHttpImageMcpToolRouter", () => {
+  it("initializes image MCP endpoints before listing tools and records server metadata", async () => {
+    const port = await freePort();
+    const methods: string[] = [];
+    let protocolHeader: string | undefined;
+    let sessionHeader: string | undefined;
+
+    const httpServer = http.createServer((request, response) => {
+      void (async () => {
+        const chunks: Buffer[] = [];
+        for await (const chunk of request) {
+          chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+        }
+        const payload = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+        methods.push(payload.method);
+
+        if (payload.method === "initialize") {
+          response.writeHead(200, {
+            "content-type": "application/json; charset=utf-8",
+            "Mcp-Session-Id": "session-123",
+          });
+          response.end(
+            `${JSON.stringify({
+              jsonrpc: "2.0",
+              id: payload.id,
+              result: {
+                protocolVersion: "2025-06-18",
+                capabilities: {
+                  tools: {
+                    listChanged: true,
+                  },
+                },
+                serverInfo: {
+                  name: "pharo-mcp",
+                  version: "1.2.3",
+                },
+              },
+            })}\n`,
+          );
+          return;
+        }
+
+        if (payload.method === "notifications/initialized") {
+          response.writeHead(200, {
+            "content-type": "application/json; charset=utf-8",
+          });
+          response.end("{}\n");
+          return;
+        }
+
+        if (payload.method === "tools/list") {
+          protocolHeader = request.headers["mcp-protocol-version"] as
+            | string
+            | undefined;
+          sessionHeader = request.headers["mcp-session-id"] as
+            | string
+            | undefined;
+          response.writeHead(200, {
+            "content-type": "application/json; charset=utf-8",
+          });
+          response.end(
+            `${JSON.stringify({
+              jsonrpc: "2.0",
+              id: payload.id,
+              result: {
+                tools: [
+                  {
+                    name: "find-packages",
+                    inputSchema: {
+                      type: "object",
+                      properties: {},
+                    },
+                  },
+                ],
+              },
+            })}\n`,
+          );
+          return;
+        }
+
+        response.writeHead(500, {
+          "content-type": "application/json; charset=utf-8",
+        });
+        response.end('{"error":"unexpected_method"}\n');
+      })().catch((error: unknown) => {
+        response.writeHead(500, {
+          "content-type": "application/json; charset=utf-8",
+        });
+        response.end(
+          `${JSON.stringify({
+            ok: false,
+            error: error instanceof Error ? error.message : String(error),
+          })}\n`,
+        );
+      });
+    });
+
+    await new Promise<void>((resolve) => {
+      httpServer.listen(port, "127.0.0.1", () => resolve());
+    });
+    servers.push(httpServer);
+
+    const router = new StreamableHttpImageMcpToolRouter({
+      host: "127.0.0.1",
+    });
+    const route = {
+      projectId: "project-123",
+      workspaceId: "worktree-a",
+      targetId: "project-123--worktree-a",
+      imageId: "dev",
+      imageName: "MyProject-dev",
+      port,
+    };
+
+    await expect(router.listTools(route)).resolves.toMatchObject([
+      {
+        name: "find-packages",
+      },
+    ]);
+    expect(methods).toEqual([
+      "initialize",
+      "notifications/initialized",
+      "tools/list",
+    ]);
+    expect(protocolHeader).toBe("2025-06-18");
+    expect(sessionHeader).toBe("session-123");
+    expect(router.connectionInfo(route)).toMatchObject({
+      lifecycle: {
+        status: "initialized",
+      },
+      protocolVersion: "2025-06-18",
+      sessionId: "session-123",
+      capabilities: {
+        tools: {
+          listChanged: true,
+        },
+      },
+      serverInfo: {
+        name: "pharo-mcp",
+        version: "1.2.3",
+      },
+    });
+  });
+
+  it("keeps stateless image endpoints routable when initialize is unsupported", async () => {
+    const port = await freePort();
+
+    const httpServer = http.createServer((request, response) => {
+      void (async () => {
+        const chunks: Buffer[] = [];
+        for await (const chunk of request) {
+          chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+        }
+        const payload = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+
+        response.writeHead(200, {
+          "content-type": "application/json; charset=utf-8",
+        });
+        if (payload.method === "initialize") {
+          response.end(
+            `${JSON.stringify({
+              jsonrpc: "2.0",
+              id: payload.id,
+              error: {
+                code: -32601,
+                message: "Method not found",
+              },
+            })}\n`,
+          );
+          return;
+        }
+
+        response.end(
+          `${JSON.stringify({
+            jsonrpc: "2.0",
+            id: payload.id,
+            result: {
+              tools: [
+                {
+                  name: "find-packages",
+                  inputSchema: {
+                    type: "object",
+                    properties: {},
+                  },
+                },
+              ],
+            },
+          })}\n`,
+        );
+      })().catch((error: unknown) => {
+        response.writeHead(500, {
+          "content-type": "application/json; charset=utf-8",
+        });
+        response.end(
+          `${JSON.stringify({
+            ok: false,
+            error: error instanceof Error ? error.message : String(error),
+          })}\n`,
+        );
+      });
+    });
+
+    await new Promise<void>((resolve) => {
+      httpServer.listen(port, "127.0.0.1", () => resolve());
+    });
+    servers.push(httpServer);
+
+    const router = new StreamableHttpImageMcpToolRouter({
+      host: "127.0.0.1",
+    });
+    const route = {
+      projectId: "project-123",
+      workspaceId: "worktree-a",
+      targetId: "project-123--worktree-a",
+      imageId: "dev",
+      imageName: "MyProject-dev",
+      port,
+    };
+
+    await expect(router.listTools(route)).resolves.toMatchObject([
+      {
+        name: "find-packages",
+      },
+    ]);
+    expect(router.connectionInfo(route)).toMatchObject({
+      lifecycle: {
+        status: "unsupported",
+        reason: "MCP initialize returned -32601: Method not found",
+      },
+    });
+  });
+
   it("posts tools/call JSON-RPC to the default image MCP HTTP endpoint at /", async () => {
     const port = await freePort();
     let rootRequests = 0;
@@ -230,7 +461,7 @@ describe("StreamableHttpImageMcpToolRouter", () => {
     });
 
     expect(rootRequests).toBe(0);
-    expect(mcpRequests).toBe(1);
+    expect(mcpRequests).toBe(2);
   });
 
   it("reports JSON-RPC errors from routed image MCP calls", async () => {

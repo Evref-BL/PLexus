@@ -94,7 +94,9 @@ can refresh that schema from routable images and records a stable fingerprint in
 `plexus_gateway_status` when called with `refreshTools: true`. If routable images
 return different tool schemas, the gateway reports a mismatched schema state and
 refuses typed Pharo facade calls until the images are brought back to one MCP
-contract.
+contract. During refresh, PLexus also performs a best-effort MCP `initialize`
+probe and includes upstream lifecycle, protocol version, capabilities, and
+server info in the schema status when the image endpoint provides them.
 
 ## Route-Control Tools
 

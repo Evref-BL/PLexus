@@ -212,7 +212,9 @@ Use `plexus_gateway_status` with `refreshTools: true` when checking whether a
 long-running gateway has caught up to image-side MCP changes. The gateway keeps
 one advertised Pharo facade schema per target/scope; mixed upstream tool
 fingerprints are reported as a degraded schema state instead of being merged or
-silently selected from one image.
+silently selected from one image. Refresh also performs a best-effort MCP
+`initialize` probe so status can include upstream server version and
+capabilities when the image endpoint supports the lifecycle.
 
 For a deliberate showcase/debug run, pass `--keepOpen` or `--showcase`. That
 mode still requires copied or template-created disposable images and a

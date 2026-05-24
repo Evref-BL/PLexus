@@ -9,6 +9,7 @@ import {
   type GatewayToolResult,
 } from "./gateway.js";
 import type {
+  ImageMcpConnectionInfo,
   ImageMcpRoute,
   ImageMcpToolRouter,
 } from "./imageMcpRouter.js";
@@ -93,7 +94,13 @@ class FakeImageRouter implements ImageMcpToolRouter {
 class FakeToolListImageRouter extends FakeImageRouter {
   readonly listCalls: ImageMcpRoute[] = [];
 
-  constructor(private readonly toolsByImageId: Record<string, Tool[]>) {
+  constructor(
+    private readonly toolsByImageId: Record<string, Tool[]>,
+    private readonly connectionInfoByImageId: Record<
+      string,
+      ImageMcpConnectionInfo
+    > = {},
+  ) {
     super();
   }
 
@@ -105,6 +112,10 @@ class FakeToolListImageRouter extends FakeImageRouter {
     }
 
     return tools;
+  }
+
+  connectionInfo(route: ImageMcpRoute): ImageMcpConnectionInfo | undefined {
+    return this.connectionInfoByImageId[route.imageId];
   }
 }
 
@@ -760,10 +771,34 @@ describe("PlexusGateway", () => {
   });
 
   it("reports mixed Pharo gateway tool schemas without choosing one image", async () => {
-    const imageRouter = new FakeToolListImageRouter({
-      dev: [repositoryOperationTool(["create"])],
-      baseline: [repositoryOperationTool(["create", "fetch"])],
-    });
+    const imageRouter = new FakeToolListImageRouter(
+      {
+        dev: [repositoryOperationTool(["create"])],
+        baseline: [repositoryOperationTool(["create", "fetch"])],
+      },
+      {
+        dev: {
+          lifecycle: {
+            status: "initialized",
+          },
+          protocolVersion: "2025-06-18",
+          serverInfo: {
+            name: "pharo-mcp",
+            version: "1.0.0",
+          },
+        },
+        baseline: {
+          lifecycle: {
+            status: "initialized",
+          },
+          protocolVersion: "2025-06-18",
+          serverInfo: {
+            name: "pharo-mcp",
+            version: "2.0.0",
+          },
+        },
+      },
+    );
     const gateway = new PlexusGateway({
       imageRouter,
       pharoTools: [pharoEvalTool],
@@ -810,11 +845,25 @@ describe("PlexusGateway", () => {
             targetId: "project-123--worktree-a",
             imageId: "dev",
             toolCount: 1,
+            lifecycle: {
+              status: "initialized",
+            },
+            serverInfo: {
+              name: "pharo-mcp",
+              version: "1.0.0",
+            },
           },
           {
             targetId: "project-123--worktree-a",
             imageId: "baseline",
             toolCount: 1,
+            lifecycle: {
+              status: "initialized",
+            },
+            serverInfo: {
+              name: "pharo-mcp",
+              version: "2.0.0",
+            },
           },
         ],
       },

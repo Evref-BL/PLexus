@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import {
   StreamableHttpImageMcpToolRouter,
+  type ImageMcpConnectionInfo,
   type ImageMcpToolRouter,
 } from "./imageMcpRouter.js";
 import {
@@ -193,6 +194,10 @@ export interface GatewayPharoToolSchemaSource {
   imageId: string;
   fingerprint?: string;
   toolCount?: number;
+  lifecycle?: ImageMcpConnectionInfo["lifecycle"];
+  protocolVersion?: string;
+  capabilities?: Record<string, unknown>;
+  serverInfo?: ImageMcpConnectionInfo["serverInfo"];
   error?: string;
 }
 
@@ -488,6 +493,28 @@ function toolSchemaFingerprint(tools: readonly Tool[]): string {
     .update(canonicalJson(canonicalTools))
     .digest("hex");
   return `sha256:${hash}`;
+}
+
+function schemaSourceConnectionFields(
+  connectionInfo: ImageMcpConnectionInfo | undefined,
+): Pick<
+  GatewayPharoToolSchemaSource,
+  "lifecycle" | "protocolVersion" | "capabilities" | "serverInfo"
+> {
+  if (!connectionInfo) {
+    return {};
+  }
+
+  return {
+    lifecycle: connectionInfo.lifecycle,
+    ...(connectionInfo.protocolVersion
+      ? { protocolVersion: connectionInfo.protocolVersion }
+      : {}),
+    ...(connectionInfo.capabilities
+      ? { capabilities: connectionInfo.capabilities }
+      : {}),
+    ...(connectionInfo.serverInfo ? { serverInfo: connectionInfo.serverInfo } : {}),
+  };
 }
 
 export class PlexusGateway {
@@ -935,6 +962,7 @@ export class PlexusGateway {
 
         try {
           const tools = await this.imageRouter.listTools(route);
+          const connectionInfo = this.imageRouter.connectionInfo?.(route);
           if (tools.length > 0) {
             successes.push({
               source: {
@@ -942,6 +970,7 @@ export class PlexusGateway {
                 imageId: image.id,
                 fingerprint: toolSchemaFingerprint(tools),
                 toolCount: tools.length,
+                ...schemaSourceConnectionFields(connectionInfo),
               },
               tools,
             });
@@ -953,17 +982,20 @@ export class PlexusGateway {
             source: {
               targetId: project.targetId,
               imageId: image.id,
+              ...schemaSourceConnectionFields(connectionInfo),
               error,
             },
             tools: [],
           });
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
+          const connectionInfo = this.imageRouter.connectionInfo?.(route);
           errors.push(`${project.targetId}/${image.id}: ${message}`);
           successes.push({
             source: {
               targetId: project.targetId,
               imageId: image.id,
+              ...schemaSourceConnectionFields(connectionInfo),
               error: message,
             },
             tools: [],
