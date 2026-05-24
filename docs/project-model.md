@@ -88,7 +88,8 @@ For parallel worktrees, image names should include workspace identity:
     "transport": "ssh"
   },
   "mcp": {
-    "loadScript": "pharo/load-mcp.st"
+    "loadScript": "pharo/load-mcp.st",
+    "loadPolicy": "ifMissing"
   }
 }
 ```
@@ -106,6 +107,14 @@ Supported image-name template tokens are:
 Image `git.transport` controls the Git/Iceberg transport the image should use
 for image-local repository operations. Supported values are `ssh`, `https`, and
 `http`; omitted config defaults to `ssh`.
+
+Image `mcp.loadPolicy` controls how PLexus handles an MCP already present in the
+image. Omit it or use `ifMissing` to keep the default behavior: use a provided
+MCP when present, otherwise load `mcp.loadScript` or the default repository.
+Use `always` when the configured script must replace a preloaded MCP, for
+example when working on MCP itself from a feature clone. Use `never` to skip
+configured preloading and require the image to provide MCP already. When the
+policy is `never`, `mcp.loadScript` may be omitted.
 
 Optional SSH key paths can be supplied per image:
 

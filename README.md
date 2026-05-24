@@ -100,7 +100,8 @@ Add `plexus.project.json` to the project root you want PLexus to manage:
         "transport": "ssh"
       },
       "mcp": {
-        "loadScript": "pharo/load-mcp.st"
+        "loadScript": "pharo/load-mcp.st",
+        "loadPolicy": "ifMissing"
       }
     }
   ]

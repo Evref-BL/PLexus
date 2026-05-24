@@ -7,6 +7,7 @@ import {
   type ProjectConfig,
   type ProjectImageDisplayMode,
   type ProjectImageConfig,
+  type ProjectPharoMcpLoadPolicy,
   type ProjectImageRepositoryWorkspaceMaterializationStrategy,
   type ProjectGatewayMode,
   type ProjectRuntimePortRange,
@@ -141,6 +142,7 @@ export interface ProjectImagePharoMcpLoadStatus {
   statusPath: string;
   source?: string;
   loadScript?: string;
+  loadPolicy?: ProjectPharoMcpLoadPolicy | string;
   repository?: string;
   configuredRepositoryHint?: string;
   baseline?: string;

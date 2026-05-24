@@ -138,10 +138,14 @@ state:
 <state-root>/projects/<project-id>/workspaces/<workspace-id>/scripts/start-<image-id>.st
 ```
 
-The script configures image-local Iceberg Git transport, loads the configured
-`mcp.loadScript` when present, falls back to the configured default Pharo MCP
-Metacello load, starts MCP on the assigned runtime port, and registers the
-server in `Smalltalk globals` as `#PLexusMCPServer`.
+The script configures image-local Iceberg Git transport, loads Pharo MCP
+according to `mcp.loadPolicy`, starts MCP on the assigned runtime port, and
+registers the server in `Smalltalk globals` as `#PLexusMCPServer`. The default
+load policy is `ifMissing`: use MCP already present in the image, otherwise load
+`mcp.loadScript` or fall back to the configured default Pharo MCP Metacello
+repository. Use `always` to force the configured source to replace preloaded MCP
+code, or `never` to skip configured preloading and require a provided MCP. When
+the policy is `never`, `mcp.loadScript` may be omitted.
 
 Prepared image caches use a separate generated script:
 
