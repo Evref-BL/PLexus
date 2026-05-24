@@ -1,6 +1,8 @@
+import crypto from "node:crypto";
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import {
   StreamableHttpImageMcpToolRouter,
+  type ImageMcpConnectionInfo,
   type ImageMcpToolRouter,
 } from "./imageMcpRouter.js";
 import {
@@ -146,6 +148,7 @@ export interface GatewayRegisterTargetInput {
 
 export interface GatewayStatusToolInput extends GatewayRouteReferenceInput {
   refreshHealth?: boolean;
+  refreshTools?: boolean;
 }
 
 export interface GatewayUnregisterTargetResult {
@@ -180,6 +183,37 @@ export interface GatewayToolResult<T = unknown> {
   route?: RouteToImageRoute;
 }
 
+export type GatewayPharoToolSchemaState =
+  | "unknown"
+  | "matching"
+  | "mismatched"
+  | "unavailable";
+
+export interface GatewayPharoToolSchemaSource {
+  targetId: string;
+  imageId: string;
+  fingerprint?: string;
+  toolCount?: number;
+  lifecycle?: ImageMcpConnectionInfo["lifecycle"];
+  protocolVersion?: string;
+  capabilities?: Record<string, unknown>;
+  serverInfo?: ImageMcpConnectionInfo["serverInfo"];
+  error?: string;
+}
+
+export interface GatewayPharoToolSchemaStatus {
+  state: GatewayPharoToolSchemaState;
+  refreshedAt?: string;
+  fingerprint?: string;
+  sourceCount: number;
+  sources: GatewayPharoToolSchemaSource[];
+  error?: string;
+}
+
+export type GatewayProjectRouteWithSchema = GatewayProjectRoute & {
+  pharoToolSchema?: GatewayPharoToolSchemaStatus;
+};
+
 export interface RouteToImageResult {
   route: RouteToImageRoute;
   result: unknown;
@@ -194,6 +228,13 @@ class GatewayInputError extends Error {
   constructor(message: string) {
     super(message);
     this.name = "GatewayInputError";
+  }
+}
+
+class GatewayPharoSchemaMismatchError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "GatewayPharoSchemaMismatchError";
   }
 }
 
@@ -426,6 +467,56 @@ function failure<T = unknown>(error: unknown): GatewayToolResult<T> {
   };
 }
 
+function canonicalJson(value: unknown): string {
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => canonicalJson(item)).join(",")}]`;
+  }
+
+  if (isObject(value)) {
+    const entries = Object.entries(value).sort(([left], [right]) =>
+      left.localeCompare(right),
+    );
+    return `{${entries
+      .map(([key, item]) => `${JSON.stringify(key)}:${canonicalJson(item)}`)
+      .join(",")}}`;
+  }
+
+  return JSON.stringify(value);
+}
+
+function toolSchemaFingerprint(tools: readonly Tool[]): string {
+  const canonicalTools = [...tools].sort((left, right) =>
+    left.name.localeCompare(right.name),
+  );
+  const hash = crypto
+    .createHash("sha256")
+    .update(canonicalJson(canonicalTools))
+    .digest("hex");
+  return `sha256:${hash}`;
+}
+
+function schemaSourceConnectionFields(
+  connectionInfo: ImageMcpConnectionInfo | undefined,
+): Pick<
+  GatewayPharoToolSchemaSource,
+  "lifecycle" | "protocolVersion" | "capabilities" | "serverInfo"
+> {
+  if (!connectionInfo) {
+    return {};
+  }
+
+  return {
+    lifecycle: connectionInfo.lifecycle,
+    ...(connectionInfo.protocolVersion
+      ? { protocolVersion: connectionInfo.protocolVersion }
+      : {}),
+    ...(connectionInfo.capabilities
+      ? { capabilities: connectionInfo.capabilities }
+      : {}),
+    ...(connectionInfo.serverInfo ? { serverInfo: connectionInfo.serverInfo } : {}),
+  };
+}
+
 export class PlexusGateway {
   private readonly routingTable: PlexusRoutingTable;
   private readonly imageRouter: ImageMcpToolRouter;
@@ -433,6 +524,11 @@ export class PlexusGateway {
   private pharoTools: Tool[];
   private pharoToolNames: Set<string>;
   private readonly pharoScope: GatewayRouteReferenceInput;
+  private pharoToolSchemaStatus: GatewayPharoToolSchemaStatus = {
+    state: "unknown",
+    sourceCount: 0,
+    sources: [],
+  };
 
   constructor(options: PlexusGatewayOptions = {}) {
     this.routingTable = options.routingTable ?? new PlexusRoutingTable();
@@ -453,8 +549,14 @@ export class PlexusGateway {
   async refreshPharoTools(): Promise<Tool[]> {
     let tools: Tool[] | undefined;
     try {
-      tools = await this.fetchCurrentPharoTools();
+      tools = await this.refreshPharoToolsForScope(this.pharoScope, {
+        throwOnMismatch: true,
+      });
     } catch (error) {
+      if (error instanceof GatewayPharoSchemaMismatchError) {
+        throw error;
+      }
+
       if (this.pharoTools.length === 0) {
         throw error;
       }
@@ -521,8 +623,18 @@ export class PlexusGateway {
 
   async status(
     input: GatewayStatusToolInput,
-  ): Promise<GatewayToolResult<GatewayProjectRoute | GatewayProjectRoute[]>> {
+  ): Promise<
+    GatewayToolResult<
+      GatewayProjectRouteWithSchema | GatewayProjectRouteWithSchema[]
+    >
+  > {
     try {
+      if (input.refreshTools) {
+        await this.refreshPharoToolsForScope(input, {
+          throwOnMismatch: false,
+        });
+      }
+
       const routes = await this.resolveProjectRoutes(input);
 
       if (input.refreshHealth) {
@@ -531,7 +643,12 @@ export class PlexusGateway {
         }
       }
 
-      return result(routes.length === 1 ? routes[0] : routes);
+      const routesWithSchema = routes.map((route) =>
+        this.routeWithPharoToolSchema(route),
+      );
+      return result(
+        routesWithSchema.length === 1 ? routesWithSchema[0] : routesWithSchema,
+      );
     } catch (error) {
       return failure(error);
     }
@@ -604,6 +721,12 @@ export class PlexusGateway {
         throw new GatewayInputError(`Unknown Pharo tool: ${toolName}`);
       }
 
+      if (this.pharoToolSchemaStatus.state === "mismatched") {
+        throw new GatewayInputError(
+          "Pharo gateway tool schemas differ across routable images; refresh or reload images before routed Pharo calls",
+        );
+      }
+
       const parsed = parsePharoFacadeArguments(inputValue);
       const routed = await this.callRoutedImageTool(
         this.pharoScope,
@@ -645,6 +768,7 @@ export class PlexusGateway {
             projectId: optionalString(input, "projectId"),
             workspaceId: optionalString(input, "workspaceId"),
             targetId: optionalString(input, "targetId"),
+            refreshTools: optionalBoolean(input, "refreshTools"),
             refreshHealth: optionalBoolean(input, "refreshHealth"),
           });
 
@@ -782,19 +906,50 @@ export class PlexusGateway {
     this.pharoToolNames = new Set(this.pharoTools.map((tool) => tool.name));
   }
 
-  private async fetchCurrentPharoTools(): Promise<Tool[] | undefined> {
+  private routeWithPharoToolSchema(
+    route: GatewayProjectRoute,
+  ): GatewayProjectRouteWithSchema {
+    return {
+      ...route,
+      pharoToolSchema: this.pharoToolSchemaStatus,
+    };
+  }
+
+  private imageRouteReference(
+    project: GatewayProjectRoute,
+    image: GatewayImageRoute,
+  ): RouteToImageRoute {
+    return {
+      projectId: project.projectId,
+      workspaceId: project.workspaceId,
+      targetId: project.targetId,
+      imageId: image.id,
+      imageName: image.imageName,
+      ...(image.port !== undefined ? { port: image.port } : {}),
+      ...(image.mcpEndpoint ? { mcpEndpoint: image.mcpEndpoint } : {}),
+    };
+  }
+
+  private async refreshPharoToolsForScope(
+    scope: GatewayRouteReferenceInput,
+    options: { throwOnMismatch: boolean },
+  ): Promise<Tool[] | undefined> {
     if (!this.imageRouter.listTools) {
       return undefined;
     }
 
     let routes: GatewayProjectRoute[];
     try {
-      routes = await this.resolveProjectRoutes(this.pharoScope);
+      routes = await this.resolveProjectRoutes(scope);
     } catch {
       return undefined;
     }
 
     const errors: string[] = [];
+    const successes: Array<{
+      source: GatewayPharoToolSchemaSource;
+      tools: Tool[];
+    }> = [];
     let attempted = false;
     for (const project of routes) {
       for (const image of project.images) {
@@ -803,33 +958,117 @@ export class PlexusGateway {
         }
 
         attempted = true;
-        const route = {
-          projectId: project.projectId,
-          workspaceId: project.workspaceId,
-          targetId: project.targetId,
-          imageId: image.id,
-          imageName: image.imageName,
-          ...(image.port !== undefined ? { port: image.port } : {}),
-          ...(image.mcpEndpoint ? { mcpEndpoint: image.mcpEndpoint } : {}),
-        };
+        const route = this.imageRouteReference(project, image);
 
         try {
           const tools = await this.imageRouter.listTools(route);
+          const connectionInfo = this.imageRouter.connectionInfo?.(route);
           if (tools.length > 0) {
-            return tools;
+            successes.push({
+              source: {
+                targetId: project.targetId,
+                imageId: image.id,
+                fingerprint: toolSchemaFingerprint(tools),
+                toolCount: tools.length,
+                ...schemaSourceConnectionFields(connectionInfo),
+              },
+              tools,
+            });
+            continue;
           }
-          errors.push(`${project.targetId}/${image.id}: MCP tools/list returned no tools`);
+          const error = "MCP tools/list returned no tools";
+          errors.push(`${project.targetId}/${image.id}: ${error}`);
+          successes.push({
+            source: {
+              targetId: project.targetId,
+              imageId: image.id,
+              ...schemaSourceConnectionFields(connectionInfo),
+              error,
+            },
+            tools: [],
+          });
         } catch (error) {
-          errors.push(
-            `${project.targetId}/${image.id}: ${
-              error instanceof Error ? error.message : String(error)
-            }`,
-          );
+          const message = error instanceof Error ? error.message : String(error);
+          const connectionInfo = this.imageRouter.connectionInfo?.(route);
+          errors.push(`${project.targetId}/${image.id}: ${message}`);
+          successes.push({
+            source: {
+              targetId: project.targetId,
+              imageId: image.id,
+              ...schemaSourceConnectionFields(connectionInfo),
+              error: message,
+            },
+            tools: [],
+          });
         }
       }
     }
 
+    const refreshedAt = new Date().toISOString();
+    const sources = successes.map((success) => success.source);
+    const validSources = successes.filter(
+      (success) => success.source.fingerprint !== undefined,
+    );
+
+    if (validSources.length > 0) {
+      if (errors.length > 0) {
+        const error = `Unable to refresh Pharo tool schemas from all registered image routes: ${errors.join("; ")}`;
+        this.pharoToolSchemaStatus = {
+          state: "unavailable",
+          refreshedAt,
+          sourceCount: sources.length,
+          sources,
+          error,
+        };
+
+        if (options.throwOnMismatch) {
+          throw new GatewayPharoSchemaMismatchError(error);
+        }
+
+        return undefined;
+      }
+
+      const fingerprints = [
+        ...new Set(validSources.map((success) => success.source.fingerprint!)),
+      ];
+      if (fingerprints.length > 1) {
+        const error =
+          "Pharo gateway tool schemas differ across routable images";
+        this.pharoToolSchemaStatus = {
+          state: "mismatched",
+          refreshedAt,
+          sourceCount: sources.length,
+          sources,
+          error,
+        };
+
+        if (options.throwOnMismatch) {
+          throw new GatewayPharoSchemaMismatchError(error);
+        }
+
+        return undefined;
+      }
+
+      this.pharoToolSchemaStatus = {
+        state: "matching",
+        refreshedAt,
+        fingerprint: fingerprints[0],
+        sourceCount: sources.length,
+        sources,
+        ...(errors.length > 0 ? { error: errors.join("; ") } : {}),
+      };
+      this.setPharoTools(validSources[0].tools);
+      return this.listPharoTools();
+    }
+
     if (attempted) {
+      this.pharoToolSchemaStatus = {
+        state: "unavailable",
+        refreshedAt,
+        sourceCount: sources.length,
+        sources,
+        error: errors.join("; "),
+      };
       throw new GatewayInputError(
         `Unable to refresh Pharo tool schemas from registered image routes: ${errors.join("; ")}`,
       );
