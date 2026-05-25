@@ -95,14 +95,16 @@ an explicit `imageId` argument at the PLexus facade boundary:
 The gateway validates route ownership and removes `imageId` before forwarding
 the call to the selected image-local MCP server.
 
-The gateway advertises one Pharo tool schema for the selected target/scope. It
-can refresh that schema from routable images and records a stable fingerprint in
-`plexus_gateway_status` when called with `refreshTools: true`. If routable images
-return different tool schemas, the gateway reports a mismatched schema state and
-refuses typed Pharo facade calls until the images are brought back to one MCP
-contract. During refresh, PLexus also performs a best-effort MCP `initialize`
-probe and includes upstream lifecycle, protocol version, capabilities, and
-server info in the schema status when the image endpoint provides them.
+The gateway advertises one active Pharo tool schema for the selected target/scope.
+It can refresh that schema from routable images and records a stable fingerprint
+in `plexus_gateway_status` when called with `refreshTools: true`. Route-control
+may pass `toolSchemaImageId` with that refresh to choose the image that supplies
+the active schema. If other routable images return different tool schemas, the
+gateway reports a mismatched schema state and rejects typed calls to those
+incompatible images. During refresh, PLexus also performs a best-effort MCP
+`initialize` probe and includes upstream lifecycle, protocol version,
+capabilities, and server info in the schema status when the image endpoint
+provides them.
 
 ## Route-Control Tools
 

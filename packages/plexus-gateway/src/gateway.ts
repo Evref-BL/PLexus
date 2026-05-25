@@ -132,6 +132,7 @@ export interface PlexusGatewayOptions {
   healthClient?: GatewayImageHealthClient;
   pharoTools?: readonly Tool[];
   pharoScope?: GatewayRouteReferenceInput;
+  pharoToolSchemaImageId?: string;
 }
 
 export interface GatewayRouteReferenceInput {
@@ -149,6 +150,7 @@ export interface GatewayRegisterTargetInput {
 export interface GatewayStatusToolInput extends GatewayRouteReferenceInput {
   refreshHealth?: boolean;
   refreshTools?: boolean;
+  toolSchemaImageId?: string;
 }
 
 export interface GatewayUnregisterTargetResult {
@@ -229,6 +231,11 @@ export interface GatewayPharoToolSchemaStatus {
 
 export type GatewayProjectRouteWithSchema = GatewayProjectRoute & {
   pharoToolSchema?: GatewayPharoToolSchemaStatus;
+};
+
+type GatewayPharoToolSchemaCandidate = {
+  source: GatewayPharoToolSchemaSource & { fingerprint: string };
+  tools: Tool[];
 };
 
 export interface RouteToImageResult {
@@ -543,10 +550,7 @@ function schemaSourceActiveVersion(
 function sourceHasFingerprint(success: {
   source: GatewayPharoToolSchemaSource;
   tools: Tool[];
-}): success is {
-  source: GatewayPharoToolSchemaSource & { fingerprint: string };
-  tools: Tool[];
-} {
+}): success is GatewayPharoToolSchemaCandidate {
   return success.source.fingerprint !== undefined;
 }
 
@@ -584,6 +588,7 @@ export class PlexusGateway {
   private pharoTools: Tool[];
   private pharoToolNames: Set<string>;
   private readonly pharoScope: GatewayRouteReferenceInput;
+  private readonly pharoToolSchemaImageId: string | undefined;
   private pharoToolSchemaStatus: GatewayPharoToolSchemaStatus = {
     state: "unknown",
     sourceCount: 0,
@@ -599,6 +604,7 @@ export class PlexusGateway {
     this.pharoTools = [];
     this.pharoToolNames = new Set();
     this.pharoScope = options.pharoScope ?? {};
+    this.pharoToolSchemaImageId = options.pharoToolSchemaImageId;
     this.setPharoTools(options.pharoTools ?? []);
   }
 
@@ -609,9 +615,11 @@ export class PlexusGateway {
   async refreshPharoTools(): Promise<Tool[]> {
     let tools: Tool[] | undefined;
     try {
-      tools = await this.refreshPharoToolsForScope(this.pharoScope);
+      tools = await this.refreshPharoToolsForScope(this.pharoScope, {
+        toolSchemaImageId: this.pharoToolSchemaImageId,
+      });
     } catch (error) {
-      if (this.pharoTools.length === 0) {
+      if (this.pharoTools.length === 0 || this.pharoToolSchemaImageId) {
         throw error;
       }
 
@@ -684,7 +692,9 @@ export class PlexusGateway {
   > {
     try {
       if (input.refreshTools) {
-        await this.refreshPharoToolsForScope(input);
+        await this.refreshPharoToolsForScope(input, {
+          toolSchemaImageId: input.toolSchemaImageId,
+        });
       }
 
       const routes = await this.resolveProjectRoutes(input);
@@ -819,6 +829,7 @@ export class PlexusGateway {
             targetId: optionalString(input, "targetId"),
             refreshTools: optionalBoolean(input, "refreshTools"),
             refreshHealth: optionalBoolean(input, "refreshHealth"),
+            toolSchemaImageId: optionalString(input, "toolSchemaImageId"),
           });
 
         case "plexus_gateway_cleanup_stale_routes":
@@ -1016,6 +1027,7 @@ export class PlexusGateway {
 
   private async refreshPharoToolsForScope(
     scope: GatewayRouteReferenceInput,
+    options: { toolSchemaImageId?: string } = {},
   ): Promise<Tool[] | undefined> {
     if (!this.imageRouter.listTools) {
       return undefined;
@@ -1093,7 +1105,14 @@ export class PlexusGateway {
 
     if (validSources.length > 0) {
       const currentFingerprint = this.pharoToolSchemaStatus.fingerprint;
+      const requestedToolSchemaImageId = options.toolSchemaImageId;
       const active =
+        (requestedToolSchemaImageId
+          ? this.requestedPharoToolSchemaSource(
+              validSources,
+              requestedToolSchemaImageId,
+            )
+          : undefined) ??
         validSources.find(
           (success) => success.source.fingerprint === currentFingerprint,
         ) ?? validSources[0];
@@ -1141,6 +1160,27 @@ export class PlexusGateway {
     }
 
     return undefined;
+  }
+
+  private requestedPharoToolSchemaSource(
+    validSources: GatewayPharoToolSchemaCandidate[],
+    imageId: string,
+  ): GatewayPharoToolSchemaCandidate | undefined {
+    const matches = validSources.filter(
+      (success) => success.source.imageId === imageId,
+    );
+    if (matches.length === 0) {
+      throw new GatewayInputError(
+        `No routable image ${imageId} provided an available Pharo MCP schema`,
+      );
+    }
+    if (matches.length > 1) {
+      throw new GatewayInputError(
+        `Multiple routable images named ${imageId} provided Pharo MCP schemas; provide targetId or workspaceId`,
+      );
+    }
+
+    return matches[0];
   }
 
   private resolveImageRoute(
