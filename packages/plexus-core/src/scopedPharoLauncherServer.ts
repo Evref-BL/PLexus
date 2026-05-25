@@ -31,6 +31,7 @@ import {
 } from "./homeImageCache.js";
 import {
   createStdioPharoLauncherMcpClient,
+  PharoLauncherMcpToolError,
   type PharoLauncherMcpToolClient,
 } from "./pharoLauncherMcpClient.js";
 import {
@@ -201,7 +202,10 @@ interface LauncherCommandResult<T = unknown> {
 }
 
 export class ScopedPharoLauncherError extends Error {
-  constructor(message: string) {
+  constructor(
+    message: string,
+    public readonly details?: unknown,
+  ) {
     super(message);
     this.name = "ScopedPharoLauncherError";
   }
@@ -212,6 +216,39 @@ function textResult(value: unknown, isError = false) {
     content: [{ type: "text" as const, text: JSON.stringify(value, null, 2) }],
     ...(isError ? { isError } : {}),
   };
+}
+
+function scopedErrorPayload(error: unknown): {
+  ok: false;
+  error: string;
+  cause?: unknown;
+} {
+  const payload = {
+    ok: false as const,
+    error: error instanceof Error ? error.message : String(error),
+  };
+
+  if (error instanceof PharoLauncherMcpToolError) {
+    return {
+      ...payload,
+      cause: {
+        toolName: error.toolName,
+        result: error.result,
+      },
+    };
+  }
+
+  if (
+    error instanceof ScopedPharoLauncherError &&
+    error.details !== undefined
+  ) {
+    return {
+      ...payload,
+      cause: error.details,
+    };
+  }
+
+  return payload;
 }
 
 function objectInput(input: unknown): Record<string, unknown> {
@@ -372,7 +409,10 @@ function assertLauncherOk(
   toolName: string,
 ): void {
   if (result && result.ok === false) {
-    throw new ScopedPharoLauncherError(`${toolName} returned ok: false`);
+    throw new ScopedPharoLauncherError(`${toolName} returned ok: false`, {
+      toolName,
+      result,
+    });
   }
 }
 
@@ -1629,13 +1669,7 @@ export function createScopedPharoLauncherServer(
           );
       }
     } catch (error) {
-      return textResult(
-        {
-          ok: false,
-          error: error instanceof Error ? error.message : String(error),
-        },
-        true,
-      );
+      return textResult(scopedErrorPayload(error), true);
     }
   });
 
