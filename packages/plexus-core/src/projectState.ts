@@ -69,6 +69,11 @@ export type ProjectImageRepositoryWorkspaceLoadState =
   | "pending"
   | "loaded"
   | "failed";
+export type ProjectImageRepositoryWorkspaceRegistrationState =
+  | "pending"
+  | "registered"
+  | "failed"
+  | "skipped";
 export type ProjectImagePharoMcpLoadState =
   | "provided"
   | "loaded"
@@ -157,6 +162,10 @@ export interface ProjectImageRepositoryWorkspaceState {
   loadSourcePath?: string;
   loadStatusPath?: string;
   loadError?: string;
+  registrationState?: ProjectImageRepositoryWorkspaceRegistrationState;
+  registeredRepositoryName?: string;
+  registeredPackageNames?: string[];
+  registrationError?: string;
   cleanupState?: ProjectImageRepositoryWorkspaceCleanupRecord;
 }
 

@@ -59,6 +59,7 @@ import {
   sanitizeRuntimeId,
   saveProjectState,
   type ProjectImageMcpEndpoint,
+  type ProjectImageRepositoryWorkspaceState,
   type ProjectImageState,
   type ProjectPortRange,
   type ProjectState,
@@ -99,6 +100,14 @@ export interface ProjectOpenPollOptions {
   healthTimeoutMs?: number;
 }
 
+export interface ProjectOpenImageMcpClient {
+  callTool(
+    image: ProjectImageState,
+    toolName: string,
+    argumentsValue: Record<string, unknown>,
+  ): Promise<unknown>;
+}
+
 export interface ProjectOpenOptions {
   projectRoot: string;
   stateRoot?: string;
@@ -107,6 +116,7 @@ export interface ProjectOpenOptions {
   imageIds?: string[];
   displayMode?: ProjectImageDisplayMode;
   pharoLauncherMcpClient?: PharoLauncherMcpToolClient;
+  imageMcpClient?: ProjectOpenImageMcpClient;
   healthClient?: PharoMcpHealthClient;
   portRange?: ProjectPortRange;
   now?: () => Date;
@@ -234,6 +244,106 @@ class ImageStartupExitedBeforeHealthError extends Error {
 
 function isObject(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function imageMcpEndpointForImage(
+  image: ProjectImageState,
+): ProjectImageMcpEndpoint | undefined {
+  if (image.mcpEndpoint) {
+    return image.mcpEndpoint;
+  }
+
+  if (image.assignedPort !== undefined) {
+    return {
+      transport: "http",
+      host: "127.0.0.1",
+      port: image.assignedPort,
+      path: "/",
+    };
+  }
+
+  return undefined;
+}
+
+function hostForUrl(host: string): string {
+  return host.includes(":") && !host.startsWith("[") ? `[${host}]` : host;
+}
+
+function imageMcpEndpointUrl(endpoint: ProjectImageMcpEndpoint): string {
+  return `http://${hostForUrl(endpoint.host)}:${endpoint.port}${endpoint.path}`;
+}
+
+function jsonRpcErrorText(value: unknown): string {
+  if (isObject(value) && typeof value.message === "string") {
+    return value.message;
+  }
+
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+}
+
+class HttpProjectOpenImageMcpClient implements ProjectOpenImageMcpClient {
+  constructor(
+    private readonly fetchFn: typeof fetch = fetch,
+    private readonly timeoutMs = 60_000,
+  ) {}
+
+  async callTool(
+    image: ProjectImageState,
+    toolName: string,
+    argumentsValue: Record<string, unknown>,
+  ): Promise<unknown> {
+    const endpoint = imageMcpEndpointForImage(image);
+    if (!endpoint) {
+      throw new Error(`Image ${image.id} has no routable Pharo MCP endpoint`);
+    }
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
+    try {
+      const response = await this.fetchFn(imageMcpEndpointUrl(endpoint), {
+        method: "POST",
+        headers: {
+          accept: "application/json, text/event-stream",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: `plexus-open-${image.id}-${Date.now()}`,
+          method: "tools/call",
+          params: {
+            name: toolName,
+            arguments: argumentsValue,
+          },
+        }),
+        signal: controller.signal,
+      });
+
+      if (!response.ok) {
+        throw new Error(`MCP tools/call failed with HTTP ${response.status}`);
+      }
+
+      const payload = (await response.json()) as unknown;
+      if (!isObject(payload)) {
+        throw new Error("MCP tools/call response was not a JSON object");
+      }
+
+      if ("error" in payload) {
+        throw new Error(`MCP error ${jsonRpcErrorText(payload.error)}`);
+      }
+
+      if (!("result" in payload)) {
+        throw new Error("MCP tools/call response did not include a result");
+      }
+
+      return payload.result;
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
 }
 
 function optionalStringField(
@@ -487,6 +597,241 @@ function appendRepositoryWorkspaceDiagnostic(
   }
 
   workspace.diagnostics = [...workspace.diagnostics, message];
+}
+
+function repositoryWorkspaceSourcePath(
+  workspace: ProjectImageRepositoryWorkspaceState,
+): string {
+  return workspace.loadSourcePath ?? joinPathLike(
+    workspace.path,
+    workspace.sourceDirectory,
+  );
+}
+
+function inferTonelPackageNames(sourcePath: string): string[] {
+  if (!fs.existsSync(sourcePath)) {
+    return [];
+  }
+
+  return fs
+    .readdirSync(sourcePath, { withFileTypes: true })
+    .filter((entry) =>
+      entry.isDirectory() &&
+      fs.existsSync(joinPathLike(sourcePath, entry.name, "package.st"))
+    )
+    .map((entry) => entry.name)
+    .sort((left, right) => left.localeCompare(right));
+}
+
+function toolStructuredContent(result: unknown): Record<string, unknown> | undefined {
+  if (!isObject(result) || !isObject(result.structuredContent)) {
+    return undefined;
+  }
+
+  return result.structuredContent;
+}
+
+function toolTextContent(result: unknown): string | undefined {
+  if (!isObject(result) || !Array.isArray(result.content)) {
+    return undefined;
+  }
+
+  const item = result.content.find(
+    (candidate): candidate is { type: "text"; text: string } =>
+      isObject(candidate) &&
+      candidate.type === "text" &&
+      typeof candidate.text === "string",
+  );
+  return item?.text;
+}
+
+function toolErrorMessage(result: unknown, toolName: string): string {
+  const structuredContent = toolStructuredContent(result);
+  if (typeof structuredContent?.summary === "string") {
+    return structuredContent.summary;
+  }
+
+  const text = toolTextContent(result);
+  if (text) {
+    return text;
+  }
+
+  return `${toolName} returned an error result`;
+}
+
+function assertToolResultOk(result: unknown, toolName: string): void {
+  const structuredContent = toolStructuredContent(result);
+  if (
+    structuredContent?.status !== "error" &&
+    (!isObject(result) || result.isError !== true)
+  ) {
+    return;
+  }
+
+  throw new Error(toolErrorMessage(result, toolName));
+}
+
+function toolResultData(result: unknown): Record<string, unknown> {
+  const structuredContent = toolStructuredContent(result);
+  if (isObject(structuredContent?.data)) {
+    return structuredContent.data;
+  }
+
+  if (isObject(result) && isObject(result.data)) {
+    return result.data;
+  }
+
+  return {};
+}
+
+function repositoryEntriesFromToolResult(result: unknown): Record<string, unknown>[] {
+  const repositories = toolResultData(result).repositories;
+  return Array.isArray(repositories)
+    ? repositories.filter((entry): entry is Record<string, unknown> => isObject(entry))
+    : [];
+}
+
+async function callImageMcpToolForOpen(options: {
+  imageMcpClient: ProjectOpenImageMcpClient;
+  imageState: ProjectImageState;
+  toolName: string;
+  argumentsValue: Record<string, unknown>;
+}): Promise<unknown> {
+  const result = await options.imageMcpClient.callTool(
+    options.imageState,
+    options.toolName,
+    options.argumentsValue,
+  );
+  assertToolResultOk(result, options.toolName);
+  return result;
+}
+
+function repositoryEntryName(
+  entry: Record<string, unknown> | undefined,
+  fallback: string,
+): string {
+  return typeof entry?.name === "string" && entry.name.length > 0
+    ? entry.name
+    : fallback;
+}
+
+function matchingRepositoryEntry(
+  entries: Record<string, unknown>[],
+  repositoryPath: string,
+): Record<string, unknown> | undefined {
+  return entries.find((entry) => entry.location === repositoryPath) ?? entries[0];
+}
+
+async function ensureRepositoryWorkspaceRegistered(options: {
+  imageConfig: ProjectImageConfig;
+  imageState: ProjectImageState;
+  imageMcpClient: ProjectOpenImageMcpClient;
+}): Promise<void> {
+  const workspace = options.imageState.repositoryWorkspace;
+  if (!workspace || workspace.loadState !== "loaded") {
+    return;
+  }
+
+  const endpoint = imageMcpEndpointForImage(options.imageState);
+  if (!endpoint) {
+    const message = `Repository workspace registration skipped for image ${options.imageState.id}: image has no routable Pharo MCP endpoint.`;
+    workspace.registrationState = "skipped";
+    workspace.registrationError = message;
+    appendRepositoryWorkspaceDiagnostic(options.imageState, message);
+    if (imageRequiresPharoMcpHealth(options.imageConfig, options.imageState)) {
+      workspace.registrationState = "failed";
+      throw new Error(message);
+    }
+    return;
+  }
+
+  if (!imageCanRouteToPharoMcp(options.imageConfig, options.imageState)) {
+    const message = `Repository workspace registration skipped for image ${options.imageState.id}: Pharo MCP startup is disabled or unsupported.`;
+    workspace.registrationState = "skipped";
+    workspace.registrationError = message;
+    appendRepositoryWorkspaceDiagnostic(options.imageState, message);
+    return;
+  }
+
+  workspace.registrationState = "pending";
+  delete workspace.registrationError;
+  delete workspace.registeredRepositoryName;
+  delete workspace.registeredPackageNames;
+
+  const packageNames = inferTonelPackageNames(
+    repositoryWorkspaceSourcePath(workspace),
+  );
+  const repositoryPath = workspace.path;
+  const repositoryId = workspace.repository.id;
+
+  try {
+    const findResult = await callImageMcpToolForOpen({
+      imageMcpClient: options.imageMcpClient,
+      imageState: options.imageState,
+      toolName: "find-repositories",
+      argumentsValue: {
+        directoryPaths: [repositoryPath],
+        limit: 1000,
+      },
+    });
+    const existingRepository = matchingRepositoryEntry(
+      repositoryEntriesFromToolResult(findResult),
+      repositoryPath,
+    );
+    const repositoryName = repositoryEntryName(existingRepository, repositoryId);
+    const repositoryArguments = {
+      location: repositoryPath,
+      subdirectory: workspace.sourceDirectory,
+      packageNames,
+    };
+
+    if (existingRepository) {
+      await callImageMcpToolForOpen({
+        imageMcpClient: options.imageMcpClient,
+        imageState: options.imageState,
+        toolName: "edit-repository",
+        argumentsValue: {
+          operation: "update",
+          repositoryName,
+          ...repositoryArguments,
+        },
+      });
+    } else {
+      await callImageMcpToolForOpen({
+        imageMcpClient: options.imageMcpClient,
+        imageState: options.imageState,
+        toolName: "edit-repository",
+        argumentsValue: {
+          operation: "attach",
+          name: repositoryName,
+          ...repositoryArguments,
+        },
+      });
+    }
+
+    await callImageMcpToolForOpen({
+      imageMcpClient: options.imageMcpClient,
+      imageState: options.imageState,
+      toolName: "edit-repository",
+      argumentsValue: {
+        operation: "verifyIdentity",
+        repositoryName,
+        ...repositoryArguments,
+      },
+    });
+
+    workspace.registrationState = "registered";
+    workspace.registeredRepositoryName = repositoryName;
+    workspace.registeredPackageNames = packageNames;
+  } catch (error) {
+    const message = errorMessage(error);
+    workspace.registrationState = "failed";
+    workspace.registrationError = message;
+    appendRepositoryWorkspaceDiagnostic(options.imageState, message);
+    throw new Error(
+      `Repository workspace registration failed for image ${options.imageState.id}: ${message}`,
+    );
+  }
 }
 
 function parseStatusProperties(filePath: string): Record<string, string> {
@@ -1191,6 +1536,8 @@ export async function openProject(
   const ownsClient = !options.pharoLauncherMcpClient;
   const healthClient =
     options.healthClient ?? new HttpPharoMcpHealthClient();
+  const imageMcpClient =
+    options.imageMcpClient ?? new HttpProjectOpenImageMcpClient();
   const poll = {
     intervalMs: options.poll?.intervalMs ?? 500,
     processTimeoutMs: options.poll?.processTimeoutMs ?? 30_000,
@@ -1412,6 +1759,11 @@ export async function openProject(
           if (loadFailure) {
             throw new Error(loadFailure);
           }
+          await ensureRepositoryWorkspaceRegistered({
+            imageConfig,
+            imageState,
+            imageMcpClient,
+          });
         } finally {
           if (ownsLaunchClient) {
             closeClientQuietly(launchClient);
