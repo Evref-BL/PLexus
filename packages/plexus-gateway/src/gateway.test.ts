@@ -770,7 +770,7 @@ describe("PlexusGateway", () => {
     expect(imageRouter.calls).toHaveLength(1);
   });
 
-  it("reports mixed Pharo gateway tool schemas without choosing one image", async () => {
+  it("selects one active Pharo tool schema and excludes incompatible image routes", async () => {
     const imageRouter = new FakeToolListImageRouter(
       {
         dev: [repositoryOperationTool(["create"])],
@@ -839,11 +839,16 @@ describe("PlexusGateway", () => {
     expect(status).toMatchObject({
       pharoToolSchema: {
         state: "mismatched",
+        activeVersion: {
+          targetId: "project-123--worktree-a",
+          imageId: "dev",
+        },
         sourceCount: 2,
         sources: [
           {
             targetId: "project-123--worktree-a",
             imageId: "dev",
+            compatibility: "active",
             toolCount: 1,
             lifecycle: {
               status: "initialized",
@@ -856,6 +861,7 @@ describe("PlexusGateway", () => {
           {
             targetId: "project-123--worktree-a",
             imageId: "baseline",
+            compatibility: "incompatible",
             toolCount: 1,
             lifecycle: {
               status: "initialized",
@@ -870,20 +876,50 @@ describe("PlexusGateway", () => {
     });
     expect(imageRouter.listCalls).toHaveLength(2);
 
-    await expect(gateway.refreshPharoTools()).rejects.toThrow(
-      "Pharo gateway tool schemas differ across routable images",
-    );
+    await expect(gateway.refreshPharoTools()).resolves.toEqual([
+      expect.objectContaining({
+        name: "edit-repository",
+        inputSchema: expect.objectContaining({
+          properties: expect.objectContaining({
+            operation: expect.objectContaining({
+              enum: ["create"],
+            }),
+          }),
+        }),
+      }),
+    ]);
     await expect(
-      gateway.callPharoTool("pharo_eval", {
+      gateway.callPharoTool("edit-repository", {
         imageId: "dev",
-        code: "1 + 1",
+        operation: "create",
+      }),
+    ).resolves.toMatchObject({
+      ok: true,
+      data: {
+        content: [{ type: "text", text: "routed" }],
+      },
+    });
+    await expect(
+      gateway.callPharoTool("edit-repository", {
+        imageId: "baseline",
+        operation: "fetch",
       }),
     ).resolves.toMatchObject({
       ok: false,
       error:
-        "Pharo gateway tool schemas differ across routable images; refresh or reload images before routed Pharo calls",
+        "Image baseline Pharo MCP schema is incompatible with active gateway schema",
     });
-    expect(imageRouter.calls).toEqual([]);
+    expect(imageRouter.calls).toEqual([
+      expect.objectContaining({
+        route: expect.objectContaining({
+          imageId: "dev",
+        }),
+        toolName: "edit-repository",
+        argumentsValue: {
+          operation: "create",
+        },
+      }),
+    ]);
   });
 
   it("reports and rejects unsupported Pharo MCP image versions before forwarding", async () => {
