@@ -1,8 +1,13 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { afterEach, describe, expect, it } from "vitest";
-import type { PharoLauncherMcpToolClient } from "./pharoLauncherMcpClient.js";
+import {
+  PharoLauncherMcpToolError,
+  type PharoLauncherMcpToolClient,
+} from "./pharoLauncherMcpClient.js";
 import type {
   ProjectLifecycleRouteRegistration,
   ProjectLifecycleRouteRegistry,
@@ -16,6 +21,7 @@ import {
 } from "./projectState.js";
 import {
   ScopedPharoLauncher,
+  createScopedPharoLauncherServer,
   scopedImageLeaseOptionsFromEnvironment,
   scopedPharoLauncherTools,
 } from "./scopedPharoLauncherServer.js";
@@ -483,6 +489,84 @@ describe("scoped pharo launcher facade", () => {
     ).rejects.toThrow(
       "Image dev has no approved create policy in project config; scoped reset is rejected",
     );
+  });
+
+  it("preserves structured launcher diagnostics in scoped MCP errors", async () => {
+    const projectRoot = makeTempDir("plexus-project-");
+    const stateRoot = makeTempDir("plexus-state-");
+    writeProjectConfig(projectRoot, {
+      home: {
+        imageCache: {
+          enabled: false,
+          networkPolicy: "online",
+        },
+      },
+    });
+    const launcherFailure = {
+      ok: false,
+      diagnostic: "The selected template is not present in the active profile.",
+      action: "Seed the scoped template sources before image creation.",
+      command: {
+        args: ["image", "create", "--templateName", "Pharo 13.0 - 64bit"],
+      },
+      templateCreateReadiness: {
+        status: "missing",
+      },
+    };
+    const pharoLauncherMcpClient: PharoLauncherMcpToolClient = {
+      async callTool(name) {
+        throw new PharoLauncherMcpToolError(
+          `pharo-launcher-mcp tool failed: ${name}`,
+          name,
+          launcherFailure,
+        );
+      },
+    };
+    const server = createScopedPharoLauncherServer({
+      projectRoot,
+      stateRoot,
+      workspaceId: "worktree-a",
+      pharoLauncherMcpClient,
+    });
+    const client = new Client(
+      {
+        name: "plexus-core-test",
+        version: "0.0.0",
+      },
+      {
+        capabilities: {},
+      },
+    );
+    const [clientTransport, serverTransport] =
+      InMemoryTransport.createLinkedPair();
+
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+
+    try {
+      const result = await client.callTool({
+        name: "pharo_launcher_image_create",
+        arguments: { imageId: "dev" },
+      });
+      const text = result.content.find(
+        (item): item is { type: "text"; text: string } =>
+          item.type === "text",
+      )?.text;
+
+      expect(result.isError).toBe(true);
+      expect(text ? JSON.parse(text) : undefined).toMatchObject({
+        ok: false,
+        error:
+          "pharo-launcher-mcp tool failed: pharo_launcher_image_create",
+        cause: {
+          toolName: "pharo_launcher_image_create",
+          result: launcherFailure,
+        },
+      });
+    } finally {
+      await client.close();
+      await server.close();
+    }
   });
 
   it("starts and stops declared images through PLexus scoped lifecycle calls", async () => {
