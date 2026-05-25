@@ -100,6 +100,22 @@ class MutableToolListImageRouter implements ImageMcpToolRouter {
   }
 }
 
+class ImageSpecificToolListRouter extends MutableToolListImageRouter {
+  constructor(private readonly toolsByImageId: Record<string, Tool[]>) {
+    super([]);
+  }
+
+  override async listTools(route: ImageMcpRoute): Promise<Tool[]> {
+    this.listCalls.push(route);
+    const tools = this.toolsByImageId[route.imageId];
+    if (!tools) {
+      throw new Error(`No tools for image ${route.imageId}`);
+    }
+
+    return tools;
+  }
+}
+
 function repositoryOperationTool(operations: string[]): Tool {
   return {
     name: "edit-repository",
@@ -355,6 +371,79 @@ describe("gateway server", () => {
           imageId: "dev",
           port: 7123,
         }),
+      ]);
+    } finally {
+      await client.close();
+      await server.close();
+    }
+  });
+
+  it("advertises only the active Pharo tool schema when registered images differ", async () => {
+    const imageRouter = new ImageSpecificToolListRouter({
+      dev: [repositoryOperationTool(["create"])],
+      baseline: [repositoryOperationTool(["create", "fetch"])],
+    });
+    const gateway = new PlexusGateway({
+      imageRouter,
+      pharoScope: {
+        targetId: runningState.targetId,
+      },
+    });
+    const server = createGatewayServerWithOptions(gateway, {
+      surface: "gateway",
+    });
+    const client = new Client(
+      {
+        name: "plexus-gateway-test",
+        version: "0.0.0",
+      },
+      {
+        capabilities: {},
+      },
+    );
+    const [clientTransport, serverTransport] =
+      InMemoryTransport.createLinkedPair();
+
+    await expect(
+      gateway.handleTool("plexus_gateway_register_target", {
+        projectRoot: "C:/dev/code/project-123",
+        statePath: "state.json",
+        state: {
+          ...runningState,
+          images: [
+            runningState.images[0],
+            {
+              id: "baseline",
+              imageName: "Project123-baseline",
+              assignedPort: 7124,
+              status: "running",
+            },
+          ],
+        },
+      }),
+    ).resolves.toMatchObject({ ok: true });
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+
+    try {
+      await expect(client.listTools()).resolves.toMatchObject({
+        tools: [
+          expect.objectContaining({
+            name: "edit-repository",
+            inputSchema: expect.objectContaining({
+              properties: expect.objectContaining({
+                operation: expect.objectContaining({
+                  enum: ["create"],
+                }),
+              }),
+              required: ["imageId", "operation"],
+            }),
+          }),
+        ],
+      });
+      expect(imageRouter.listCalls.map((route) => route.imageId)).toEqual([
+        "dev",
+        "baseline",
       ]);
     } finally {
       await client.close();
