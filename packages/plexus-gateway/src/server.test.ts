@@ -451,6 +451,76 @@ describe("gateway server", () => {
     }
   });
 
+  it("can advertise a requested Pharo tool schema image", async () => {
+    const imageRouter = new ImageSpecificToolListRouter({
+      dev: [repositoryOperationTool(["create"])],
+      baseline: [repositoryOperationTool(["create", "fetch"])],
+    });
+    const gateway = new PlexusGateway({
+      imageRouter,
+      pharoScope: {
+        targetId: runningState.targetId,
+      },
+      pharoToolSchemaImageId: "baseline",
+    });
+    const server = createGatewayServerWithOptions(gateway, {
+      surface: "gateway",
+    });
+    const client = new Client(
+      {
+        name: "plexus-gateway-test",
+        version: "0.0.0",
+      },
+      {
+        capabilities: {},
+      },
+    );
+    const [clientTransport, serverTransport] =
+      InMemoryTransport.createLinkedPair();
+
+    await expect(
+      gateway.handleTool("plexus_gateway_register_target", {
+        projectRoot: "C:/dev/code/project-123",
+        statePath: "state.json",
+        state: {
+          ...runningState,
+          images: [
+            runningState.images[0],
+            {
+              id: "baseline",
+              imageName: "Project123-baseline",
+              assignedPort: 7124,
+              status: "running",
+            },
+          ],
+        },
+      }),
+    ).resolves.toMatchObject({ ok: true });
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+
+    try {
+      await expect(client.listTools()).resolves.toMatchObject({
+        tools: [
+          expect.objectContaining({
+            name: "edit-repository",
+            inputSchema: expect.objectContaining({
+              properties: expect.objectContaining({
+                operation: expect.objectContaining({
+                  enum: ["create", "fetch"],
+                }),
+              }),
+              required: ["imageId", "operation"],
+            }),
+          }),
+        ],
+      });
+    } finally {
+      await client.close();
+      await server.close();
+    }
+  });
+
   it("defaults direct server creation to the agent-facing gateway surface", async () => {
     const server = createGatewayServerWithOptions(
       new PlexusGateway({
@@ -646,11 +716,13 @@ describe("gateway server", () => {
         PLEXUS_WORKSPACE_ID: "task-123",
         PLEXUS_TARGET_ID: "project-123--task-123",
         PLEXUS_PHARO_TOOLS_JSON: JSON.stringify(pharoTools),
+        PLEXUS_PHARO_TOOL_SCHEMA_IMAGE_ID: "baseline",
       }),
     ).toEqual({
       surface: "gateway",
       exposeRawRoutingTool: false,
       pharoTools,
+      pharoToolSchemaImageId: "baseline",
       pharoScope: {
         projectId: "project-123",
         workspaceId: "task-123",

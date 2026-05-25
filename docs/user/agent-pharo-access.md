@@ -300,8 +300,11 @@ contract. Runtime image state is represented in data:
 
 - `pharo-launcher` reports which images exist and whether they are routable.
 - Each `pharo_gateway` call carries `imageId`.
-- PLexus rejects unavailable images, images outside the workspace, and contract
-  mismatches before forwarding.
+- `plexus_gateway_status` with `refreshTools: true` refreshes the one active
+  schema. Route-control may pass `toolSchemaImageId` to choose the image that
+  supplies that schema.
+- PLexus rejects unavailable images, images outside the workspace, and images
+  whose contract or live tool schema does not match the active gateway schema.
 
 This keeps the agent contract stable while still allowing multiple images per
 workspace.

@@ -64,6 +64,7 @@ export const gatewayTools = [
       ...routeReferenceProperties,
       refreshHealth: { type: "boolean" },
       refreshTools: { type: "boolean" },
+      toolSchemaImageId: optionalStringSchema,
     }),
   },
   {
@@ -104,6 +105,7 @@ export interface GatewayEnvironmentOptions {
   exposeRawRoutingTool: boolean;
   pharoTools: Tool[];
   pharoScope: GatewayRouteReferenceInput;
+  pharoToolSchemaImageId?: string;
 }
 
 function agentGatewaySurface(surface: GatewaySurface): boolean {
@@ -164,6 +166,10 @@ function parseBooleanEnv(value: string | undefined, name: string): boolean {
   }
 
   throw new Error(`${name} must be true or false`);
+}
+
+function optionalStringEnv(value: string | undefined): string | undefined {
+  return value && value.trim().length > 0 ? value : undefined;
 }
 
 function parseGatewaySurface(value: string | undefined): GatewaySurface {
@@ -368,6 +374,9 @@ export function parseGatewayEnvironmentOptions(
       workspaceId: env.PLEXUS_WORKSPACE_ID ?? env.VIBE_KANBAN_WORKSPACE_ID,
       targetId: env.PLEXUS_TARGET_ID,
     },
+    pharoToolSchemaImageId: optionalStringEnv(
+      env.PLEXUS_PHARO_TOOL_SCHEMA_IMAGE_ID,
+    ),
   };
 }
 
@@ -379,6 +388,7 @@ export function createGatewayFromEnvironment(
     gateway: new PlexusGateway({
       pharoTools: options.pharoTools,
       pharoScope: options.pharoScope,
+      pharoToolSchemaImageId: options.pharoToolSchemaImageId,
     }),
     serverOptions: {
       surface: options.surface,

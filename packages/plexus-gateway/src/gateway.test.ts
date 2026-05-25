@@ -922,6 +922,142 @@ describe("PlexusGateway", () => {
     ]);
   });
 
+  it("can select the active Pharo tool schema source by image", async () => {
+    const imageRouter = new FakeToolListImageRouter({
+      dev: [repositoryOperationTool(["create"])],
+      baseline: [repositoryOperationTool(["create", "fetch"])],
+    });
+    const gateway = new PlexusGateway({
+      imageRouter,
+      pharoTools: [pharoEvalTool],
+      pharoScope: {
+        projectId: "project-123",
+        workspaceId: "worktree-a",
+      },
+    });
+    const mixedSchemaState: GatewayProjectState = {
+      ...runningState,
+      images: [
+        {
+          id: "dev",
+          imageName: "MyProject-dev",
+          assignedPort: 7123,
+          pid: 1234,
+          status: "running",
+        },
+        {
+          id: "baseline",
+          imageName: "MyProject-baseline",
+          assignedPort: 7124,
+          pid: 5678,
+          status: "running",
+        },
+      ],
+    };
+
+    await registerTarget(gateway, mixedSchemaState);
+
+    const status = data(
+      await gateway.handleTool("plexus_gateway_status", {
+        projectId: "project-123",
+        workspaceId: "worktree-a",
+        refreshTools: true,
+        toolSchemaImageId: "baseline",
+      }),
+    );
+    expect(status).toMatchObject({
+      pharoToolSchema: {
+        state: "mismatched",
+        activeVersion: {
+          targetId: "project-123--worktree-a",
+          imageId: "baseline",
+        },
+        sources: [
+          {
+            imageId: "dev",
+            compatibility: "incompatible",
+          },
+          {
+            imageId: "baseline",
+            compatibility: "active",
+          },
+        ],
+      },
+    });
+
+    await expect(gateway.refreshPharoTools()).resolves.toEqual([
+      expect.objectContaining({
+        name: "edit-repository",
+        inputSchema: expect.objectContaining({
+          properties: expect.objectContaining({
+            operation: expect.objectContaining({
+              enum: ["create", "fetch"],
+            }),
+          }),
+        }),
+      }),
+    ]);
+    await expect(
+      gateway.callPharoTool("edit-repository", {
+        imageId: "baseline",
+        operation: "fetch",
+      }),
+    ).resolves.toMatchObject({
+      ok: true,
+      data: {
+        content: [{ type: "text", text: "routed" }],
+      },
+    });
+    await expect(
+      gateway.callPharoTool("edit-repository", {
+        imageId: "dev",
+        operation: "create",
+      }),
+    ).resolves.toMatchObject({
+      ok: false,
+      error:
+        "Image dev Pharo MCP schema is incompatible with active gateway schema",
+    });
+  });
+
+  it("rejects missing Pharo tool schema source image selection", async () => {
+    const imageRouter = new FakeToolListImageRouter({
+      dev: [repositoryOperationTool(["create"])],
+    });
+    const gateway = new PlexusGateway({
+      imageRouter,
+      pharoScope: {
+        projectId: "project-123",
+        workspaceId: "worktree-a",
+      },
+    });
+
+    await registerTarget(gateway, {
+      ...runningState,
+      images: [
+        {
+          id: "dev",
+          imageName: "MyProject-dev",
+          assignedPort: 7123,
+          pid: 1234,
+          status: "running",
+        },
+      ],
+    });
+
+    await expect(
+      gateway.handleTool("plexus_gateway_status", {
+        projectId: "project-123",
+        workspaceId: "worktree-a",
+        refreshTools: true,
+        toolSchemaImageId: "missing",
+      }),
+    ).resolves.toMatchObject({
+      ok: false,
+      error: "No routable image missing provided an available Pharo MCP schema",
+    });
+  });
+
   it("reports and rejects unsupported Pharo MCP image versions before forwarding", async () => {
     const imageRouter = new FakeImageRouter();
     const gateway = new PlexusGateway({
