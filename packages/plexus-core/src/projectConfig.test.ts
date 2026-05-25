@@ -317,6 +317,56 @@ describe("project config", () => {
     });
   });
 
+  it("parses launcher template catalogue source policy", () => {
+    const config: ReturnType<typeof validProjectConfig> & { runtime?: unknown } =
+      validProjectConfig();
+    config.runtime = {
+      launcherProfile: {
+        mode: "project-owned",
+        templateCatalog: {
+          source: "path",
+          path: "/Users/ada/Library/Application Support/Pharo Launcher/templates",
+          serverSourcesUrl: "https://files.example.test/sources.list",
+        },
+      },
+    };
+
+    expect(parseProjectConfig(config).runtime?.launcherProfile).toEqual({
+      mode: "project-owned",
+      templateCatalog: {
+        source: "path",
+        path: "/Users/ada/Library/Application Support/Pharo Launcher/templates",
+        serverSourcesUrl: "https://files.example.test/sources.list",
+      },
+    });
+  });
+
+  it("rejects invalid launcher template catalogue policy", () => {
+    const config: ReturnType<typeof validProjectConfig> & { runtime?: unknown } =
+      validProjectConfig();
+    config.runtime = {
+      launcherProfile: {
+        templateCatalog: {
+          source: "custom",
+          serverSourcesUrl: "not a url",
+        },
+      },
+    };
+
+    expect(() => parseProjectConfig(config)).toThrow(ProjectConfigError);
+
+    try {
+      parseProjectConfig(config);
+    } catch (error) {
+      expect((error as ProjectConfigError).issues).toEqual(
+        expect.arrayContaining([
+          "runtime.launcherProfile.templateCatalog.source must be one of user-or-server, user, server, path, none",
+          "runtime.launcherProfile.templateCatalog.serverSourcesUrl must be a valid URL",
+        ]),
+      );
+    }
+  });
+
   it("parses Pharo MCP supported version policy overrides", () => {
     const config: ReturnType<typeof validProjectConfig> & { runtime?: unknown } =
       validProjectConfig();

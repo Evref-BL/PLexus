@@ -435,6 +435,154 @@ describe("scoped pharo launcher facade", () => {
     ]);
   });
 
+  it("bootstraps and refreshes a scoped template catalogue before direct create", async () => {
+    const projectRoot = makeTempDir("plexus-project-");
+    const stateRoot = makeTempDir("plexus-state-");
+    const { client, calls } = fakeLauncherClient();
+    const sourceListUrl = "https://files.example.test/pharo/sources.list";
+    const sourceList = "https://files.example.test/pharo/pharo-13.ston\n";
+    const fetches: string[] = [];
+    writeProjectConfig(projectRoot, {
+      home: {
+        imageCache: { enabled: false, networkPolicy: "online" },
+      },
+      runtime: {
+        launcherProfile: {
+          templateCatalog: {
+            source: "server",
+            serverSourcesUrl: sourceListUrl,
+          },
+        },
+      },
+    });
+
+    await new ScopedPharoLauncher({
+      projectRoot,
+      stateRoot,
+      workspaceId: "worktree-a",
+      pharoLauncherMcpClient: client,
+      fetch: (async (input) => {
+        fetches.push(String(input));
+        return new Response(sourceList, { status: 200 });
+      }) as typeof fetch,
+      now: () => new Date("2026-05-18T12:00:00.000Z"),
+    }).createImage("dev", "pharo-13-default");
+
+    expect(fetches).toEqual([sourceListUrl]);
+    expect(
+      fs.readFileSync(
+        path.join(
+          stateRoot,
+          "profiles",
+          "pharo-launcher-mcp",
+          "project-123",
+          "templates",
+          "sources.list",
+        ),
+        "utf8",
+      ),
+    ).toBe(sourceList);
+    expect(calls).toEqual([
+      {
+        name: "pharo_launcher_template_update",
+        argumentsValue: {},
+      },
+      {
+        name: "pharo_launcher_image_create",
+        argumentsValue: {
+          newImageName: "MyProject-worktree-a-dev",
+          templateName: "Pharo 13.0 - 64bit",
+          templateCategory: "Official",
+          noLaunch: true,
+        },
+      },
+    ]);
+  });
+
+  it("seeds a scoped template catalogue from an explicit local path offline", async () => {
+    const projectRoot = makeTempDir("plexus-project-");
+    const stateRoot = makeTempDir("plexus-state-");
+    const templateSource = makeTempDir("plexus-template-catalog-");
+    const { client, calls } = fakeLauncherClient();
+    fs.writeFileSync(
+      path.join(templateSource, "sources.list"),
+      "https://files.example.test/pharo/pharo-13.ston\n",
+      "utf8",
+    );
+    fs.writeFileSync(
+      path.join(templateSource, "pharo-13.ston"),
+      "STON template catalogue fixture",
+      "utf8",
+    );
+    writeProjectConfig(projectRoot, {
+      home: {
+        imageCache: { enabled: false, networkPolicy: "local-only" },
+      },
+      runtime: {
+        launcherProfile: {
+          templateCatalog: {
+            source: "path",
+            path: templateSource,
+          },
+        },
+      },
+    });
+
+    await new ScopedPharoLauncher({
+      projectRoot,
+      stateRoot,
+      workspaceId: "worktree-a",
+      pharoLauncherMcpClient: client,
+      now: () => new Date("2026-05-18T12:00:00.000Z"),
+    }).createImage("dev", "pharo-13-default");
+
+    expect(
+      fs.existsSync(
+        path.join(
+          stateRoot,
+          "profiles",
+          "pharo-launcher-mcp",
+          "project-123",
+          "templates",
+          "pharo-13.ston",
+        ),
+      ),
+    ).toBe(true);
+    expect(calls.map((call) => call.name)).toEqual([
+      "pharo_launcher_image_create",
+    ]);
+  });
+
+  it("fails direct create clearly when local-only policy has no template catalogue", async () => {
+    const projectRoot = makeTempDir("plexus-project-");
+    const stateRoot = makeTempDir("plexus-state-");
+    const { client, calls } = fakeLauncherClient();
+    writeProjectConfig(projectRoot, {
+      home: {
+        imageCache: { enabled: false, networkPolicy: "local-only" },
+      },
+      runtime: {
+        launcherProfile: {
+          templateCatalog: {
+            source: "server",
+          },
+        },
+      },
+    });
+
+    await expect(
+      new ScopedPharoLauncher({
+        projectRoot,
+        stateRoot,
+        workspaceId: "worktree-a",
+        pharoLauncherMcpClient: client,
+      }).createImage("dev", "pharo-13-default"),
+    ).rejects.toThrow(
+      "Scoped template catalogue is missing and local-only policy forbids server bootstrap",
+    );
+    expect(calls).toEqual([]);
+  });
+
   it("rejects unapproved create profiles before launcher calls", async () => {
     const projectRoot = makeTempDir("plexus-project-");
     const stateRoot = makeTempDir("plexus-state-");
@@ -499,6 +647,13 @@ describe("scoped pharo launcher facade", () => {
         imageCache: {
           enabled: false,
           networkPolicy: "online",
+        },
+      },
+      runtime: {
+        launcherProfile: {
+          templateCatalog: {
+            source: "none",
+          },
         },
       },
     });
@@ -781,6 +936,13 @@ describe("scoped pharo launcher facade", () => {
         imageCache: {
           enabled: false,
           networkPolicy: "online",
+        },
+      },
+      runtime: {
+        launcherProfile: {
+          templateCatalog: {
+            source: "none",
+          },
         },
       },
       images: [

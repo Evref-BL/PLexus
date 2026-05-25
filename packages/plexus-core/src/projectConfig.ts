@@ -204,10 +204,24 @@ export interface ProjectPharoMcpPolicy {
 
 export type ProjectLauncherProfileMode = "project-owned" | "external";
 
+export type ProjectLauncherTemplateCatalogSource =
+  | "user-or-server"
+  | "user"
+  | "server"
+  | "path"
+  | "none";
+
+export interface ProjectLauncherTemplateCatalogPolicy {
+  source: ProjectLauncherTemplateCatalogSource;
+  path?: string;
+  serverSourcesUrl?: string;
+}
+
 export interface ProjectLauncherProfilePolicy {
   mode: ProjectLauncherProfileMode;
   name?: string;
   root?: string;
+  templateCatalog?: ProjectLauncherTemplateCatalogPolicy;
 }
 
 export interface ProjectRuntimePolicy {
@@ -555,6 +569,31 @@ function urlField(
 
   issues.push(`${pathPrefix}.${key} must be a valid URL`);
   return "";
+}
+
+function optionalUrlField(
+  object: Record<string, unknown>,
+  key: string,
+  issues: string[],
+  pathPrefix: string,
+): string | undefined {
+  const value = object[key];
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (typeof value === "string" && value.trim().length > 0) {
+    try {
+      new URL(value);
+      return value;
+    } catch {
+      issues.push(`${pathPrefix}.${key} must be a valid URL`);
+      return undefined;
+    }
+  }
+
+  issues.push(`${pathPrefix}.${key} must be a valid URL`);
+  return undefined;
 }
 
 function pathFieldWithDefault(
@@ -1493,11 +1532,67 @@ function parseLauncherProfilePolicy(
     issues,
     "runtime.launcherProfile",
   );
+  const templateCatalog = parseLauncherTemplateCatalogPolicy(
+    value.templateCatalog,
+    issues,
+  );
 
   return {
     mode,
     ...(name ? { name } : {}),
     ...(root ? { root } : {}),
+    ...(templateCatalog
+      ? {
+          templateCatalog,
+        }
+      : {}),
+  };
+}
+
+function parseLauncherTemplateCatalogPolicy(
+  value: unknown,
+  issues: string[],
+): ProjectLauncherTemplateCatalogPolicy | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  const pathPrefix = "runtime.launcherProfile.templateCatalog";
+  if (!isObject(value)) {
+    issues.push(`${pathPrefix} must be an object`);
+    return undefined;
+  }
+
+  const pathValue = optionalStringField(value, "path", issues, pathPrefix);
+  const sourceValue = value.source ?? (pathValue ? "path" : "user-or-server");
+  const source =
+    sourceValue === "user-or-server" ||
+    sourceValue === "user" ||
+    sourceValue === "server" ||
+    sourceValue === "path" ||
+    sourceValue === "none"
+      ? sourceValue
+      : "user-or-server";
+  if (source !== sourceValue) {
+    issues.push(
+      `${pathPrefix}.source must be one of user-or-server, user, server, path, none`,
+    );
+  }
+  if (source === "path" && !pathValue) {
+    issues.push(`${pathPrefix}.path must be set when source is path`);
+  }
+
+  const serverSourcesUrl = optionalUrlField(
+    value,
+    "serverSourcesUrl",
+    issues,
+    pathPrefix,
+  );
+
+  return {
+    source,
+    ...(pathValue ? { path: pathValue } : {}),
+    ...(serverSourcesUrl ? { serverSourcesUrl } : {}),
   };
 }
 

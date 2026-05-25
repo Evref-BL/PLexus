@@ -26,6 +26,7 @@ import {
 } from "./projectLifecycle.js";
 import { openProject } from "./projectOpen.js";
 import {
+  homeImageCacheNetworkPolicy,
   materializeProjectImageFromHomeCache,
   type HomeImageCacheMutationApproval,
 } from "./homeImageCache.js";
@@ -59,6 +60,7 @@ import {
 } from "./projectState.js";
 import { projectScriptsDirectoryPath } from "./projectStartupScript.js";
 import { dirnamePathLike, joinPathLike } from "./pathStyle.js";
+import { prepareScopedTemplateCatalog } from "./scopedTemplateCatalog.js";
 
 const stringSchema = { type: "string", minLength: 1 } as const;
 const displayModeSchema = {
@@ -414,6 +416,40 @@ function assertLauncherOk(
       result,
     });
   }
+}
+
+async function ensureScopedTemplateCatalogReady(options: {
+  client: PharoLauncherMcpToolClient;
+  scope: ResolvedScope;
+  projectConfig: ProjectConfig;
+  fetch?: typeof fetch;
+}): Promise<void> {
+  const runtime = resolveProjectRuntimePolicy(options.projectConfig);
+  const launcherProfile = describePharoLauncherMcpProfile({
+    projectRoot: options.scope.projectRoot,
+    config: options.projectConfig,
+    workspaceId: options.scope.workspaceId,
+    targetId: options.scope.targetId,
+    stateRoot: options.scope.stateRoot,
+  });
+  const bootstrap = await prepareScopedTemplateCatalog({
+    destinationDirectory: launcherProfile.templateSourcesDir,
+    policy: runtime.launcherProfile.templateCatalog,
+    networkPolicy: homeImageCacheNetworkPolicy(options.projectConfig),
+    fetch: options.fetch,
+  });
+  if (!bootstrap.ok) {
+    throw new ScopedPharoLauncherError(bootstrap.message, bootstrap.details);
+  }
+  if (!bootstrap.refreshTemplateCatalog) {
+    return;
+  }
+
+  const result = await options.client.callTool<LauncherCommandResult>(
+    "pharo_launcher_template_update",
+    {},
+  );
+  assertLauncherOk(result, "pharo_launcher_template_update");
 }
 
 function scopedMutationApproval(
@@ -1185,6 +1221,12 @@ export class ScopedPharoLauncher {
       });
 
       if (!homeMaterialization) {
+        await ensureScopedTemplateCatalogReady({
+          client,
+          scope,
+          projectConfig,
+          fetch: this.options.fetch,
+        });
         const result = await client.callTool<LauncherCommandResult>(
           "pharo_launcher_image_create",
           {
