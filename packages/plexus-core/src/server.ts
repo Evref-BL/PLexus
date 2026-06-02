@@ -31,6 +31,7 @@ function objectSchema(
 
 const projectReferenceProperties = {
   projectPath: optionalStringSchema,
+  sourcePath: optionalStringSchema,
   projectId: optionalStringSchema,
   workspaceId: optionalStringSchema,
   targetId: optionalStringSchema,
@@ -74,6 +75,7 @@ export const projectLifecycleTools = [
     inputSchema: objectSchema(
       {
         projectPath: stringSchema,
+        sourcePath: optionalStringSchema,
         workspaceId: optionalStringSchema,
         targetId: optionalStringSchema,
         stateRoot: optionalStringSchema,

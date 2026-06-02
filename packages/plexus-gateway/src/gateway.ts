@@ -13,6 +13,7 @@ import {
   PlexusRoutingTable,
   type GatewayImageMcpEndpoint,
   type GatewayImageRoute,
+  type GatewayProjectImageCreationState,
   type GatewayProjectRoute,
   type GatewayProjectState,
 } from "./routingTable.js";
@@ -210,6 +211,18 @@ export interface GatewayPharoToolSchemaSource {
   error?: string;
 }
 
+export type GatewayImagePharoToolSchemaState =
+  | "unknown"
+  | "active"
+  | "compatible"
+  | "incompatible"
+  | "unavailable";
+
+export interface GatewayImagePharoToolSchemaStatus
+  extends Omit<GatewayPharoToolSchemaSource, "targetId" | "imageId"> {
+  state: GatewayImagePharoToolSchemaState;
+}
+
 export interface GatewayPharoToolSchemaActiveVersion {
   fingerprint: string;
   targetId: string;
@@ -229,7 +242,15 @@ export interface GatewayPharoToolSchemaStatus {
   error?: string;
 }
 
-export type GatewayProjectRouteWithSchema = GatewayProjectRoute & {
+export type GatewayImageRouteWithSchema = GatewayImageRoute & {
+  pharoToolSchema?: GatewayImagePharoToolSchemaStatus;
+};
+
+export type GatewayProjectRouteWithSchema = Omit<
+  GatewayProjectRoute,
+  "images"
+> & {
+  images: GatewayImageRouteWithSchema[];
   pharoToolSchema?: GatewayPharoToolSchemaStatus;
 };
 
@@ -371,6 +392,128 @@ function endpointInput(
   };
 }
 
+function optionalCreationString(
+  input: Record<string, unknown>,
+  pathLabel: string,
+  key: string,
+): string | undefined {
+  const value = input[key];
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (typeof value !== "string" || value.length === 0) {
+    throw new GatewayInputError(`${pathLabel}.${key} must be a non-empty string`);
+  }
+
+  return value;
+}
+
+function requireCreationString(
+  input: Record<string, unknown>,
+  pathLabel: string,
+  key: string,
+): string {
+  const value = optionalCreationString(input, pathLabel, key);
+  if (value === undefined) {
+    throw new GatewayInputError(`${pathLabel}.${key} is required`);
+  }
+
+  return value;
+}
+
+function imageCreationInput(
+  image: Record<string, unknown>,
+  index: number,
+): GatewayProjectImageCreationState | undefined {
+  const value = image.creation;
+  if (value === undefined) {
+    return undefined;
+  }
+
+  const basePath = `state.images[${index}].creation`;
+  if (!isObject(value)) {
+    throw new GatewayInputError(`${basePath} must be an object`);
+  }
+
+  const sourceValue = value.source;
+  const source = sourceValue === undefined ? undefined : sourceValue;
+  if (source !== undefined && !isObject(source)) {
+    throw new GatewayInputError(`${basePath}.source must be an object`);
+  }
+
+  const routeValue = value.route;
+  const route = routeValue === undefined ? undefined : routeValue;
+  if (route !== undefined && !isObject(route)) {
+    throw new GatewayInputError(`${basePath}.route must be an object`);
+  }
+
+  const creation: GatewayProjectImageCreationState = {};
+  const role = optionalCreationString(value, basePath, "role");
+  const cleanupPolicy = optionalCreationString(value, basePath, "cleanupPolicy");
+  if (role) {
+    creation.role = role;
+  }
+  if (cleanupPolicy) {
+    creation.cleanupPolicy = cleanupPolicy;
+  }
+
+  if (source) {
+    const profileId = optionalCreationString(
+      source,
+      `${basePath}.source`,
+      "profileId",
+    );
+    const templateName = optionalCreationString(
+      source,
+      `${basePath}.source`,
+      "templateName",
+    );
+    const templateCategory = optionalCreationString(
+      source,
+      `${basePath}.source`,
+      "templateCategory",
+    );
+    creation.source = {
+      kind: requireCreationString(source, `${basePath}.source`, "kind"),
+      ...(profileId ? { profileId } : {}),
+      ...(templateName ? { templateName } : {}),
+      ...(templateCategory ? { templateCategory } : {}),
+    };
+  }
+
+  if (route) {
+    const serverName = optionalCreationString(
+      route,
+      `${basePath}.route`,
+      "serverName",
+    );
+    const targetKey = optionalCreationString(
+      route,
+      `${basePath}.route`,
+      "targetKey",
+    );
+    const imageArgument = optionalCreationString(
+      route,
+      `${basePath}.route`,
+      "imageArgument",
+    );
+    const imageId = optionalCreationString(
+      route,
+      `${basePath}.route`,
+      "imageId",
+    );
+    creation.route = {
+      ...(serverName ? { serverName } : {}),
+      ...(targetKey ? { targetKey } : {}),
+      ...(imageArgument ? { imageArgument } : {}),
+      ...(imageId ? { imageId } : {}),
+    };
+  }
+
+  return creation;
+}
+
 function stateInput(input: Record<string, unknown>): GatewayProjectState {
   const value = input.state;
   if (!isObject(value)) {
@@ -401,6 +544,7 @@ function stateInput(input: Record<string, unknown>): GatewayProjectState {
       const pharoMcpContract = isObject(image.pharoMcpContract)
         ? image.pharoMcpContract
         : undefined;
+      const creation = imageCreationInput(image, index);
       const unsupportedPharoMcp =
         pharoMcpContract?.status === "unsupported";
       const pid = image.pid;
@@ -442,6 +586,7 @@ function stateInput(input: Record<string, unknown>): GatewayProjectState {
         ...(mcpEndpoint ? { mcpEndpoint } : {}),
         ...(pid ? { pid } : {}),
         status,
+        ...(creation ? { creation } : {}),
         ...(pharoMcpContract ? { pharoMcpContract } : {}),
       };
     }),
@@ -1006,7 +1151,50 @@ export class PlexusGateway {
   ): GatewayProjectRouteWithSchema {
     return {
       ...route,
+      images: route.images.map((image) => ({
+        ...image,
+        pharoToolSchema: this.imagePharoToolSchemaStatus(route, image),
+      })),
       pharoToolSchema: this.pharoToolSchemaStatus,
+    };
+  }
+
+  private imagePharoToolSchemaStatus(
+    route: GatewayProjectRoute,
+    image: GatewayImageRoute,
+  ): GatewayImagePharoToolSchemaStatus {
+    const source = this.pharoToolSchemaStatus.sources.find(
+      (candidate) =>
+        candidate.targetId === route.targetId && candidate.imageId === image.id,
+    );
+
+    if (!source) {
+      if (this.pharoToolSchemaStatus.state === "unknown") {
+        return { state: "unknown" };
+      }
+
+      return {
+        state: "unavailable",
+        compatibility: "unavailable",
+        error: image.routable.ok
+          ? `Image ${image.id} has no refreshed Pharo MCP schema`
+          : image.routable.message,
+      };
+    }
+
+    const compatibility = source.compatibility ?? "unavailable";
+    return {
+      state: compatibility,
+      ...(source.fingerprint ? { fingerprint: source.fingerprint } : {}),
+      compatibility,
+      ...(source.toolCount !== undefined ? { toolCount: source.toolCount } : {}),
+      ...(source.lifecycle ? { lifecycle: source.lifecycle } : {}),
+      ...(source.protocolVersion
+        ? { protocolVersion: source.protocolVersion }
+        : {}),
+      ...(source.capabilities ? { capabilities: source.capabilities } : {}),
+      ...(source.serverInfo ? { serverInfo: source.serverInfo } : {}),
+      ...(source.error ? { error: source.error } : {}),
     };
   }
 

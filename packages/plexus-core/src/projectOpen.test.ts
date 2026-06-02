@@ -418,6 +418,53 @@ describe("project open", () => {
     });
   });
 
+  it("persists and uses the workspace source path for relative startup loads", async () => {
+    const projectRoot = makeTempDir("plexus-project-");
+    const sourcePath = makeTempDir("plexus-source-");
+    const stateRoot = makeTempDir("plexus-state-");
+    writeProjectConfig(projectRoot);
+    const pharoLauncherMcpClient = new FakePharoLauncherMcpClient([
+      {
+        pid: 1234,
+        imageName: "MyProject-dev",
+        commandLine: "PharoConsole.exe MyProject-dev.image",
+      },
+    ]);
+
+    const result = await openProject({
+      projectRoot,
+      sourcePath,
+      stateRoot,
+      workspaceId: "worktree-a",
+      pharoLauncherMcpClient,
+      healthClient: new FakeHealthClient(true),
+      now: fixedNow,
+      sleep: async () => {},
+      poll: {
+        intervalMs: 0,
+      },
+    });
+
+    const scriptPath = path.join(
+      stateRoot,
+      "projects",
+      "project-123",
+      "workspaces",
+      "worktree-a",
+      "scripts",
+      "start-dev.st",
+    );
+    const startupScript = fs.readFileSync(scriptPath, "utf8");
+
+    expect(result.state.sourcePath).toBe(sourcePath);
+    expect(startupScript).toContain(
+      `${sourcePath.replaceAll("\\", "/")}/pharo/load-mcp.st`,
+    );
+    expect(startupScript).not.toContain(
+      `${projectRoot.replaceAll("\\", "/")}/pharo/load-mcp.st`,
+    );
+  });
+
   it("launches active images with the configured display mode", async () => {
     const projectRoot = makeTempDir("plexus-project-");
     const stateRoot = makeTempDir("plexus-state-");

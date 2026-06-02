@@ -242,6 +242,60 @@ describe("image rescue", () => {
     expect(result.selectedHistoryFilePath).toBe(ombuPath);
   });
 
+  it("plans a scoped replacement image without launcher mutation", async () => {
+    const projectRoot = makeTempDir("plexus-project-");
+    const stateRoot = makeTempDir("plexus-state-");
+    const imagesDir = makeTempDir("plexus-images-");
+    writeProjectConfig(projectRoot);
+    writeState(stateRoot, [
+      {
+        id: "dev",
+        imageName: "MyProject-dev",
+        assignedPort: 7123,
+        status: "failed",
+      },
+    ]);
+    const launcher = new FakeLauncherClient(imagesDir);
+
+    const result = await rescueImage({
+      operation: "plan",
+      projectRoot,
+      stateRoot,
+      workspaceId: "worktree-a",
+      sourceImageId: "dev",
+      targetImageId: "dev-replacement",
+      targetImageName: "MyProject-dev-replacement",
+      targetMcpPort: 7124,
+      pharoLauncherMcpClient: launcher,
+      now: () => new Date("2026-05-11T10:00:00.000Z"),
+    });
+
+    expect(result.targetPlan).toMatchObject({
+      targetImageId: "dev-replacement",
+      targetImageName: "MyProject-dev-replacement",
+      targetMcpPort: 7124,
+      templateName: "Pharo 13.0 - 64bit",
+      cleanupPolicy: "workspace_cleanup_only",
+      route: {
+        serverName: "pharo_gateway",
+        targetKey: "targetId",
+        imageArgument: "imageId",
+        imageId: "dev-replacement",
+      },
+      creationTool: {
+        name: "pharo_launcher_image_create",
+        arguments: {
+          newImageName: "MyProject-dev-replacement",
+          templateName: "Pharo 13.0 - 64bit",
+          noLaunch: true,
+        },
+      },
+    });
+    expect(launcher.calls.map((call) => call.name)).not.toContain(
+      "pharo_launcher_image_create",
+    );
+  });
+
   it("prepares and launches a fresh target image from the source template", async () => {
     const projectRoot = makeTempDir("plexus-project-");
     const stateRoot = makeTempDir("plexus-state-");
@@ -279,6 +333,20 @@ describe("image rescue", () => {
       assignedPort: 7100,
       pid: 4321,
       status: "running",
+      creation: {
+        role: "rescue",
+        source: {
+          kind: "template",
+          templateName: "Pharo 13.0 - 64bit",
+        },
+        cleanupPolicy: "workspace_cleanup_only",
+        route: {
+          serverName: "pharo_gateway",
+          targetKey: "targetId",
+          imageArgument: "imageId",
+          imageId: "dev-rescue",
+        },
+      },
     });
     expect(launcher.calls).toContainEqual({
       name: "pharo_launcher_image_create",
@@ -288,6 +356,45 @@ describe("image rescue", () => {
         noLaunch: true,
       },
     });
+  });
+
+  it("rejects history files outside the source image history directory", async () => {
+    const projectRoot = makeTempDir("plexus-project-");
+    const stateRoot = makeTempDir("plexus-state-");
+    const imagesDir = makeTempDir("plexus-images-");
+    const outsideDir = makeTempDir("plexus-outside-history-");
+    const outsideHistoryFile = path.join(outsideDir, "changes.ombu");
+    fs.writeFileSync(outsideHistoryFile, "ombu", "utf8");
+    writeProjectConfig(projectRoot);
+    writeState(stateRoot, [
+      {
+        id: "dev",
+        imageName: "MyProject-dev",
+        assignedPort: 7123,
+        status: "failed",
+      },
+      {
+        id: "dev-rescue",
+        imageName: "MyProject-dev-rescue",
+        assignedPort: 7100,
+        status: "running",
+      },
+    ]);
+
+    await expect(
+      rescueImage({
+        operation: "applyPlan",
+        projectRoot,
+        stateRoot,
+        workspaceId: "worktree-a",
+        sourceImageId: "dev",
+        targetImageId: "dev-rescue",
+        historyFilePath: outsideHistoryFile,
+        pharoLauncherMcpClient: new FakeLauncherClient(imagesDir),
+        imageMcpClient: new FakeImageMcpClient(),
+        confirm: true,
+      }),
+    ).rejects.toThrow("historyFilePath must be inside");
   });
 
   it("applies selected history entries while excluding suspected indexes", async () => {

@@ -157,6 +157,7 @@ export interface ProjectLifecycleOptions {
 
 export interface ProjectOpenToolInput {
   projectPath: string;
+  sourcePath?: string;
   stateRoot?: string;
   workspaceId?: string;
   targetId?: string;
@@ -173,6 +174,7 @@ export interface ProjectCloseToolInput {
 
 export interface ProjectStatusToolInput extends ProjectLifecycleRouteReference {
   projectPath?: string;
+  sourcePath?: string;
   stateRoot?: string;
   refreshHealth?: boolean;
   includeDiagnostics?: boolean;
@@ -391,6 +393,33 @@ export interface ProjectLifecycleRepositoryWorkspaceDiagnostic {
   };
 }
 
+export interface ProjectLifecycleImageRecoveryAction {
+  operation: Extract<ImageRescueOperation, "plan" | "prepareTarget">;
+  toolName: "plexus_rescue_image";
+  arguments: {
+    projectPath: string;
+    stateRoot: string;
+    workspaceId: string;
+    sourceImageId: string;
+    operation: Extract<ImageRescueOperation, "plan" | "prepareTarget">;
+  };
+}
+
+export interface ProjectLifecycleImageRecoveryDiagnostic {
+  imageId: string;
+  imageName: string;
+  status: "failed";
+  message: string;
+  paths: {
+    imagePath?: string;
+    imageDirectoryPath?: string;
+    changesPath?: string;
+    localDirectoryPath?: string;
+    ombuDirectoryPath?: string;
+  };
+  actions: ProjectLifecycleImageRecoveryAction[];
+}
+
 export interface ProjectLifecycleDiagnostics {
   toolRuntime: PlexusRuntimeIdentityDiagnostic;
   runtime: {
@@ -414,6 +443,7 @@ export interface ProjectLifecycleDiagnostics {
   launcherProfile: PharoLauncherMcpProfileDiagnostic;
   agentAccess: ProjectLifecycleAgentAccessDiagnostics;
   repositoryWorkspaces: ProjectLifecycleRepositoryWorkspaceDiagnostic[];
+  imageRecovery: ProjectLifecycleImageRecoveryDiagnostic[];
   imageMcpPorts: Array<{
     imageId: string;
     imageName: string;
@@ -1203,6 +1233,64 @@ function repositoryWorkspaceDiagnostics(
     );
 }
 
+function imageRecoveryDiagnostics(input: {
+  projectRoot: string;
+  stateRoot: string;
+  workspaceId: string;
+  state: ProjectState | undefined;
+}): ProjectLifecycleImageRecoveryDiagnostic[] {
+  return (input.state?.images ?? [])
+    .filter((image): image is ProjectImageState & { status: "failed" } =>
+      image.status === "failed",
+    )
+    .map((image) => {
+      const actionBase = {
+        projectPath: input.projectRoot,
+        stateRoot: input.stateRoot,
+        workspaceId: input.workspaceId,
+        sourceImageId: image.id,
+      };
+
+      return {
+        imageId: image.id,
+        imageName: image.imageName,
+        status: image.status,
+        message: `Image ${image.id} is failed; use scoped rescue before raw cleanup.`,
+        paths: {
+          ...(image.imagePath ? { imagePath: image.imagePath } : {}),
+          ...(image.imageDirectoryPath
+            ? { imageDirectoryPath: image.imageDirectoryPath }
+            : {}),
+          ...(image.changesPath ? { changesPath: image.changesPath } : {}),
+          ...(image.localDirectoryPath
+            ? { localDirectoryPath: image.localDirectoryPath }
+            : {}),
+          ...(image.ombuDirectoryPath
+            ? { ombuDirectoryPath: image.ombuDirectoryPath }
+            : {}),
+        },
+        actions: [
+          {
+            operation: "plan",
+            toolName: "plexus_rescue_image",
+            arguments: {
+              ...actionBase,
+              operation: "plan",
+            },
+          },
+          {
+            operation: "prepareTarget",
+            toolName: "plexus_rescue_image",
+            arguments: {
+              ...actionBase,
+              operation: "prepareTarget",
+            },
+          },
+        ],
+      };
+    });
+}
+
 function imageMcpPorts(
   state: ProjectState | undefined,
 ): ProjectLifecycleDiagnostics["imageMcpPorts"] {
@@ -1921,6 +2009,7 @@ export class PlexusProjectLifecycle {
     try {
       const openResult = await this.projectOpen({
         projectRoot: input.projectPath,
+        sourcePath: input.sourcePath,
         stateRoot: this.effectiveStateRoot(input.stateRoot),
         workspaceId: input.workspaceId,
         targetId: input.targetId,
@@ -2282,6 +2371,7 @@ export class PlexusProjectLifecycle {
         case "plexus_project_open":
           return this.open({
             projectPath: requireString(input, "projectPath"),
+            sourcePath: optionalString(input, "sourcePath"),
             stateRoot: optionalString(input, "stateRoot"),
             workspaceId: optionalString(input, "workspaceId"),
             targetId: optionalString(input, "targetId"),
@@ -2298,6 +2388,7 @@ export class PlexusProjectLifecycle {
         case "plexus_project_status":
           return this.status({
             projectPath: optionalString(input, "projectPath"),
+            sourcePath: optionalString(input, "sourcePath"),
             projectId: optionalString(input, "projectId"),
             workspaceId: optionalString(input, "workspaceId"),
             targetId: optionalString(input, "targetId"),
@@ -2405,6 +2496,10 @@ export class PlexusProjectLifecycle {
     if (gatewayReconciliation) {
       state = loadProjectState(statePath);
     }
+    const requestedSourcePath = input.sourcePath ?? state?.sourcePath;
+    const sourcePath = requestedSourcePath
+      ? path.resolve(requestedSourcePath)
+      : projectRoot;
     const gateway = gatewayReconciliation
       ? gatewayWithoutRuntimeIdentity(projectGatewayStatus(config, state))
       : projectGatewayStatus(config, state);
@@ -2464,6 +2559,7 @@ export class PlexusProjectLifecycle {
     });
     const context = buildScopedProjectContext({
       projectRoot,
+      sourcePath,
       projectConfig: config,
       workspaceId: scope.workspaceId,
       targetId: scope.targetId,
@@ -2503,7 +2599,7 @@ export class PlexusProjectLifecycle {
       project: projectDiagnostics(config, state),
       scope: {
         projectRoot,
-        sourcePath: projectRoot,
+        sourcePath,
         stateRoot,
         statePath,
         projectId: scope.projectId,
@@ -2535,6 +2631,12 @@ export class PlexusProjectLifecycle {
         state,
         scope,
       ),
+      imageRecovery: imageRecoveryDiagnostics({
+        projectRoot,
+        stateRoot,
+        workspaceId: scope.workspaceId,
+        state,
+      }),
       imageMcpPorts: imageMcpPorts(state),
       imagePortCoordination: imagePortCoordinationDiagnostics(
         projectRoot,

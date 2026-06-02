@@ -4,6 +4,7 @@ import {
   loadProjectConfig,
   projectConfigId,
   resolveProjectRuntimePolicy,
+  type ProjectConfig,
   type ProjectImageConfig,
 } from "./projectConfig.js";
 import {
@@ -23,6 +24,7 @@ import {
   runtimeStatusForImages,
   sanitizeRuntimeId,
   saveProjectState,
+  type ProjectImageCreationRouteState,
   type ProjectImageState,
   type ProjectPortRange,
   type ProjectState,
@@ -173,6 +175,25 @@ export interface ImageRescueChangeResult {
   failureClass?: ImageRescueFailureClass;
 }
 
+export interface ImageRescueTargetPlan {
+  targetImageId: string;
+  targetImageName: string;
+  targetMcpPort: number;
+  templateName: string;
+  templateCategory?: string;
+  cleanupPolicy: "workspace_cleanup_only";
+  route: ProjectImageCreationRouteState;
+  creationTool: {
+    name: "pharo_launcher_image_create";
+    arguments: {
+      newImageName: string;
+      templateName: string;
+      templateCategory?: string;
+      noLaunch: true;
+    };
+  };
+}
+
 export interface ImageRescueResult {
   ok: boolean;
   operation: ImageRescueOperation;
@@ -186,6 +207,7 @@ export interface ImageRescueResult {
   historyFiles?: ImageRescueHistoryFile[];
   historyListing?: unknown;
   selectedHistoryFilePath?: string;
+  targetPlan?: ImageRescueTargetPlan;
   repositoryResults?: ImageRescueRepositoryResult[];
   changeResult?: ImageRescueChangeResult;
   warnings: string[];
@@ -803,6 +825,31 @@ function selectedHistoryFile(
   return historyFilePath ?? historyFiles[0]?.path;
 }
 
+function pathIsInsideDirectory(filePath: string, directoryPath: string): boolean {
+  const relativePath = path.relative(
+    path.resolve(directoryPath),
+    path.resolve(filePath),
+  );
+  return (
+    relativePath === "" ||
+    (relativePath.length > 0 &&
+      !relativePath.startsWith("..") &&
+      !path.isAbsolute(relativePath))
+  );
+}
+
+function assertPathInsideDirectory(
+  filePath: string,
+  directoryPath: string | undefined,
+  label: string,
+): void {
+  if (!directoryPath || !pathIsInsideDirectory(filePath, directoryPath)) {
+    throw new ImageRescueError(
+      `${label} must be inside ${directoryPath ?? "the source image boundary"}`,
+    );
+  }
+}
+
 async function listHistoryFilesThroughImage(
   imageMcpClient: ImageRescueMcpClient | undefined,
   image: ProjectImageState | undefined,
@@ -946,6 +993,75 @@ async function createTargetImage(
   assertLauncherOk(result, "pharo_launcher_image_create");
 }
 
+function assertWorkspaceImagePolicyAllowsTarget(
+  config: ProjectConfig,
+  state: ProjectState,
+  targetImageId: string,
+): void {
+  const maxCount = resolveProjectRuntimePolicy(config).workspaceImages?.maxCount;
+  if (maxCount === undefined || state.images.length < maxCount) {
+    return;
+  }
+
+  throw new ImageRescueError(
+    `Workspace image policy allows at most ${maxCount} image${maxCount === 1 ? "" : "s"}; rescue target image ${targetImageId} is rejected`,
+  );
+}
+
+function targetRoute(targetImageId: string): ProjectImageCreationRouteState {
+  return {
+    serverName: "pharo_gateway",
+    targetKey: "targetId",
+    imageArgument: "imageId",
+    imageId: targetImageId,
+  };
+}
+
+function buildTargetPlan(input: {
+  state: ProjectState;
+  config: ProjectConfig;
+  targetImageId: string;
+  targetImageName: string;
+  templateName: string;
+  templateCategory?: string;
+  targetMcpPort?: number;
+  portRange?: ProjectPortRange;
+}): ImageRescueTargetPlan {
+  assertWorkspaceImagePolicyAllowsTarget(
+    input.config,
+    input.state,
+    input.targetImageId,
+  );
+  const targetMcpPort = allocatePort(
+    input.state,
+    input.targetMcpPort,
+    input.portRange ?? resolveProjectRuntimePolicy(input.config).imagePorts.range,
+  );
+
+  return {
+    targetImageId: input.targetImageId,
+    targetImageName: input.targetImageName,
+    targetMcpPort,
+    templateName: input.templateName,
+    ...(input.templateCategory
+      ? { templateCategory: input.templateCategory }
+      : {}),
+    cleanupPolicy: "workspace_cleanup_only",
+    route: targetRoute(input.targetImageId),
+    creationTool: {
+      name: "pharo_launcher_image_create",
+      arguments: {
+        newImageName: input.targetImageName,
+        templateName: input.templateName,
+        ...(input.templateCategory
+          ? { templateCategory: input.templateCategory }
+          : {}),
+        noLaunch: true,
+      },
+    },
+  };
+}
+
 export async function rescueImage(
   options: ImageRescueOptions,
 ): Promise<ImageRescueResult> {
@@ -1006,14 +1122,53 @@ export async function rescueImage(
     };
     const historyDirectoryPath =
       options.sourceHistoryDirectoryPath ?? paths.ombuDirectoryPath;
+    if (options.sourceHistoryDirectoryPath) {
+      assertPathInsideDirectory(
+        options.sourceHistoryDirectoryPath,
+        paths.localDirectoryPath ?? paths.imageDirectoryPath,
+        "sourceHistoryDirectoryPath",
+      );
+    }
     const historyFiles = listOmbuFiles(historyDirectoryPath);
     const selectedHistoryFilePath = selectedHistoryFile(
       options.historyFilePath,
       historyFiles,
     );
+    if (selectedHistoryFilePath) {
+      assertPathInsideDirectory(
+        selectedHistoryFilePath,
+        historyDirectoryPath,
+        "historyFilePath",
+      );
+    }
     const targetImageId =
       options.targetImageId ?? defaultTargetImageId(options.sourceImageId);
     let targetImage = state.images.find((image) => image.id === targetImageId);
+    const shouldPlanReplacement =
+      options.operation === "plan" || options.operation === "prepareTarget";
+    const plannedTargetImageName = shouldPlanReplacement
+      ? options.targetImageName ??
+        defaultTargetImageName(sourceImage.imageName, now)
+      : undefined;
+    const plannedTemplateName = shouldPlanReplacement
+      ? options.targetTemplateName ?? launcherImage?.originTemplate?.name
+      : undefined;
+    const replacementPlan =
+      shouldPlanReplacement &&
+      !targetImage &&
+      plannedTargetImageName &&
+      plannedTemplateName
+        ? buildTargetPlan({
+            state,
+            config,
+            targetImageId,
+            targetImageName: plannedTargetImageName,
+            targetMcpPort: options.targetMcpPort,
+            templateName: plannedTemplateName,
+            templateCategory: options.targetTemplateCategory,
+            portRange: options.portRange,
+          })
+        : undefined;
     let historyListing: unknown;
 
     if (options.operation === "plan" && options.includeEntryCounts) {
@@ -1057,6 +1212,7 @@ export async function rescueImage(
         historyFiles,
         historyListing,
         selectedHistoryFilePath,
+        ...(replacementPlan ? { targetPlan: replacementPlan } : {}),
         warnings,
       };
     }
@@ -1066,12 +1222,7 @@ export async function rescueImage(
         throw new ImageRescueError(`Target image id already exists: ${targetImageId}`);
       }
 
-      const targetImageName =
-        options.targetImageName ??
-        defaultTargetImageName(sourceImage.imageName, now);
-      const templateName =
-        options.targetTemplateName ?? launcherImage?.originTemplate?.name;
-      if (!templateName) {
+      if (!replacementPlan) {
         throw new ImageRescueError(
           "targetTemplateName is required because the source image origin template is unknown",
         );
@@ -1079,22 +1230,30 @@ export async function rescueImage(
 
       await createTargetImage(
         launcherClient,
-        targetImageName,
-        templateName,
-        options.targetTemplateCategory,
-      );
-
-      const assignedPort = allocatePort(
-        state,
-        options.targetMcpPort,
-        options.portRange ??
-          resolveProjectRuntimePolicy(config).imagePorts.range,
+        replacementPlan.targetImageName,
+        replacementPlan.templateName,
+        replacementPlan.templateCategory,
       );
       targetImage = {
         id: targetImageId,
-        imageName: targetImageName,
-        assignedPort,
+        imageName: replacementPlan.targetImageName,
+        assignedPort: replacementPlan.targetMcpPort,
         status: "starting",
+        creation: {
+          role: "rescue",
+          source: {
+            kind: "template",
+            ...(sourceConfig.create?.profileId
+              ? { profileId: sourceConfig.create.profileId }
+              : {}),
+            templateName: replacementPlan.templateName,
+            ...(replacementPlan.templateCategory
+              ? { templateCategory: replacementPlan.templateCategory }
+              : {}),
+          },
+          cleanupPolicy: replacementPlan.cleanupPolicy,
+          route: replacementPlan.route,
+        },
       };
       state.images.push(targetImage);
       updateImageMetadata(sourceImage, sourceSnapshot);
@@ -1104,8 +1263,8 @@ export async function rescueImage(
       const targetConfig = targetConfigFromSource(
         sourceConfig,
         targetImageId,
-        targetImageName,
-        assignedPort,
+        replacementPlan.targetImageName,
+        replacementPlan.targetMcpPort,
       );
       const startupScript = writeImageStartupScript({
         projectRoot,
@@ -1181,6 +1340,7 @@ export async function rescueImage(
         historyFiles,
         historyListing,
         selectedHistoryFilePath,
+        ...(replacementPlan ? { targetPlan: replacementPlan } : {}),
         repositoryResults,
         changeResult,
         warnings,
@@ -1200,6 +1360,7 @@ export async function rescueImage(
       historyFiles,
       historyListing,
       selectedHistoryFilePath,
+      ...(replacementPlan ? { targetPlan: replacementPlan } : {}),
       warnings,
     };
   } finally {
