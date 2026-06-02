@@ -36,6 +36,11 @@ may treat that same path as the workspace source path unless it explicitly
 declares another source path. PLexus reports the resolved source path in scoped
 status as the default place where project code should be loaded from.
 
+Editable image repository workspaces use `repository.originPath` when it is
+configured. Relative `originPath` values resolve under the workspace source path
+supplied at open time; when `originPath` is omitted, local copy/worktree
+materialization uses that workspace source path directly.
+
 The `workspaceId` comes from:
 
 ```text
@@ -153,6 +158,17 @@ The cache stores manifests and preparation scripts under:
 ```text
 <PLEXUS_HOME>/image-cache
 ```
+
+PLexus-managed images also point Iceberg/Metacello dependency clones at:
+
+```text
+<PLEXUS_HOME>/repositories/iceberg
+```
+
+After managed loads, PLexus unregisters shared-cache repositories from Iceberg
+unless the path matches one of the image's declared editable repository
+workspaces. The loaded packages stay in the image; status diagnostics show which
+cache repositories were detached.
 
 Cache base images live in an explicit home-level pharo-launcher-mcp profile.
 Runtime images still belong to project-owned launcher profiles, so cache

@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import {
+  imageRepositoryWorkspaceConfigs,
   projectImageDisplayMode,
   projectConfigId,
   projectMcpStartupMode,
@@ -9,6 +10,7 @@ import {
   type ProjectImageConfig,
   type ProjectImageCreationCleanupPolicy,
   type ProjectPharoMcpLoadPolicy,
+  type ProjectImageRepositoryWorkspaceConfig,
   type ProjectImageRepositoryWorkspaceMaterializationStrategy,
   type ProjectGatewayMode,
   type ProjectRuntimePortRange,
@@ -97,6 +99,10 @@ export type ProjectImageRepositoryWorkspaceLoadState =
 export type ProjectImageRepositoryWorkspaceRegistrationState =
   | "pending"
   | "registered"
+  | "failed"
+  | "skipped";
+export type ProjectImageDependencyRepositoryDetachState =
+  | "detached"
   | "failed"
   | "skipped";
 export type ProjectImagePharoMcpLoadState =
@@ -194,6 +200,21 @@ export interface ProjectImageRepositoryWorkspaceState {
   cleanupState?: ProjectImageRepositoryWorkspaceCleanupRecord;
 }
 
+export interface ProjectImageDetachedDependencyRepositoryState {
+  location: string;
+  name?: string;
+}
+
+export interface ProjectImageDependencyRepositoryDetachStatus {
+  state: ProjectImageDependencyRepositoryDetachState;
+  statusPath: string;
+  cachePath?: string;
+  detachedCount: number;
+  repositories: ProjectImageDetachedDependencyRepositoryState[];
+  message?: string;
+  error?: string;
+}
+
 export interface ProjectImagePharoMcpLoadStatus {
   state: ProjectImagePharoMcpLoadState;
   statusPath: string;
@@ -218,7 +239,9 @@ export interface ProjectImageState {
   lease?: ProjectImageLeaseState;
   pharoMcpContract?: ProjectImagePharoMcpContractState;
   pharoMcpLoad?: ProjectImagePharoMcpLoadStatus;
+  dependencyRepositoryDetach?: ProjectImageDependencyRepositoryDetachStatus;
   repositoryWorkspace?: ProjectImageRepositoryWorkspaceState;
+  repositoryWorkspaces?: ProjectImageRepositoryWorkspaceState[];
   imagePath?: string;
   imageDirectoryPath?: string;
   changesPath?: string;
@@ -567,10 +590,17 @@ export function loadProjectState(filePath: string): ProjectState | undefined {
     return undefined;
   }
 
-  return JSON.parse(fs.readFileSync(filePath, "utf8")) as ProjectState;
+  const state = JSON.parse(fs.readFileSync(filePath, "utf8")) as ProjectState;
+  for (const image of state.images) {
+    syncProjectImageRepositoryWorkspaceAliases(image);
+  }
+  return state;
 }
 
 export function saveProjectState(filePath: string, state: ProjectState): void {
+  for (const image of state.images) {
+    syncProjectImageRepositoryWorkspaceAliases(image);
+  }
   fs.mkdirSync(dirnamePathLike(filePath), { recursive: true });
   fs.writeFileSync(filePath, `${JSON.stringify(state, null, 2)}\n`, "utf8");
 }
@@ -693,11 +723,13 @@ export function projectImageRepositoryWorkspaceState(
   image: ProjectImageConfig,
   context: ProjectImageNameTemplateContext,
 ): ProjectImageRepositoryWorkspaceState | undefined {
-  const workspace = image.repositoryWorkspace;
-  if (!workspace) {
-    return undefined;
-  }
+  return projectImageRepositoryWorkspaceStates(image, context)[0];
+}
 
+function projectImageRepositoryWorkspaceConfigState(
+  workspace: ProjectImageRepositoryWorkspaceConfig,
+  context: ProjectImageNameTemplateContext,
+): ProjectImageRepositoryWorkspaceState {
   const pathContext = {
     ...context,
     repositoryId: workspace.repository.id,
@@ -742,6 +774,41 @@ export function projectImageRepositoryWorkspaceState(
     dirtyState: "unknown",
     loadState: "not-loaded",
   };
+}
+
+export function projectImageRepositoryWorkspaceStates(
+  image: ProjectImageConfig,
+  context: ProjectImageNameTemplateContext,
+): ProjectImageRepositoryWorkspaceState[] {
+  return imageRepositoryWorkspaceConfigs(image).map((workspace) =>
+    projectImageRepositoryWorkspaceConfigState(workspace, context),
+  );
+}
+
+export function projectImageRepositoryWorkspaces(
+  image: Pick<
+    ProjectImageState,
+    "repositoryWorkspace" | "repositoryWorkspaces"
+  >,
+): ProjectImageRepositoryWorkspaceState[] {
+  if (image.repositoryWorkspaces && image.repositoryWorkspaces.length > 0) {
+    return image.repositoryWorkspaces;
+  }
+  return image.repositoryWorkspace ? [image.repositoryWorkspace] : [];
+}
+
+export function syncProjectImageRepositoryWorkspaceAliases(
+  image: ProjectImageState,
+): void {
+  const workspaces = projectImageRepositoryWorkspaces(image);
+  if (workspaces.length === 0) {
+    delete image.repositoryWorkspace;
+    delete image.repositoryWorkspaces;
+    return;
+  }
+
+  image.repositoryWorkspaces = workspaces;
+  image.repositoryWorkspace = workspaces[0];
 }
 
 export function runtimeStatusForImages(
@@ -798,7 +865,7 @@ export function createProjectState(
       targetId,
       imageId: image.id,
     };
-    const repositoryWorkspace = projectImageRepositoryWorkspaceState(
+    const repositoryWorkspaces = projectImageRepositoryWorkspaceStates(
       image,
       imageContext,
     );
@@ -838,7 +905,12 @@ export function createProjectState(
       status: image.active ? "starting" : "stopped",
       ...(previousImage?.lease ? { lease: previousImage.lease } : {}),
       ...supportState,
-      ...(repositoryWorkspace ? { repositoryWorkspace } : {}),
+      ...(repositoryWorkspaces.length > 0
+        ? {
+            repositoryWorkspaces,
+            repositoryWorkspace: repositoryWorkspaces[0],
+          }
+        : {}),
     };
   });
 

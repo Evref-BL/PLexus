@@ -2280,6 +2280,107 @@ describe("project lifecycle tools", () => {
     });
   });
 
+  it("reports multiple planned repository workspaces from status diagnostics before open", async () => {
+    const projectRoot = makeTempDir("plexus-project-");
+    const stateRoot = makeTempDir("plexus-state-");
+    writeProjectConfig(projectRoot, {
+      images: [
+        {
+          id: "dev",
+          imageName: "MyProject-{workspaceId}-dev",
+          active: true,
+          mcp: {
+            port: 7123,
+            loadScript: "pharo/load-mcp.st",
+          },
+          repositoryWorkspaces: [
+            {
+              repository: {
+                id: "my-project",
+                componentId: "my-project",
+              },
+              sourceDirectory: "src",
+              baseline: "MyProject",
+              materialization: {
+                strategy: "copy",
+              },
+            },
+            {
+              repository: {
+                id: "dependency",
+                remoteUrl: "git@github.com:Example/Dependency.git",
+              },
+              sourceDirectory: "repository",
+              baseline: "Dependency",
+              materialization: {
+                strategy: "clone",
+              },
+            },
+          ],
+        },
+      ],
+    });
+    const lifecycle = new PlexusProjectLifecycle({
+      gateway: {
+        checks: {
+          isPortListening: async () => false,
+        },
+      },
+    });
+
+    const result = await lifecycle.handleTool("plexus_project_status", {
+      projectPath: projectRoot,
+      stateRoot,
+      workspaceId: "worktree-a",
+      includeDiagnostics: true,
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
+      data: {
+        context: {
+          images: [
+            {
+              imageId: "dev",
+              repositoryWorkspaces: [
+                {
+                  path: "image-local://dev/pharo-local/iceberg/my-project",
+                  baseline: "MyProject",
+                },
+                {
+                  path: "image-local://dev/pharo-local/iceberg/dependency",
+                  baseline: "Dependency",
+                },
+              ],
+            },
+          ],
+        },
+        diagnostics: {
+          repositoryWorkspaces: [
+            {
+              imageId: "dev",
+              workspace: {
+                repository: {
+                  id: "my-project",
+                },
+                baseline: "MyProject",
+              },
+            },
+            {
+              imageId: "dev",
+              workspace: {
+                repository: {
+                  id: "dependency",
+                },
+                baseline: "Dependency",
+              },
+            },
+          ],
+        },
+      },
+    });
+  });
+
   it("reports live dirty repository workspaces that need review from status diagnostics", async () => {
     const projectRoot = makeTempDir("plexus-project-");
     const stateRoot = makeTempDir("plexus-state-");
@@ -2349,6 +2450,87 @@ describe("project lifecycle tools", () => {
                 reviewRequired: true,
                 recommendedAction: "review",
                 message: expect.stringContaining("uncommitted changes"),
+              },
+            },
+          ],
+        },
+      },
+    });
+  });
+
+  it("reports detached dependency repositories from status diagnostics", async () => {
+    const projectRoot = makeTempDir("plexus-project-");
+    const stateRoot = makeTempDir("plexus-state-");
+    writeProjectConfig(projectRoot);
+    saveProjectState(statePath(stateRoot), {
+      projectId: "project-123",
+      projectName: "my-project",
+      workspaceId: "worktree-a",
+      targetId: "project-123--worktree-a",
+      updatedAt: "2026-04-25T10:00:00.000Z",
+      images: [
+        {
+          id: "dev",
+          imageName: "MyProject-dev",
+          status: "running",
+          dependencyRepositoryDetach: {
+            state: "detached",
+            statusPath: path.join(
+              stateRoot,
+              "projects",
+              "project-123",
+              "workspaces",
+              "worktree-a",
+              "scripts",
+              "dependency-repository-detach-dev.properties",
+            ),
+            cachePath: "/plexus-home/repositories/iceberg",
+            detachedCount: 1,
+            repositories: [
+              {
+                name: "TinyLogger",
+                location: "/plexus-home/repositories/iceberg/jecisc/TinyLogger",
+              },
+            ],
+          },
+        },
+      ],
+    });
+    const lifecycle = new PlexusProjectLifecycle({
+      gateway: {
+        checks: {
+          isPortListening: async () => false,
+        },
+      },
+    });
+
+    const result = await lifecycle.handleTool("plexus_project_status", {
+      projectPath: projectRoot,
+      stateRoot,
+      workspaceId: "worktree-a",
+      includeDiagnostics: true,
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
+      data: {
+        diagnostics: {
+          dependencyRepositoryDetaches: [
+            {
+              imageId: "dev",
+              imageName: "MyProject-dev",
+              status: "running",
+              detach: {
+                state: "detached",
+                cachePath: "/plexus-home/repositories/iceberg",
+                detachedCount: 1,
+                repositories: [
+                  {
+                    name: "TinyLogger",
+                    location:
+                      "/plexus-home/repositories/iceberg/jecisc/TinyLogger",
+                  },
+                ],
               },
             },
           ],

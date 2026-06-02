@@ -4,10 +4,16 @@ import {
   projectMcpLoadPolicy,
   projectMcpStartupMode,
   type ProjectConfig,
+  type ProjectHomeDependencyRepositoryNetworkPolicy,
   type ProjectImageConfig,
   type ProjectImageGitTransport,
   type ProjectImageSshConfig,
 } from "./projectConfig.js";
+import {
+  homeDependencyRepositoryCachePath,
+  homeDependencyRepositoryNetworkPolicy,
+  resolvePlexusHomePath,
+} from "./plexusHome.js";
 import {
   dirnamePathLike,
   isAbsolutePathLike,
@@ -15,6 +21,7 @@ import {
   resolvePathLike,
 } from "./pathStyle.js";
 import {
+  projectImageRepositoryWorkspaces,
   projectStateDirectoryPath,
   projectStateRootForConfig,
   type ProjectImageState,
@@ -56,6 +63,10 @@ export interface GenerateImageStartupScriptOptions {
   endpointHandoffPath?: string;
   pharoMcpLoadStatusPath?: string;
   repositoryWorkspaceLoadStatusPath?: string;
+  repositoryWorkspaceLoadStatusPaths?: Record<string, string>;
+  dependencyRepositoryDetachStatusPath?: string;
+  dependencyRepositoryCachePath?: string;
+  dependencyRepositoryNetworkPolicy?: ProjectHomeDependencyRepositoryNetworkPolicy;
   repository?: PharoMcpMetacelloRepository;
 }
 
@@ -82,6 +93,8 @@ export interface WrittenImageStartupScript {
   source: string;
   pharoMcpLoadStatusPath?: string;
   repositoryWorkspaceLoadStatusPath?: string;
+  repositoryWorkspaceLoadStatusPaths?: Record<string, string>;
+  dependencyRepositoryDetachStatusPath?: string;
 }
 
 export class ProjectStartupScriptError extends Error {
@@ -120,15 +133,25 @@ export function imageStartupScriptPath(
 }
 
 export function imageRepositoryWorkspaceLoadStatusPath(
-  options: ProjectImageStartupScriptPathOptions,
+  options: ProjectImageStartupScriptPathOptions & { repositoryId?: string },
 ): string {
   const imageScriptName = imageStartupScriptFileName(options.imageId)
     .replace(/^start-/, "")
     .replace(/\.st$/, ".properties");
+  const repositorySuffix = options.repositoryId
+    ? `-${statusPathSegment(options.repositoryId)}`
+    : "";
   return joinPathLike(
     projectScriptsDirectoryPath(options),
-    `repository-workspace-load-${imageScriptName}`,
+    `repository-workspace-load-${imageScriptName.replace(
+      /\.properties$/,
+      `${repositorySuffix}.properties`,
+    )}`,
   );
+}
+
+function statusPathSegment(value: string): string {
+  return value.replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || "repo";
 }
 
 export function imagePharoMcpLoadStatusPath(
@@ -140,6 +163,18 @@ export function imagePharoMcpLoadStatusPath(
   return joinPathLike(
     projectScriptsDirectoryPath(options),
     `pharo-mcp-load-${imageScriptName}`,
+  );
+}
+
+export function imageDependencyRepositoryDetachStatusPath(
+  options: ProjectImageStartupScriptPathOptions,
+): string {
+  const imageScriptName = imageStartupScriptFileName(options.imageId)
+    .replace(/^start-/, "")
+    .replace(/\.st$/, ".properties");
+  return joinPathLike(
+    projectScriptsDirectoryPath(options),
+    `dependency-repository-detach-${imageScriptName}`,
   );
 }
 
@@ -348,11 +383,21 @@ function generateEndpointHandoffStartupScript(options: {
 function generateRepositoryWorkspaceLoadScript(options: {
   imageState: ProjectImageState;
   loadStatusPath?: string;
+  loadStatusPaths?: Record<string, string>;
 }): string {
-  const workspace = options.imageState.repositoryWorkspace;
-  if (!workspace || !options.loadStatusPath) {
+  const workspaces = projectImageRepositoryWorkspaces(options.imageState);
+  if (workspaces.length === 0) {
     return "";
   }
+
+  return workspaces
+    .map((workspace) => {
+      const loadStatusPath =
+        options.loadStatusPaths?.[workspace.repository.id] ??
+        (workspaces.length === 1 ? options.loadStatusPath : undefined);
+      if (!loadStatusPath) {
+        return "";
+      }
 
   const sourcePath = joinPathLike(workspace.path, workspace.sourceDirectory);
   const loadCommand = workspace.loadGroup
@@ -369,7 +414,7 @@ function generateRepositoryWorkspaceLoadScript(options: {
 
   return `
 "Load the configured Pharo project from the image-local repository workspace."
-repositoryLoadStatusFile := ${smalltalkPath(options.loadStatusPath)} asFileReference.
+repositoryLoadStatusFile := ${smalltalkPath(loadStatusPath)} asFileReference.
 repositorySourcePath := ${smalltalkPath(sourcePath)}.
 repositoryLoadStatusFile exists ifTrue: [ repositoryLoadStatusFile delete ].
 repositoryLoadStatusWriter := [ :status :message |
@@ -378,6 +423,10 @@ repositoryLoadStatusWriter := [ :status :message |
     stream
       nextPutAll: 'status=';
       nextPutAll: status;
+      cr.
+    stream
+      nextPutAll: 'repositoryId=';
+      nextPutAll: ${smalltalkString(workspace.repository.id)};
       cr.
     stream
       nextPutAll: 'sourcePath=';
@@ -414,6 +463,155 @@ ${loadCommand}.
 ] on: Error do: [ :error |
   repositoryLoadStatusWriter value: 'failed' value: error description.
   error pass ].
+`;
+    })
+    .filter((script) => script.length > 0)
+    .join("\n");
+}
+
+function generateDependencyRepositoryCacheSetupScript(options: {
+  cachePath?: string;
+  networkPolicy?: ProjectHomeDependencyRepositoryNetworkPolicy;
+}): string {
+  if (!options.cachePath) {
+    return "";
+  }
+
+  const networkPolicy = options.networkPolicy ?? "online";
+  return `
+"Configure the PLexus-owned dependency repository cache for Metacello/Iceberg."
+plexusDependencyRepositoryCachePath := ${smalltalkPath(options.cachePath)}.
+plexusDependencyRepositoryNetworkPolicy := ${smalltalkString(networkPolicy)}.
+plexusDependencyRepositoryCachePath asFileReference ensureCreateDirectory.
+Smalltalk globals
+  at: #PLexusDependencyRepositoryCachePath
+  put: plexusDependencyRepositoryCachePath.
+Smalltalk globals
+  at: #PLexusDependencyRepositoryNetworkPolicy
+  put: plexusDependencyRepositoryNetworkPolicy.
+((Smalltalk globals includesKey: #Iceberg)
+  and: [ Smalltalk globals includesKey: #IceRepository ])
+    ifTrue: [
+      (Smalltalk globals at: #Iceberg)
+        enableMetacelloIntegration: true.
+      (Smalltalk globals at: #IceRepository)
+        shareRepositoriesBetweenImages: true;
+        sharedRepositoriesLocationString: plexusDependencyRepositoryCachePath ].
+`;
+}
+
+function generateDependencyRepositoryDetachScript(options: {
+  cachePath?: string;
+  statusPath?: string;
+  editableRepositoryPaths?: string[];
+}): string {
+  if (!options.cachePath || !options.statusPath) {
+    return "";
+  }
+
+  const editableRepositoryPaths = options.editableRepositoryPaths ?? [];
+  const editablePathsLiteral =
+    editableRepositoryPaths.length === 0
+      ? "#()"
+      : `{ ${editableRepositoryPaths
+          .map((repositoryPath) => smalltalkPath(repositoryPath))
+          .join(". ")} }`;
+
+  return `
+"Detach shared dependency repositories that PLexus loaded from the home cache."
+plexusDependencyRepositoryDetachStatusFile := ${smalltalkPath(options.statusPath)} asFileReference.
+plexusDependencyRepositoryDetachStatusFile exists
+  ifTrue: [ plexusDependencyRepositoryDetachStatusFile delete ].
+plexusDependencyRepositoryCachePath := ${smalltalkPath(options.cachePath)}.
+plexusEditableRepositoryPaths := ${editablePathsLiteral}.
+plexusNormalizePath := [ :path |
+  | normalized |
+  normalized := path ifNil: [ '' ] ifNotNil: [
+    path asString copyReplaceAll: '\\' with: '/' ].
+  [ normalized notEmpty and: [ normalized last = $/ ] ]
+    whileTrue: [ normalized := normalized allButLast ].
+  normalized ].
+plexusRepositoryLocationString := [ :repository |
+  plexusNormalizePath value: ([
+    repository location fullName ]
+      on: Error
+      do: [ :ignored |
+        [ repository location asString ]
+          on: Error
+          do: [ :secondIgnored | '' ] ]) ].
+plexusRepositoryNameString := [ :repository |
+  [ repository name asString ]
+    on: Error
+    do: [ :ignored | '' ] ].
+plexusDependencyRepositoryDetachStatusWriter := [ :status :message :detachedRepositories |
+  plexusDependencyRepositoryDetachStatusFile parent ensureCreateDirectory.
+  plexusDependencyRepositoryDetachStatusFile writeStreamDo: [ :stream |
+    stream
+      nextPutAll: 'status=';
+      nextPutAll: status;
+      cr.
+    stream
+      nextPutAll: 'cachePath=';
+      nextPutAll: (plexusNormalizePath value: plexusDependencyRepositoryCachePath);
+      cr.
+    stream
+      nextPutAll: 'detachedCount=';
+      nextPutAll: detachedRepositories size asString;
+      cr.
+    message ifNotNil: [
+      stream
+        nextPutAll: 'message=';
+        nextPutAll: message asString;
+        cr ].
+    detachedRepositories withIndexDo: [ :repository :index |
+      stream
+        nextPutAll: 'repository.';
+        nextPutAll: index asString;
+        nextPutAll: '.name=';
+        nextPutAll: (plexusRepositoryNameString value: repository);
+        cr.
+      stream
+        nextPutAll: 'repository.';
+        nextPutAll: index asString;
+        nextPutAll: '.location=';
+        nextPutAll: (plexusRepositoryLocationString value: repository);
+        cr ] ] ].
+(Smalltalk globals includesKey: #IceRepository)
+  ifTrue: [
+    [
+      | cachePath editablePaths repositoriesToDetach |
+      cachePath := plexusNormalizePath value: plexusDependencyRepositoryCachePath.
+      editablePaths := plexusEditableRepositoryPaths collect: [ :each |
+        plexusNormalizePath value: each ].
+      repositoriesToDetach := OrderedCollection new.
+      (Smalltalk globals at: #IceRepository) registry do: [ :repository |
+        | repositoryLocation isInCache isEditable |
+        repositoryLocation := plexusRepositoryLocationString value: repository.
+        isInCache := repositoryLocation = cachePath or: [
+          repositoryLocation beginsWith: cachePath , '/' ].
+        isEditable := editablePaths includes: repositoryLocation.
+        (isInCache and: [ isEditable not ])
+          ifTrue: [ repositoriesToDetach add: repository ] ].
+      repositoriesToDetach do: [ :repository |
+        (Smalltalk globals at: #IceRepository) registry
+          remove: repository
+          ifAbsent: [  ] ].
+      plexusDependencyRepositoryDetachStatusWriter
+        value: 'detached'
+        value: nil
+        value: repositoriesToDetach ]
+      on: Error
+      do: [ :error |
+        plexusDependencyRepositoryDetachStatusWriter
+          value: 'failed'
+          value: error description
+          value: #(  ).
+        error pass ] ]
+  ifFalse: [
+    plexusDependencyRepositoryDetachStatusWriter
+      value: 'skipped'
+      value: 'IceRepository is not available.'
+      value: #(  ) ].
 `;
 }
 
@@ -558,10 +756,24 @@ ${failureHandler} ].`;
 export function generateImageStartupScript(
   options: GenerateImageStartupScriptOptions,
 ): string {
+  const dependencyRepositoryCacheSetupScript =
+    generateDependencyRepositoryCacheSetupScript({
+      cachePath: options.dependencyRepositoryCachePath,
+      networkPolicy: options.dependencyRepositoryNetworkPolicy,
+    });
   const repositoryWorkspaceLoadScript = generateRepositoryWorkspaceLoadScript({
     imageState: options.imageState,
     loadStatusPath: options.repositoryWorkspaceLoadStatusPath,
+    loadStatusPaths: options.repositoryWorkspaceLoadStatusPaths,
   });
+  const dependencyRepositoryDetachScript =
+    generateDependencyRepositoryDetachScript({
+      cachePath: options.dependencyRepositoryCachePath,
+      statusPath: options.dependencyRepositoryDetachStatusPath,
+      editableRepositoryPaths: projectImageRepositoryWorkspaces(
+        options.imageState,
+      ).map((workspace) => workspace.path),
+    });
 
   const startupMode = projectMcpStartupMode(options.imageConfig.mcp);
   if (
@@ -576,9 +788,11 @@ export function generateImageStartupScript(
 
     return `"Generated by PLexus. Do not edit."
 
-| repositoryLoadStatusFile repositorySourcePath repositorySourceDirectory repositoryLoadStatusWriter |
+| plexusDependencyRepositoryCachePath plexusDependencyRepositoryNetworkPolicy plexusDependencyRepositoryDetachStatusFile plexusEditableRepositoryPaths plexusNormalizePath plexusRepositoryLocationString plexusRepositoryNameString plexusDependencyRepositoryDetachStatusWriter repositoryLoadStatusFile repositorySourcePath repositorySourceDirectory repositoryLoadStatusWriter |
 
+${dependencyRepositoryCacheSetupScript}
 ${repositoryWorkspaceLoadScript}
+${dependencyRepositoryDetachScript}
 
 ${smalltalkComment(`Pharo MCP startup is disabled: ${reason}`)}
 ${smalltalkComment("Keep the headless eval process alive for project lifecycle management only.")}
@@ -648,13 +862,16 @@ Semaphore new wait.
 
   return `"Generated by PLexus. Do not edit."
 
-| loadScript mcp endpointFile endpoint endpointValue endpointTransport endpointHost endpointPort endpointPath pharoMcpLoadStatusFile pharoMcpLoadStatusWriter pharoMcpLoadSource pharoMcpLoadPolicy repositoryLoadStatusFile repositorySourcePath repositorySourceDirectory repositoryLoadStatusWriter |
+| loadScript mcp endpointFile endpoint endpointValue endpointTransport endpointHost endpointPort endpointPath pharoMcpLoadStatusFile pharoMcpLoadStatusWriter pharoMcpLoadSource pharoMcpLoadPolicy plexusDependencyRepositoryCachePath plexusDependencyRepositoryNetworkPolicy plexusDependencyRepositoryDetachStatusFile plexusEditableRepositoryPaths plexusNormalizePath plexusRepositoryLocationString plexusRepositoryNameString plexusDependencyRepositoryDetachStatusWriter repositoryLoadStatusFile repositorySourcePath repositorySourceDirectory repositoryLoadStatusWriter |
 
 ${gitConfiguration}
 
+${dependencyRepositoryCacheSetupScript}
 ${repositoryWorkspaceLoadScript}
 
 ${pharoMcpLoadScript}
+
+${dependencyRepositoryDetachScript}
 
 "Stop the previous server registered by PLexus before starting a new one."
 (Smalltalk globals at: #PLexusMCPServer ifAbsent: [ nil ])
@@ -678,15 +895,36 @@ export function writeImageStartupScript(
     imageId: options.imageConfig.id,
     stateRoot: options.stateRoot,
   });
-  const repositoryWorkspaceLoadStatusPath = options.imageState.repositoryWorkspace
-    ? imageRepositoryWorkspaceLoadStatusPath({
-        projectRoot: options.projectRoot,
-        projectId: options.projectId,
-        workspaceId: options.workspaceId,
-        imageId: options.imageConfig.id,
-        stateRoot: options.stateRoot,
-      })
-    : undefined;
+  const repositoryWorkspaces = projectImageRepositoryWorkspaces(options.imageState);
+  const repositoryWorkspaceLoadStatusPaths =
+    repositoryWorkspaces.length > 0
+      ? Object.fromEntries(
+          repositoryWorkspaces.map((workspace) => {
+            const pathOptions = {
+              projectRoot: options.projectRoot,
+              projectId: options.projectId,
+              workspaceId: options.workspaceId,
+              imageId: options.imageConfig.id,
+              stateRoot: options.stateRoot,
+            };
+            return [
+              workspace.repository.id,
+              imageRepositoryWorkspaceLoadStatusPath(
+                repositoryWorkspaces.length === 1
+                  ? pathOptions
+                  : {
+                      ...pathOptions,
+                      repositoryId: workspace.repository.id,
+                    },
+              ),
+            ];
+          }),
+        )
+      : undefined;
+  const repositoryWorkspaceLoadStatusPath =
+    repositoryWorkspaces.length === 1
+      ? repositoryWorkspaceLoadStatusPaths?.[repositoryWorkspaces[0].repository.id]
+      : undefined;
   const pharoMcpLoadStatusPath =
     projectMcpStartupMode(options.imageConfig.mcp) === "disabled" ||
     options.imageState.pharoMcpContract?.status === "unsupported"
@@ -698,11 +936,27 @@ export function writeImageStartupScript(
           imageId: options.imageConfig.id,
           stateRoot: options.stateRoot,
         });
+  const dependencyRepositoryDetachStatusPath =
+    options.dependencyRepositoryCachePath
+      ? imageDependencyRepositoryDetachStatusPath({
+          projectRoot: options.projectRoot,
+          projectId: options.projectId,
+          workspaceId: options.workspaceId,
+          imageId: options.imageConfig.id,
+          stateRoot: options.stateRoot,
+        })
+      : undefined;
   const source = generateImageStartupScript({
     ...options,
     ...(pharoMcpLoadStatusPath ? { pharoMcpLoadStatusPath } : {}),
     ...(repositoryWorkspaceLoadStatusPath
       ? { repositoryWorkspaceLoadStatusPath }
+      : {}),
+    ...(repositoryWorkspaceLoadStatusPaths
+      ? { repositoryWorkspaceLoadStatusPaths }
+      : {}),
+    ...(dependencyRepositoryDetachStatusPath
+      ? { dependencyRepositoryDetachStatusPath }
       : {}),
   });
 
@@ -716,6 +970,12 @@ export function writeImageStartupScript(
     ...(repositoryWorkspaceLoadStatusPath
       ? { repositoryWorkspaceLoadStatusPath }
       : {}),
+    ...(repositoryWorkspaceLoadStatusPaths
+      ? { repositoryWorkspaceLoadStatusPaths }
+      : {}),
+    ...(dependencyRepositoryDetachStatusPath
+      ? { dependencyRepositoryDetachStatusPath }
+      : {}),
   };
 }
 
@@ -723,6 +983,7 @@ export function writeProjectImageStartupScript(
   options: WriteProjectImageStartupScriptOptions,
 ): WrittenImageStartupScript {
   const imageConfig = findProjectImageConfig(options.config, options.imageId);
+  const plexusHomePath = resolvePlexusHomePath({ config: options.config });
 
   return writeImageStartupScript({
     projectRoot: options.projectRoot,
@@ -739,6 +1000,10 @@ export function writeProjectImageStartupScript(
     }),
     workspaceId: options.workspaceId,
     stateRoot: projectStateRootForConfig(options.config, options.stateRoot),
+    dependencyRepositoryCachePath:
+      homeDependencyRepositoryCachePath(plexusHomePath),
+    dependencyRepositoryNetworkPolicy:
+      homeDependencyRepositoryNetworkPolicy(options.config),
     repository: options.repository,
   });
 }

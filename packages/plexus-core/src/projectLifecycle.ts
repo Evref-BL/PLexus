@@ -68,7 +68,9 @@ import {
   ProjectOpenError,
   type ProjectOpenResult,
 } from "./projectOpen.js";
-import { inspectProjectImageRepositoryWorkspace } from "./projectRepositoryWorkspace.js";
+import {
+  inspectProjectImageRepositoryWorkspace,
+} from "./projectRepositoryWorkspace.js";
 import {
   defaultPlexusStateRoot,
   defaultTargetId,
@@ -76,7 +78,8 @@ import {
   loadProjectState,
   projectStateRootForConfig,
   projectStatePathForConfig,
-  projectImageRepositoryWorkspaceState,
+  projectImageRepositoryWorkspaceStates,
+  projectImageRepositoryWorkspaces,
   renderProjectImageName,
   runtimeStatusForImages,
   sanitizeRuntimeId,
@@ -409,6 +412,13 @@ export interface ProjectLifecycleRepositoryWorkspaceDiagnostic {
   };
 }
 
+export interface ProjectLifecycleDependencyRepositoryDetachDiagnostic {
+  imageId: string;
+  imageName: string;
+  status: ProjectImageState["status"];
+  detach: NonNullable<ProjectImageState["dependencyRepositoryDetach"]>;
+}
+
 export interface ProjectLifecycleImageRecoveryAction {
   operation: Extract<ImageRescueOperation, "plan" | "prepareTarget">;
   toolName: "plexus_rescue_image";
@@ -459,6 +469,7 @@ export interface ProjectLifecycleDiagnostics {
   launcherProfile: PharoLauncherMcpProfileDiagnostic;
   agentAccess: ProjectLifecycleAgentAccessDiagnostics;
   repositoryWorkspaces: ProjectLifecycleRepositoryWorkspaceDiagnostic[];
+  dependencyRepositoryDetaches: ProjectLifecycleDependencyRepositoryDetachDiagnostic[];
   imageRecovery: ProjectLifecycleImageRecoveryDiagnostic[];
   imageMcpPorts: Array<{
     imageId: string;
@@ -1240,7 +1251,7 @@ function repositoryWorkspaceDiagnostics(
   },
 ): ProjectLifecycleRepositoryWorkspaceDiagnostic[] {
   return config.images
-    .map((imageConfig) => {
+    .flatMap((imageConfig) => {
       const imageState = state?.images.find((image) => image.id === imageConfig.id);
       const context = {
         projectId: scope.projectId,
@@ -1249,29 +1260,30 @@ function repositoryWorkspaceDiagnostics(
         targetId: scope.targetId,
         imageId: imageConfig.id,
       };
-      const workspace =
-        imageState?.repositoryWorkspace ??
-        projectImageRepositoryWorkspaceState(imageConfig, context);
-      if (!workspace) {
-        return undefined;
-      }
-      const inspection = imageState
-        ? inspectProjectImageRepositoryWorkspace({
-            projectRoot,
-            imageState,
-          })
-        : undefined;
-      const liveWorkspace = liveRepositoryWorkspaceState(workspace, inspection);
+      const workspaces = imageState
+        ? projectImageRepositoryWorkspaces(imageState)
+        : projectImageRepositoryWorkspaceStates(imageConfig, context);
 
-      return {
-        imageId: imageConfig.id,
-        imageName:
-          imageState?.imageName ??
-          renderProjectImageName(imageConfig.imageName, context),
-        status: imageState?.status ?? "declared",
-        workspace: liveWorkspace,
-        cleanup: repositoryWorkspaceCleanupDiagnostic(liveWorkspace, inspection),
-      };
+      return workspaces.map((workspace) => {
+        const inspection = imageState
+          ? inspectProjectImageRepositoryWorkspace({
+              projectRoot,
+              imageState,
+              workspace,
+            })
+          : undefined;
+        const liveWorkspace = liveRepositoryWorkspaceState(workspace, inspection);
+
+        return {
+          imageId: imageConfig.id,
+          imageName:
+            imageState?.imageName ??
+            renderProjectImageName(imageConfig.imageName, context),
+          status: imageState?.status ?? "declared",
+          workspace: liveWorkspace,
+          cleanup: repositoryWorkspaceCleanupDiagnostic(liveWorkspace, inspection),
+        };
+      });
     })
     .filter(
       (
@@ -1279,6 +1291,27 @@ function repositoryWorkspaceDiagnostics(
       ): item is ProjectLifecycleRepositoryWorkspaceDiagnostic =>
         item !== undefined,
     );
+}
+
+function dependencyRepositoryDetachDiagnostics(
+  state: ProjectState | undefined,
+): ProjectLifecycleDependencyRepositoryDetachDiagnostic[] {
+  return (state?.images ?? [])
+    .filter(
+      (
+        image,
+      ): image is ProjectImageState & {
+        dependencyRepositoryDetach: NonNullable<
+          ProjectImageState["dependencyRepositoryDetach"]
+        >;
+      } => image.dependencyRepositoryDetach !== undefined,
+    )
+    .map((image) => ({
+      imageId: image.id,
+      imageName: image.imageName,
+      status: image.status,
+      detach: image.dependencyRepositoryDetach,
+    }));
 }
 
 function imageRecoveryDiagnostics(input: {
@@ -2786,6 +2819,8 @@ export class PlexusProjectLifecycle {
         state,
         scope,
       ),
+      dependencyRepositoryDetaches:
+        dependencyRepositoryDetachDiagnostics(state),
       imageRecovery: imageRecoveryDiagnostics({
         projectRoot,
         stateRoot,

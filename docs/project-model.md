@@ -46,6 +46,24 @@ When no separate `sourcePath` is supplied, PLexus treats `projectRoot` as the
 source path. PLexus reports the resolved source path in scoped context; it does
 not decide how the caller created or owns that checkout.
 
+Image repository workspaces are local editable repositories that PLexus
+materializes before image startup and keeps attached in Iceberg. Use
+`repositoryWorkspaces` when an image needs more than one editable repository.
+For a single editable repository, `repositoryWorkspace` is accepted as a
+shorthand; runtime state and scoped context expose it as the first repository
+workspace.
+
+For image repository workspace declarations that use local materialization such
+as `copy` or `git-worktree`, an explicit `repository.originPath` wins. If
+`originPath` is relative, PLexus resolves it under the workspace `sourcePath`.
+If `originPath` is omitted, PLexus uses the workspace `sourcePath` as the local
+source checkout for that repository workspace. This lets one project config
+stay shared while each workspace supplies its own source checkout and
+workspace-relative dependency checkout layout.
+
+Repository workspace ids are unique per image. Status files, cleanup
+resources, and diagnostics are tracked per image and repository workspace id.
+
 The `workspaceId` separates sibling worktrees for the same project. The default is the project root directory name, which works well for agent worktree directories. Callers can override it with:
 
 ```text
@@ -235,6 +253,9 @@ the image cache for one project:
     "path": "/home/user/.plexus",
     "imageCache": {
       "enabled": true
+    },
+    "dependencyRepositories": {
+      "networkPolicy": "online"
     }
   }
 }
@@ -261,6 +282,24 @@ profile under:
 ```text
 <PLEXUS_HOME>/profiles/pharo-launcher-mcp/image-cache
 ```
+
+PLexus-managed startup scripts also configure Iceberg/Metacello dependency
+clones to use a fixed shared repository cache:
+
+```text
+<PLEXUS_HOME>/repositories/iceberg
+```
+
+Only `networkPolicy` is configurable for dependency repositories. `online`
+allows missing dependencies to be cloned into the shared cache. `local-only`
+records a no-network policy for PLexus-managed loads; missing dependency
+handling must fail clearly rather than silently mutate user image state.
+
+After PLexus-managed project and MCP loads, startup scripts unregister any
+Iceberg repository under that shared cache unless it matches a declared editable
+repository workspace for the image. Loaded code remains in the image, but the
+shared cache clone is no longer presented as an editable repository. Status
+diagnostics report the cache repositories that were detached.
 
 Runtime workspace images must remain copies of home cache bases; agents must
 not operate directly on home cache images. If a template's Pharo version is not

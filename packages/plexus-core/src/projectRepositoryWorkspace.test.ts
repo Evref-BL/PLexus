@@ -6,11 +6,13 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { ProjectImageConfig } from "./projectConfig.js";
 import {
   materializeProjectImageRepositoryWorkspace,
+  materializeProjectImageRepositoryWorkspaces,
   ProjectRepositoryWorkspaceError,
   resolveRepositoryWorkspacePath,
 } from "./projectRepositoryWorkspace.js";
 import {
   projectImageRepositoryWorkspaceState,
+  projectImageRepositoryWorkspaceStates,
   type ProjectImageState,
 } from "./projectState.js";
 
@@ -54,6 +56,7 @@ function initRepository(sourceRoot: string): string {
 }
 
 function imageConfig(overrides: {
+  componentId?: string;
   originPath?: string;
   remoteUrl?: string;
   strategy?: "copy" | "git-worktree" | "clone";
@@ -70,6 +73,7 @@ function imageConfig(overrides: {
     repositoryWorkspace: {
       repository: {
         id: "my-project",
+        ...(overrides.componentId ? { componentId: overrides.componentId } : {}),
         ...(overrides.originPath ? { originPath: overrides.originPath } : {}),
         ...(overrides.remoteUrl ? { remoteUrl: overrides.remoteUrl } : {}),
       },
@@ -120,6 +124,88 @@ describe("project repository workspace materialization", () => {
     ).toBe(path.join(state.localDirectoryPath!, "iceberg", "my-project"));
   });
 
+  it("uses the workspace source path when a local repository workspace omits originPath", () => {
+    const sourceRoot = makeTempDir("plexus-source-");
+    const sourceCommit = initRepository(sourceRoot);
+    const targetPath = path.join(makeTempDir("plexus-target-"), "repo");
+    const config = imageConfig({
+      componentId: "my-project",
+      path: targetPath,
+    });
+    const state = imageState(config);
+
+    const result = materializeProjectImageRepositoryWorkspace({
+      projectRoot: makeTempDir("plexus-project-"),
+      imageConfig: config,
+      imageState: state,
+      sourcePath: sourceRoot,
+      env: gitEnv,
+    });
+
+    expect(result).toMatchObject({
+      status: "ready",
+      strategy: "copy",
+      sourcePath: sourceRoot,
+      targetPath,
+      currentCommit: sourceCommit,
+      dirtyState: "clean",
+    });
+    expect(git(targetPath, ["rev-parse", "HEAD"])).toBe(sourceCommit);
+    expect(state.repositoryWorkspace).toMatchObject({
+      repository: {
+        componentId: "my-project",
+      },
+      sourcePath: sourceRoot,
+      currentCommit: sourceCommit,
+      baseCommit: sourceCommit,
+      materializationState: "ready",
+    });
+  });
+
+  it("resolves relative repository origins from the workspace source path", () => {
+    const workspaceSourceRoot = makeTempDir("plexus-workspace-source-");
+    const dependencyOrigin = path.join(
+      workspaceSourceRoot,
+      "dependencies",
+      "dependency",
+    );
+    fs.mkdirSync(dependencyOrigin, { recursive: true });
+    const dependencyCommit = initRepository(dependencyOrigin);
+    const targetPath = path.join(makeTempDir("plexus-target-"), "dependency");
+    const config = imageConfig({
+      originPath: path.join("dependencies", "dependency"),
+      path: targetPath,
+    });
+    const state = imageState(config);
+
+    const result = materializeProjectImageRepositoryWorkspace({
+      projectRoot: makeTempDir("plexus-project-"),
+      imageConfig: config,
+      imageState: state,
+      sourcePath: workspaceSourceRoot,
+      env: gitEnv,
+    });
+
+    expect(result).toMatchObject({
+      status: "ready",
+      strategy: "copy",
+      sourcePath: dependencyOrigin,
+      targetPath,
+      currentCommit: dependencyCommit,
+      dirtyState: "clean",
+    });
+    expect(git(targetPath, ["rev-parse", "HEAD"])).toBe(dependencyCommit);
+    expect(state.repositoryWorkspace).toMatchObject({
+      repository: {
+        originPath: path.join("dependencies", "dependency"),
+      },
+      sourcePath: dependencyOrigin,
+      currentCommit: dependencyCommit,
+      baseCommit: dependencyCommit,
+      materializationState: "ready",
+    });
+  });
+
   it("materializes a clean local source through copy strategy", () => {
     const sourceRoot = makeTempDir("plexus-source-");
     const sourceCommit = initRepository(sourceRoot);
@@ -155,6 +241,97 @@ describe("project repository workspace materialization", () => {
       dirtyState: "clean",
       loadState: "not-loaded",
     });
+  });
+
+  it("materializes multiple editable repository workspaces", () => {
+    const firstSourceRoot = makeTempDir("plexus-source-");
+    const firstCommit = initRepository(firstSourceRoot);
+    const secondSourceRoot = makeTempDir("plexus-source-");
+    const secondCommit = initRepository(secondSourceRoot);
+    const firstTargetPath = path.join(makeTempDir("plexus-target-"), "first");
+    const secondTargetPath = path.join(makeTempDir("plexus-target-"), "second");
+    const config: ProjectImageConfig = {
+      id: "dev",
+      imageName: "MyProject-dev",
+      active: true,
+      mcp: {
+        loadScript: "pharo/load-mcp.st",
+      },
+      repositoryWorkspaces: [
+        {
+          repository: {
+            id: "my-project",
+            originPath: firstSourceRoot,
+          },
+          sourceDirectory: "src",
+          baseline: "MyProject",
+          materialization: {
+            strategy: "copy",
+            path: firstTargetPath,
+          },
+        },
+        {
+          repository: {
+            id: "dependency",
+            originPath: secondSourceRoot,
+          },
+          sourceDirectory: "src",
+          baseline: "Dependency",
+          materialization: {
+            strategy: "copy",
+            path: secondTargetPath,
+          },
+        },
+      ],
+    };
+    const state: ProjectImageState = {
+      id: "dev",
+      imageName: "MyProject-dev",
+      status: "starting",
+      localDirectoryPath: path.join(makeTempDir("plexus-image-local-"), "pharo-local"),
+      repositoryWorkspaces: projectImageRepositoryWorkspaceStates(config, {
+        projectId: "project-123",
+        projectName: "my-project",
+        workspaceId: "task-123",
+        targetId: "target-123",
+        imageId: "dev",
+      }),
+    };
+
+    const results = materializeProjectImageRepositoryWorkspaces({
+      projectRoot: makeTempDir("plexus-project-"),
+      imageConfig: config,
+      imageState: state,
+      env: gitEnv,
+    });
+
+    expect(results).toEqual([
+      expect.objectContaining({
+        repositoryId: "my-project",
+        targetPath: firstTargetPath,
+        currentCommit: firstCommit,
+      }),
+      expect.objectContaining({
+        repositoryId: "dependency",
+        targetPath: secondTargetPath,
+        currentCommit: secondCommit,
+      }),
+    ]);
+    expect(git(firstTargetPath, ["rev-parse", "HEAD"])).toBe(firstCommit);
+    expect(git(secondTargetPath, ["rev-parse", "HEAD"])).toBe(secondCommit);
+    expect(state.repositoryWorkspaces).toEqual([
+      expect.objectContaining({
+        repository: { id: "my-project", originPath: firstSourceRoot },
+        currentCommit: firstCommit,
+        materializationState: "ready",
+      }),
+      expect.objectContaining({
+        repository: { id: "dependency", originPath: secondSourceRoot },
+        currentCommit: secondCommit,
+        materializationState: "ready",
+      }),
+    ]);
+    expect(state.repositoryWorkspace).toBe(state.repositoryWorkspaces?.[0]);
   });
 
   it("reuses an existing repository workspace", () => {

@@ -29,6 +29,7 @@ import {
   defaultPlexusStateRoot,
   defaultWorkspaceId,
   loadProjectState,
+  projectImageRepositoryWorkspaces,
   projectStatePathForConfig,
   projectStateRootForConfig,
   runtimeStatusForImages,
@@ -223,14 +224,14 @@ function cleanupResources(input: {
       });
     }
 
-    if (image.repositoryWorkspace) {
+    for (const workspace of projectImageRepositoryWorkspaces(image)) {
       resources.push({
         ...resourceBase(input.state),
         kind: "repository-workspace",
-        id: `${image.id}:${image.repositoryWorkspace.repository.id}`,
+        id: `${image.id}:${workspace.repository.id}`,
         imageId: image.id,
         imageName: image.imageName,
-        path: image.repositoryWorkspace.path,
+        path: workspace.path,
       });
     }
   }
@@ -436,7 +437,9 @@ export async function cleanupProjectOwnedResources(
         record.decision === "deleted" || record.decision === "archived"
           ? "cleaned"
           : "skipped",
-        (resource) => resource.imageId === record.imageId,
+        (resource) =>
+          resource.imageId === record.imageId &&
+          resource.id === `${record.imageId}:${record.repositoryId}`,
         record.message ?? `Repository workspace cleanup decision: ${record.decision}`,
       );
     }

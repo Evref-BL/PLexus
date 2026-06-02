@@ -8,6 +8,7 @@ import {
   defaultPlexusHomePath,
   deriveHomeImageCacheKey,
   flushHomeImageCache,
+  homeDependencyRepositoryCachePath,
   homeImageCacheKeyMaterial,
   homeImageCacheProfile,
   inferPharoMajorVersionFromTemplateText,
@@ -125,6 +126,9 @@ describe("home image cache", () => {
         },
       }),
     ).toBe(rootPath("env", "plexus-home"));
+    expect(homeDependencyRepositoryCachePath(rootPath("env", "plexus-home"))).toBe(
+      rootPath("env", "plexus-home", "repositories", "iceberg"),
+    );
   });
 
   it("derives stable cache keys from template, MCP support, Git, and launcher metadata", () => {

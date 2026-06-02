@@ -406,6 +406,9 @@ describe("project config", () => {
         enabled: false,
         networkPolicy: "local-only",
       },
+      dependencyRepositories: {
+        networkPolicy: "local-only",
+      },
     };
 
     expect(parseProjectConfig(config).home).toEqual({
@@ -414,15 +417,37 @@ describe("project config", () => {
         enabled: false,
         networkPolicy: "local-only",
       },
+      dependencyRepositories: {
+        networkPolicy: "local-only",
+      },
     });
   });
 
-  it("rejects invalid PLexus home image-cache network policy", () => {
+  it("defaults PLexus home dependency repository policy", () => {
+    const config: ReturnType<typeof validProjectConfig> & { home?: unknown } =
+      validProjectConfig();
+    config.home = {};
+
+    expect(parseProjectConfig(config).home).toEqual({
+      imageCache: {
+        enabled: true,
+        networkPolicy: "online",
+      },
+      dependencyRepositories: {
+        networkPolicy: "online",
+      },
+    });
+  });
+
+  it("rejects invalid PLexus home network policy values", () => {
     const config: ReturnType<typeof validProjectConfig> & { home?: unknown } =
       validProjectConfig();
     config.home = {
       imageCache: {
         enabled: true,
+        networkPolicy: "offline",
+      },
+      dependencyRepositories: {
         networkPolicy: "offline",
       },
     };
@@ -435,6 +460,7 @@ describe("project config", () => {
       expect((error as ProjectConfigError).issues).toEqual(
         expect.arrayContaining([
           "home.imageCache.networkPolicy must be one of online, local-only",
+          "home.dependencyRepositories.networkPolicy must be one of online, local-only",
         ]),
       );
     }
@@ -558,6 +584,49 @@ describe("project config", () => {
     );
   });
 
+  it("parses multiple image-local repository workspace declarations", () => {
+    const baseConfig = validProjectConfig();
+    const config = {
+      ...baseConfig,
+      images: [
+        {
+          ...baseConfig.images[0],
+          repositoryWorkspaces: [
+            {
+              repository: {
+                id: "my-project",
+                componentId: "my-project",
+              },
+              sourceDirectory: "src",
+              baseline: "MyProject",
+              materialization: {
+                strategy: "copy",
+              },
+            },
+            {
+              repository: {
+                id: "dependency",
+                remoteUrl: "git@github.com:Example/Dependency.git",
+              },
+              sourceDirectory: "repository",
+              baseline: "Dependency",
+              materialization: {
+                strategy: "clone",
+                path: "image-local://{imageId}/pharo-local/iceberg/{repositoryId}",
+              },
+            },
+          ],
+        },
+        baseConfig.images[1],
+      ],
+    };
+
+    const image = parseProjectConfig(config).images[0];
+
+    expect(image.repositoryWorkspaces).toEqual(config.images[0].repositoryWorkspaces);
+    expect(image.repositoryWorkspace).toEqual(config.images[0].repositoryWorkspaces[0]);
+  });
+
   it("defaults image-local repository workspace materialization to copy", () => {
     const baseConfig = validProjectConfig();
     const config = {
@@ -641,6 +710,45 @@ describe("project config", () => {
           "images[0].repositoryWorkspace.materialization.strategy must be one of copy, git-worktree, clone",
           "active image repository workspace paths must be unique: /tmp/shared-pharo-repo",
         ]),
+      );
+    }
+  });
+
+  it("rejects duplicate repository workspace ids in one image", () => {
+    const baseConfig = validProjectConfig();
+    const config = {
+      ...baseConfig,
+      images: [
+        {
+          ...baseConfig.images[0],
+          repositoryWorkspaces: [
+            {
+              repository: {
+                id: "my-project",
+                componentId: "my-project",
+              },
+              sourceDirectory: "src",
+              baseline: "MyProject",
+            },
+            {
+              repository: {
+                id: "my-project",
+                remoteUrl: "git@github.com:Example/MyProject.git",
+              },
+              sourceDirectory: "repository",
+              baseline: "MyProjectDependency",
+            },
+          ],
+        },
+      ],
+    };
+
+    expect(() => parseProjectConfig(config)).toThrow(ProjectConfigError);
+    try {
+      parseProjectConfig(config);
+    } catch (error) {
+      expect((error as ProjectConfigError).issues).toContain(
+        "images[0] repository workspace ids must be unique: my-project",
       );
     }
   });

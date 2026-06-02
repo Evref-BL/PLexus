@@ -388,6 +388,73 @@ describe("project state", () => {
     });
   });
 
+  it("plans multiple image-local repository workspace states", () => {
+    const state = createProjectState(
+      {
+        ...config,
+        images: [
+          {
+            ...config.images[0],
+            imageName: "MyProject-{workspaceId}-{imageId}",
+            repositoryWorkspaces: [
+              {
+                repository: {
+                  id: "my-project",
+                  componentId: "my-project",
+                },
+                sourceDirectory: "src",
+                baseline: "MyProject",
+                materialization: {
+                  strategy: "copy",
+                },
+              },
+              {
+                repository: {
+                  id: "dependency",
+                  remoteUrl: "git@github.com:Example/Dependency.git",
+                },
+                sourceDirectory: "repository",
+                baseline: "Dependency",
+                materialization: {
+                  strategy: "clone",
+                },
+              },
+            ],
+          },
+        ],
+      },
+      {
+        updatedAt: "2026-04-25T10:00:00.000Z",
+        workspaceId: "task-123",
+      },
+    );
+
+    expect(state.images[0].repositoryWorkspaces).toHaveLength(2);
+    expect(state.images[0].repositoryWorkspace).toBe(
+      state.images[0].repositoryWorkspaces?.[0],
+    );
+    expect(state.images[0].repositoryWorkspaces).toEqual([
+      expect.objectContaining({
+        repository: {
+          id: "my-project",
+          componentId: "my-project",
+        },
+        path: "image-local://dev/pharo-local/iceberg/my-project",
+        materializationStrategy: "copy",
+        baseline: "MyProject",
+      }),
+      expect.objectContaining({
+        repository: {
+          id: "dependency",
+          remoteUrl: "git@github.com:Example/Dependency.git",
+        },
+        path: "image-local://dev/pharo-local/iceberg/dependency",
+        materializationStrategy: "clone",
+        baseline: "Dependency",
+      }),
+    ]);
+  });
+
   it("renders configured image-local repository workspace path templates", () => {
     const state = createProjectState(
       {

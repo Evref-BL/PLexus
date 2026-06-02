@@ -13,7 +13,8 @@ import {
   defaultWorkspaceId,
   loadProjectState,
   projectStatePathForConfig,
-  projectImageRepositoryWorkspaceState,
+  projectImageRepositoryWorkspaceStates,
+  projectImageRepositoryWorkspaces,
   renderProjectImageName,
   sanitizeRuntimeId,
   type ProjectImageState,
@@ -144,6 +145,7 @@ export interface ScopedImageCleanupMetadata {
   policy: ScopedImageCleanupPolicy;
   paths: ScopedImageCleanupPaths;
   repositoryWorkspace?: ScopedImageRepositoryWorkspaceCleanupMetadata;
+  repositoryWorkspaces?: ScopedImageRepositoryWorkspaceCleanupMetadata[];
 }
 
 export interface ScopedImageGatewayRouteMetadata {
@@ -168,6 +170,7 @@ export interface ScopedImageContext {
   affordances: ScopedImageAffordances;
   route: ScopedImageGatewayRouteMetadata;
   repositoryWorkspace?: ProjectImageRepositoryWorkspaceState;
+  repositoryWorkspaces?: ProjectImageRepositoryWorkspaceState[];
 }
 
 export interface ScopedProjectContext {
@@ -187,6 +190,7 @@ export interface ScopedImageDiagnosticContext {
   mcpEndpoint?: ProjectImageState["mcpEndpoint"];
   pid?: number;
   repositoryWorkspace?: ProjectImageRepositoryWorkspaceState;
+  repositoryWorkspaces?: ProjectImageRepositoryWorkspaceState[];
   cleanup: ScopedImageCleanupMetadata;
 }
 
@@ -531,21 +535,20 @@ function renderedLauncherImageName(
   );
 }
 
-function repositoryWorkspace(
+function repositoryWorkspaces(
   scope: ScopedProjectContextScope,
   imageConfig: ProjectImageConfig,
   imageState: ProjectImageState | undefined,
-): ProjectImageRepositoryWorkspaceState | undefined {
-  return (
-    imageState?.repositoryWorkspace ??
-    projectImageRepositoryWorkspaceState(imageConfig, {
+): ProjectImageRepositoryWorkspaceState[] {
+  return imageState
+    ? projectImageRepositoryWorkspaces(imageState)
+    : projectImageRepositoryWorkspaceStates(imageConfig, {
       projectId: scope.projectId,
       projectName: scope.projectName,
       workspaceId: scope.workspaceId,
       targetId: scope.targetId,
       imageId: imageConfig.id,
-    })
-  );
+    });
 }
 
 function scopedImageContext(
@@ -553,11 +556,12 @@ function scopedImageContext(
   imageConfig: ProjectImageConfig,
   imageState: ProjectImageState | undefined,
 ): ScopedImageContext {
-  const repositoryWorkspaceState = repositoryWorkspace(
+  const repositoryWorkspaceStates = repositoryWorkspaces(
     scope,
     imageConfig,
     imageState,
   );
+  const repositoryWorkspaceState = repositoryWorkspaceStates[0];
 
   return {
     imageId: imageConfig.id,
@@ -577,6 +581,9 @@ function scopedImageContext(
     ...(repositoryWorkspaceState
       ? { repositoryWorkspace: repositoryWorkspaceState }
       : {}),
+    ...(repositoryWorkspaceStates.length > 0
+      ? { repositoryWorkspaces: repositoryWorkspaceStates }
+      : {}),
   };
 }
 
@@ -590,13 +597,22 @@ function scopedImageDiagnostics(
     imageConfig,
     imageState,
   );
-  const repositoryWorkspaceState = repositoryWorkspace(
+  const repositoryWorkspaceStates = repositoryWorkspaces(
     scope,
     imageConfig,
     imageState,
   );
+  const repositoryWorkspaceState = repositoryWorkspaceStates[0];
   const repositoryWorkspaceCleanup =
     repositoryWorkspaceCleanupMetadata(repositoryWorkspaceState);
+  const repositoryWorkspaceCleanups = repositoryWorkspaceStates
+    .map((workspace) => repositoryWorkspaceCleanupMetadata(workspace))
+    .filter(
+      (
+        cleanup,
+      ): cleanup is ScopedImageRepositoryWorkspaceCleanupMetadata =>
+        cleanup !== undefined,
+    );
 
   return {
     imageId: imageConfig.id,
@@ -612,6 +628,9 @@ function scopedImageDiagnostics(
     ...(repositoryWorkspaceState
       ? { repositoryWorkspace: repositoryWorkspaceState }
       : {}),
+    ...(repositoryWorkspaceStates.length > 0
+      ? { repositoryWorkspaces: repositoryWorkspaceStates }
+      : {}),
     cleanup: {
       disposable: true,
       statePath: scope.statePath,
@@ -620,6 +639,9 @@ function scopedImageDiagnostics(
       paths: cleanupPaths(imageState),
       ...(repositoryWorkspaceCleanup
         ? { repositoryWorkspace: repositoryWorkspaceCleanup }
+        : {}),
+      ...(repositoryWorkspaceCleanups.length > 0
+        ? { repositoryWorkspaces: repositoryWorkspaceCleanups }
         : {}),
     },
   };

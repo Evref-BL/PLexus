@@ -565,6 +565,66 @@ describe("project close", () => {
     ]);
   });
 
+  it("deletes multiple clean disposable repository workspaces", async () => {
+    const projectRoot = makeTempDir("plexus-project-");
+    const stateRoot = makeTempDir("plexus-state-");
+    const firstRepositoryPath = path.join(makeTempDir("plexus-repo-"), "my-project");
+    const secondRepositoryPath = path.join(makeTempDir("plexus-repo-"), "dependency");
+    initRepository(firstRepositoryPath);
+    initRepository(secondRepositoryPath);
+    writeProjectConfig(projectRoot);
+    writeRuntimeState(stateRoot, {
+      projectId: "project-123",
+      projectName: "my-project",
+      workspaceId: "worktree-a",
+      targetId: "project-123--worktree-a",
+      updatedAt: "2026-04-25T10:00:00.000Z",
+      images: [
+        {
+          id: "dev",
+          imageName: "MyProject-dev",
+          status: "stopped",
+          repositoryWorkspaces: [
+            repositoryWorkspace(firstRepositoryPath),
+            repositoryWorkspace(secondRepositoryPath, {
+              repository: {
+                id: "dependency",
+                originPath: secondRepositoryPath,
+              },
+              baseline: "Dependency",
+            }),
+          ],
+        },
+      ],
+    });
+
+    const result = await closeProject({
+      projectRoot,
+      stateRoot,
+      workspaceId: "worktree-a",
+      repositoryWorkspaceCleanupPolicy: "delete-disposable",
+      pharoLauncherMcpClient: new FakePharoLauncherMcpClient(),
+      now: fixedNow,
+      env: gitEnv,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(fs.existsSync(firstRepositoryPath)).toBe(false);
+    expect(fs.existsSync(secondRepositoryPath)).toBe(false);
+    expect(result.repositoryWorkspaceCleanups).toEqual([
+      expect.objectContaining({
+        repositoryId: "my-project",
+        decision: "deleted",
+        path: firstRepositoryPath,
+      }),
+      expect.objectContaining({
+        repositoryId: "dependency",
+        decision: "deleted",
+        path: secondRepositoryPath,
+      }),
+    ]);
+  });
+
   it("refuses destructive cleanup of dirty repository workspaces", async () => {
     const projectRoot = makeTempDir("plexus-project-");
     const stateRoot = makeTempDir("plexus-state-");

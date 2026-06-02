@@ -1,6 +1,5 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
-import os from "node:os";
 import {
   defaultPharoMcpMetacelloRepository,
   type PharoMcpMetacelloRepository,
@@ -20,6 +19,19 @@ import {
   type ProjectPreparedImageSourceConfig,
 } from "./projectConfig.js";
 import {
+  defaultPlexusHomePath,
+  defaultPlexusHomeDirectoryName,
+  homeDependencyIcebergDirectoryName,
+  homeDependencyRepositoriesDirectoryName,
+  homeDependencyRepositoryCachePath,
+  homeDependencyRepositoryNetworkPolicy,
+  homeImageCacheDirectoryName,
+  homeImageCacheEnabled,
+  homeImageCacheNetworkPolicy,
+  plexusHomeEnvironmentKey,
+  resolvePlexusHomePath,
+} from "./plexusHome.js";
+import {
   dirnamePathLike,
   isAbsolutePathLike,
   joinPathLike,
@@ -35,10 +47,21 @@ import {
 } from "./pharoLauncherMcpClient.js";
 import type { ProjectImageState } from "./projectState.js";
 
-export const plexusHomeEnvironmentKey = "PLEXUS_HOME";
-export const defaultPlexusHomeDirectoryName = ".plexus";
-export const homeImageCacheDirectoryName = "image-cache";
 export const homeImageCacheSchemaVersion = 1;
+
+export {
+  defaultPlexusHomePath,
+  defaultPlexusHomeDirectoryName,
+  homeDependencyIcebergDirectoryName,
+  homeDependencyRepositoriesDirectoryName,
+  homeDependencyRepositoryCachePath,
+  homeDependencyRepositoryNetworkPolicy,
+  homeImageCacheDirectoryName,
+  homeImageCacheEnabled,
+  homeImageCacheNetworkPolicy,
+  plexusHomeEnvironmentKey,
+  resolvePlexusHomePath,
+} from "./plexusHome.js";
 
 export type HomeImageCachePlanStatus =
   | "disabled"
@@ -412,34 +435,6 @@ function preparedTemplateSource(
       ? { templateCategory: source.templateCategory }
       : {}),
   };
-}
-
-export function defaultPlexusHomePath(homeDirectory = os.homedir()): string {
-  return joinPathLike(homeDirectory, defaultPlexusHomeDirectoryName);
-}
-
-export function resolvePlexusHomePath(options: {
-  config?: Pick<ProjectConfig, "home">;
-  env?: NodeJS.ProcessEnv;
-  homeDirectory?: string;
-} = {}): string {
-  const env = options.env ?? process.env;
-  const configured = env[plexusHomeEnvironmentKey] ?? options.config?.home?.path;
-  return configured
-    ? resolvePathLike(configured)
-    : defaultPlexusHomePath(options.homeDirectory);
-}
-
-export function homeImageCacheEnabled(
-  config: Pick<ProjectConfig, "home">,
-): boolean {
-  return config.home?.imageCache.enabled ?? true;
-}
-
-export function homeImageCacheNetworkPolicy(
-  config: Pick<ProjectConfig, "home">,
-): ProjectHomeImageCacheNetworkPolicy {
-  return config.home?.imageCache.networkPolicy ?? "online";
 }
 
 export function homeImageCacheRootPath(homePath: string): string {
