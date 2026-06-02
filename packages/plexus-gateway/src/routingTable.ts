@@ -36,6 +36,27 @@ export interface GatewayProjectImagePharoMcpContractState
   reason?: string;
 }
 
+export interface GatewayProjectImageCreationSourceState {
+  kind: string;
+  profileId?: string;
+  templateName?: string;
+  templateCategory?: string;
+}
+
+export interface GatewayProjectImageCreationRouteState {
+  serverName?: string;
+  targetKey?: string;
+  imageArgument?: string;
+  imageId?: string;
+}
+
+export interface GatewayProjectImageCreationState {
+  role?: string;
+  source?: GatewayProjectImageCreationSourceState;
+  cleanupPolicy?: string;
+  route?: GatewayProjectImageCreationRouteState;
+}
+
 export interface GatewayProjectImageState {
   id: string;
   imageName: string;
@@ -43,6 +64,7 @@ export interface GatewayProjectImageState {
   mcpEndpoint?: GatewayImageMcpEndpoint;
   pid?: number;
   status: GatewayProjectImageStatus;
+  creation?: GatewayProjectImageCreationState;
   pharoMcpContract?: GatewayProjectImagePharoMcpContractState;
 }
 
@@ -93,6 +115,7 @@ export interface GatewayImageRoute {
   health: GatewayImageHealth;
   routable: GatewayImageRoutability;
   routeMetadata: GatewayImageRouteMetadata;
+  creation?: GatewayProjectImageCreationState;
   pharoMcpContract?: GatewayProjectImagePharoMcpContractState;
   updatedAt: string;
 }
@@ -312,6 +335,7 @@ export class PlexusRoutingTable {
             health,
           }),
           routeMetadata: imageRouteMetadata(state, image.id),
+          ...(image.creation ? { creation: image.creation } : {}),
           ...(image.pharoMcpContract
             ? { pharoMcpContract: image.pharoMcpContract }
             : {}),
