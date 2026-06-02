@@ -393,6 +393,33 @@ export interface ProjectLifecycleRepositoryWorkspaceDiagnostic {
   };
 }
 
+export interface ProjectLifecycleImageRecoveryAction {
+  operation: Extract<ImageRescueOperation, "plan" | "prepareTarget">;
+  toolName: "plexus_rescue_image";
+  arguments: {
+    projectPath: string;
+    stateRoot: string;
+    workspaceId: string;
+    sourceImageId: string;
+    operation: Extract<ImageRescueOperation, "plan" | "prepareTarget">;
+  };
+}
+
+export interface ProjectLifecycleImageRecoveryDiagnostic {
+  imageId: string;
+  imageName: string;
+  status: "failed";
+  message: string;
+  paths: {
+    imagePath?: string;
+    imageDirectoryPath?: string;
+    changesPath?: string;
+    localDirectoryPath?: string;
+    ombuDirectoryPath?: string;
+  };
+  actions: ProjectLifecycleImageRecoveryAction[];
+}
+
 export interface ProjectLifecycleDiagnostics {
   toolRuntime: PlexusRuntimeIdentityDiagnostic;
   runtime: {
@@ -416,6 +443,7 @@ export interface ProjectLifecycleDiagnostics {
   launcherProfile: PharoLauncherMcpProfileDiagnostic;
   agentAccess: ProjectLifecycleAgentAccessDiagnostics;
   repositoryWorkspaces: ProjectLifecycleRepositoryWorkspaceDiagnostic[];
+  imageRecovery: ProjectLifecycleImageRecoveryDiagnostic[];
   imageMcpPorts: Array<{
     imageId: string;
     imageName: string;
@@ -1203,6 +1231,64 @@ function repositoryWorkspaceDiagnostics(
       ): item is ProjectLifecycleRepositoryWorkspaceDiagnostic =>
         item !== undefined,
     );
+}
+
+function imageRecoveryDiagnostics(input: {
+  projectRoot: string;
+  stateRoot: string;
+  workspaceId: string;
+  state: ProjectState | undefined;
+}): ProjectLifecycleImageRecoveryDiagnostic[] {
+  return (input.state?.images ?? [])
+    .filter((image): image is ProjectImageState & { status: "failed" } =>
+      image.status === "failed",
+    )
+    .map((image) => {
+      const actionBase = {
+        projectPath: input.projectRoot,
+        stateRoot: input.stateRoot,
+        workspaceId: input.workspaceId,
+        sourceImageId: image.id,
+      };
+
+      return {
+        imageId: image.id,
+        imageName: image.imageName,
+        status: image.status,
+        message: `Image ${image.id} is failed; use scoped rescue before raw cleanup.`,
+        paths: {
+          ...(image.imagePath ? { imagePath: image.imagePath } : {}),
+          ...(image.imageDirectoryPath
+            ? { imageDirectoryPath: image.imageDirectoryPath }
+            : {}),
+          ...(image.changesPath ? { changesPath: image.changesPath } : {}),
+          ...(image.localDirectoryPath
+            ? { localDirectoryPath: image.localDirectoryPath }
+            : {}),
+          ...(image.ombuDirectoryPath
+            ? { ombuDirectoryPath: image.ombuDirectoryPath }
+            : {}),
+        },
+        actions: [
+          {
+            operation: "plan",
+            toolName: "plexus_rescue_image",
+            arguments: {
+              ...actionBase,
+              operation: "plan",
+            },
+          },
+          {
+            operation: "prepareTarget",
+            toolName: "plexus_rescue_image",
+            arguments: {
+              ...actionBase,
+              operation: "prepareTarget",
+            },
+          },
+        ],
+      };
+    });
 }
 
 function imageMcpPorts(
@@ -2545,6 +2631,12 @@ export class PlexusProjectLifecycle {
         state,
         scope,
       ),
+      imageRecovery: imageRecoveryDiagnostics({
+        projectRoot,
+        stateRoot,
+        workspaceId: scope.workspaceId,
+        state,
+      }),
       imageMcpPorts: imageMcpPorts(state),
       imagePortCoordination: imagePortCoordinationDiagnostics(
         projectRoot,
