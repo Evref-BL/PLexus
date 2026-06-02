@@ -253,6 +253,55 @@ describe("PlexusGateway", () => {
     );
   });
 
+  it("reports image creation role and source metadata from PLexus state", async () => {
+    const gateway = new PlexusGateway();
+    const createdState: GatewayProjectState = {
+      ...runningState,
+      images: [
+        {
+          ...runningState.images[0],
+          creation: {
+            role: "development",
+            source: {
+              kind: "template",
+              profileId: "pharo-13-default",
+              templateName: "Pharo 13.0 - 64bit",
+              templateCategory: "Official",
+            },
+            cleanupPolicy: "workspace_cleanup_only",
+          },
+        },
+      ],
+    };
+
+    await registerTarget(gateway, createdState);
+
+    expect(
+      data(
+        await gateway.handleTool("plexus_gateway_status", {
+          projectId: "project-123",
+          workspaceId: "worktree-a",
+        }),
+      ),
+    ).toMatchObject({
+      images: [
+        {
+          id: "dev",
+          creation: {
+            role: "development",
+            source: {
+              kind: "template",
+              profileId: "pharo-13-default",
+              templateName: "Pharo 13.0 - 64bit",
+              templateCategory: "Official",
+            },
+            cleanupPolicy: "workspace_cleanup_only",
+          },
+        },
+      ],
+    });
+  });
+
   it("refreshes health for running image routes", async () => {
     const healthClient = new FakeHealthClient();
     const gateway = new PlexusGateway({ healthClient });
@@ -873,6 +922,36 @@ describe("PlexusGateway", () => {
           },
         ],
       },
+      images: [
+        {
+          id: "dev",
+          pharoToolSchema: {
+            compatibility: "active",
+            toolCount: 1,
+            lifecycle: {
+              status: "initialized",
+            },
+            serverInfo: {
+              name: "pharo-mcp",
+              version: "1.0.0",
+            },
+          },
+        },
+        {
+          id: "baseline",
+          pharoToolSchema: {
+            compatibility: "incompatible",
+            toolCount: 1,
+            lifecycle: {
+              status: "initialized",
+            },
+            serverInfo: {
+              name: "pharo-mcp",
+              version: "2.0.0",
+            },
+          },
+        },
+      ],
     });
     expect(imageRouter.listCalls).toHaveLength(2);
 
@@ -1018,6 +1097,60 @@ describe("PlexusGateway", () => {
       error:
         "Image dev Pharo MCP schema is incompatible with active gateway schema",
     });
+  });
+
+  it("reports unavailable Pharo tool schema status for stopped image routes", async () => {
+    const imageRouter = new FakeToolListImageRouter({
+      dev: [repositoryOperationTool(["create"])],
+    });
+    const gateway = new PlexusGateway({
+      imageRouter,
+      pharoScope: {
+        projectId: "project-123",
+        workspaceId: "worktree-a",
+      },
+    });
+
+    await registerTarget(gateway, runningState);
+
+    const status = data(
+      await gateway.handleTool("plexus_gateway_status", {
+        projectId: "project-123",
+        workspaceId: "worktree-a",
+        refreshTools: true,
+      }),
+    );
+
+    expect(status).toMatchObject({
+      pharoToolSchema: {
+        state: "matching",
+        sourceCount: 1,
+        sources: [
+          {
+            imageId: "dev",
+            compatibility: "active",
+          },
+        ],
+      },
+      images: [
+        {
+          id: "dev",
+          pharoToolSchema: {
+            compatibility: "active",
+            toolCount: 1,
+          },
+        },
+        {
+          id: "baseline",
+          status: "stopped",
+          pharoToolSchema: {
+            compatibility: "unavailable",
+            error: "Image baseline is not running; current status is stopped",
+          },
+        },
+      ],
+    });
+    expect(imageRouter.listCalls).toHaveLength(1);
   });
 
   it("rejects missing Pharo tool schema source image selection", async () => {
