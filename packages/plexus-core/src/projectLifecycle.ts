@@ -401,6 +401,7 @@ export interface ProjectLifecycleDiagnostics {
   project: ProjectLifecycleProjectDiagnostics;
   scope: {
     projectRoot: string;
+    sourcePath: string;
     stateRoot: string;
     statePath: string;
     projectId: string;
@@ -2502,6 +2503,7 @@ export class PlexusProjectLifecycle {
       project: projectDiagnostics(config, state),
       scope: {
         projectRoot,
+        sourcePath: projectRoot,
         stateRoot,
         statePath,
         projectId: scope.projectId,

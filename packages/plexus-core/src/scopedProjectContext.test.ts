@@ -95,6 +95,34 @@ describe("scoped project context", () => {
         workspaceId: "task-123",
         targetId: "target-123",
       },
+      workspace: {
+        projectRoot: path.win32.resolve(projectRoot),
+        source: {
+          path: path.win32.resolve(projectRoot),
+          policy: "caller-managed",
+          defaultLoadSource: true,
+        },
+        state: {
+          root: path.win32.resolve(stateRoot),
+          path: statePath,
+        },
+        images: {
+          declaration: "project-config",
+          lifecycle: "scoped-affordances",
+          handle: "imageId",
+          creation: "project-policy",
+        },
+        routes: {
+          policy: "pharo-gateway-target-route",
+          serverName: "pharo_gateway",
+          targetKey: "targetId",
+          imageArgument: "imageId",
+        },
+        cleanup: {
+          policy: "workspace_cleanup_only",
+          deletionSurface: "workspace-cleanup",
+        },
+      },
       images: [
         {
           imageId: "dev",
@@ -130,6 +158,33 @@ describe("scoped project context", () => {
     expect(contextJson).not.toContain("7123");
     expect(contextJson).not.toContain("1234");
     expect(contextJson).not.toContain("C:\\Users\\me\\Pharo\\images");
+  });
+
+  it("allows callers to declare a workspace source path separately from the project root", () => {
+    const sourcePath = "C:\\dev\\code\\git\\Project-feature-source";
+
+    const context = buildScopedProjectContext({
+      projectRoot,
+      sourcePath,
+      projectConfig,
+      workspaceId: "task-123",
+      targetId: "target-123",
+      stateRoot,
+      projectState,
+    });
+
+    expect(context.workspace).toMatchObject({
+      projectRoot: path.win32.resolve(projectRoot),
+      source: {
+        path: path.win32.resolve(sourcePath),
+        policy: "caller-managed",
+        defaultLoadSource: true,
+      },
+      state: {
+        root: path.win32.resolve(stateRoot),
+        path: statePath,
+      },
+    });
   });
 
   it("describes safe scoped lifecycle affordances without raw launcher mutation keys", () => {
@@ -245,12 +300,27 @@ describe("scoped project context", () => {
 
     expect(diagnostics.scope).toEqual({
       projectRoot: path.win32.resolve(projectRoot),
+      sourcePath: path.win32.resolve(projectRoot),
       projectId: "project-123",
       projectName: "my-project",
       workspaceId: "task-123",
       targetId: "target-123",
       stateRoot: path.win32.resolve(stateRoot),
       statePath,
+    });
+    expect(diagnostics.workspace).toMatchObject({
+      projectRoot: path.win32.resolve(projectRoot),
+      source: {
+        path: path.win32.resolve(projectRoot),
+        policy: "caller-managed",
+      },
+      state: {
+        root: path.win32.resolve(stateRoot),
+        path: statePath,
+      },
+      cleanup: {
+        policy: "workspace_cleanup_only",
+      },
     });
     expect(diagnostics.images[0]).toMatchObject({
       imageId: "dev",

@@ -164,6 +164,20 @@ describe("project config", () => {
     ]);
   });
 
+  it("parses workspace image creation limits", () => {
+    const config: ReturnType<typeof validProjectConfig> & { runtime?: unknown } =
+      validProjectConfig();
+    config.runtime = {
+      workspaceImages: {
+        maxCount: 2,
+      },
+    };
+
+    expect(parseProjectConfig(config).runtime?.workspaceImages).toEqual({
+      maxCount: 2,
+    });
+  });
+
   it("parses image display mode defaults", () => {
     const config = validProjectConfig();
     (config.images[0] as { displayMode?: string }).displayMode = "interactive";
@@ -490,6 +504,8 @@ describe("project config", () => {
             profileId: "pharo-13-default",
             templateName: "Pharo 13.0 - 64bit",
             templateCategory: "Official",
+            role: "development",
+            cleanupPolicy: "workspace_cleanup_only",
           },
         },
         baseConfig.images[1],
@@ -501,6 +517,8 @@ describe("project config", () => {
       profileId: "pharo-13-default",
       templateName: "Pharo 13.0 - 64bit",
       templateCategory: "Official",
+      role: "development",
+      cleanupPolicy: "workspace_cleanup_only",
     });
   });
 
@@ -637,6 +655,8 @@ describe("project config", () => {
           create: {
             kind: "copy",
             profileId: "",
+            role: "",
+            cleanupPolicy: "host-delete",
           },
         },
         baseConfig.images[1],
@@ -652,7 +672,31 @@ describe("project config", () => {
         expect.arrayContaining([
           "images[0].create.kind must be template",
           "images[0].create.profileId must be a non-empty string",
+          "images[0].create.role must be a non-empty string",
+          "images[0].create.cleanupPolicy must be workspace_cleanup_only",
           "images[0].create.templateName must be a non-empty string",
+        ]),
+      );
+    }
+  });
+
+  it("rejects invalid workspace image creation limits", () => {
+    const config: ReturnType<typeof validProjectConfig> & { runtime?: unknown } =
+      validProjectConfig();
+    config.runtime = {
+      workspaceImages: {
+        maxCount: 0,
+      },
+    };
+
+    expect(() => parseProjectConfig(config)).toThrow(ProjectConfigError);
+
+    try {
+      parseProjectConfig(config);
+    } catch (error) {
+      expect((error as ProjectConfigError).issues).toEqual(
+        expect.arrayContaining([
+          "runtime.workspaceImages.maxCount must be a positive integer",
         ]),
       );
     }

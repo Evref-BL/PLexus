@@ -8,6 +8,7 @@ import {
   type ProjectImageConfig,
 } from "./projectConfig.js";
 import {
+  defaultPlexusStateRoot,
   defaultTargetId,
   defaultWorkspaceId,
   loadProjectState,
@@ -25,6 +26,10 @@ import { resolvePathLike } from "./pathStyle.js";
 export type ScopedProjectContextSchemaVersion = 1;
 export type ScopedImageStatus = ProjectImageStatus | "declared";
 export type ScopedImageCleanupPolicy = "workspace_cleanup_only";
+export type ScopedWorkspaceSourcePolicy = "caller-managed";
+export type ScopedWorkspaceImageDeclarationPolicy = "project-config";
+export type ScopedWorkspaceImageLifecyclePolicy = "scoped-affordances";
+export type ScopedWorkspaceRoutePolicy = "pharo-gateway-target-route";
 
 export interface ScopedProjectContextScope {
   projectId: string;
@@ -36,8 +41,49 @@ export interface ScopedProjectContextScope {
 export interface ScopedProjectContextDiagnosticScope
   extends ScopedProjectContextScope {
   projectRoot: string;
-  stateRoot?: string;
+  sourcePath: string;
+  stateRoot: string;
   statePath: string;
+}
+
+export interface ScopedWorkspaceSourceContext {
+  path: string;
+  policy: ScopedWorkspaceSourcePolicy;
+  defaultLoadSource: true;
+}
+
+export interface ScopedWorkspaceStateContext {
+  root: string;
+  path: string;
+}
+
+export interface ScopedWorkspaceImagePolicyContext {
+  declaration: ScopedWorkspaceImageDeclarationPolicy;
+  lifecycle: ScopedWorkspaceImageLifecyclePolicy;
+  handle: "imageId";
+  creation: "project-policy";
+  maxCount?: number;
+}
+
+export interface ScopedWorkspaceRoutePolicyContext {
+  policy: ScopedWorkspaceRoutePolicy;
+  serverName: "pharo_gateway";
+  targetKey: "targetId";
+  imageArgument: "imageId";
+}
+
+export interface ScopedWorkspaceCleanupPolicyContext {
+  policy: ScopedImageCleanupPolicy;
+  deletionSurface: "workspace-cleanup";
+}
+
+export interface ScopedWorkspaceRuntimeContract {
+  projectRoot: string;
+  source: ScopedWorkspaceSourceContext;
+  state: ScopedWorkspaceStateContext;
+  images: ScopedWorkspaceImagePolicyContext;
+  routes: ScopedWorkspaceRoutePolicyContext;
+  cleanup: ScopedWorkspaceCleanupPolicyContext;
 }
 
 export interface ScopedImageOwnership {
@@ -127,6 +173,7 @@ export interface ScopedImageContext {
 export interface ScopedProjectContext {
   schemaVersion: ScopedProjectContextSchemaVersion;
   scope: ScopedProjectContextScope;
+  workspace: ScopedWorkspaceRuntimeContract;
   images: ScopedImageContext[];
 }
 
@@ -146,11 +193,13 @@ export interface ScopedImageDiagnosticContext {
 export interface ScopedProjectContextDiagnostics {
   schemaVersion: ScopedProjectContextSchemaVersion;
   scope: ScopedProjectContextDiagnosticScope;
+  workspace: ScopedWorkspaceRuntimeContract;
   images: ScopedImageDiagnosticContext[];
 }
 
 export interface BuildScopedProjectContextOptions {
   projectRoot: string;
+  sourcePath?: string;
   projectConfig?: ProjectConfig;
   workspaceId?: string;
   targetId?: string;
@@ -383,6 +432,46 @@ function routeMetadata(
   };
 }
 
+function workspaceContract(
+  scope: ScopedProjectContextDiagnosticScope,
+  projectConfig: ProjectConfig,
+): ScopedWorkspaceRuntimeContract {
+  const workspaceImagePolicy =
+    resolveProjectRuntimePolicy(projectConfig).workspaceImages;
+
+  return {
+    projectRoot: scope.projectRoot,
+    source: {
+      path: scope.sourcePath,
+      policy: "caller-managed",
+      defaultLoadSource: true,
+    },
+    state: {
+      root: scope.stateRoot,
+      path: scope.statePath,
+    },
+    images: {
+      declaration: "project-config",
+      lifecycle: "scoped-affordances",
+      handle: "imageId",
+      creation: "project-policy",
+      ...(workspaceImagePolicy?.maxCount !== undefined
+        ? { maxCount: workspaceImagePolicy.maxCount }
+        : {}),
+    },
+    routes: {
+      policy: "pharo-gateway-target-route",
+      serverName: "pharo_gateway",
+      targetKey: "targetId",
+      imageArgument: "imageId",
+    },
+    cleanup: {
+      policy: "workspace_cleanup_only",
+      deletionSurface: "workspace-cleanup",
+    },
+  };
+}
+
 function validateProjectState(
   scope: ScopedProjectContextScope,
   projectState: ProjectState | undefined,
@@ -540,6 +629,7 @@ function resolveScopedProjectContext(
   options: BuildScopedProjectContextOptions,
 ): ResolvedScopedProjectContext {
   const projectRoot = resolvePathLike(options.projectRoot);
+  const sourcePath = resolvePathLike(options.sourcePath ?? projectRoot);
   const projectConfig = options.projectConfig ?? loadProjectConfig(projectRoot);
   const workspaceId = options.workspaceId
     ? sanitizeRuntimeId(options.workspaceId)
@@ -551,7 +641,9 @@ function resolveScopedProjectContext(
   const configuredStateRoot =
     runtime.stateRoot.mode === "external" ? runtime.stateRoot.path : undefined;
   const stateRoot = options.stateRoot ?? configuredStateRoot;
-  const resolvedStateRoot = stateRoot ? resolvePathLike(stateRoot) : undefined;
+  const resolvedStateRoot = stateRoot
+    ? resolvePathLike(stateRoot)
+    : defaultPlexusStateRoot(projectRoot);
   const statePath = projectStatePathForConfig({
     projectRoot,
     config: projectConfig,
@@ -561,11 +653,12 @@ function resolveScopedProjectContext(
   const projectState = options.projectState ?? loadProjectState(statePath);
   const scope: ScopedProjectContextDiagnosticScope = {
     projectRoot,
+    sourcePath,
     projectId: projectConfigId(projectConfig),
     projectName: projectConfig.name,
     workspaceId,
     targetId,
-    ...(resolvedStateRoot ? { stateRoot: resolvedStateRoot } : {}),
+    stateRoot: resolvedStateRoot,
     statePath,
   };
   const configuredImageIds = new Set(
@@ -595,6 +688,7 @@ export function buildScopedProjectContext(
       workspaceId: scope.workspaceId,
       targetId: scope.targetId,
     },
+    workspace: workspaceContract(scope, projectConfig),
     images: projectConfig.images.map((imageConfig) =>
       scopedImageContext(
         scope,
@@ -614,6 +708,7 @@ export function buildScopedProjectContextDiagnostics(
   return {
     schemaVersion: 1,
     scope,
+    workspace: workspaceContract(scope, projectConfig),
     images: projectConfig.images.map((imageConfig) =>
       scopedImageDiagnostics(
         scope,
