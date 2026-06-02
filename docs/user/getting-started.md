@@ -125,6 +125,7 @@ Project lifecycle tools:
 
 ```sh
 plexus mcp project
+plexus mcp project --http --port 7332
 ```
 
 Scoped launcher tools for one project/workspace:

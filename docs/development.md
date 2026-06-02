@@ -86,6 +86,8 @@ Use route-control terminology for private/trusted gateway controls. In HTTP
 service mode, the normal shape is one `plexus-gateway` process with `/mcp`
 serving the agent-facing `pharo_gateway` server and `/control-mcp` serving
 route-control. Both paths share the same in-memory route table.
+The project lifecycle MCP remains stdio-first for local agent runners, and can
+also run as a Streamable HTTP MCP service with `plexus mcp project --http`.
 Generated workspace MCP config writes `pharo_gateway` for the agent-facing Pharo MCP
 proxy and keeps route-control separate.
 

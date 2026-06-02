@@ -6,7 +6,10 @@ import {
   scopedImageLeaseOptionsFromEnvironment,
   startScopedPharoLauncherServer,
 } from "./scopedPharoLauncherServer.js";
-import { startProjectLifecycleServer } from "./server.js";
+import {
+  parseProjectLifecycleServerCliOptions,
+  startProjectLifecycleServerFromCli,
+} from "./server.js";
 
 function usage(): string {
   return [
@@ -15,7 +18,7 @@ function usage(): string {
     "  plexus project close <path> [--workspace-id <id>] [--state-root <path>] [--repository-workspace-cleanup-policy <preserve|archive|delete-disposable>] [--repository-workspace-archive-root <path>]",
     "  plexus project cleanup <path> [--workspace-id <id>] [--state-root <path>] [--confirm] [--delete-state] [--keep-launcher-images] [--repository-workspace-cleanup-policy <preserve|archive|delete-disposable>] [--repository-workspace-archive-root <path>]",
     "  plexus project status <path> [--workspace-id <id>] [--state-root <path>]",
-    "  plexus mcp project",
+    "  plexus mcp project [serve|http|--http] [--host <host>] [--port <port>] [--mcp-path <path>]",
     "  plexus mcp pharo-launcher [--project-path <path>] [--workspace-id <id>] [--target-id <id>] [--state-root <path>]",
     "",
     "Environment:",
@@ -26,6 +29,8 @@ function usage(): string {
     "  PLEXUS_IMAGE_LEASE_OWNER_ID Optional scoped image lease owner id.",
     "  PLEXUS_IMAGE_LEASE_OWNER_KIND Optional lease owner kind.",
     "  PLEXUS_IMAGE_LEASE_PURPOSE Optional lease purpose.",
+    "  PLEXUS_PROJECT_MCP_PORT Optional project MCP HTTP service port.",
+    "  PLEXUS_PROJECT_MCP_PATH Optional project MCP HTTP service path.",
   ].join("\n");
 }
 
@@ -124,6 +129,13 @@ async function main(argv: string[]): Promise<number> {
     return 0;
   }
 
+  if (argv[0] === "mcp" && argv[1] === "project") {
+    await startProjectLifecycleServerFromCli(
+      parseProjectLifecycleServerCliOptions(argv.slice(2)),
+    );
+    return 0;
+  }
+
   const parsed = parseCommand(argv);
   const workspaceId =
     parsed.workspaceId ??
@@ -145,11 +157,6 @@ async function main(argv: string[]): Promise<number> {
       targetId: parsed.targetId ?? process.env.PLEXUS_TARGET_ID,
       imageLease: scopedImageLeaseOptionsFromEnvironment(process.env),
     });
-    return 0;
-  }
-
-  if (parsed.scope === "mcp" && parsed.command === "project") {
-    await startProjectLifecycleServer();
     return 0;
   }
 

@@ -1,5 +1,7 @@
+import http from "node:http";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
@@ -193,6 +195,21 @@ export const projectLifecycleTools = [
   },
 ] as const;
 
+export interface ProjectLifecycleHttpServerOptions {
+  host?: string;
+  port: number;
+  healthPath?: string;
+  mcpPath?: string;
+  lifecycle?: PlexusProjectLifecycle;
+}
+
+export interface ProjectLifecycleCliOptions {
+  transport: "stdio" | "http";
+  host: string;
+  port: number;
+  mcpPath: string;
+}
+
 function jsonResult(value: unknown, isError = false): CallToolResult {
   return {
     content: [{ type: "text", text: JSON.stringify(value, null, 2) }],
@@ -237,4 +254,225 @@ export async function startProjectLifecycleServer(
   const server = createProjectLifecycleServer(lifecycle);
   const transport = new StdioServerTransport();
   await server.connect(transport);
+}
+
+function parsePort(value: string | undefined, name: string): number {
+  const port = Number(value);
+  if (!Number.isInteger(port) || port < 1 || port > 65_535) {
+    throw new Error(`${name} must be an integer between 1 and 65535`);
+  }
+
+  return port;
+}
+
+function parseHttpPath(value: string | undefined, name: string): string {
+  if (value === undefined || value.trim().length === 0) {
+    throw new Error(`${name} must be a non-empty HTTP path`);
+  }
+
+  const trimmed = value.trim();
+  if (!trimmed.startsWith("/")) {
+    throw new Error(`${name} must start with /`);
+  }
+
+  return trimmed;
+}
+
+function writeJsonResponse(
+  response: http.ServerResponse,
+  statusCode: number,
+  value: unknown,
+): void {
+  response.writeHead(statusCode, {
+    "content-type": "application/json; charset=utf-8",
+  });
+  response.end(`${JSON.stringify(value)}\n`);
+}
+
+function listen(
+  server: http.Server,
+  port: number,
+  host: string,
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const onError = (error: Error): void => {
+      server.off("listening", onListening);
+      reject(error);
+    };
+    const onListening = (): void => {
+      server.off("error", onError);
+      resolve();
+    };
+
+    server.once("error", onError);
+    server.once("listening", onListening);
+    server.listen(port, host);
+  });
+}
+
+export async function startProjectLifecycleHttpServer(
+  options: ProjectLifecycleHttpServerOptions,
+): Promise<http.Server> {
+  const host = options.host ?? "127.0.0.1";
+  const healthPath = options.healthPath ?? "/health";
+  const mcpPath = parseHttpPath(options.mcpPath ?? "/mcp", "mcpPath");
+  const lifecycle = options.lifecycle ?? createProjectLifecycleFromEnvironment();
+  const activeTransports = new Set<StreamableHTTPServerTransport>();
+
+  async function handleMcpRequest(
+    request: http.IncomingMessage,
+    response: http.ServerResponse,
+  ): Promise<void> {
+    const projectServer = createProjectLifecycleServer(lifecycle);
+    const transport = new StreamableHTTPServerTransport({
+      sessionIdGenerator: undefined,
+      enableJsonResponse: true,
+    });
+
+    activeTransports.add(transport);
+    response.once("close", () => {
+      activeTransports.delete(transport);
+      void transport.close();
+    });
+
+    await projectServer.connect(transport);
+    await transport.handleRequest(request, response);
+  }
+
+  const server = http.createServer((request, response) => {
+    void (async () => {
+      const url = new URL(
+        request.url ?? "/",
+        `http://${request.headers.host ?? `${host}:${options.port}`}`,
+      );
+
+      if (url.pathname === "/" || url.pathname === healthPath) {
+        if (request.method !== "GET" && request.method !== "HEAD") {
+          writeJsonResponse(response, 405, {
+            ok: false,
+            error: "Method not allowed",
+          });
+          return;
+        }
+
+        writeJsonResponse(response, 200, {
+          ok: true,
+          service: "plexus-core",
+          mcpPath,
+        });
+        return;
+      }
+
+      if (url.pathname === mcpPath) {
+        await handleMcpRequest(request, response);
+        return;
+      }
+
+      writeJsonResponse(response, 404, {
+        ok: false,
+        error: "Not found",
+      });
+    })().catch((error: unknown) => {
+      if (!response.headersSent) {
+        writeJsonResponse(response, 500, {
+          ok: false,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        return;
+      }
+
+      response.destroy(error instanceof Error ? error : undefined);
+    });
+  });
+
+  server.on("close", () => {
+    for (const transport of activeTransports) {
+      void transport.close();
+    }
+    activeTransports.clear();
+  });
+
+  await listen(server, options.port, host);
+  return server;
+}
+
+export function parseProjectLifecycleServerCliOptions(
+  args: string[] = process.argv.slice(2),
+  env: NodeJS.ProcessEnv = process.env,
+): ProjectLifecycleCliOptions {
+  let transport: ProjectLifecycleCliOptions["transport"] = "stdio";
+  let host = env.PLEXUS_HOST ?? "127.0.0.1";
+  let portValue = env.PLEXUS_PROJECT_MCP_PORT ?? env.PORT ?? "7332";
+  let mcpPath = env.PLEXUS_PROJECT_MCP_PATH ?? "/mcp";
+
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+
+    if (arg === "serve" || arg === "http" || arg === "--http") {
+      transport = "http";
+      continue;
+    }
+
+    if (arg === "--stdio") {
+      transport = "stdio";
+      continue;
+    }
+
+    if (arg === "--host") {
+      const next = args[index + 1];
+      if (!next) {
+        throw new Error("--host requires a value");
+      }
+
+      host = next;
+      index += 1;
+      continue;
+    }
+
+    if (arg === "--port") {
+      const next = args[index + 1];
+      if (!next) {
+        throw new Error("--port requires a value");
+      }
+
+      portValue = next;
+      index += 1;
+      continue;
+    }
+
+    if (arg === "--mcp-path") {
+      const next = args[index + 1];
+      if (!next) {
+        throw new Error("--mcp-path requires a value");
+      }
+
+      mcpPath = next;
+      index += 1;
+      continue;
+    }
+
+    throw new Error(`Unknown plexus project MCP argument: ${arg}`);
+  }
+
+  return {
+    transport,
+    host,
+    port: parsePort(portValue, "PLexus project MCP port"),
+    mcpPath: parseHttpPath(mcpPath, "PLexus project MCP path"),
+  };
+}
+
+export async function startProjectLifecycleServerFromCli(
+  options = parseProjectLifecycleServerCliOptions(),
+): Promise<void> {
+  if (options.transport === "stdio") {
+    await startProjectLifecycleServer();
+    return;
+  }
+
+  await startProjectLifecycleHttpServer({
+    host: options.host,
+    port: options.port,
+    mcpPath: options.mcpPath,
+  });
 }
