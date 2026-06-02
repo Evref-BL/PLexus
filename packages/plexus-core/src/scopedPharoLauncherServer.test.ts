@@ -52,6 +52,8 @@ function projectConfig(overrides: Record<string, unknown> = {}) {
           profileId: "pharo-13-default",
           templateName: "Pharo 13.0 - 64bit",
           templateCategory: "Official",
+          role: "development",
+          cleanupPolicy: "workspace_cleanup_only",
         },
       },
     ],
@@ -423,6 +425,22 @@ describe("scoped pharo launcher facade", () => {
         imageName: "MyProject-worktree-a-dev",
         assignedPort: 7123,
         status: "stopped",
+        creation: {
+          role: "development",
+          source: {
+            kind: "template",
+            profileId: "pharo-13-default",
+            templateName: "Pharo 13.0 - 64bit",
+            templateCategory: "Official",
+          },
+          cleanupPolicy: "workspace_cleanup_only",
+          route: {
+            serverName: "pharo_gateway",
+            targetKey: "targetId",
+            imageArgument: "imageId",
+            imageId: "dev",
+          },
+        },
         lease: {
           ownerId: "project-123--worktree-a",
           ownerKind: "target",
@@ -433,6 +451,107 @@ describe("scoped pharo launcher facade", () => {
         },
       }),
     ]);
+  });
+
+  it("rejects create when the workspace image limit is already reached", async () => {
+    const projectRoot = makeTempDir("plexus-project-");
+    const stateRoot = makeTempDir("plexus-state-");
+    const { client, calls } = fakeLauncherClient();
+    writeProjectConfig(projectRoot, {
+      runtime: {
+        workspaceImages: {
+          maxCount: 1,
+        },
+      },
+      images: [
+        projectConfig().images[0],
+        {
+          ...projectConfig().images[0],
+          id: "experiment",
+          imageName: "MyProject-{workspaceId}-experiment",
+          active: true,
+          mcp: {
+            port: 7124,
+            loadScript: "pharo/load-mcp.st",
+          },
+        },
+      ],
+    });
+    saveProjectState(statePath(projectRoot, stateRoot), runningState());
+
+    await expect(
+      new ScopedPharoLauncher({
+        projectRoot,
+        stateRoot,
+        workspaceId: "worktree-a",
+        pharoLauncherMcpClient: client,
+      }).createImage("experiment", "pharo-13-default"),
+    ).rejects.toThrow(
+      "Workspace image policy allows at most 1 image; scoped create for image experiment is rejected",
+    );
+    expect(calls).toEqual([]);
+  });
+
+  it("rejects rendered launcher image-name collisions before launcher calls", async () => {
+    const projectRoot = makeTempDir("plexus-project-");
+    const stateRoot = makeTempDir("plexus-state-");
+    const { client, calls } = fakeLauncherClient();
+    writeProjectConfig(projectRoot, {
+      images: [
+        {
+          ...projectConfig().images[0],
+          imageName: "MyProject-{workspaceId}-experiment",
+        },
+        {
+          ...projectConfig().images[0],
+          id: "experiment",
+          imageName: "MyProject-{workspaceId}-{imageId}",
+          active: true,
+          mcp: {
+            port: 7124,
+            loadScript: "pharo/load-mcp.st",
+          },
+        },
+      ],
+    });
+
+    await expect(
+      new ScopedPharoLauncher({
+        projectRoot,
+        stateRoot,
+        workspaceId: "worktree-a",
+        pharoLauncherMcpClient: client,
+      }).createImage("experiment", "pharo-13-default"),
+    ).rejects.toThrow(
+      "Rendered image names must be unique: MyProject-worktree-a-experiment",
+    );
+    expect(calls).toEqual([]);
+  });
+
+  it("rejects create when persisted state belongs to another workspace", async () => {
+    const projectRoot = makeTempDir("plexus-project-");
+    const stateRoot = makeTempDir("plexus-state-");
+    const { client, calls } = fakeLauncherClient();
+    writeProjectConfig(projectRoot);
+    saveProjectState(statePath(projectRoot, stateRoot), {
+      ...runningState(),
+      workspaceId: "worktree-b",
+      targetId: "project-123--worktree-b",
+      runtimeStatus: "idle",
+      images: [],
+    });
+
+    await expect(
+      new ScopedPharoLauncher({
+        projectRoot,
+        stateRoot,
+        workspaceId: "worktree-a",
+        pharoLauncherMcpClient: client,
+      }).createImage("dev", "pharo-13-default"),
+    ).rejects.toThrow(
+      "State file belongs to workspace worktree-b; scoped create for workspace worktree-a is rejected",
+    );
+    expect(calls).toEqual([]);
   });
 
   it("bootstraps and refreshes a scoped template catalogue before direct create", async () => {

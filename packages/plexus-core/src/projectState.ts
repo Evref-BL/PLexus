@@ -7,6 +7,7 @@ import {
   type ProjectConfig,
   type ProjectImageDisplayMode,
   type ProjectImageConfig,
+  type ProjectImageCreationCleanupPolicy,
   type ProjectPharoMcpLoadPolicy,
   type ProjectImageRepositoryWorkspaceMaterializationStrategy,
   type ProjectGatewayMode,
@@ -42,6 +43,30 @@ export interface ProjectImageMcpEndpoint {
   host: string;
   port: number;
   path: string;
+}
+
+export interface ProjectImageTemplateCreationSourceState {
+  kind: "template";
+  profileId?: string;
+  templateName: string;
+  templateCategory?: string;
+}
+
+export type ProjectImageCreationSourceState =
+  ProjectImageTemplateCreationSourceState;
+
+export interface ProjectImageCreationRouteState {
+  serverName: "pharo_gateway";
+  targetKey: "targetId";
+  imageArgument: "imageId";
+  imageId: string;
+}
+
+export interface ProjectImageCreationState {
+  role?: string;
+  source: ProjectImageCreationSourceState;
+  cleanupPolicy: ProjectImageCreationCleanupPolicy;
+  route: ProjectImageCreationRouteState;
 }
 
 export interface PharoMcpContractReference {
@@ -189,6 +214,7 @@ export interface ProjectImageState {
   mcpEndpoint?: ProjectImageMcpEndpoint;
   pid?: number;
   status: ProjectImageStatus;
+  creation?: ProjectImageCreationState;
   lease?: ProjectImageLeaseState;
   pharoMcpContract?: ProjectImagePharoMcpContractState;
   pharoMcpLoad?: ProjectImagePharoMcpLoadStatus;

@@ -8,6 +8,7 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import {
   loadProjectConfig,
+  projectImageCreateCleanupPolicy,
   projectImageDisplayMode,
   projectConfigId,
   resolveProjectRuntimePolicy,
@@ -55,6 +56,7 @@ import {
   type ProjectImageLeaseMode,
   type ProjectImageLeaseOwnerKind,
   type ProjectImageLeaseState,
+  type ProjectImageCreationState,
   type ProjectImageState,
   type ProjectState,
 } from "./projectState.js";
@@ -661,6 +663,78 @@ function renderedImageName(
   });
 }
 
+function imageCreationState(
+  imageConfig: ProjectImageConfig,
+): ProjectImageCreationState | undefined {
+  const create = imageConfig.create;
+  if (!create) {
+    return undefined;
+  }
+
+  return {
+    ...(create.role ? { role: create.role } : {}),
+    source: {
+      kind: create.kind,
+      ...(create.profileId ? { profileId: create.profileId } : {}),
+      templateName: create.templateName,
+      ...(create.templateCategory
+        ? { templateCategory: create.templateCategory }
+        : {}),
+    },
+    cleanupPolicy: projectImageCreateCleanupPolicy(create),
+    route: {
+      serverName: "pharo_gateway",
+      targetKey: "targetId",
+      imageArgument: "imageId",
+      imageId: imageConfig.id,
+    },
+  };
+}
+
+function assertPreviousStateBelongsToScope(
+  previousState: ProjectState | undefined,
+  scope: ResolvedScope,
+): void {
+  if (!previousState) {
+    return;
+  }
+
+  if (previousState.projectId !== scope.projectId) {
+    throw new ScopedPharoLauncherError(
+      `State file belongs to project ${previousState.projectId}; scoped create for project ${scope.projectId} is rejected`,
+    );
+  }
+  if (previousState.workspaceId !== scope.workspaceId) {
+    throw new ScopedPharoLauncherError(
+      `State file belongs to workspace ${previousState.workspaceId}; scoped create for workspace ${scope.workspaceId} is rejected`,
+    );
+  }
+  if (previousState.targetId !== scope.targetId) {
+    throw new ScopedPharoLauncherError(
+      `State file belongs to target ${previousState.targetId}; scoped create for target ${scope.targetId} is rejected`,
+    );
+  }
+}
+
+function assertWorkspaceImagePolicyAllowsCreate(
+  projectConfig: ProjectConfig,
+  previousState: ProjectState | undefined,
+  imageId: string,
+): void {
+  const maxCount =
+    resolveProjectRuntimePolicy(projectConfig).workspaceImages?.maxCount;
+  if (maxCount === undefined) {
+    return;
+  }
+
+  const currentImageCount = previousState?.images.length ?? 0;
+  if (currentImageCount >= maxCount) {
+    throw new ScopedPharoLauncherError(
+      `Workspace image policy allows at most ${maxCount} image${maxCount === 1 ? "" : "s"}; scoped create for image ${imageId} is rejected`,
+    );
+  }
+}
+
 function imageMcpSnapshotEndpoint(
   imageState: ProjectImageState,
 ): ProjectImageState["mcpEndpoint"] | undefined {
@@ -911,14 +985,22 @@ function stateWithCreatedImage(
     portRange: runtime.imagePorts.range,
     updatedAt: now.toISOString(),
   });
+  const existingImageIds = new Set(
+    previousState?.images.map((image) => image.id) ?? [],
+  );
+  state.images = state.images.filter(
+    (image) => image.id === imageId || existingImageIds.has(image.id),
+  );
 
   for (const image of state.images) {
     const previousImage = previousState?.images.find(
       (candidate) => candidate.id === image.id,
     );
     if (image.id === imageId) {
+      const imageConfig = findImageConfig(projectConfig, imageId);
       image.status = "stopped";
       delete image.pid;
+      image.creation = imageCreationState(imageConfig);
     } else if (previousImage) {
       Object.assign(image, previousImage);
     } else {
@@ -1166,13 +1248,28 @@ export class ScopedPharoLauncher {
 
     const statePath = statePathForScope(scope, projectConfig);
     const previousState = loadProjectState(statePath);
+    assertPreviousStateBelongsToScope(previousState, scope);
     if (previousState?.images.some((image) => image.id === imageId)) {
       throw new ScopedPharoLauncherError(
         `Image ${imageId} already has runtime state`,
       );
     }
+    assertWorkspaceImagePolicyAllowsCreate(projectConfig, previousState, imageId);
     const now = this.options.now?.() ?? new Date();
     const lease = this.imageLeaseForMutation(scope, projectConfig, imageId, now);
+    const state = stateWithCreatedImage(
+      projectConfig,
+      scope,
+      previousState,
+      imageId,
+      now,
+    );
+    const imageState = state.images.find((image) => image.id === imageId);
+    if (!imageState) {
+      throw new ScopedPharoLauncherError(
+        `Image ${imageId} is not declared in this PLexus workspace`,
+      );
+    }
 
     const client =
       this.options.pharoLauncherMcpClient ??
@@ -1188,20 +1285,6 @@ export class ScopedPharoLauncher {
     const ownsClient = !this.options.pharoLauncherMcpClient;
 
     try {
-      const state = stateWithCreatedImage(
-        projectConfig,
-        scope,
-        previousState,
-        imageId,
-        now,
-      );
-      const imageState = state.images.find((image) => image.id === imageId);
-      if (!imageState) {
-        throw new ScopedPharoLauncherError(
-          `Image ${imageId} is not declared in this PLexus workspace`,
-        );
-      }
-
       const homeMaterialization = await materializeProjectImageFromHomeCache({
         runtimeClient: client,
         homeClient: this.options.homeImageCacheClient ??

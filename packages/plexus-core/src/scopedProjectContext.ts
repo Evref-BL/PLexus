@@ -62,6 +62,7 @@ export interface ScopedWorkspaceImagePolicyContext {
   lifecycle: ScopedWorkspaceImageLifecyclePolicy;
   handle: "imageId";
   creation: "project-policy";
+  maxCount?: number;
 }
 
 export interface ScopedWorkspaceRoutePolicyContext {
@@ -433,7 +434,11 @@ function routeMetadata(
 
 function workspaceContract(
   scope: ScopedProjectContextDiagnosticScope,
+  projectConfig: ProjectConfig,
 ): ScopedWorkspaceRuntimeContract {
+  const workspaceImagePolicy =
+    resolveProjectRuntimePolicy(projectConfig).workspaceImages;
+
   return {
     projectRoot: scope.projectRoot,
     source: {
@@ -450,6 +455,9 @@ function workspaceContract(
       lifecycle: "scoped-affordances",
       handle: "imageId",
       creation: "project-policy",
+      ...(workspaceImagePolicy?.maxCount !== undefined
+        ? { maxCount: workspaceImagePolicy.maxCount }
+        : {}),
     },
     routes: {
       policy: "pharo-gateway-target-route",
@@ -680,7 +688,7 @@ export function buildScopedProjectContext(
       workspaceId: scope.workspaceId,
       targetId: scope.targetId,
     },
-    workspace: workspaceContract(scope),
+    workspace: workspaceContract(scope, projectConfig),
     images: projectConfig.images.map((imageConfig) =>
       scopedImageContext(
         scope,
@@ -700,7 +708,7 @@ export function buildScopedProjectContextDiagnostics(
   return {
     schemaVersion: 1,
     scope,
-    workspace: workspaceContract(scope),
+    workspace: workspaceContract(scope, projectConfig),
     images: projectConfig.images.map((imageConfig) =>
       scopedImageDiagnostics(
         scope,

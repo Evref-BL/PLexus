@@ -59,9 +59,12 @@ export interface ProjectImageTemplateCreateConfig {
   profileId?: string;
   templateName: string;
   templateCategory?: string;
+  role?: string;
+  cleanupPolicy?: ProjectImageCreationCleanupPolicy;
 }
 
 export type ProjectImageCreateConfig = ProjectImageTemplateCreateConfig;
+export type ProjectImageCreationCleanupPolicy = "workspace_cleanup_only";
 
 export type ProjectImagePreparedCopyMode = "copy-on-open";
 
@@ -229,8 +232,13 @@ export interface ProjectRuntimePolicy {
   stateRoot: ProjectRuntimeStateRootPolicy;
   gateway: ProjectGatewayPolicy;
   imagePorts: ProjectImagePortPolicy;
+  workspaceImages?: ProjectWorkspaceImagePolicy;
   launcherProfile: ProjectLauncherProfilePolicy;
   pharoMcp: ProjectPharoMcpPolicy;
+}
+
+export interface ProjectWorkspaceImagePolicy {
+  maxCount?: number;
 }
 
 export interface ProjectConfig {
@@ -321,6 +329,12 @@ export function projectImageDisplayMode(
   image: Pick<ProjectImageConfig, "displayMode">,
 ): ProjectImageDisplayMode {
   return image.displayMode ?? "headless";
+}
+
+export function projectImageCreateCleanupPolicy(
+  create: ProjectImageCreateConfig,
+): ProjectImageCreationCleanupPolicy {
+  return create.cleanupPolicy ?? "workspace_cleanup_only";
 }
 
 function stringField(
@@ -480,6 +494,25 @@ function optionalImageDisplayModeField(
   }
 
   issues.push(`${pathPrefix}.${key} must be one of headless, interactive`);
+  return undefined;
+}
+
+function optionalImageCreateCleanupPolicyField(
+  object: Record<string, unknown>,
+  key: string,
+  issues: string[],
+  pathPrefix: string,
+): ProjectImageCreationCleanupPolicy | undefined {
+  const value = object[key];
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (value === "workspace_cleanup_only") {
+    return value;
+  }
+
+  issues.push(`${pathPrefix}.${key} must be workspace_cleanup_only`);
   return undefined;
 }
 
@@ -978,16 +1011,29 @@ function parseImageCreate(
     issues.push(`${createPath}.kind must be template`);
   }
 
+  const profileId = optionalStringField(value, "profileId", issues, createPath);
+  const templateName = stringField(value, "templateName", issues, createPath);
+  const templateCategory = optionalStringField(
+    value,
+    "templateCategory",
+    issues,
+    createPath,
+  );
+  const role = optionalStringField(value, "role", issues, createPath);
+  const cleanupPolicy = optionalImageCreateCleanupPolicyField(
+    value,
+    "cleanupPolicy",
+    issues,
+    createPath,
+  );
+
   return {
     kind,
-    profileId: optionalStringField(value, "profileId", issues, createPath),
-    templateName: stringField(value, "templateName", issues, createPath),
-    templateCategory: optionalStringField(
-      value,
-      "templateCategory",
-      issues,
-      createPath,
-    ),
+    ...(profileId ? { profileId } : {}),
+    templateName,
+    ...(templateCategory ? { templateCategory } : {}),
+    ...(role ? { role } : {}),
+    ...(cleanupPolicy ? { cleanupPolicy } : {}),
   };
 }
 
@@ -1633,6 +1679,32 @@ function parsePharoMcpPolicy(
   };
 }
 
+function parseWorkspaceImagePolicy(
+  value: unknown,
+  issues: string[],
+): ProjectWorkspaceImagePolicy | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  const pathPrefix = "runtime.workspaceImages";
+  if (!isObject(value)) {
+    issues.push(`${pathPrefix} must be an object`);
+    return undefined;
+  }
+
+  const maxCount = optionalPositiveIntegerField(
+    value,
+    "maxCount",
+    issues,
+    pathPrefix,
+  );
+
+  return {
+    ...(maxCount !== undefined ? { maxCount } : {}),
+  };
+}
+
 function parseRuntimePolicy(
   value: unknown,
   issues: string[],
@@ -1650,12 +1722,17 @@ function parseRuntimePolicy(
   if (scopeValue !== "project") {
     issues.push("runtime.scope must be \"project\"");
   }
+  const workspaceImages = parseWorkspaceImagePolicy(
+    value.workspaceImages,
+    issues,
+  );
 
   return {
     scope: "project",
     stateRoot: parseRuntimeStateRoot(value.stateRoot, issues),
     gateway: parseRuntimeGateway(value.gateway, issues),
     imagePorts: parseImagePortPolicy(value.imagePorts, issues),
+    ...(workspaceImages ? { workspaceImages } : {}),
     launcherProfile: parseLauncherProfilePolicy(
       value.launcherProfile,
       issues,
