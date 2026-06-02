@@ -139,6 +139,20 @@ When the host gateway registers a remote upstream, calls route through the
 remote gateway MCP endpoint. Remote image-local ports remain remote facts and
 are not mirrored onto host ports.
 
+Remote nodes are the supported runner boundary for VM, container, or remote-host
+execution. A node that runs inside a Linux VM, a container, another local
+process, or a different host still exposes the same PLexus project MCP and
+gateway MCP endpoints. The host PLexus instance records only endpoint and
+workspace mapping configuration; provisioning the machine, installing PLexus,
+and keeping that remote service alive are outside the project model.
+
+Opening a mapped workspace through the host forwards the lifecycle request to
+the remote project MCP service, then registers a host gateway route whose
+`remoteGateway` points at the remote gateway MCP endpoint. Agents can keep using
+the host `pharo_gateway` surface with the host workspace and target ids while
+the remote node owns image files, image processes, image-local ports, and remote
+runtime cleanup.
+
 ### Pharo Image
 
 A runtime target can manage several Pharo images, as configured in `plexus.project.json`.

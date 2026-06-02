@@ -1,3 +1,4 @@
+import fs from "node:fs";
 import path from "node:path";
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import {
@@ -160,6 +161,16 @@ interface ProjectRemoteLifecycleMapping {
     ProjectRemoteNodeWorkspaceMappingConfig["targets"]
   >[number];
   workspaceId: string;
+}
+
+interface ProjectHostRemoteRouteContext {
+  projectRoot: string;
+  config: ProjectConfig;
+  stateRoot: string;
+  statePath: string;
+  projectId: string;
+  workspaceId: string;
+  targetId: string;
 }
 
 export interface HttpGatewayRouteRegistryOptions {
@@ -2086,6 +2097,30 @@ function imageMcpEndpointUrl(endpoint: ProjectImageMcpEndpoint): string {
   return `http://${hostForUrl(endpoint.host)}:${endpoint.port}${endpoint.path}`;
 }
 
+function remoteGatewayEndpointFromUrl(value: string): ProjectImageMcpEndpoint {
+  const url = new URL(value);
+
+  if (url.protocol !== "http:") {
+    throw new ProjectLifecycleInputError(
+      `Remote gateway MCP URL must use http for PLexus gateway forwarding: ${value}`,
+    );
+  }
+
+  const port = url.port ? Number(url.port) : 80;
+  if (!Number.isInteger(port) || port < 1 || port > 65_535) {
+    throw new ProjectLifecycleInputError(
+      `Remote gateway MCP URL must include a valid port: ${value}`,
+    );
+  }
+
+  return {
+    transport: "http",
+    host: url.hostname,
+    port,
+    path: url.pathname || "/",
+  };
+}
+
 function toolFromMcpListItem(value: unknown, index: number): Tool {
   if (!isObject(value) || typeof value.name !== "string") {
     throw new Error(`MCP tools/list returned an invalid tool at index ${index}`);
@@ -2255,6 +2290,80 @@ function remoteLifecycleArguments<T extends {
   );
 }
 
+function hostRemoteRouteContext(input: {
+  projectPath: string;
+  workspaceId?: string;
+  targetId?: string;
+  stateRoot?: string;
+}, mapping: ProjectRemoteLifecycleMapping): ProjectHostRemoteRouteContext {
+  const projectRoot = path.resolve(input.projectPath);
+  const config = loadProjectConfig(projectRoot);
+  const projectId = projectConfigId(config);
+  const workspaceId = mapping.workspaceId;
+  const targetId = input.targetId ?? defaultTargetId(projectId, workspaceId);
+  const stateRoot =
+    projectStateRootForConfig(config, input.stateRoot) ??
+    defaultPlexusStateRoot(projectRoot);
+  const statePath = projectStatePathForConfig({
+    projectRoot,
+    config,
+    workspaceId,
+    stateRoot,
+  });
+
+  return {
+    projectRoot,
+    config,
+    stateRoot,
+    statePath,
+    projectId,
+    workspaceId,
+    targetId,
+  };
+}
+
+function hostOpenResultForRemoteOpen(
+  input: ProjectOpenToolInput,
+  mapping: ProjectRemoteLifecycleMapping,
+  openResult: ProjectOpenResult,
+  context: ProjectHostRemoteRouteContext,
+): ProjectOpenResult {
+  const {
+    gateway: _remoteProjectGateway,
+    projectId: _remoteProjectId,
+    projectName: _remoteProjectName,
+    workspaceId: _remoteWorkspaceId,
+    targetId: _remoteTargetId,
+    sourcePath: remoteSourcePath,
+    ...remoteState
+  } = openResult.state;
+  const sourcePath = input.sourcePath ?? remoteSourcePath;
+  const state: ProjectState = {
+    ...remoteState,
+    projectId: context.projectId,
+    projectName: context.config.name,
+    workspaceId: context.workspaceId,
+    targetId: context.targetId,
+    ...(sourcePath ? { sourcePath } : {}),
+    remoteGateway: {
+      remoteNodeId: mapping.remoteNode.id,
+      endpoint: remoteGatewayEndpointFromUrl(mapping.remoteNode.gatewayMcpUrl),
+      projectId: openResult.state.projectId,
+      workspaceId: openResult.state.workspaceId,
+      targetId: openResult.state.targetId,
+    },
+  };
+
+  saveProjectState(context.statePath, state);
+
+  return {
+    ...openResult,
+    projectRoot: context.projectRoot,
+    statePath: context.statePath,
+    state,
+  };
+}
+
 export class PlexusProjectLifecycle {
   private readonly routeRegistry?: ProjectLifecycleRouteRegistry;
   private readonly imageToolCaller?: ProjectLifecycleImageToolCaller;
@@ -2325,16 +2434,96 @@ export class PlexusProjectLifecycle {
     );
   }
 
+  private async registerHostRouteForRemoteOpen(
+    input: ProjectOpenToolInput,
+    mapping: ProjectRemoteLifecycleMapping,
+    openResult: ProjectOpenResult,
+  ): Promise<ProjectOpenResult> {
+    const context = hostRemoteRouteContext(
+      {
+        ...input,
+        stateRoot: this.effectiveStateRoot(input.stateRoot),
+      },
+      mapping,
+    );
+    const hostOpenResult = hostOpenResultForRemoteOpen(
+      input,
+      mapping,
+      openResult,
+      context,
+    );
+
+    await this.ensureGatewayRouteForOpenResult(hostOpenResult);
+
+    return hostOpenResult;
+  }
+
+  private async unregisterHostRouteForRemote(
+    input: {
+      projectPath: string;
+      workspaceId?: string;
+      targetId?: string;
+      stateRoot?: string;
+    },
+    mapping: ProjectRemoteLifecycleMapping,
+    options: { deleteStateFile?: boolean } = {},
+  ): Promise<void> {
+    const context = hostRemoteRouteContext(
+      {
+        ...input,
+        stateRoot: this.effectiveStateRoot(input.stateRoot),
+      },
+      mapping,
+    );
+    const state = loadProjectState(context.statePath);
+    const routeRegistry =
+      this.routeRegistry ?? this.routeRegistryForProject(context.config, state);
+
+    await this.unregisterRoute(
+      {
+        projectId: context.projectId,
+        workspaceId: context.workspaceId,
+        ...(input.targetId ? { targetId: context.targetId } : {}),
+      },
+      routeRegistry,
+    );
+
+    if (state?.gateway?.managedByProject) {
+      await closeProjectGateway({
+        ...this.gateway,
+        state,
+      });
+      state.updatedAt = (this.gateway.now ?? (() => new Date()))().toISOString();
+      saveProjectState(context.statePath, state);
+    }
+
+    if (options.deleteStateFile) {
+      fs.rmSync(context.statePath, { force: true });
+    }
+  }
+
   async open(
     input: ProjectOpenToolInput,
   ): Promise<ProjectLifecycleToolResult<ProjectOpenResult>> {
     try {
       const remote = this.remoteLifecycleMapping(input);
       if (remote) {
-        return this.remoteClientFor(remote.remoteNode).callTool<ProjectOpenResult>(
-          "plexus_project_open",
-          remoteLifecycleArguments(input, remote),
-        );
+        const remoteResult =
+          await this.remoteClientFor(remote.remoteNode).callTool<ProjectOpenResult>(
+            "plexus_project_open",
+            remoteLifecycleArguments(input, remote),
+          );
+        if (remoteResult.ok && remoteResult.data) {
+          return result(
+            await this.registerHostRouteForRemoteOpen(
+              input,
+              remote,
+              remoteResult.data,
+            ),
+          );
+        }
+
+        return remoteResult;
       }
 
       const openResult = await this.projectOpen({
@@ -2421,6 +2610,10 @@ export class PlexusProjectLifecycle {
   private async discoverGatewayPharoTools(
     state: ProjectState,
   ): Promise<Tool[] | undefined> {
+    if (state.remoteGateway) {
+      return undefined;
+    }
+
     if (gatewayHasExplicitPharoTools(this.gateway)) {
       return undefined;
     }
@@ -2541,10 +2734,16 @@ export class PlexusProjectLifecycle {
     try {
       const remote = this.remoteLifecycleMapping(input);
       if (remote) {
-        return this.remoteClientFor(remote.remoteNode).callTool<ProjectCloseResult>(
-          "plexus_project_close",
-          remoteLifecycleArguments(input, remote),
-        );
+        const remoteResult =
+          await this.remoteClientFor(remote.remoteNode).callTool<ProjectCloseResult>(
+            "plexus_project_close",
+            remoteLifecycleArguments(input, remote),
+          );
+        if (remoteResult.ok) {
+          await this.unregisterHostRouteForRemote(input, remote);
+        }
+
+        return remoteResult;
       }
 
       const closeResult = await this.projectClose({
@@ -2620,10 +2819,18 @@ export class PlexusProjectLifecycle {
     try {
       const remote = this.remoteLifecycleMapping(input);
       if (remote) {
-        return this.remoteClientFor(remote.remoteNode).callTool<ProjectCleanupResult>(
-          "plexus_project_cleanup",
-          remoteLifecycleArguments(input, remote),
-        );
+        const remoteResult =
+          await this.remoteClientFor(remote.remoteNode).callTool<ProjectCleanupResult>(
+            "plexus_project_cleanup",
+            remoteLifecycleArguments(input, remote),
+          );
+        if (remoteResult.ok && input.confirm === true) {
+          await this.unregisterHostRouteForRemote(input, remote, {
+            deleteStateFile: input.deleteStateFile === true,
+          });
+        }
+
+        return remoteResult;
       }
 
       const projectRoot = path.resolve(input.projectPath);
