@@ -139,10 +139,10 @@ test("enforces configured workspace and target prefixes", () => {
   assert.doesNotThrow(() =>
     buildLiveSmokeRunPlan(
       baseOptions({
-        workspaceId: "dogfood-overnight-1",
-        targetId: "dogfood-overnight-target-1",
-        requiredWorkspacePrefix: "dogfood-overnight",
-        requiredTargetPrefix: "dogfood-overnight",
+        workspaceId: "smoke-nightly-1",
+        targetId: "smoke-nightly-target-1",
+        requiredWorkspacePrefix: "smoke-nightly",
+        requiredTargetPrefix: "smoke-nightly",
       }),
       { repoRoot },
     ),
@@ -152,7 +152,7 @@ test("enforces configured workspace and target prefixes", () => {
       buildLiveSmokeRunPlan(
         baseOptions({
           workspaceId: "manual-1",
-          requiredWorkspacePrefix: "dogfood-overnight",
+          requiredWorkspacePrefix: "smoke-nightly",
         }),
         { repoRoot },
       ),
