@@ -13,6 +13,7 @@ function usage(): string {
     "Usage:",
     "  plexus project open <path> [--workspace-id <id>] [--target-id <id>] [--state-root <path>] [--display-mode <headless|interactive>]",
     "  plexus project close <path> [--workspace-id <id>] [--state-root <path>] [--repository-workspace-cleanup-policy <preserve|archive|delete-disposable>] [--repository-workspace-archive-root <path>]",
+    "  plexus project cleanup <path> [--workspace-id <id>] [--state-root <path>] [--confirm] [--delete-state] [--keep-launcher-images] [--repository-workspace-cleanup-policy <preserve|archive|delete-disposable>] [--repository-workspace-archive-root <path>]",
     "  plexus project status <path> [--workspace-id <id>] [--state-root <path>]",
     "  plexus mcp project",
     "  plexus mcp pharo-launcher [--project-path <path>] [--workspace-id <id>] [--target-id <id>] [--state-root <path>]",
@@ -38,6 +39,9 @@ interface ParsedCommand {
   displayMode?: "headless" | "interactive";
   repositoryWorkspaceCleanupPolicy?: "preserve" | "archive" | "delete-disposable";
   repositoryWorkspaceArchiveRoot?: string;
+  confirm?: boolean;
+  deleteStateFile?: boolean;
+  deleteLauncherImages?: boolean;
 }
 
 function parseCommand(argv: string[]): ParsedCommand {
@@ -49,6 +53,20 @@ function parseCommand(argv: string[]): ParsedCommand {
 
   for (let index = 0; index < rest.length; index += 1) {
     const arg = rest[index];
+    switch (arg) {
+      case "--confirm":
+        parsed.confirm = true;
+        continue;
+      case "--delete-state":
+        parsed.deleteStateFile = true;
+        continue;
+      case "--keep-launcher-images":
+        parsed.deleteLauncherImages = false;
+        continue;
+      default:
+        break;
+    }
+
     const value = rest[index + 1];
     if (!value) {
       throw new Error(`${arg} requires a value`);
@@ -139,6 +157,7 @@ async function main(argv: string[]): Promise<number> {
     parsed.scope !== "project" ||
     (parsed.command !== "open" &&
       parsed.command !== "close" &&
+      parsed.command !== "cleanup" &&
       parsed.command !== "status") ||
     !parsed.projectPath
   ) {
@@ -187,6 +206,32 @@ async function main(argv: string[]): Promise<number> {
       });
       console.log(JSON.stringify(status, null, 2));
       return status.ok ? 0 : 1;
+    }
+
+    if (parsed.command === "cleanup") {
+      const lifecycle = new PlexusProjectLifecycle();
+      const cleanup = await lifecycle.cleanup({
+        projectPath: parsed.projectPath,
+        stateRoot,
+        workspaceId,
+        confirm: parsed.confirm,
+        deleteStateFile: parsed.deleteStateFile,
+        deleteLauncherImages: parsed.deleteLauncherImages,
+        ...(parsed.repositoryWorkspaceCleanupPolicy
+          ? {
+              repositoryWorkspaceCleanupPolicy:
+                parsed.repositoryWorkspaceCleanupPolicy,
+            }
+          : {}),
+        ...(parsed.repositoryWorkspaceArchiveRoot
+          ? {
+              repositoryWorkspaceArchiveRoot:
+                parsed.repositoryWorkspaceArchiveRoot,
+            }
+          : {}),
+      });
+      console.log(JSON.stringify(cleanup, null, 2));
+      return cleanup.ok ? 0 : 1;
     }
 
     const lifecycle = new PlexusProjectLifecycle();

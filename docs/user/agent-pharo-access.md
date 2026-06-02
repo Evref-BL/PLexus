@@ -175,6 +175,11 @@ Do not expose these through the scoped surface by default:
 Deletion and cleanup should remain PLexus workspace policy. The scoped reset
 workflow is the reviewable destructive path for disposable verification images;
 agents must still not call host-wide launcher delete or recreate directly.
+For interrupted project runs, use `plexus_project_cleanup` or
+`plexus project cleanup` first without confirmation to audit owned leftovers,
+then repeat with `confirm: true` or `--confirm` only after the reported scope is
+correct. Cleanup deletes launcher images only when PLexus runtime state records
+creation ownership metadata for that image.
 
 ## Create Policy
 

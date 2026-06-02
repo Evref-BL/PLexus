@@ -37,14 +37,22 @@ The `plexus_project` surface owns project runtime lifecycle:
 ```text
 plexus_project_open
 plexus_project_close
+plexus_project_cleanup
 plexus_project_status
 plexus_home_image_cache_status
 plexus_home_image_cache_flush
 plexus_rescue_image
 ```
 
-Use this surface for opening, closing, inspecting, planning rescue, applying
-rescue, and inspecting or flushing PLexus home image cache entries.
+Use this surface for opening, closing, cleanup audits, confirmed cleanup,
+inspecting, planning rescue, applying rescue, and inspecting or flushing PLexus
+home image cache entries.
+
+`plexus_project_cleanup` is dry-run by default. It reports PLexus-owned runtime
+state, image processes, scoped launcher images with creation ownership metadata,
+endpoint handoff files, port claims, project-local gateway state, routes, and
+repository workspaces. It mutates only when called with `confirm: true`.
+State-file deletion is separately controlled by `deleteStateFile: true`.
 
 ## Scoped Launcher Tools
 

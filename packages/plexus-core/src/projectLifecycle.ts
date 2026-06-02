@@ -27,6 +27,11 @@ import {
 } from "./projectConfig.js";
 import { closeProject, type ProjectCloseResult } from "./projectClose.js";
 import {
+  cleanupProjectOwnedResources,
+  type ProjectCleanupResource,
+  type ProjectCleanupResult,
+} from "./projectCleanup.js";
+import {
   closeProjectGateway,
   ensureProjectGateway,
   projectGatewayStatus,
@@ -168,6 +173,17 @@ export interface ProjectCloseToolInput {
   projectPath: string;
   stateRoot?: string;
   workspaceId?: string;
+  repositoryWorkspaceCleanupPolicy?: ProjectImageRepositoryWorkspaceCleanupPolicy;
+  repositoryWorkspaceArchiveRoot?: string;
+}
+
+export interface ProjectCleanupToolInput {
+  projectPath: string;
+  stateRoot?: string;
+  workspaceId?: string;
+  confirm?: boolean;
+  deleteStateFile?: boolean;
+  deleteLauncherImages?: boolean;
   repositoryWorkspaceCleanupPolicy?: ProjectImageRepositoryWorkspaceCleanupPolicy;
   repositoryWorkspaceArchiveRoot?: string;
 }
@@ -577,6 +593,27 @@ function optionalDisplayMode(
   throw new ProjectLifecycleInputError(`${key} must be headless or interactive`);
 }
 
+function optionalRepositoryWorkspaceCleanupPolicy(
+  input: Record<string, unknown>,
+): ProjectImageRepositoryWorkspaceCleanupPolicy | undefined {
+  const value = input.repositoryWorkspaceCleanupPolicy;
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (
+    value === "preserve" ||
+    value === "archive" ||
+    value === "delete-disposable"
+  ) {
+    return value;
+  }
+
+  throw new ProjectLifecycleInputError(
+    "repositoryWorkspaceCleanupPolicy must be preserve, archive, or delete-disposable",
+  );
+}
+
 function optionalNumber(
   input: Record<string, unknown>,
   key: string,
@@ -761,6 +798,17 @@ function failure<T = unknown>(error: unknown): ProjectLifecycleToolResult<T> {
     ok: false,
     error: error instanceof Error ? error.message : String(error),
     diagnostics,
+  };
+}
+
+function routeCleanupResource(state: ProjectState): ProjectCleanupResource {
+  return {
+    kind: "route",
+    status: "planned",
+    id: state.targetId,
+    projectId: state.projectId,
+    workspaceId: state.workspaceId,
+    targetId: state.targetId,
   };
 }
 
@@ -2276,6 +2324,88 @@ export class PlexusProjectLifecycle {
     }
   }
 
+  async cleanup(
+    input: ProjectCleanupToolInput,
+  ): Promise<ProjectLifecycleToolResult<ProjectCleanupResult>> {
+    try {
+      const projectRoot = path.resolve(input.projectPath);
+      const config = loadProjectConfig(projectRoot);
+      const workspaceId = input.workspaceId
+        ? sanitizeRuntimeId(input.workspaceId)
+        : defaultWorkspaceId(projectRoot);
+      const stateRoot =
+        projectStateRootForConfig(config, this.effectiveStateRoot(input.stateRoot)) ??
+        defaultPlexusStateRoot(projectRoot);
+      const statePath = projectStatePathForConfig({
+        projectRoot,
+        config,
+        workspaceId,
+        stateRoot,
+      });
+      const state = loadProjectState(statePath);
+      const routeResource = state ? routeCleanupResource(state) : undefined;
+      let routeFailure: ProjectCleanupResult["failures"][number] | undefined;
+
+      if (input.confirm === true && routeResource && state) {
+        const routeRegistry = this.routeRegistryForProject(config, state);
+        if (routeRegistry) {
+          try {
+            await this.unregisterRoute(
+              { targetId: state.targetId },
+              routeRegistry,
+            );
+            routeResource.status = "cleaned";
+          } catch (error) {
+            routeResource.status = "failed";
+            routeResource.reason = errorMessage(error);
+            routeFailure = {
+              kind: "route",
+              id: state.targetId,
+              message: errorMessage(error),
+            };
+          }
+        } else {
+          routeResource.status = "skipped";
+          routeResource.reason =
+            "No route registry is configured for this project scope.";
+        }
+      }
+
+      const cleanupResult = await cleanupProjectOwnedResources({
+        projectRoot,
+        stateRoot,
+        workspaceId,
+        confirm: input.confirm,
+        deleteStateFile: input.deleteStateFile,
+        deleteLauncherImages: input.deleteLauncherImages,
+        repositoryWorkspaceCleanupPolicy:
+          input.repositoryWorkspaceCleanupPolicy,
+        repositoryWorkspaceArchiveRoot: input.repositoryWorkspaceArchiveRoot,
+        gateway: this.gateway,
+      });
+
+      if (routeResource) {
+        cleanupResult.resources.push(routeResource);
+      }
+      if (routeFailure) {
+        cleanupResult.failures.push(routeFailure);
+        cleanupResult.ok = false;
+      }
+
+      if (!cleanupResult.ok) {
+        return {
+          ok: false,
+          data: cleanupResult,
+          error: "One or more PLexus-owned resources failed to clean",
+        };
+      }
+
+      return result(cleanupResult);
+    } catch (error) {
+      return failure(error);
+    }
+  }
+
   async status(
     input: ProjectStatusToolInput,
   ): Promise<
@@ -2383,6 +2513,31 @@ export class PlexusProjectLifecycle {
             projectPath: requireString(input, "projectPath"),
             stateRoot: optionalString(input, "stateRoot"),
             workspaceId: optionalString(input, "workspaceId"),
+            repositoryWorkspaceCleanupPolicy:
+              optionalRepositoryWorkspaceCleanupPolicy(input),
+            repositoryWorkspaceArchiveRoot: optionalString(
+              input,
+              "repositoryWorkspaceArchiveRoot",
+            ),
+          });
+
+        case "plexus_project_cleanup":
+          return this.cleanup({
+            projectPath: requireString(input, "projectPath"),
+            stateRoot: optionalString(input, "stateRoot"),
+            workspaceId: optionalString(input, "workspaceId"),
+            confirm: optionalBooleanValue(input, "confirm"),
+            deleteStateFile: optionalBooleanValue(input, "deleteStateFile"),
+            deleteLauncherImages: optionalBooleanValue(
+              input,
+              "deleteLauncherImages",
+            ),
+            repositoryWorkspaceCleanupPolicy:
+              optionalRepositoryWorkspaceCleanupPolicy(input),
+            repositoryWorkspaceArchiveRoot: optionalString(
+              input,
+              "repositoryWorkspaceArchiveRoot",
+            ),
           });
 
         case "plexus_project_status":

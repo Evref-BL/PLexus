@@ -226,6 +226,19 @@ exiting, and writes `keep-open-cleanup-context.json` with the scoped
 environment, and the owned `pharo_launcher_image_delete` tool calls needed to
 remove copied/source images after close.
 
+For interrupted retained runs, audit PLexus-owned leftovers before deleting
+anything:
+
+```sh
+plexus project cleanup <project-root> --state-root <state-root> --workspace-id <workspace-id>
+```
+
+Add `--confirm` to stop owned image processes, unregister the route, release
+owned port claims, stop the managed project-local gateway, remove endpoint
+handoff files, and delete scoped launcher images that have PLexus creation
+ownership metadata. Add `--delete-state` only when the runtime state file should
+also be removed.
+
 Use `--imageSpecJson` more than once to exercise the real multi-image shape:
 
 ```sh

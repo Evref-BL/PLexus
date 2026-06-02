@@ -484,6 +484,56 @@ describe("project lifecycle tools", () => {
     ]);
   });
 
+  it("cleans a project scope and unregisters the gateway route when confirmed", async () => {
+    const projectRoot = makeTempDir("plexus-project-");
+    const stateRoot = makeTempDir("plexus-state-");
+    writeProjectConfig(projectRoot);
+    saveProjectState(statePath(stateRoot), {
+      ...runningState,
+      runtimeStatus: "idle",
+      images: runningState.images.map((image) => ({
+        ...image,
+        status: "stopped",
+        pid: undefined,
+      })),
+    });
+    const routeRegistry = new FakeRouteRegistry();
+    const lifecycle = new PlexusProjectLifecycle({
+      routeRegistry,
+      gateway: {
+        checks: {
+          isPortListening: () => false,
+          isProcessAlive: () => false,
+        },
+      },
+    });
+
+    const result = await lifecycle.handleTool("plexus_project_cleanup", {
+      projectPath: projectRoot,
+      stateRoot,
+      workspaceId: "worktree-a",
+      confirm: true,
+      deleteLauncherImages: false,
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
+      data: {
+        confirmed: true,
+        resources: expect.arrayContaining([
+          expect.objectContaining({
+            kind: "route",
+            id: "project-123--worktree-a",
+            status: "cleaned",
+          }),
+        ]),
+      },
+    });
+    expect(routeRegistry.unregisters).toEqual([
+      { targetId: "project-123--worktree-a" },
+    ]);
+  });
+
   it("reports lifecycle status from project runtime state without starting images", async () => {
     const projectRoot = makeTempDir("plexus-project-");
     const stateRoot = makeTempDir("plexus-state-");
