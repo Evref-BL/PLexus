@@ -215,7 +215,7 @@ npm run smoke:open-route-close -- --createSourceFromTemplate
 The smoke creates a disposable PLexus project and isolated state root, copies
 the source image when `--copyFromImageName` is used, opens it through PLexus
 core lifecycle orchestration, registers the route, verifies `tools/list`
-exposes the current Pharo MCP `find-packages` tool, routes that read-only probe
+exposes the current Pharo MCP `package_search` tool, routes that read-only probe
 into every active image, closes the images, checks that the processes are gone,
 checks that the closed target is unregistered from gateway status, then deletes
 copied images, temporary source images, and temp directories.
@@ -300,7 +300,7 @@ Use `--stepJson` for extra routed calls, for example:
 ```sh
 npm run smoke:open-route-close -- \
   --copyFromImageName MCP12-2 \
-  --stepJson '{"forEachImage":true,"toolName":"find-packages","arguments":{"projectNames":["MCP"]},"expectedText":"packages found"}'
+  --stepJson '{"forEachImage":true,"toolName":"package_search","arguments":{"projectNames":["MCP"]},"expectedText":"packages found"}'
 ```
 
 ## Useful Docs

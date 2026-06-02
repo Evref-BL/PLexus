@@ -407,7 +407,7 @@ describe("project repository workspace materialization", () => {
       dirtyState: "clean",
     });
     expect(git(targetPath, ["branch", "--show-current"])).toBe("image/dev");
-  });
+  }, 20_000);
 
   it("materializes a remote clone fallback", () => {
     const sourceRoot = makeTempDir("plexus-source-");

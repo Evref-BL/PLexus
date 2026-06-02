@@ -489,14 +489,16 @@ Smalltalk globals
 Smalltalk globals
   at: #PLexusDependencyRepositoryNetworkPolicy
   put: plexusDependencyRepositoryNetworkPolicy.
-((Smalltalk globals includesKey: #Iceberg)
-  and: [ Smalltalk globals includesKey: #IceRepository ])
-    ifTrue: [
-      (Smalltalk globals at: #Iceberg)
-        enableMetacelloIntegration: true.
-      (Smalltalk globals at: #IceRepository)
-        shareRepositoriesBetweenImages: true;
-        sharedRepositoriesLocationString: plexusDependencyRepositoryCachePath ].
+[
+  Iceberg enableMetacelloIntegration: true.
+  IceRepository
+    shareRepositoriesBetweenImages: true;
+    sharedRepositoriesLocationString: plexusDependencyRepositoryCachePath
+]
+  on: Error
+  do: [ :error |
+    Error signal:
+      'PLexus dependency repository cache setup failed: ', error description ].
 `;
 }
 
