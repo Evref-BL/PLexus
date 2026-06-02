@@ -214,6 +214,25 @@ export interface ProjectPharoMcpPolicy {
   supportedMajorVersions: number[];
 }
 
+export interface ProjectRemoteNodeTargetMappingConfig {
+  targetId: string;
+  remoteTargetId?: string;
+}
+
+export interface ProjectRemoteNodeWorkspaceMappingConfig {
+  workspaceId: string;
+  remoteWorkspaceId?: string;
+  remoteProjectPath?: string;
+  targets?: ProjectRemoteNodeTargetMappingConfig[];
+}
+
+export interface ProjectRemoteNodeConfig {
+  id: string;
+  projectMcpUrl: string;
+  gatewayMcpUrl: string;
+  workspaces?: ProjectRemoteNodeWorkspaceMappingConfig[];
+}
+
 export type ProjectLauncherProfileMode = "project-owned" | "external";
 
 export type ProjectLauncherTemplateCatalogSource =
@@ -242,6 +261,7 @@ export interface ProjectRuntimePolicy {
   gateway: ProjectGatewayPolicy;
   imagePorts: ProjectImagePortPolicy;
   workspaceImages?: ProjectWorkspaceImagePolicy;
+  remoteNodes?: ProjectRemoteNodeConfig[];
   launcherProfile: ProjectLauncherProfilePolicy;
   pharoMcp: ProjectPharoMcpPolicy;
 }
@@ -1530,6 +1550,128 @@ function parseRuntimeGateway(
   return parseProjectLocalGateway(value, issues);
 }
 
+function parseRemoteNodeTargetMappings(
+  value: unknown,
+  issues: string[],
+  pathPrefix: string,
+): ProjectRemoteNodeTargetMappingConfig[] | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (!Array.isArray(value)) {
+    issues.push(`${pathPrefix}.targets must be an array`);
+    return undefined;
+  }
+
+  return value.map((item, index) => {
+    const itemPath = `${pathPrefix}.targets[${index}]`;
+    if (!isObject(item)) {
+      issues.push(`${itemPath} must be an object`);
+      return {
+        targetId: "",
+      };
+    }
+
+    const remoteTargetId = optionalStringField(
+      item,
+      "remoteTargetId",
+      issues,
+      itemPath,
+    );
+
+    return {
+      targetId: stringField(item, "targetId", issues, itemPath),
+      ...(remoteTargetId ? { remoteTargetId } : {}),
+    };
+  });
+}
+
+function parseRemoteNodeWorkspaceMappings(
+  value: unknown,
+  issues: string[],
+  pathPrefix: string,
+): ProjectRemoteNodeWorkspaceMappingConfig[] | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (!Array.isArray(value)) {
+    issues.push(`${pathPrefix}.workspaces must be an array`);
+    return undefined;
+  }
+
+  return value.map((item, index) => {
+    const itemPath = `${pathPrefix}.workspaces[${index}]`;
+    if (!isObject(item)) {
+      issues.push(`${itemPath} must be an object`);
+      return {
+        workspaceId: "",
+      };
+    }
+
+    const remoteWorkspaceId = optionalStringField(
+      item,
+      "remoteWorkspaceId",
+      issues,
+      itemPath,
+    );
+    const remoteProjectPath = optionalStringField(
+      item,
+      "remoteProjectPath",
+      issues,
+      itemPath,
+    );
+    const targets = parseRemoteNodeTargetMappings(item.targets, issues, itemPath);
+
+    return {
+      workspaceId: stringField(item, "workspaceId", issues, itemPath),
+      ...(remoteWorkspaceId ? { remoteWorkspaceId } : {}),
+      ...(remoteProjectPath ? { remoteProjectPath } : {}),
+      ...(targets ? { targets } : {}),
+    };
+  });
+}
+
+function parseRemoteNodes(
+  value: unknown,
+  issues: string[],
+): ProjectRemoteNodeConfig[] | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (!Array.isArray(value)) {
+    issues.push("runtime.remoteNodes must be an array");
+    return undefined;
+  }
+
+  return value.map((item, index) => {
+    const itemPath = `runtime.remoteNodes[${index}]`;
+    if (!isObject(item)) {
+      issues.push(`${itemPath} must be an object`);
+      return {
+        id: "",
+        projectMcpUrl: "",
+        gatewayMcpUrl: "",
+      };
+    }
+
+    const workspaces = parseRemoteNodeWorkspaceMappings(
+      item.workspaces,
+      issues,
+      itemPath,
+    );
+
+    return {
+      id: stringField(item, "id", issues, itemPath),
+      projectMcpUrl: urlField(item, "projectMcpUrl", issues, itemPath),
+      gatewayMcpUrl: urlField(item, "gatewayMcpUrl", issues, itemPath),
+      ...(workspaces ? { workspaces } : {}),
+    };
+  });
+}
+
 function parseImagePortCoordination(
   value: unknown,
   issues: string[],
@@ -1808,6 +1950,7 @@ function parseRuntimePolicy(
     value.workspaceImages,
     issues,
   );
+  const remoteNodes = parseRemoteNodes(value.remoteNodes, issues);
 
   return {
     scope: "project",
@@ -1815,6 +1958,7 @@ function parseRuntimePolicy(
     gateway: parseRuntimeGateway(value.gateway, issues),
     imagePorts: parseImagePortPolicy(value.imagePorts, issues),
     ...(workspaceImages ? { workspaceImages } : {}),
+    ...(remoteNodes ? { remoteNodes } : {}),
     launcherProfile: parseLauncherProfilePolicy(
       value.launcherProfile,
       issues,
@@ -1946,6 +2090,31 @@ function validatePreparedImageReferences(
   });
 }
 
+function validateRemoteNodeConfig(config: ProjectConfig, issues: string[]): void {
+  const remoteNodes = resolveProjectRuntimePolicy(config).remoteNodes ?? [];
+  collectDuplicates(
+    remoteNodes.map((remoteNode) => remoteNode.id),
+    "remote node ids",
+    issues,
+  );
+
+  remoteNodes.forEach((remoteNode, remoteNodeIndex) => {
+    collectDuplicates(
+      remoteNode.workspaces?.map((workspace) => workspace.workspaceId) ?? [],
+      `runtime.remoteNodes[${remoteNodeIndex}].workspaces.workspaceId`,
+      issues,
+    );
+
+    remoteNode.workspaces?.forEach((workspace, workspaceIndex) => {
+      collectDuplicates(
+        workspace.targets?.map((target) => target.targetId) ?? [],
+        `runtime.remoteNodes[${remoteNodeIndex}].workspaces[${workspaceIndex}].targets.targetId`,
+        issues,
+      );
+    });
+  });
+}
+
 export function parseProjectConfig(value: unknown): ProjectConfig {
   const issues: string[] = [];
 
@@ -1993,6 +2162,7 @@ export function parseProjectConfig(value: unknown): ProjectConfig {
   collectDuplicateActiveRepositoryWorkspacePaths(config.images, issues);
   validateImagePortPolicy(config, issues);
   validatePreparedImageReferences(config, issues);
+  validateRemoteNodeConfig(config, issues);
 
   if (issues.length > 0) {
     throw new ProjectConfigError("Invalid Plexus project config", issues);

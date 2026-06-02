@@ -511,6 +511,132 @@ describe("project config", () => {
     }
   });
 
+  it("parses remote PLexus node declarations", () => {
+    const config: ReturnType<typeof validProjectConfig> & { runtime?: unknown } =
+      validProjectConfig();
+    config.runtime = {
+      remoteNodes: [
+        {
+          id: "remote-a",
+          projectMcpUrl: "http://remote-a.local:7332/mcp",
+          gatewayMcpUrl: "http://remote-a.local:7331/mcp",
+          workspaces: [
+            {
+              workspaceId: "task-a",
+              remoteWorkspaceId: "remote-task-a",
+              remoteProjectPath: "/workspaces/project-a",
+              targets: [
+                {
+                  targetId: "task-a-dev",
+                  remoteTargetId: "remote-task-a-dev",
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    };
+
+    expect(parseProjectConfig(config).runtime?.remoteNodes).toEqual([
+      {
+        id: "remote-a",
+        projectMcpUrl: "http://remote-a.local:7332/mcp",
+        gatewayMcpUrl: "http://remote-a.local:7331/mcp",
+        workspaces: [
+          {
+            workspaceId: "task-a",
+            remoteWorkspaceId: "remote-task-a",
+            remoteProjectPath: "/workspaces/project-a",
+            targets: [
+              {
+                targetId: "task-a-dev",
+                remoteTargetId: "remote-task-a-dev",
+              },
+            ],
+          },
+        ],
+      },
+    ]);
+  });
+
+  it("rejects invalid remote PLexus node declarations", () => {
+    const config: ReturnType<typeof validProjectConfig> & { runtime?: unknown } =
+      validProjectConfig();
+    config.runtime = {
+      remoteNodes: [
+        {
+          id: "",
+          projectMcpUrl: "not-a-url",
+          gatewayMcpUrl: "",
+          workspaces: [
+            {
+              remoteWorkspaceId: "remote-task-a",
+              targets: [
+                {
+                  remoteTargetId: "remote-target-a",
+                },
+                "not-a-target",
+              ],
+            },
+            "not-a-workspace",
+          ],
+        },
+        {
+          id: "remote-b",
+          projectMcpUrl: "http://remote-b.local:7332/mcp",
+          gatewayMcpUrl: "http://remote-b.local:7331/mcp",
+          workspaces: [
+            {
+              workspaceId: "task-b",
+              targets: [
+                {
+                  targetId: "target-b",
+                },
+                {
+                  targetId: "target-b",
+                },
+              ],
+            },
+          ],
+        },
+        {
+          id: "remote-b",
+          projectMcpUrl: "http://remote-b2.local:7332/mcp",
+          gatewayMcpUrl: "http://remote-b2.local:7331/mcp",
+          workspaces: [
+            {
+              workspaceId: "task-b",
+            },
+            {
+              workspaceId: "task-b",
+            },
+          ],
+        },
+      ],
+    };
+
+    expect(() => parseProjectConfig(config)).toThrow(ProjectConfigError);
+
+    try {
+      parseProjectConfig(config);
+    } catch (error) {
+      expect((error as ProjectConfigError).issues).toEqual(
+        expect.arrayContaining([
+          "runtime.remoteNodes[0].id must be a non-empty string",
+          "runtime.remoteNodes[0].projectMcpUrl must be a valid URL",
+          "runtime.remoteNodes[0].gatewayMcpUrl must be a valid URL",
+          "runtime.remoteNodes[0].workspaces[0].workspaceId must be a non-empty string",
+          "runtime.remoteNodes[0].workspaces[0].targets[0].targetId must be a non-empty string",
+          "runtime.remoteNodes[0].workspaces[0].targets[1] must be an object",
+          "runtime.remoteNodes[0].workspaces[1] must be an object",
+          "remote node ids must be unique: remote-b",
+          "runtime.remoteNodes[1].workspaces[0].targets.targetId must be unique: target-b",
+          "runtime.remoteNodes[2].workspaces.workspaceId must be unique: task-b",
+        ]),
+      );
+    }
+  });
+
   it("leaves image git configuration absent when not specified", () => {
     const config = validProjectConfig();
     delete config.images[0].git;
