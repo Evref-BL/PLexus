@@ -649,6 +649,86 @@ describe("project lifecycle tools", () => {
     });
   });
 
+  it("reports failed workspace images with scoped rescue affordances", async () => {
+    const projectRoot = makeTempDir("plexus-project-");
+    const stateRoot = makeTempDir("plexus-state-");
+    const failedState: ProjectState = {
+      ...runningState,
+      images: [
+        {
+          ...runningState.images[0],
+          status: "failed",
+          imagePath: "/profiles/project-123/images/MyProject-dev/MyProject-dev.image",
+          ombuDirectoryPath:
+            "/profiles/project-123/images/MyProject-dev/pharo-local/ombu-sessions",
+        },
+      ],
+    };
+    writeProjectConfig(projectRoot);
+    saveProjectState(statePath(stateRoot), failedState);
+    const lifecycle = new PlexusProjectLifecycle({
+      routeRegistry: new FakeRouteRegistry(),
+      gateway: {
+        checks: {
+          isPortListening: async () => false,
+        },
+      },
+    });
+
+    const result = await lifecycle.handleTool("plexus_project_status", {
+      projectPath: projectRoot,
+      stateRoot,
+      workspaceId: "worktree-a",
+      includeDiagnostics: true,
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
+      data: {
+        diagnostics: {
+          imageRecovery: [
+            {
+              imageId: "dev",
+              imageName: "MyProject-dev",
+              status: "failed",
+              message: "Image dev is failed; use scoped rescue before raw cleanup.",
+              paths: {
+                imagePath:
+                  "/profiles/project-123/images/MyProject-dev/MyProject-dev.image",
+                ombuDirectoryPath:
+                  "/profiles/project-123/images/MyProject-dev/pharo-local/ombu-sessions",
+              },
+              actions: [
+                {
+                  operation: "plan",
+                  toolName: "plexus_rescue_image",
+                  arguments: {
+                    projectPath: projectRoot,
+                    stateRoot,
+                    workspaceId: "worktree-a",
+                    sourceImageId: "dev",
+                    operation: "plan",
+                  },
+                },
+                {
+                  operation: "prepareTarget",
+                  toolName: "plexus_rescue_image",
+                  arguments: {
+                    projectPath: projectRoot,
+                    stateRoot,
+                    workspaceId: "worktree-a",
+                    sourceImageId: "dev",
+                    operation: "prepareTarget",
+                  },
+                },
+              ],
+            },
+          ],
+        },
+      },
+    });
+  });
+
   it("reports the persisted workspace source path in status context and diagnostics", async () => {
     const projectRoot = makeTempDir("plexus-project-");
     const sourcePath = makeTempDir("plexus-source-");
