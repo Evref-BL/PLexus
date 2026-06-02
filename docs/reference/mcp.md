@@ -9,7 +9,11 @@ Project lifecycle:
 
 ```sh
 plexus mcp project
+plexus mcp project --http --host 127.0.0.1 --port 7332 --mcp-path /mcp
 ```
+
+The project lifecycle MCP uses stdio by default. HTTP mode serves the same tools
+with Streamable HTTP MCP and exposes a health response at `/health`.
 
 Scoped launcher for one project/workspace:
 

@@ -16,6 +16,7 @@ import {
   type GatewayProjectImageCreationState,
   type GatewayProjectRoute,
   type GatewayProjectState,
+  type GatewayRemoteGatewayUpstream,
 } from "./routingTable.js";
 
 export interface GatewayImageHealthClient {
@@ -131,6 +132,7 @@ export interface PlexusGatewayOptions {
   routingTable?: PlexusRoutingTable;
   imageRouter?: ImageMcpToolRouter;
   healthClient?: GatewayImageHealthClient;
+  remoteGatewayFetch?: typeof fetch;
   pharoTools?: readonly Tool[];
   pharoScope?: GatewayRouteReferenceInput;
   pharoToolSchemaImageId?: string;
@@ -177,6 +179,7 @@ export interface RouteToImageRoute {
   imageName: string;
   port?: number;
   mcpEndpoint?: GatewayImageMcpEndpoint;
+  remoteGateway?: GatewayRemoteGatewayUpstream;
 }
 
 export interface GatewayToolResult<T = unknown> {
@@ -354,34 +357,31 @@ function endpointInput(
     return undefined;
   }
 
+  return endpointValueInput(value, `state.images[${index}].mcpEndpoint`);
+}
+
+function endpointValueInput(
+  value: unknown,
+  pathLabel: string,
+): GatewayImageMcpEndpoint {
   if (!isObject(value)) {
-    throw new GatewayInputError(
-      `state.images[${index}].mcpEndpoint must be an object`,
-    );
+    throw new GatewayInputError(`${pathLabel} must be an object`);
   }
 
   if (value.transport !== "http") {
-    throw new GatewayInputError(
-      `state.images[${index}].mcpEndpoint.transport must be http`,
-    );
+    throw new GatewayInputError(`${pathLabel}.transport must be http`);
   }
 
   if (typeof value.host !== "string" || value.host.length === 0) {
-    throw new GatewayInputError(
-      `state.images[${index}].mcpEndpoint.host must be a non-empty string`,
-    );
+    throw new GatewayInputError(`${pathLabel}.host must be a non-empty string`);
   }
 
   if (typeof value.port !== "number" || !Number.isInteger(value.port)) {
-    throw new GatewayInputError(
-      `state.images[${index}].mcpEndpoint.port must be an integer`,
-    );
+    throw new GatewayInputError(`${pathLabel}.port must be an integer`);
   }
 
   if (typeof value.path !== "string" || value.path.length === 0) {
-    throw new GatewayInputError(
-      `state.images[${index}].mcpEndpoint.path must be a non-empty string`,
-    );
+    throw new GatewayInputError(`${pathLabel}.path must be a non-empty string`);
   }
 
   return {
@@ -514,6 +514,35 @@ function imageCreationInput(
   return creation;
 }
 
+function remoteGatewayInput(
+  state: Record<string, unknown>,
+): GatewayRemoteGatewayUpstream | undefined {
+  const value = state.remoteGateway;
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (!isObject(value)) {
+    throw new GatewayInputError("state.remoteGateway must be an object");
+  }
+
+  const endpoint = value.endpoint;
+  if (endpoint === undefined) {
+    throw new GatewayInputError("state.remoteGateway.endpoint is required");
+  }
+  const projectId = optionalString(value, "projectId");
+  const workspaceId = optionalString(value, "workspaceId");
+  const targetId = optionalString(value, "targetId");
+
+  return {
+    remoteNodeId: requireString(value, "remoteNodeId"),
+    endpoint: endpointValueInput(endpoint, "state.remoteGateway.endpoint"),
+    ...(projectId ? { projectId } : {}),
+    ...(workspaceId ? { workspaceId } : {}),
+    ...(targetId ? { targetId } : {}),
+  };
+}
+
 function stateInput(input: Record<string, unknown>): GatewayProjectState {
   const value = input.state;
   if (!isObject(value)) {
@@ -524,6 +553,7 @@ function stateInput(input: Record<string, unknown>): GatewayProjectState {
   if (!Array.isArray(images)) {
     throw new GatewayInputError("state.images must be an array");
   }
+  const remoteGateway = remoteGatewayInput(value);
 
   return {
     projectId: requireString(value, "projectId"),
@@ -531,6 +561,7 @@ function stateInput(input: Record<string, unknown>): GatewayProjectState {
     workspaceId: requireString(value, "workspaceId"),
     targetId: requireString(value, "targetId"),
     updatedAt: requireString(value, "updatedAt"),
+    ...(remoteGateway ? { remoteGateway } : {}),
     ...(isObject(value.pharoMcpContract)
       ? { pharoMcpContract: value.pharoMcpContract }
       : {}),
@@ -557,9 +588,11 @@ function stateInput(input: Record<string, unknown>): GatewayProjectState {
         );
       }
       if (assignedPort === undefined && !mcpEndpoint && !unsupportedPharoMcp) {
-        throw new GatewayInputError(
-          `state.images[${index}] must include assignedPort or mcpEndpoint`,
-        );
+        if (!remoteGateway) {
+          throw new GatewayInputError(
+            `state.images[${index}] must include assignedPort or mcpEndpoint`,
+          );
+        }
       }
       if (pid !== undefined && (typeof pid !== "number" || !Number.isInteger(pid))) {
         throw new GatewayInputError(
@@ -644,6 +677,14 @@ function canonicalJson(value: unknown): string {
   }
 
   return JSON.stringify(value);
+}
+
+function hostForUrl(host: string): string {
+  return host.includes(":") && !host.startsWith("[") ? `[${host}]` : host;
+}
+
+function mcpEndpointUrl(endpoint: GatewayImageMcpEndpoint): string {
+  return `http://${hostForUrl(endpoint.host)}:${endpoint.port}${endpoint.path}`;
 }
 
 function toolSchemaFingerprint(tools: readonly Tool[]): string {
@@ -734,6 +775,7 @@ export class PlexusGateway {
   private pharoToolNames: Set<string>;
   private readonly pharoScope: GatewayRouteReferenceInput;
   private readonly pharoToolSchemaImageId: string | undefined;
+  private readonly remoteGatewayFetch: typeof fetch;
   private pharoToolSchemaStatus: GatewayPharoToolSchemaStatus = {
     state: "unknown",
     sourceCount: 0,
@@ -750,6 +792,7 @@ export class PlexusGateway {
     this.pharoToolNames = new Set();
     this.pharoScope = options.pharoScope ?? {};
     this.pharoToolSchemaImageId = options.pharoToolSchemaImageId;
+    this.remoteGatewayFetch = options.remoteGatewayFetch ?? fetch;
     this.setPharoTools(options.pharoTools ?? []);
   }
 
@@ -1093,22 +1136,135 @@ export class PlexusGateway {
       imageName: image.imageName,
       ...(image.port !== undefined ? { port: image.port } : {}),
       ...(image.mcpEndpoint ? { mcpEndpoint: image.mcpEndpoint } : {}),
+      ...(project.remoteGateway ? { remoteGateway: project.remoteGateway } : {}),
     };
 
     if (options.requireActivePharoSchema) {
       this.assertActivePharoSchemaForRoute(route);
     }
 
-    const toolResult = await this.imageRouter.callTool(
-      route,
-      toolName,
-      argumentsValue,
-    );
+    const toolResult = project.remoteGateway
+      ? await this.callRemoteGatewayTool(
+          project.remoteGateway,
+          image.id,
+          toolName,
+          argumentsValue,
+        )
+      : await this.imageRouter.callTool(route, toolName, argumentsValue);
 
     return {
       route,
       result: toolResult,
     };
+  }
+
+  private async callRemoteGatewayTool(
+    remoteGateway: GatewayRemoteGatewayUpstream,
+    imageId: string,
+    toolName: string,
+    argumentsValue: Record<string, unknown>,
+  ): Promise<unknown> {
+    const response = await this.remoteGatewayFetch(
+      mcpEndpointUrl(remoteGateway.endpoint),
+      {
+        method: "POST",
+        headers: {
+          accept: "application/json, text/event-stream",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: `plexus-remote-${remoteGateway.remoteNodeId}-${Date.now()}`,
+          method: "tools/call",
+          params: {
+            name: toolName,
+            arguments: {
+              ...argumentsValue,
+              imageId,
+            },
+          },
+        }),
+      },
+    );
+
+    if (!response.ok) {
+      throw new GatewayInputError(
+        `Remote gateway MCP request failed with HTTP ${response.status}`,
+      );
+    }
+
+    const payload = (await response.json()) as unknown;
+    if (!isObject(payload)) {
+      throw new GatewayInputError(
+        "Remote gateway MCP response was not a JSON object",
+      );
+    }
+
+    if ("error" in payload) {
+      throw new GatewayInputError(JSON.stringify(payload.error));
+    }
+
+    if (!("result" in payload)) {
+      throw new GatewayInputError(
+        "Remote gateway MCP response did not include a result",
+      );
+    }
+
+    return payload.result;
+  }
+
+  private async listRemoteGatewayTools(
+    remoteGateway: GatewayRemoteGatewayUpstream,
+  ): Promise<Tool[]> {
+    const response = await this.remoteGatewayFetch(
+      mcpEndpointUrl(remoteGateway.endpoint),
+      {
+        method: "POST",
+        headers: {
+          accept: "application/json, text/event-stream",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: `plexus-remote-${remoteGateway.remoteNodeId}-tools-${Date.now()}`,
+          method: "tools/list",
+        }),
+      },
+    );
+
+    if (!response.ok) {
+      throw new GatewayInputError(
+        `Remote gateway MCP tools/list failed with HTTP ${response.status}`,
+      );
+    }
+
+    const payload = (await response.json()) as unknown;
+    if (!isObject(payload)) {
+      throw new GatewayInputError(
+        "Remote gateway MCP tools/list response was not a JSON object",
+      );
+    }
+
+    if ("error" in payload) {
+      throw new GatewayInputError(JSON.stringify(payload.error));
+    }
+
+    const resultValue = payload.result;
+    if (!isObject(resultValue) || !Array.isArray(resultValue.tools)) {
+      throw new GatewayInputError(
+        "Remote gateway MCP tools/list response did not include result.tools",
+      );
+    }
+
+    return resultValue.tools.map((tool, index) => {
+      if (!isObject(tool) || typeof tool.name !== "string") {
+        throw new GatewayInputError(
+          `Remote gateway MCP tools/list returned an invalid tool at index ${index}`,
+        );
+      }
+
+      return tool as Tool;
+    });
   }
 
   private assertActivePharoSchemaForRoute(route: RouteToImageRoute): void {
@@ -1244,8 +1400,12 @@ export class PlexusGateway {
         const route = this.imageRouteReference(project, image);
 
         try {
-          const tools = await this.imageRouter.listTools(route);
-          const connectionInfo = this.imageRouter.connectionInfo?.(route);
+          const tools = project.remoteGateway
+            ? await this.listRemoteGatewayTools(project.remoteGateway)
+            : await this.imageRouter.listTools(route);
+          const connectionInfo = project.remoteGateway
+            ? undefined
+            : this.imageRouter.connectionInfo?.(route);
           if (tools.length > 0) {
             successes.push({
               source: {

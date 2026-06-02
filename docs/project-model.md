@@ -94,6 +94,51 @@ The current prototype keeps the relationship as one workspace to one target. Lat
 
 The PLexus Gateway routing table is keyed by `targetId`. A route by `projectId` alone is only unambiguous when exactly one workspace for that project is registered.
 
+### Remote PLexus Node
+
+A remote PLexus node is another PLexus instance that owns runtime state in its
+own workspace, VM, container, or host. The host records the remote MCP
+endpoints and optional local-to-remote workspace mapping; it does not manage
+remote image paths, processes, or image-local ports directly.
+
+```json
+{
+  "runtime": {
+    "nodeId": "host-a",
+    "remoteNodes": [
+      {
+        "id": "remote-a",
+        "parentNodeId": "host-a",
+        "projectMcpUrl": "http://remote-a.local:7332/mcp",
+        "gatewayMcpUrl": "http://remote-a.local:7331/mcp",
+        "workspaces": [
+          {
+            "workspaceId": "task-a",
+            "remoteWorkspaceId": "remote-task-a",
+            "remoteProjectPath": "/workspaces/project-a",
+            "targets": [
+              {
+                "targetId": "task-a-dev",
+                "remoteTargetId": "remote-task-a-dev"
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+This declaration is configuration only. Lifecycle forwarding and remote gateway
+upstream routing are separate runtime behaviors. The supported topology is a
+flat tree: each configured remote must either omit `parentNodeId` or point back
+to the local `runtime.nodeId`.
+
+When the host gateway registers a remote upstream, calls route through the
+remote gateway MCP endpoint. Remote image-local ports remain remote facts and
+are not mirrored onto host ports.
+
 ### Pharo Image
 
 A runtime target can manage several Pharo images, as configured in `plexus.project.json`.

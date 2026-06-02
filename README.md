@@ -136,6 +136,7 @@ Run MCP surfaces directly when integrating with an agent runner:
 
 ```sh
 plexus mcp project
+plexus mcp project --http --port 7332
 plexus mcp pharo-launcher --project-path /path/to/project --workspace-id task-a --state-root /tmp/plexus-state
 ```
 
@@ -156,6 +157,13 @@ Expose project lifecycle tools to an agent:
 
 ```sh
 plexus mcp project
+```
+
+For remote or service use, keep stdio local and serve the same lifecycle tools
+over Streamable HTTP MCP:
+
+```sh
+plexus mcp project --http --host 127.0.0.1 --port 7332 --mcp-path /mcp
 ```
 
 Expose scoped launcher tools for one project/workspace:

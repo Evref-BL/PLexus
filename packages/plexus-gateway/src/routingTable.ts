@@ -20,6 +20,14 @@ export interface GatewayImageMcpEndpoint {
   path: string;
 }
 
+export interface GatewayRemoteGatewayUpstream {
+  remoteNodeId: string;
+  endpoint: GatewayImageMcpEndpoint;
+  projectId?: string;
+  workspaceId?: string;
+  targetId?: string;
+}
+
 export interface GatewayPharoMcpContractReference {
   id?: string;
   hash?: string;
@@ -73,6 +81,7 @@ export interface GatewayProjectState {
   projectName: string;
   workspaceId: string;
   targetId: string;
+  remoteGateway?: GatewayRemoteGatewayUpstream;
   pharoMcpContract?: GatewayPharoMcpContractReference;
   images: GatewayProjectImageState[];
   updatedAt: string;
@@ -127,6 +136,7 @@ export interface GatewayProjectRoute {
   targetId: string;
   projectRoot: string;
   statePath: string;
+  remoteGateway?: GatewayRemoteGatewayUpstream;
   pharoMcpContract?: GatewayPharoMcpContractReference;
   images: GatewayImageRoute[];
   updatedAt: string;
@@ -225,6 +235,7 @@ function imageRoutability(
   > & {
     port?: number;
     health?: GatewayImageHealth;
+    remoteGateway?: GatewayRemoteGatewayUpstream;
   },
 ): GatewayImageRoutability {
   if (image.pharoMcpContract?.status === "unsupported") {
@@ -238,7 +249,8 @@ function imageRoutability(
   if (
     !image.mcpEndpoint &&
     image.assignedPort === undefined &&
-    image.port === undefined
+    image.port === undefined &&
+    image.remoteGateway === undefined
   ) {
     return {
       ok: false,
@@ -333,6 +345,7 @@ export class PlexusRoutingTable {
           routable: imageRoutability(state.pharoMcpContract, {
             ...image,
             health,
+            remoteGateway: state.remoteGateway,
           }),
           routeMetadata: imageRouteMetadata(state, image.id),
           ...(image.creation ? { creation: image.creation } : {}),
@@ -342,6 +355,7 @@ export class PlexusRoutingTable {
           updatedAt: state.updatedAt,
         };
       }),
+      ...(state.remoteGateway ? { remoteGateway: state.remoteGateway } : {}),
     };
 
     this.targets.set(route.targetId, route);

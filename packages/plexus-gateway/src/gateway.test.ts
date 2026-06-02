@@ -523,6 +523,199 @@ describe("PlexusGateway", () => {
     ]);
   });
 
+  it("routes Pharo MCP calls through a remote gateway upstream", async () => {
+    const imageRouter = new FakeImageRouter();
+    const requests: Array<{
+      url: string;
+      body: Record<string, unknown>;
+    }> = [];
+    const remoteState: GatewayProjectState = {
+      ...runningState,
+      remoteGateway: {
+        remoteNodeId: "remote-a",
+        endpoint: {
+          transport: "http",
+          host: "remote-a.local",
+          port: 7331,
+          path: "/mcp",
+        },
+        projectId: "remote-project",
+        workspaceId: "remote-worktree-a",
+        targetId: "remote-target-a",
+      },
+      images: [
+        {
+          id: "dev",
+          imageName: "MyProject-dev",
+          status: "running",
+        },
+      ],
+    };
+    const gateway = new PlexusGateway({
+      imageRouter,
+      remoteGatewayFetch: (async (
+        input: Parameters<typeof fetch>[0],
+        init?: RequestInit,
+      ) => {
+        requests.push({
+          url: String(input),
+          body: JSON.parse(String(init?.body)) as Record<string, unknown>,
+        });
+        return new Response(
+          JSON.stringify({
+            result: {
+              content: [{ type: "text", text: "remote routed" }],
+            },
+          }),
+          {
+            status: 200,
+            headers: {
+              "content-type": "application/json",
+            },
+          },
+        );
+      }) as typeof fetch,
+    });
+
+    await registerTarget(gateway, remoteState);
+    const status = data(
+      await gateway.handleTool("plexus_gateway_status", {
+        projectId: "project-123",
+        workspaceId: "worktree-a",
+      }),
+    );
+    const routeResult = await gateway.handleTool("plexus_route_to_image", {
+      projectId: "project-123",
+      workspaceId: "worktree-a",
+      imageId: "dev",
+      toolName: "pharo_eval",
+      arguments: {
+        code: "Smalltalk version",
+      },
+    });
+
+    expect(status).toMatchObject({
+      remoteGateway: {
+        remoteNodeId: "remote-a",
+      },
+      images: [
+        {
+          id: "dev",
+          routable: {
+            ok: true,
+            code: "ready",
+          },
+        },
+      ],
+    });
+    expect(routeResult).toMatchObject({
+      ok: true,
+      data: {
+        content: [{ type: "text", text: "remote routed" }],
+      },
+      route: {
+        projectId: "project-123",
+        workspaceId: "worktree-a",
+        targetId: "project-123--worktree-a",
+        imageId: "dev",
+        imageName: "MyProject-dev",
+        remoteGateway: {
+          remoteNodeId: "remote-a",
+          endpoint: {
+            host: "remote-a.local",
+            port: 7331,
+            path: "/mcp",
+          },
+        },
+      },
+    });
+    expect(imageRouter.calls).toEqual([]);
+    expect(requests).toMatchObject([
+      {
+        url: "http://remote-a.local:7331/mcp",
+        body: {
+          method: "tools/call",
+          params: {
+            name: "pharo_eval",
+            arguments: {
+              imageId: "dev",
+              code: "Smalltalk version",
+            },
+          },
+        },
+      },
+    ]);
+  });
+
+  it("refreshes Pharo tools from a remote gateway upstream", async () => {
+    const requests: Array<{
+      url: string;
+      body: Record<string, unknown>;
+    }> = [];
+    const remoteState: GatewayProjectState = {
+      ...runningState,
+      remoteGateway: {
+        remoteNodeId: "remote-a",
+        endpoint: {
+          transport: "http",
+          host: "remote-a.local",
+          port: 7331,
+          path: "/mcp",
+        },
+      },
+      images: [
+        {
+          id: "dev",
+          imageName: "MyProject-dev",
+          status: "running",
+        },
+      ],
+    };
+    const gateway = new PlexusGateway({
+      remoteGatewayFetch: (async (
+        input: Parameters<typeof fetch>[0],
+        init?: RequestInit,
+      ) => {
+        requests.push({
+          url: String(input),
+          body: JSON.parse(String(init?.body)) as Record<string, unknown>,
+        });
+        return new Response(
+          JSON.stringify({
+            result: {
+              tools: [pharoEvalTool],
+            },
+          }),
+          {
+            status: 200,
+            headers: {
+              "content-type": "application/json",
+            },
+          },
+        );
+      }) as typeof fetch,
+    });
+
+    await registerTarget(gateway, remoteState);
+
+    await expect(gateway.refreshPharoTools()).resolves.toMatchObject([
+      {
+        name: "pharo_eval",
+        inputSchema: {
+          required: ["imageId", "code"],
+        },
+      },
+    ]);
+    expect(requests).toMatchObject([
+      {
+        url: "http://remote-a.local:7331/mcp",
+        body: {
+          method: "tools/list",
+        },
+      },
+    ]);
+  });
+
   it("exposes stable Pharo facade tools with a required imageId route field", () => {
     const gateway = new PlexusGateway({
       pharoTools: [pharoEvalTool],

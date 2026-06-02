@@ -22,6 +22,8 @@ import {
   type ProjectImageDisplayMode,
   type ProjectImagePortAllocationPolicy,
   type ProjectImagePortCoordinationMode,
+  type ProjectRemoteNodeConfig,
+  type ProjectRemoteNodeWorkspaceMappingConfig,
   type ProjectRuntimePortRange,
   type ProjectRuntimePolicy,
 } from "./projectConfig.js";
@@ -138,6 +140,28 @@ export interface ProjectLifecycleImageToolCaller {
   ): Promise<unknown>;
 }
 
+export interface ProjectLifecycleRemoteClient {
+  callTool<T = unknown>(
+    toolName: string,
+    argumentsValue: Record<string, unknown>,
+  ): Promise<ProjectLifecycleToolResult<T>>;
+}
+
+export interface HttpProjectLifecycleClientOptions {
+  url: string;
+  timeoutMs?: number;
+  fetch?: typeof fetch;
+}
+
+interface ProjectRemoteLifecycleMapping {
+  remoteNode: ProjectRemoteNodeConfig;
+  workspace?: ProjectRemoteNodeWorkspaceMappingConfig;
+  target?: NonNullable<
+    ProjectRemoteNodeWorkspaceMappingConfig["targets"]
+  >[number];
+  workspaceId: string;
+}
+
 export interface HttpGatewayRouteRegistryOptions {
   url?: string;
   host?: string;
@@ -154,6 +178,9 @@ export interface ProjectLifecycleOptions {
   routeRegistry?: ProjectLifecycleRouteRegistry;
   imageToolCaller?: ProjectLifecycleImageToolCaller;
   homeImageCacheClient?: PharoLauncherMcpToolClient;
+  remoteClientFactory?: (
+    remoteNode: ProjectRemoteNodeConfig,
+  ) => ProjectLifecycleRemoteClient;
   defaultStateRoot?: string;
   projectOpen?: typeof openProject;
   projectClose?: typeof closeProject;
@@ -446,6 +473,18 @@ export interface ProjectLifecycleImageRecoveryDiagnostic {
   actions: ProjectLifecycleImageRecoveryAction[];
 }
 
+export interface ProjectLifecycleRemoteTopologyDiagnostics {
+  nodeId: string;
+  policy: "flat-tree";
+  status: "local-only" | "flat";
+  remoteNodeIds: string[];
+  remoteNodes: Array<{
+    id: string;
+    parentNodeId?: string;
+    mappedWorkspaceIds: string[];
+  }>;
+}
+
 export interface ProjectLifecycleDiagnostics {
   toolRuntime: PlexusRuntimeIdentityDiagnostic;
   runtime: {
@@ -465,6 +504,7 @@ export interface ProjectLifecycleDiagnostics {
   };
   gateway: ProjectLifecycleGatewayDiagnostics;
   runtimePolicy: ProjectRuntimePolicy;
+  remoteTopology: ProjectLifecycleRemoteTopologyDiagnostics;
   imagePortPolicy: ProjectLifecycleImagePortPolicyDiagnostics;
   launcherProfile: PharoLauncherMcpProfileDiagnostic;
   agentAccess: ProjectLifecycleAgentAccessDiagnostics;
@@ -1085,6 +1125,27 @@ function projectDiagnostics(
     declaredImageCount: config.images.length,
     activeImageCount: config.images.filter((image) => image.active).length,
     runtimeImageCount: state?.images.length ?? 0,
+  };
+}
+
+function remoteTopologyDiagnostics(
+  config: ProjectConfig,
+  runtime: ProjectRuntimePolicy,
+): ProjectLifecycleRemoteTopologyDiagnostics {
+  const remoteNodes = runtime.remoteNodes ?? [];
+  return {
+    nodeId: runtime.nodeId ?? projectConfigId(config),
+    policy: "flat-tree",
+    status: remoteNodes.length === 0 ? "local-only" : "flat",
+    remoteNodeIds: remoteNodes.map((remoteNode) => remoteNode.id),
+    remoteNodes: remoteNodes.map((remoteNode) => ({
+      id: remoteNode.id,
+      ...(remoteNode.parentNodeId
+        ? { parentNodeId: remoteNode.parentNodeId }
+        : {}),
+      mappedWorkspaceIds:
+        remoteNode.workspaces?.map((workspace) => workspace.workspaceId) ?? [],
+    })),
   };
 }
 
@@ -1898,6 +1959,74 @@ export class HttpGatewayRouteRegistry implements ProjectLifecycleRouteRegistry {
   }
 }
 
+export class HttpProjectLifecycleClient implements ProjectLifecycleRemoteClient {
+  private readonly url: string;
+  private readonly timeoutMs: number;
+  private readonly fetchFn: typeof fetch;
+
+  constructor(options: HttpProjectLifecycleClientOptions) {
+    this.url = options.url;
+    this.timeoutMs = options.timeoutMs ?? 10_000;
+    this.fetchFn = options.fetch ?? fetch;
+  }
+
+  async callTool<T = unknown>(
+    name: string,
+    argumentsValue: Record<string, unknown>,
+  ): Promise<ProjectLifecycleToolResult<T>> {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
+
+    try {
+      const response = await this.fetchFn(this.url, {
+        method: "POST",
+        headers: {
+          accept: "application/json, text/event-stream",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: `plexus-project-${Date.now()}`,
+          method: "tools/call",
+          params: {
+            name,
+            arguments: argumentsValue,
+          },
+        }),
+        signal: controller.signal,
+      });
+
+      if (!response.ok) {
+        throw new Error(
+          `Remote project MCP request failed with HTTP ${response.status}`,
+        );
+      }
+
+      const payload = (await response.json()) as unknown;
+      if (!isObject(payload)) {
+        throw new Error("Remote project MCP response was not a JSON object");
+      }
+      if ("error" in payload) {
+        throw new Error(JSON.stringify(payload.error));
+      }
+
+      const decoded = decodeMcpToolResult(
+        (payload as { result?: unknown }).result,
+      );
+      if (isObject(decoded) && typeof decoded.ok === "boolean") {
+        return decoded as unknown as ProjectLifecycleToolResult<T>;
+      }
+
+      return {
+        ok: true,
+        data: decoded as T,
+      };
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+}
+
 function gatewayHasExplicitPharoTools(
   gateway: ProjectLifecycleOptions["gateway"],
 ): boolean {
@@ -2059,6 +2188,73 @@ async function discoverPharoMcpToolsFromRunningImages(options: {
   return undefined;
 }
 
+function remoteLifecycleMappingForInput(
+  config: ProjectConfig,
+  projectRoot: string,
+  input: { workspaceId?: string; targetId?: string },
+): ProjectRemoteLifecycleMapping | undefined {
+  const runtime = resolveProjectRuntimePolicy(config);
+  const remoteNodes = runtime.remoteNodes ?? [];
+  if (remoteNodes.length === 0) {
+    return undefined;
+  }
+
+  const workspaceId = input.workspaceId
+    ? sanitizeRuntimeId(input.workspaceId)
+    : defaultWorkspaceId(projectRoot);
+
+  for (const remoteNode of remoteNodes) {
+    for (const workspace of remoteNode.workspaces ?? []) {
+      const target = input.targetId
+        ? workspace.targets?.find(
+            (candidate) => candidate.targetId === input.targetId,
+          )
+        : undefined;
+
+      if (input.targetId && workspace.targets && !target) {
+        continue;
+      }
+
+      if (workspace.workspaceId === workspaceId || target) {
+        return {
+          remoteNode,
+          workspace,
+          ...(target ? { target } : {}),
+          workspaceId,
+        };
+      }
+    }
+  }
+
+  return undefined;
+}
+
+function remoteLifecycleArguments<T extends {
+  projectPath: string;
+  workspaceId?: string;
+  targetId?: string;
+}>(
+  input: T,
+  mapping: ProjectRemoteLifecycleMapping,
+): Record<string, unknown> {
+  const projectPath = mapping.workspace?.remoteProjectPath ?? input.projectPath;
+  const workspaceId =
+    mapping.workspace?.remoteWorkspaceId ??
+    input.workspaceId ??
+    mapping.workspaceId;
+  const targetId = mapping.target?.remoteTargetId ?? input.targetId;
+
+  return Object.fromEntries(
+    Object.entries({
+      ...(input as Record<string, unknown>),
+      projectPath,
+      stateRoot: undefined,
+      workspaceId,
+      targetId,
+    }).filter(([, value]) => value !== undefined),
+  );
+}
+
 export class PlexusProjectLifecycle {
   private readonly routeRegistry?: ProjectLifecycleRouteRegistry;
   private readonly imageToolCaller?: ProjectLifecycleImageToolCaller;
@@ -2067,6 +2263,9 @@ export class PlexusProjectLifecycle {
   private readonly projectOpen: typeof openProject;
   private readonly projectClose: typeof closeProject;
   private readonly imageRescue: typeof rescueImage;
+  private readonly remoteClientFactory?: (
+    remoteNode: ProjectRemoteNodeConfig,
+  ) => ProjectLifecycleRemoteClient;
   private readonly gateway: NonNullable<ProjectLifecycleOptions["gateway"]>;
 
   constructor(options: ProjectLifecycleOptions = {}) {
@@ -2077,6 +2276,7 @@ export class PlexusProjectLifecycle {
     this.projectOpen = options.projectOpen ?? openProject;
     this.projectClose = options.projectClose ?? closeProject;
     this.imageRescue = options.imageRescue ?? rescueImage;
+    this.remoteClientFactory = options.remoteClientFactory;
     this.gateway = options.gateway ?? {};
   }
 
@@ -2084,10 +2284,59 @@ export class PlexusProjectLifecycle {
     return stateRoot ?? this.defaultStateRoot;
   }
 
+  private remoteLifecycleMapping(input: {
+    projectPath: string;
+    workspaceId?: string;
+    targetId?: string;
+  }): ProjectRemoteLifecycleMapping | undefined {
+    const projectRoot = path.resolve(input.projectPath);
+    if (path.basename(projectRoot) === plexusProjectConfigFileName) {
+      return undefined;
+    }
+
+    let config: ProjectConfig;
+    try {
+      config = loadProjectConfig(projectRoot);
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        (error.message.startsWith("ENOENT:") ||
+          error.message.startsWith("ENOTDIR:"))
+      ) {
+        return undefined;
+      }
+
+      throw error;
+    }
+
+    return remoteLifecycleMappingForInput(config, projectRoot, input);
+  }
+
+  private remoteClientFor(
+    remoteNode: ProjectRemoteNodeConfig,
+  ): ProjectLifecycleRemoteClient {
+    return (
+      this.remoteClientFactory?.(remoteNode) ??
+      new HttpProjectLifecycleClient({
+        url: remoteNode.projectMcpUrl,
+        timeoutMs: this.gateway.routeRegistryTimeoutMs,
+        fetch: this.gateway.fetch,
+      })
+    );
+  }
+
   async open(
     input: ProjectOpenToolInput,
   ): Promise<ProjectLifecycleToolResult<ProjectOpenResult>> {
     try {
+      const remote = this.remoteLifecycleMapping(input);
+      if (remote) {
+        return this.remoteClientFor(remote.remoteNode).callTool<ProjectOpenResult>(
+          "plexus_project_open",
+          remoteLifecycleArguments(input, remote),
+        );
+      }
+
       const openResult = await this.projectOpen({
         projectRoot: input.projectPath,
         sourcePath: input.sourcePath,
@@ -2290,6 +2539,14 @@ export class PlexusProjectLifecycle {
     input: ProjectCloseToolInput,
   ): Promise<ProjectLifecycleToolResult<ProjectCloseResult>> {
     try {
+      const remote = this.remoteLifecycleMapping(input);
+      if (remote) {
+        return this.remoteClientFor(remote.remoteNode).callTool<ProjectCloseResult>(
+          "plexus_project_close",
+          remoteLifecycleArguments(input, remote),
+        );
+      }
+
       const closeResult = await this.projectClose({
         projectRoot: input.projectPath,
         stateRoot: this.effectiveStateRoot(input.stateRoot),
@@ -2361,6 +2618,14 @@ export class PlexusProjectLifecycle {
     input: ProjectCleanupToolInput,
   ): Promise<ProjectLifecycleToolResult<ProjectCleanupResult>> {
     try {
+      const remote = this.remoteLifecycleMapping(input);
+      if (remote) {
+        return this.remoteClientFor(remote.remoteNode).callTool<ProjectCleanupResult>(
+          "plexus_project_cleanup",
+          remoteLifecycleArguments(input, remote),
+        );
+      }
+
       const projectRoot = path.resolve(input.projectPath);
       const config = loadProjectConfig(projectRoot);
       const workspaceId = input.workspaceId
@@ -2446,6 +2711,25 @@ export class PlexusProjectLifecycle {
   > {
     try {
       if (input.projectPath) {
+        const remote = this.remoteLifecycleMapping({
+          ...input,
+          projectPath: input.projectPath,
+        });
+        if (remote) {
+          return this.remoteClientFor(
+            remote.remoteNode,
+          ).callTool<ProjectLifecycleStatus>(
+            "plexus_project_status",
+            remoteLifecycleArguments(
+              {
+                ...input,
+                projectPath: input.projectPath,
+              },
+              remote,
+            ),
+          );
+        }
+
         return result(
           await this.statusFromProjectPath({
             ...input,
@@ -2796,6 +3080,7 @@ export class PlexusProjectLifecycle {
       },
       gateway: gatewayDiagnostic(gateway, gatewayReconciliation, gatewayRepair),
       runtimePolicy: runtime,
+      remoteTopology: remoteTopologyDiagnostics(config, runtime),
       imagePortPolicy: imagePortPolicyDiagnostics(
         runtime,
         stateRoot,
