@@ -154,6 +154,12 @@ The cache stores manifests and preparation scripts under:
 <PLEXUS_HOME>/image-cache
 ```
 
+PLexus-managed images also point Iceberg/Metacello dependency clones at:
+
+```text
+<PLEXUS_HOME>/repositories/iceberg
+```
+
 Cache base images live in an explicit home-level pharo-launcher-mcp profile.
 Runtime images still belong to project-owned launcher profiles, so cache
 materialization remains a live launcher mutation and requires an approved runner

@@ -167,6 +167,11 @@ belong to project-owned launcher profiles, so live home-cache copy requires a
 launcher-owned cross-profile copy/export/import operation rather than raw
 filesystem copying.
 
+Generated startup scripts for PLexus-managed images configure Iceberg/Metacello
+dependency clones to use `<PLEXUS_HOME>/repositories/iceberg`. This is fixed
+relative to PLexus home; the only dependency repository policy knob is
+`home.dependencyRepositories.networkPolicy`.
+
 ## Prototype Open/Close Check
 
 Run one real-image lifecycle check after building:

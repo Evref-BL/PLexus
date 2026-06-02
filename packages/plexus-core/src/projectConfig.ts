@@ -134,15 +134,23 @@ export interface ProjectPreparedImageConfig {
 }
 
 export type ProjectHomeImageCacheNetworkPolicy = "online" | "local-only";
+export type ProjectHomeDependencyRepositoryNetworkPolicy =
+  | "online"
+  | "local-only";
 
 export interface ProjectHomeImageCacheConfig {
   enabled: boolean;
   networkPolicy: ProjectHomeImageCacheNetworkPolicy;
 }
 
+export interface ProjectHomeDependencyRepositoriesConfig {
+  networkPolicy: ProjectHomeDependencyRepositoryNetworkPolicy;
+}
+
 export interface ProjectHomeConfig {
   path?: string;
   imageCache: ProjectHomeImageCacheConfig;
+  dependencyRepositories?: ProjectHomeDependencyRepositoriesConfig;
 }
 
 export interface ProjectRuntimePortRange {
@@ -763,11 +771,33 @@ function parseHome(value: unknown, issues: string[]): ProjectHomeConfig | undefi
       };
     }
   }
+  const dependencyRepositoriesValue = value.dependencyRepositories;
+  let dependencyRepositories: ProjectHomeDependencyRepositoriesConfig = {
+    networkPolicy: "online",
+  };
+  if (dependencyRepositoriesValue !== undefined) {
+    if (!isObject(dependencyRepositoriesValue)) {
+      issues.push("home.dependencyRepositories must be an object");
+    } else {
+      const networkPolicy =
+        dependencyRepositoriesValue.networkPolicy ?? "online";
+      if (networkPolicy !== "online" && networkPolicy !== "local-only") {
+        issues.push(
+          "home.dependencyRepositories.networkPolicy must be one of online, local-only",
+        );
+      }
+      dependencyRepositories = {
+        networkPolicy:
+          networkPolicy === "local-only" ? "local-only" : "online",
+      };
+    }
+  }
 
   const path = optionalStringField(value, "path", issues, "home");
   return {
     ...(path ? { path } : {}),
     imageCache,
+    dependencyRepositories,
   };
 }
 

@@ -406,6 +406,9 @@ describe("project config", () => {
         enabled: false,
         networkPolicy: "local-only",
       },
+      dependencyRepositories: {
+        networkPolicy: "local-only",
+      },
     };
 
     expect(parseProjectConfig(config).home).toEqual({
@@ -414,15 +417,37 @@ describe("project config", () => {
         enabled: false,
         networkPolicy: "local-only",
       },
+      dependencyRepositories: {
+        networkPolicy: "local-only",
+      },
     });
   });
 
-  it("rejects invalid PLexus home image-cache network policy", () => {
+  it("defaults PLexus home dependency repository policy", () => {
+    const config: ReturnType<typeof validProjectConfig> & { home?: unknown } =
+      validProjectConfig();
+    config.home = {};
+
+    expect(parseProjectConfig(config).home).toEqual({
+      imageCache: {
+        enabled: true,
+        networkPolicy: "online",
+      },
+      dependencyRepositories: {
+        networkPolicy: "online",
+      },
+    });
+  });
+
+  it("rejects invalid PLexus home network policy values", () => {
     const config: ReturnType<typeof validProjectConfig> & { home?: unknown } =
       validProjectConfig();
     config.home = {
       imageCache: {
         enabled: true,
+        networkPolicy: "offline",
+      },
+      dependencyRepositories: {
         networkPolicy: "offline",
       },
     };
@@ -435,6 +460,7 @@ describe("project config", () => {
       expect((error as ProjectConfigError).issues).toEqual(
         expect.arrayContaining([
           "home.imageCache.networkPolicy must be one of online, local-only",
+          "home.dependencyRepositories.networkPolicy must be one of online, local-only",
         ]),
       );
     }

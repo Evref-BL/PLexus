@@ -235,6 +235,9 @@ the image cache for one project:
     "path": "/home/user/.plexus",
     "imageCache": {
       "enabled": true
+    },
+    "dependencyRepositories": {
+      "networkPolicy": "online"
     }
   }
 }
@@ -261,6 +264,18 @@ profile under:
 ```text
 <PLEXUS_HOME>/profiles/pharo-launcher-mcp/image-cache
 ```
+
+PLexus-managed startup scripts also configure Iceberg/Metacello dependency
+clones to use a fixed shared repository cache:
+
+```text
+<PLEXUS_HOME>/repositories/iceberg
+```
+
+Only `networkPolicy` is configurable for dependency repositories. `online`
+allows missing dependencies to be cloned into the shared cache. `local-only`
+records a no-network policy for PLexus-managed loads; missing dependency
+handling must fail clearly rather than silently mutate user image state.
 
 Runtime workspace images must remain copies of home cache bases; agents must
 not operate directly on home cache images. If a template's Pharo version is not

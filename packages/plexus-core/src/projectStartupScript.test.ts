@@ -110,6 +110,40 @@ describe("project startup scripts", () => {
     expect(source).toContain("Semaphore new wait.");
   });
 
+  it("configures a PLexus-owned shared Iceberg dependency cache when provided", () => {
+    const projectRoot = path.join("C:", "dev", "code", "git", "my-project");
+    const dependencyCachePath = path.join(
+      "C:",
+      "Users",
+      "ada",
+      ".plexus",
+      "repositories",
+      "iceberg",
+    );
+    const source = generateImageStartupScript({
+      projectRoot,
+      imageConfig: config.images[0],
+      imageState,
+      dependencyRepositoryCachePath: dependencyCachePath,
+      dependencyRepositoryNetworkPolicy: "local-only",
+    });
+
+    expect(source).toContain(
+      '"Configure the PLexus-owned dependency repository cache for Metacello/Iceberg."',
+    );
+    expect(source).toContain(
+      "plexusDependencyRepositoryCachePath := 'C:/Users/ada/.plexus/repositories/iceberg'.",
+    );
+    expect(source).toContain(
+      "plexusDependencyRepositoryNetworkPolicy := 'local-only'.",
+    );
+    expect(source).toContain("enableMetacelloIntegration: true.");
+    expect(source).toContain("shareRepositoriesBetweenImages: true;");
+    expect(source).toContain(
+      "sharedRepositoriesLocationString: plexusDependencyRepositoryCachePath",
+    );
+  });
+
   it("resolves relative startup load scripts from the workspace source path", () => {
     const projectRoot = path.join("C:", "dev", "code", "git", "my-project");
     const sourcePath = path.join(
@@ -817,6 +851,51 @@ describe("project startup scripts", () => {
     expect(source).not.toContain(
       "repositorySourcePath := 'C:/dev/code/git/my-project-worktree/src'.",
     );
+  });
+
+  it("writes project startup scripts with the fixed PLexus home dependency cache", () => {
+    const projectRoot = fs.mkdtempSync(
+      path.join(os.tmpdir(), "plexus-startup-project-"),
+    );
+    const stateRoot = fs.mkdtempSync(
+      path.join(os.tmpdir(), "plexus-startup-state-"),
+    );
+    const plexusHomePath = path.join(projectRoot, ".plexus-home");
+    try {
+      const result = writeProjectImageStartupScript({
+        projectRoot,
+        stateRoot,
+        workspaceId: "worktree-a",
+        config: {
+          ...config,
+          home: {
+            path: plexusHomePath,
+            imageCache: {
+              enabled: true,
+              networkPolicy: "online",
+            },
+            dependencyRepositories: {
+              networkPolicy: "local-only",
+            },
+          },
+        },
+        imageId: "dev",
+        imageState,
+      });
+
+      expect(result.source).toContain(
+        `plexusDependencyRepositoryCachePath := '${plexusHomePath.replaceAll(
+          "\\",
+          "/",
+        )}/repositories/iceberg'.`,
+      );
+      expect(result.source).toContain(
+        "plexusDependencyRepositoryNetworkPolicy := 'local-only'.",
+      );
+    } finally {
+      fs.rmSync(projectRoot, { recursive: true, force: true });
+      fs.rmSync(stateRoot, { recursive: true, force: true });
+    }
   });
 
   it("fails when the requested project image is missing", () => {
