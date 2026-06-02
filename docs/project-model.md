@@ -135,6 +135,10 @@ upstream routing are separate runtime behaviors. The supported topology is a
 flat tree: each configured remote must either omit `parentNodeId` or point back
 to the local `runtime.nodeId`.
 
+When the host gateway registers a remote upstream, calls route through the
+remote gateway MCP endpoint. Remote image-local ports remain remote facts and
+are not mirrored onto host ports.
+
 ### Pharo Image
 
 A runtime target can manage several Pharo images, as configured in `plexus.project.json`.
