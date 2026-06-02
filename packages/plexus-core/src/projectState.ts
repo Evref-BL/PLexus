@@ -302,6 +302,14 @@ export interface ProjectGatewayState {
   claim?: ProjectGatewayClaimState;
 }
 
+export interface ProjectRemoteGatewayState {
+  remoteNodeId: string;
+  endpoint: ProjectImageMcpEndpoint;
+  projectId?: string;
+  workspaceId?: string;
+  targetId?: string;
+}
+
 export interface ProjectState {
   projectId: string;
   projectName: string;
@@ -310,6 +318,7 @@ export interface ProjectState {
   sourcePath?: string;
   runtimeStatus?: ProjectRuntimeStatus;
   gateway?: ProjectGatewayState;
+  remoteGateway?: ProjectRemoteGatewayState;
   pharoMcpContract?: PharoMcpContractReference;
   images: ProjectImageState[];
   updatedAt: string;

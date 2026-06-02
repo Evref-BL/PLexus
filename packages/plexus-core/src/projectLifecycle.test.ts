@@ -805,6 +805,270 @@ describe("project lifecycle tools", () => {
     ]);
   });
 
+  it("registers host gateway routes for remote PLexus opens", async () => {
+    const projectRoot = makeTempDir("plexus-project-");
+    const stateRoot = makeTempDir("plexus-state-");
+    const routeRegistry = new FakeRouteRegistry();
+    const remoteOpenResult: ProjectOpenResult = {
+      ok: true,
+      projectRoot: "/remote/project-a",
+      statePath: "/remote/state/project-a/worktree-a/state.json",
+      failures: [],
+      state: {
+        projectId: "remote-project",
+        projectName: "remote-project",
+        workspaceId: "remote-worktree-a",
+        targetId: "remote-task-a-dev",
+        updatedAt: "2026-04-25T10:00:00.000Z",
+        images: [
+          {
+            id: "dev",
+            imageName: "RemoteProject-dev",
+            status: "running",
+          },
+        ],
+      },
+    };
+    const remoteClient: ProjectLifecycleRemoteClient = {
+      async callTool<T>(toolName: string, argumentsValue: Record<string, unknown>) {
+        expect(toolName).toBe("plexus_project_open");
+        expect(argumentsValue).toMatchObject({
+          projectPath: "/remote/project-a",
+          workspaceId: "remote-worktree-a",
+          targetId: "remote-task-a-dev",
+        });
+        return { ok: true, data: remoteOpenResult as T };
+      },
+    };
+    writeProjectConfig(projectRoot, {
+      runtime: {
+        nodeId: "host-a",
+        remoteNodes: [
+          {
+            id: "remote-a",
+            parentNodeId: "host-a",
+            projectMcpUrl: "http://remote-a.local:7332/mcp",
+            gatewayMcpUrl: "http://remote-a.local:7331/mcp",
+            workspaces: [
+              {
+                workspaceId: "worktree-a",
+                remoteWorkspaceId: "remote-worktree-a",
+                remoteProjectPath: "/remote/project-a",
+                targets: [
+                  {
+                    targetId: "task-a-dev",
+                    remoteTargetId: "remote-task-a-dev",
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+    });
+    const lifecycle = new PlexusProjectLifecycle({
+      routeRegistry,
+      remoteClientFactory: () => remoteClient,
+    });
+
+    const result = await lifecycle.handleTool("plexus_project_open", {
+      projectPath: projectRoot,
+      sourcePath: "/host/source",
+      stateRoot,
+      workspaceId: "worktree-a",
+      targetId: "task-a-dev",
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
+      data: {
+        projectRoot,
+        statePath: statePath(stateRoot),
+        state: {
+          projectId: "project-123",
+          projectName: "my-project",
+          workspaceId: "worktree-a",
+          targetId: "task-a-dev",
+          sourcePath: "/host/source",
+          remoteGateway: {
+            remoteNodeId: "remote-a",
+            endpoint: {
+              transport: "http",
+              host: "remote-a.local",
+              port: 7331,
+              path: "/mcp",
+            },
+            projectId: "remote-project",
+            workspaceId: "remote-worktree-a",
+            targetId: "remote-task-a-dev",
+          },
+        },
+      },
+    });
+    expect(routeRegistry.registrations).toHaveLength(1);
+    expect(routeRegistry.registrations[0]).toMatchObject({
+      projectRoot,
+      statePath: statePath(stateRoot),
+      state: {
+        projectId: "project-123",
+        workspaceId: "worktree-a",
+        targetId: "task-a-dev",
+        remoteGateway: {
+          remoteNodeId: "remote-a",
+        },
+        images: [
+          {
+            id: "dev",
+            status: "running",
+          },
+        ],
+      },
+    });
+    expect(loadProjectState(statePath(stateRoot))).toMatchObject({
+      projectId: "project-123",
+      workspaceId: "worktree-a",
+      targetId: "task-a-dev",
+      remoteGateway: {
+        remoteNodeId: "remote-a",
+      },
+    });
+  });
+
+  it("unregisters host gateway routes after remote close and confirmed cleanup", async () => {
+    const projectRoot = makeTempDir("plexus-project-");
+    const stateRoot = makeTempDir("plexus-state-");
+    const routeRegistry = new FakeRouteRegistry();
+    const remoteOpenResult: ProjectOpenResult = {
+      ok: true,
+      projectRoot: "/remote/project-a",
+      statePath: "/remote/state/project-a/worktree-a/state.json",
+      failures: [],
+      state: {
+        projectId: "remote-project",
+        projectName: "remote-project",
+        workspaceId: "remote-worktree-a",
+        targetId: "remote-task-a-dev",
+        updatedAt: "2026-04-25T10:00:00.000Z",
+        images: [
+          {
+            id: "dev",
+            imageName: "RemoteProject-dev",
+            status: "running",
+          },
+        ],
+      },
+    };
+    const remoteClient: ProjectLifecycleRemoteClient = {
+      async callTool<T>(toolName: string) {
+        if (toolName === "plexus_project_open") {
+          return { ok: true, data: remoteOpenResult as T };
+        }
+        if (toolName === "plexus_project_close") {
+          return {
+            ok: true,
+            data: {
+              ok: true,
+              projectRoot: "/remote/project-a",
+              statePath: "/remote/state/project-a/worktree-a/state.json",
+              stoppedImages: [],
+              repositoryWorkspaceCleanups: [],
+              failures: [],
+            } as T,
+          };
+        }
+        if (toolName === "plexus_project_cleanup") {
+          return {
+            ok: true,
+            data: {
+              ok: true,
+              projectRoot: "/remote/project-a",
+              stateRoot: "/remote/state",
+              statePath: "/remote/state/project-a/worktree-a/state.json",
+              confirmed: true,
+              deleteStateFile: true,
+              deleteLauncherImages: false,
+              resources: [],
+              failures: [],
+              stoppedImages: [],
+              repositoryWorkspaceCleanups: [],
+              deletedLauncherImages: [],
+              gatewayClosed: false,
+            } as T,
+          };
+        }
+        throw new Error(`Unexpected remote tool: ${toolName}`);
+      },
+    };
+    writeProjectConfig(projectRoot, {
+      runtime: {
+        nodeId: "host-a",
+        remoteNodes: [
+          {
+            id: "remote-a",
+            parentNodeId: "host-a",
+            projectMcpUrl: "http://remote-a.local:7332/mcp",
+            gatewayMcpUrl: "http://remote-a.local:7331/mcp",
+            workspaces: [
+              {
+                workspaceId: "worktree-a",
+                remoteWorkspaceId: "remote-worktree-a",
+                remoteProjectPath: "/remote/project-a",
+                targets: [
+                  {
+                    targetId: "task-a-dev",
+                    remoteTargetId: "remote-task-a-dev",
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+    });
+    const lifecycle = new PlexusProjectLifecycle({
+      routeRegistry,
+      remoteClientFactory: () => remoteClient,
+    });
+
+    await lifecycle.handleTool("plexus_project_open", {
+      projectPath: projectRoot,
+      stateRoot,
+      workspaceId: "worktree-a",
+      targetId: "task-a-dev",
+    });
+    await lifecycle.handleTool("plexus_project_close", {
+      projectPath: projectRoot,
+      stateRoot,
+      workspaceId: "worktree-a",
+    });
+    await lifecycle.handleTool("plexus_project_open", {
+      projectPath: projectRoot,
+      stateRoot,
+      workspaceId: "worktree-a",
+      targetId: "task-a-dev",
+    });
+    await lifecycle.handleTool("plexus_project_cleanup", {
+      projectPath: projectRoot,
+      stateRoot,
+      workspaceId: "worktree-a",
+      confirm: true,
+      deleteStateFile: true,
+      deleteLauncherImages: false,
+    });
+
+    expect(routeRegistry.unregisters).toEqual([
+      {
+        projectId: "project-123",
+        workspaceId: "worktree-a",
+      },
+      {
+        projectId: "project-123",
+        workspaceId: "worktree-a",
+      },
+    ]);
+    expect(loadProjectState(statePath(stateRoot))).toBeUndefined();
+  });
+
   it("decodes remote project lifecycle MCP responses over HTTP", async () => {
     const requests: Array<{
       url: string;
