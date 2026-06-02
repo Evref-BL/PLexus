@@ -16,6 +16,10 @@ import type {
   ProjectImageRepositoryWorkspaceState,
   ProjectImageState,
 } from "./projectState.js";
+import {
+  projectImageRepositoryWorkspaces,
+  syncProjectImageRepositoryWorkspaceAliases,
+} from "./projectState.js";
 
 export interface ProjectRepositoryWorkspaceMaterializationPlan {
   imageId: string;
@@ -43,6 +47,7 @@ export interface MaterializeProjectImageRepositoryWorkspaceOptions {
   projectRoot: string;
   imageConfig: ProjectImageConfig;
   imageState: ProjectImageState;
+  workspace?: ProjectImageRepositoryWorkspaceState | undefined;
   sourcePath?: string | undefined;
   env?: NodeJS.ProcessEnv;
 }
@@ -63,6 +68,7 @@ export interface ProjectRepositoryWorkspaceInspection {
 export interface CleanupProjectImageRepositoryWorkspaceOptions {
   projectRoot: string;
   imageState: ProjectImageState;
+  workspace?: ProjectImageRepositoryWorkspaceState | undefined;
   policy: ProjectImageRepositoryWorkspaceCleanupPolicy;
   archiveRoot?: string | undefined;
   now?: (() => Date) | undefined;
@@ -484,7 +490,8 @@ function updateWorkspaceState(
 export function buildProjectImageRepositoryWorkspaceMaterializationPlan(
   options: MaterializeProjectImageRepositoryWorkspaceOptions,
 ): ProjectRepositoryWorkspaceMaterializationPlan | undefined {
-  const workspace = options.imageState.repositoryWorkspace;
+  const workspace =
+    options.workspace ?? options.imageState.repositoryWorkspace;
   if (!workspace) {
     return undefined;
   }
@@ -518,7 +525,8 @@ export function buildProjectImageRepositoryWorkspaceMaterializationPlan(
 export function materializeProjectImageRepositoryWorkspace(
   options: MaterializeProjectImageRepositoryWorkspaceOptions,
 ): ProjectRepositoryWorkspaceMaterializationResult | undefined {
-  const workspace = options.imageState.repositoryWorkspace;
+  const workspace =
+    options.workspace ?? options.imageState.repositoryWorkspace;
   const plan = buildProjectImageRepositoryWorkspaceMaterializationPlan(options);
   if (!workspace || !plan) {
     return undefined;
@@ -547,6 +555,7 @@ export function materializeProjectImageRepositoryWorkspace(
       ],
     };
     updateWorkspaceState(workspace, plan, result);
+    syncProjectImageRepositoryWorkspaceAliases(options.imageState);
     return result;
   } catch (error) {
     workspace.materializationState = "failed";
@@ -558,12 +567,31 @@ export function materializeProjectImageRepositoryWorkspace(
   }
 }
 
+export function materializeProjectImageRepositoryWorkspaces(
+  options: MaterializeProjectImageRepositoryWorkspaceOptions,
+): ProjectRepositoryWorkspaceMaterializationResult[] {
+  const results: ProjectRepositoryWorkspaceMaterializationResult[] = [];
+  for (const workspace of projectImageRepositoryWorkspaces(options.imageState)) {
+    const result = materializeProjectImageRepositoryWorkspace({
+      ...options,
+      workspace,
+    });
+    if (result) {
+      results.push(result);
+    }
+  }
+  syncProjectImageRepositoryWorkspaceAliases(options.imageState);
+  return results;
+}
+
 export function inspectProjectImageRepositoryWorkspace(options: {
   projectRoot: string;
   imageState: ProjectImageState;
+  workspace?: ProjectImageRepositoryWorkspaceState | undefined;
   env?: NodeJS.ProcessEnv;
 }): ProjectRepositoryWorkspaceInspection | undefined {
-  const workspace = options.imageState.repositoryWorkspace;
+  const workspace =
+    options.workspace ?? options.imageState.repositoryWorkspace;
   if (!workspace) {
     return undefined;
   }
@@ -642,10 +670,31 @@ export function inspectProjectImageRepositoryWorkspace(options: {
   };
 }
 
+export function inspectProjectImageRepositoryWorkspaces(options: {
+  projectRoot: string;
+  imageState: ProjectImageState;
+  env?: NodeJS.ProcessEnv;
+}): ProjectRepositoryWorkspaceInspection[] {
+  return projectImageRepositoryWorkspaces(options.imageState)
+    .map((workspace) =>
+      inspectProjectImageRepositoryWorkspace({
+        ...options,
+        workspace,
+      }),
+    )
+    .filter(
+      (
+        inspection,
+      ): inspection is ProjectRepositoryWorkspaceInspection =>
+        inspection !== undefined,
+    );
+}
+
 export function cleanupProjectImageRepositoryWorkspace(
   options: CleanupProjectImageRepositoryWorkspaceOptions,
 ): ProjectImageRepositoryWorkspaceCleanupRecord | undefined {
-  const workspace = options.imageState.repositoryWorkspace;
+  const workspace =
+    options.workspace ?? options.imageState.repositoryWorkspace;
   if (!workspace) {
     return undefined;
   }
@@ -690,6 +739,7 @@ export function cleanupProjectImageRepositoryWorkspace(
         message ?? `policy ${options.policy}`
       }`,
     ];
+    syncProjectImageRepositoryWorkspaceAliases(options.imageState);
     return cleanupState;
   }
 
@@ -748,4 +798,21 @@ export function cleanupProjectImageRepositoryWorkspace(
       error instanceof Error ? error.message : String(error),
     );
   }
+}
+
+export function cleanupProjectImageRepositoryWorkspaces(
+  options: CleanupProjectImageRepositoryWorkspaceOptions,
+): ProjectImageRepositoryWorkspaceCleanupRecord[] {
+  const records: ProjectImageRepositoryWorkspaceCleanupRecord[] = [];
+  for (const workspace of projectImageRepositoryWorkspaces(options.imageState)) {
+    const record = cleanupProjectImageRepositoryWorkspace({
+      ...options,
+      workspace,
+    });
+    if (record) {
+      records.push(record);
+    }
+  }
+  syncProjectImageRepositoryWorkspaceAliases(options.imageState);
+  return records;
 }

@@ -21,6 +21,7 @@ import {
   resolvePathLike,
 } from "./pathStyle.js";
 import {
+  projectImageRepositoryWorkspaces,
   projectStateDirectoryPath,
   projectStateRootForConfig,
   type ProjectImageState,
@@ -62,6 +63,7 @@ export interface GenerateImageStartupScriptOptions {
   endpointHandoffPath?: string;
   pharoMcpLoadStatusPath?: string;
   repositoryWorkspaceLoadStatusPath?: string;
+  repositoryWorkspaceLoadStatusPaths?: Record<string, string>;
   dependencyRepositoryDetachStatusPath?: string;
   dependencyRepositoryCachePath?: string;
   dependencyRepositoryNetworkPolicy?: ProjectHomeDependencyRepositoryNetworkPolicy;
@@ -91,6 +93,7 @@ export interface WrittenImageStartupScript {
   source: string;
   pharoMcpLoadStatusPath?: string;
   repositoryWorkspaceLoadStatusPath?: string;
+  repositoryWorkspaceLoadStatusPaths?: Record<string, string>;
   dependencyRepositoryDetachStatusPath?: string;
 }
 
@@ -130,15 +133,25 @@ export function imageStartupScriptPath(
 }
 
 export function imageRepositoryWorkspaceLoadStatusPath(
-  options: ProjectImageStartupScriptPathOptions,
+  options: ProjectImageStartupScriptPathOptions & { repositoryId?: string },
 ): string {
   const imageScriptName = imageStartupScriptFileName(options.imageId)
     .replace(/^start-/, "")
     .replace(/\.st$/, ".properties");
+  const repositorySuffix = options.repositoryId
+    ? `-${statusPathSegment(options.repositoryId)}`
+    : "";
   return joinPathLike(
     projectScriptsDirectoryPath(options),
-    `repository-workspace-load-${imageScriptName}`,
+    `repository-workspace-load-${imageScriptName.replace(
+      /\.properties$/,
+      `${repositorySuffix}.properties`,
+    )}`,
   );
+}
+
+function statusPathSegment(value: string): string {
+  return value.replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || "repo";
 }
 
 export function imagePharoMcpLoadStatusPath(
@@ -370,11 +383,21 @@ function generateEndpointHandoffStartupScript(options: {
 function generateRepositoryWorkspaceLoadScript(options: {
   imageState: ProjectImageState;
   loadStatusPath?: string;
+  loadStatusPaths?: Record<string, string>;
 }): string {
-  const workspace = options.imageState.repositoryWorkspace;
-  if (!workspace || !options.loadStatusPath) {
+  const workspaces = projectImageRepositoryWorkspaces(options.imageState);
+  if (workspaces.length === 0) {
     return "";
   }
+
+  return workspaces
+    .map((workspace) => {
+      const loadStatusPath =
+        options.loadStatusPaths?.[workspace.repository.id] ??
+        (workspaces.length === 1 ? options.loadStatusPath : undefined);
+      if (!loadStatusPath) {
+        return "";
+      }
 
   const sourcePath = joinPathLike(workspace.path, workspace.sourceDirectory);
   const loadCommand = workspace.loadGroup
@@ -391,7 +414,7 @@ function generateRepositoryWorkspaceLoadScript(options: {
 
   return `
 "Load the configured Pharo project from the image-local repository workspace."
-repositoryLoadStatusFile := ${smalltalkPath(options.loadStatusPath)} asFileReference.
+repositoryLoadStatusFile := ${smalltalkPath(loadStatusPath)} asFileReference.
 repositorySourcePath := ${smalltalkPath(sourcePath)}.
 repositoryLoadStatusFile exists ifTrue: [ repositoryLoadStatusFile delete ].
 repositoryLoadStatusWriter := [ :status :message |
@@ -400,6 +423,10 @@ repositoryLoadStatusWriter := [ :status :message |
     stream
       nextPutAll: 'status=';
       nextPutAll: status;
+      cr.
+    stream
+      nextPutAll: 'repositoryId=';
+      nextPutAll: ${smalltalkString(workspace.repository.id)};
       cr.
     stream
       nextPutAll: 'sourcePath=';
@@ -437,6 +464,9 @@ ${loadCommand}.
   repositoryLoadStatusWriter value: 'failed' value: error description.
   error pass ].
 `;
+    })
+    .filter((script) => script.length > 0)
+    .join("\n");
 }
 
 function generateDependencyRepositoryCacheSetupScript(options: {
@@ -734,14 +764,15 @@ export function generateImageStartupScript(
   const repositoryWorkspaceLoadScript = generateRepositoryWorkspaceLoadScript({
     imageState: options.imageState,
     loadStatusPath: options.repositoryWorkspaceLoadStatusPath,
+    loadStatusPaths: options.repositoryWorkspaceLoadStatusPaths,
   });
   const dependencyRepositoryDetachScript =
     generateDependencyRepositoryDetachScript({
       cachePath: options.dependencyRepositoryCachePath,
       statusPath: options.dependencyRepositoryDetachStatusPath,
-      editableRepositoryPaths: options.imageState.repositoryWorkspace
-        ? [options.imageState.repositoryWorkspace.path]
-        : [],
+      editableRepositoryPaths: projectImageRepositoryWorkspaces(
+        options.imageState,
+      ).map((workspace) => workspace.path),
     });
 
   const startupMode = projectMcpStartupMode(options.imageConfig.mcp);
@@ -864,15 +895,36 @@ export function writeImageStartupScript(
     imageId: options.imageConfig.id,
     stateRoot: options.stateRoot,
   });
-  const repositoryWorkspaceLoadStatusPath = options.imageState.repositoryWorkspace
-    ? imageRepositoryWorkspaceLoadStatusPath({
-        projectRoot: options.projectRoot,
-        projectId: options.projectId,
-        workspaceId: options.workspaceId,
-        imageId: options.imageConfig.id,
-        stateRoot: options.stateRoot,
-      })
-    : undefined;
+  const repositoryWorkspaces = projectImageRepositoryWorkspaces(options.imageState);
+  const repositoryWorkspaceLoadStatusPaths =
+    repositoryWorkspaces.length > 0
+      ? Object.fromEntries(
+          repositoryWorkspaces.map((workspace) => {
+            const pathOptions = {
+              projectRoot: options.projectRoot,
+              projectId: options.projectId,
+              workspaceId: options.workspaceId,
+              imageId: options.imageConfig.id,
+              stateRoot: options.stateRoot,
+            };
+            return [
+              workspace.repository.id,
+              imageRepositoryWorkspaceLoadStatusPath(
+                repositoryWorkspaces.length === 1
+                  ? pathOptions
+                  : {
+                      ...pathOptions,
+                      repositoryId: workspace.repository.id,
+                    },
+              ),
+            ];
+          }),
+        )
+      : undefined;
+  const repositoryWorkspaceLoadStatusPath =
+    repositoryWorkspaces.length === 1
+      ? repositoryWorkspaceLoadStatusPaths?.[repositoryWorkspaces[0].repository.id]
+      : undefined;
   const pharoMcpLoadStatusPath =
     projectMcpStartupMode(options.imageConfig.mcp) === "disabled" ||
     options.imageState.pharoMcpContract?.status === "unsupported"
@@ -900,6 +952,9 @@ export function writeImageStartupScript(
     ...(repositoryWorkspaceLoadStatusPath
       ? { repositoryWorkspaceLoadStatusPath }
       : {}),
+    ...(repositoryWorkspaceLoadStatusPaths
+      ? { repositoryWorkspaceLoadStatusPaths }
+      : {}),
     ...(dependencyRepositoryDetachStatusPath
       ? { dependencyRepositoryDetachStatusPath }
       : {}),
@@ -914,6 +969,9 @@ export function writeImageStartupScript(
     ...(pharoMcpLoadStatusPath ? { pharoMcpLoadStatusPath } : {}),
     ...(repositoryWorkspaceLoadStatusPath
       ? { repositoryWorkspaceLoadStatusPath }
+      : {}),
+    ...(repositoryWorkspaceLoadStatusPaths
+      ? { repositoryWorkspaceLoadStatusPaths }
       : {}),
     ...(dependencyRepositoryDetachStatusPath
       ? { dependencyRepositoryDetachStatusPath }

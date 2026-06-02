@@ -113,6 +113,7 @@ export interface ProjectImageConfig {
   create?: ProjectImageCreateConfig;
   preparedImage?: ProjectImagePreparedImageConfig;
   repositoryWorkspace?: ProjectImageRepositoryWorkspaceConfig;
+  repositoryWorkspaces?: ProjectImageRepositoryWorkspaceConfig[];
   git?: ProjectImageGitConfig;
 }
 
@@ -1176,13 +1177,12 @@ function parseImageRepositoryWorkspaceMaterialization(
 function parseImageRepositoryWorkspace(
   value: unknown,
   issues: string[],
-  pathPrefix: string,
+  workspacePath: string,
 ): ProjectImageRepositoryWorkspaceConfig | undefined {
   if (value === undefined) {
     return undefined;
   }
 
-  const workspacePath = `${pathPrefix}.repositoryWorkspace`;
   if (!isObject(value)) {
     issues.push(`${workspacePath} must be an object`);
     return undefined;
@@ -1219,6 +1219,44 @@ function parseImageRepositoryWorkspace(
   };
 }
 
+function parseImageRepositoryWorkspaces(
+  value: unknown,
+  issues: string[],
+  pathPrefix: string,
+): ProjectImageRepositoryWorkspaceConfig[] | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  const workspacesPath = `${pathPrefix}.repositoryWorkspaces`;
+  if (!Array.isArray(value)) {
+    issues.push(`${workspacesPath} must be an array`);
+    return undefined;
+  }
+
+  return value.map((workspace, index) =>
+    parseImageRepositoryWorkspace(
+      workspace,
+      issues,
+      `${workspacesPath}[${index}]`,
+    ) ?? {
+      repository: { id: "" },
+      sourceDirectory: "",
+      baseline: "",
+      materialization: { strategy: "copy" },
+    },
+  );
+}
+
+export function imageRepositoryWorkspaceConfigs(
+  image: Pick<ProjectImageConfig, "repositoryWorkspace" | "repositoryWorkspaces">,
+): ProjectImageRepositoryWorkspaceConfig[] {
+  if (image.repositoryWorkspaces && image.repositoryWorkspaces.length > 0) {
+    return image.repositoryWorkspaces;
+  }
+  return image.repositoryWorkspace ? [image.repositoryWorkspace] : [];
+}
+
 function parseImages(
   value: unknown,
   issues: string[],
@@ -1240,6 +1278,20 @@ function parseImages(
       };
     }
 
+    const repositoryWorkspace = parseImageRepositoryWorkspace(
+      image.repositoryWorkspace,
+      issues,
+      `${pathPrefix}.repositoryWorkspace`,
+    );
+    const repositoryWorkspaces = parseImageRepositoryWorkspaces(
+      image.repositoryWorkspaces,
+      issues,
+      pathPrefix,
+    );
+    const effectiveRepositoryWorkspaces =
+      repositoryWorkspaces ??
+      (repositoryWorkspace ? [repositoryWorkspace] : undefined);
+
     return {
       id: stringField(image, "id", issues, pathPrefix),
       imageName: stringField(image, "imageName", issues, pathPrefix),
@@ -1257,11 +1309,11 @@ function parseImages(
         issues,
         pathPrefix,
       ),
-      repositoryWorkspace: parseImageRepositoryWorkspace(
-        image.repositoryWorkspace,
-        issues,
-        pathPrefix,
-      ),
+      repositoryWorkspace:
+        repositoryWorkspace ?? effectiveRepositoryWorkspaces?.[0],
+      ...(effectiveRepositoryWorkspaces
+        ? { repositoryWorkspaces: effectiveRepositoryWorkspaces }
+        : {}),
       git: parseImageGit(image.git, issues, pathPrefix),
     };
   });
@@ -1820,17 +1872,38 @@ function collectDuplicateActiveRepositoryWorkspacePaths(
       continue;
     }
 
-    const path = image.repositoryWorkspace?.materialization.path;
-    if (!path) {
-      continue;
-    }
+    for (const workspace of imageRepositoryWorkspaceConfigs(image)) {
+      const path = workspace.materialization.path;
+      if (!path) {
+        continue;
+      }
 
-    if (seen.has(path)) {
-      issues.push(`active image repository workspace paths must be unique: ${path}`);
-    } else {
-      seen.add(path);
+      if (seen.has(path)) {
+        issues.push(`active image repository workspace paths must be unique: ${path}`);
+      } else {
+        seen.add(path);
+      }
     }
   }
+}
+
+function collectDuplicateRepositoryWorkspaceIds(
+  images: ProjectImageConfig[],
+  issues: string[],
+): void {
+  images.forEach((image, imageIndex) => {
+    const seen = new Set<string>();
+    for (const workspace of imageRepositoryWorkspaceConfigs(image)) {
+      const repositoryId = workspace.repository.id;
+      if (seen.has(repositoryId)) {
+        issues.push(
+          `images[${imageIndex}] repository workspace ids must be unique: ${repositoryId}`,
+        );
+      } else {
+        seen.add(repositoryId);
+      }
+    }
+  });
 }
 
 function validateImagePortPolicy(config: ProjectConfig, issues: string[]): void {
@@ -1916,6 +1989,7 @@ export function parseProjectConfig(value: unknown): ProjectConfig {
     issues,
   );
   collectDuplicatePorts(config.images, issues);
+  collectDuplicateRepositoryWorkspaceIds(config.images, issues);
   collectDuplicateActiveRepositoryWorkspacePaths(config.images, issues);
   validateImagePortPolicy(config, issues);
   validatePreparedImageReferences(config, issues);

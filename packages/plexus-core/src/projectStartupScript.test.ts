@@ -882,6 +882,112 @@ describe("project startup scripts", () => {
     }
   });
 
+  it("reports separate repository workspace load status paths for multiple Pharo projects", () => {
+    const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), "plexus-project-"));
+    const stateRoot = fs.mkdtempSync(path.join(os.tmpdir(), "plexus-state-"));
+    const repositoryConfig: ProjectConfig = {
+      ...config,
+      images: [
+        {
+          ...config.images[0],
+          repositoryWorkspaces: [
+            {
+              repository: {
+                id: "my-project",
+                originPath: "/repo/source",
+              },
+              sourceDirectory: "src",
+              baseline: "MyProject",
+              materialization: {
+                strategy: "copy",
+              },
+            },
+            {
+              repository: {
+                id: "dependency",
+                originPath: "/repo/dependency",
+              },
+              sourceDirectory: "repository",
+              baseline: "Dependency",
+              materialization: {
+                strategy: "copy",
+              },
+            },
+          ],
+        },
+      ],
+    };
+
+    try {
+      const written = writeProjectImageStartupScript({
+        projectRoot,
+        config: repositoryConfig,
+        imageId: "dev",
+        imageState: {
+          ...imageState,
+          repositoryWorkspaces: [
+            {
+              repository: {
+                id: "my-project",
+                originPath: "/repo/source",
+              },
+              path: "/image/pharo-local/iceberg/my-project",
+              materializationStrategy: "copy",
+              sourceDirectory: "src",
+              baseline: "MyProject",
+              materializationState: "ready",
+              diagnostics: [],
+              dirtyState: "clean",
+              loadState: "not-loaded",
+            },
+            {
+              repository: {
+                id: "dependency",
+                originPath: "/repo/dependency",
+              },
+              path: "/image/pharo-local/iceberg/dependency",
+              materializationStrategy: "copy",
+              sourceDirectory: "repository",
+              baseline: "Dependency",
+              materializationState: "ready",
+              diagnostics: [],
+              dirtyState: "clean",
+              loadState: "not-loaded",
+            },
+          ],
+        },
+        workspaceId: "worktree-a",
+        stateRoot,
+      });
+
+      expect(written.repositoryWorkspaceLoadStatusPath).toBeUndefined();
+      expect(written.repositoryWorkspaceLoadStatusPaths).toEqual({
+        "my-project": imageRepositoryWorkspaceLoadStatusPath({
+          projectRoot,
+          projectId: "project-123",
+          imageId: "dev",
+          workspaceId: "worktree-a",
+          repositoryId: "my-project",
+          stateRoot,
+        }),
+        dependency: imageRepositoryWorkspaceLoadStatusPath({
+          projectRoot,
+          projectId: "project-123",
+          imageId: "dev",
+          workspaceId: "worktree-a",
+          repositoryId: "dependency",
+          stateRoot,
+        }),
+      });
+      expect(written.source).toContain("baseline: 'MyProject'");
+      expect(written.source).toContain("baseline: 'Dependency'");
+      expect(written.source).toContain("repositoryId=");
+    } finally {
+      fs.rmSync(projectRoot, { recursive: true, force: true });
+      fs.rmSync(stateRoot, { recursive: true, force: true });
+    }
+  });
+
   it("reports the dependency repository detach status path when using the fixed PLexus home cache", () => {
     const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), "plexus-project-"));
     const stateRoot = fs.mkdtempSync(path.join(os.tmpdir(), "plexus-state-"));

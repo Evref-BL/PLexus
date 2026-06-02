@@ -15,7 +15,7 @@ import {
 } from "./projectImageMcpEndpoint.js";
 import { pharoLauncherMcpProfileEnvironment } from "./pharoLauncherProfile.js";
 import {
-  cleanupProjectImageRepositoryWorkspace,
+  cleanupProjectImageRepositoryWorkspaces,
 } from "./projectRepositoryWorkspace.js";
 import {
   defaultWorkspaceId,
@@ -150,7 +150,7 @@ function applyRepositoryWorkspaceCleanup(options: {
     path.join(path.dirname(options.statePath), "repository-workspace-archives");
 
   for (const imageState of options.imageStates) {
-    const record = cleanupProjectImageRepositoryWorkspace({
+    const imageRecords = cleanupProjectImageRepositoryWorkspaces({
       projectRoot: options.projectRoot,
       imageState,
       policy: options.policy,
@@ -158,19 +158,18 @@ function applyRepositoryWorkspaceCleanup(options: {
       now: options.now,
       env: options.env,
     });
-    if (!record) {
-      continue;
-    }
 
-    records.push(record);
-    if (repositoryWorkspaceCleanupFailure(record)) {
-      options.failures.push({
-        imageId: imageState.id,
-        imageName: imageState.imageName,
-        message:
-          record.message ??
-          `Repository workspace cleanup ${record.decision} for ${record.path}`,
-      });
+    records.push(...imageRecords);
+    for (const record of imageRecords) {
+      if (repositoryWorkspaceCleanupFailure(record)) {
+        options.failures.push({
+          imageId: imageState.id,
+          imageName: imageState.imageName,
+          message:
+            record.message ??
+            `Repository workspace cleanup ${record.decision} for ${record.path}`,
+        });
+      }
     }
   }
 

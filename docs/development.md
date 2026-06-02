@@ -172,8 +172,8 @@ dependency clones to use `<PLEXUS_HOME>/repositories/iceberg`. This is fixed
 relative to PLexus home; the only dependency repository policy knob is
 `home.dependencyRepositories.networkPolicy`. After project and MCP loads, the
 same startup script removes shared-cache repositories from the Iceberg registry
-unless the repository path is the image's declared editable
-`repositoryWorkspace`. The script records the result in
+unless the repository path matches one of the image's declared editable
+repository workspaces. The script records the result in
 `dependency-repository-detach-<image-id>.properties`, and lifecycle diagnostics
 surface the detached repository names and locations.
 

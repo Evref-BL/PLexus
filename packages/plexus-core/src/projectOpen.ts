@@ -53,6 +53,7 @@ import {
   createProjectState,
   defaultWorkspaceId,
   loadProjectState,
+  projectImageRepositoryWorkspaces,
   projectStatePathForConfig,
   projectStateRootForConfig,
   runtimeStatusForImages,
@@ -65,7 +66,7 @@ import {
   type ProjectState,
 } from "./projectState.js";
 import { writeProjectImageStartupScript } from "./projectStartupScript.js";
-import { materializeProjectImageRepositoryWorkspace } from "./projectRepositoryWorkspace.js";
+import { materializeProjectImageRepositoryWorkspaces } from "./projectRepositoryWorkspace.js";
 import type { PortClaimChecks } from "./portClaims.js";
 
 export interface LauncherCommandResult<T = unknown> {
@@ -582,18 +583,19 @@ function applyLauncherImageInfo(
 }
 
 function repositoryWorkspaceNeedsLauncherPaths(imageState: ProjectImageState): boolean {
-  return Boolean(
-    imageState.repositoryWorkspace?.path.startsWith("image-local://") &&
-      !imageState.localDirectoryPath,
+  return (
+    !imageState.localDirectoryPath &&
+    projectImageRepositoryWorkspaces(imageState).some((workspace) =>
+      workspace.path.startsWith("image-local://"),
+    )
   );
 }
 
 function appendRepositoryWorkspaceDiagnostic(
-  imageState: ProjectImageState,
+  workspace: ProjectImageRepositoryWorkspaceState,
   message: string,
 ): void {
-  const workspace = imageState.repositoryWorkspace;
-  if (!workspace || workspace.diagnostics.includes(message)) {
+  if (workspace.diagnostics.includes(message)) {
     return;
   }
 
@@ -726,9 +728,10 @@ function matchingRepositoryEntry(
 async function ensureRepositoryWorkspaceRegistered(options: {
   imageConfig: ProjectImageConfig;
   imageState: ProjectImageState;
+  workspace: ProjectImageRepositoryWorkspaceState;
   imageMcpClient: ProjectOpenImageMcpClient;
 }): Promise<void> {
-  const workspace = options.imageState.repositoryWorkspace;
+  const workspace = options.workspace;
   if (!workspace || workspace.loadState !== "loaded") {
     return;
   }
@@ -738,7 +741,7 @@ async function ensureRepositoryWorkspaceRegistered(options: {
     const message = `Repository workspace registration skipped for image ${options.imageState.id}: image has no routable Pharo MCP endpoint.`;
     workspace.registrationState = "skipped";
     workspace.registrationError = message;
-    appendRepositoryWorkspaceDiagnostic(options.imageState, message);
+    appendRepositoryWorkspaceDiagnostic(workspace, message);
     if (imageRequiresPharoMcpHealth(options.imageConfig, options.imageState)) {
       workspace.registrationState = "failed";
       throw new Error(message);
@@ -750,7 +753,7 @@ async function ensureRepositoryWorkspaceRegistered(options: {
     const message = `Repository workspace registration skipped for image ${options.imageState.id}: Pharo MCP startup is disabled or unsupported.`;
     workspace.registrationState = "skipped";
     workspace.registrationError = message;
-    appendRepositoryWorkspaceDiagnostic(options.imageState, message);
+    appendRepositoryWorkspaceDiagnostic(workspace, message);
     return;
   }
 
@@ -828,7 +831,7 @@ async function ensureRepositoryWorkspaceRegistered(options: {
     const message = errorMessage(error);
     workspace.registrationState = "failed";
     workspace.registrationError = message;
-    appendRepositoryWorkspaceDiagnostic(options.imageState, message);
+    appendRepositoryWorkspaceDiagnostic(workspace, message);
     throw new Error(
       `Repository workspace registration failed for image ${options.imageState.id}: ${message}`,
     );
@@ -1021,35 +1024,53 @@ function refreshDependencyRepositoryDetachStatus(
   return message;
 }
 
-function prepareRepositoryWorkspaceLoadStatus(
-  imageState: ProjectImageState,
-  statusPath: string | undefined,
+function clearRepositoryWorkspaceLoadStatuses(
+  statusPaths: Record<string, string> | undefined,
 ): void {
-  const workspace = imageState.repositoryWorkspace;
-  if (!workspace || !statusPath) {
+  if (!statusPaths) {
     return;
   }
 
-  workspace.loadState = "pending";
-  workspace.loadStatusPath = statusPath;
-  workspace.loadSourcePath = joinPathLike(
-    workspace.path,
-    workspace.sourceDirectory,
-  );
-  delete workspace.loadError;
+  for (const statusPath of Object.values(statusPaths)) {
+    fs.rmSync(statusPath, { force: true });
+  }
+}
+
+function prepareRepositoryWorkspaceLoadStatuses(
+  imageState: ProjectImageState,
+  statusPaths: Record<string, string> | undefined,
+): void {
+  if (!statusPaths) {
+    return;
+  }
+
+  for (const workspace of projectImageRepositoryWorkspaces(imageState)) {
+    const statusPath = statusPaths[workspace.repository.id];
+    if (!statusPath) {
+      continue;
+    }
+
+    workspace.loadState = "pending";
+    workspace.loadStatusPath = statusPath;
+    workspace.loadSourcePath = joinPathLike(
+      workspace.path,
+      workspace.sourceDirectory,
+    );
+    delete workspace.loadError;
+  }
 }
 
 function refreshRepositoryWorkspaceLoadStatus(
   imageState: ProjectImageState,
+  workspace: ProjectImageRepositoryWorkspaceState,
 ): string | undefined {
-  const workspace = imageState.repositoryWorkspace;
   if (!workspace?.loadStatusPath) {
     return undefined;
   }
 
   if (!fs.existsSync(workspace.loadStatusPath)) {
     appendRepositoryWorkspaceDiagnostic(
-      imageState,
+      workspace,
       `Pharo project load has not reported status at ${workspace.loadStatusPath}.`,
     );
     return undefined;
@@ -1072,14 +1093,25 @@ function refreshRepositoryWorkspaceLoadStatus(
     workspace.loadState = "failed";
     workspace.loadError =
       properties.message ?? "Pharo project load failed without a reported message.";
-    appendRepositoryWorkspaceDiagnostic(imageState, workspace.loadError);
+    appendRepositoryWorkspaceDiagnostic(workspace, workspace.loadError);
     return `Pharo project load failed for image ${imageState.id}: ${workspace.loadError}`;
   }
 
   workspace.loadState = "failed";
   workspace.loadError = `Invalid Pharo project load status at ${workspace.loadStatusPath}: ${status ?? "(missing)"}`;
-  appendRepositoryWorkspaceDiagnostic(imageState, workspace.loadError);
+  appendRepositoryWorkspaceDiagnostic(workspace, workspace.loadError);
   return workspace.loadError;
+}
+
+function refreshRepositoryWorkspaceLoadStatuses(
+  imageState: ProjectImageState,
+): string | undefined {
+  let firstFailure: string | undefined;
+  for (const workspace of projectImageRepositoryWorkspaces(imageState)) {
+    const failure = refreshRepositoryWorkspaceLoadStatus(imageState, workspace);
+    firstFailure ??= failure;
+  }
+  return firstFailure;
 }
 
 async function hydrateRepositoryWorkspaceImagePaths(
@@ -1701,7 +1733,7 @@ export async function openProject(
         }
 
         await hydrateRepositoryWorkspaceImagePaths(client, imageState);
-        materializeProjectImageRepositoryWorkspace({
+        materializeProjectImageRepositoryWorkspaces({
           projectRoot,
           imageConfig,
           imageState,
@@ -1735,9 +1767,12 @@ export async function openProject(
           imageState,
           dependencyRepositoryDetachStatusPath,
         );
-        prepareRepositoryWorkspaceLoadStatus(
+        clearRepositoryWorkspaceLoadStatuses(
+          startupScript.repositoryWorkspaceLoadStatusPaths,
+        );
+        prepareRepositoryWorkspaceLoadStatuses(
           imageState,
-          startupScript.repositoryWorkspaceLoadStatusPath,
+          startupScript.repositoryWorkspaceLoadStatusPaths,
         );
 
         const launchClient = options.pharoLauncherMcpClient
@@ -1867,7 +1902,7 @@ export async function openProject(
           ) {
             throw new Error(pharoMcpLoadFailure);
           }
-          const loadFailure = refreshRepositoryWorkspaceLoadStatus(imageState);
+          const loadFailure = refreshRepositoryWorkspaceLoadStatuses(imageState);
           if (loadFailure) {
             throw new Error(loadFailure);
           }
@@ -1878,11 +1913,14 @@ export async function openProject(
           if (detachFailure) {
             throw new Error(detachFailure);
           }
-          await ensureRepositoryWorkspaceRegistered({
-            imageConfig,
-            imageState,
-            imageMcpClient,
-          });
+          for (const workspace of projectImageRepositoryWorkspaces(imageState)) {
+            await ensureRepositoryWorkspaceRegistered({
+              imageConfig,
+              imageState,
+              workspace,
+              imageMcpClient,
+            });
+          }
         } finally {
           if (ownsLaunchClient) {
             closeClientQuietly(launchClient);
@@ -1907,7 +1945,7 @@ export async function openProject(
           imageState,
           pharoMcpLoadStatusPath,
         );
-        const loadFailure = refreshRepositoryWorkspaceLoadStatus(imageState);
+        const loadFailure = refreshRepositoryWorkspaceLoadStatuses(imageState);
         const detachFailure = refreshDependencyRepositoryDetachStatus(
           imageState,
           dependencyRepositoryDetachStatusPath,

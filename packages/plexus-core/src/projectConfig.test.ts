@@ -584,6 +584,49 @@ describe("project config", () => {
     );
   });
 
+  it("parses multiple image-local repository workspace declarations", () => {
+    const baseConfig = validProjectConfig();
+    const config = {
+      ...baseConfig,
+      images: [
+        {
+          ...baseConfig.images[0],
+          repositoryWorkspaces: [
+            {
+              repository: {
+                id: "my-project",
+                componentId: "my-project",
+              },
+              sourceDirectory: "src",
+              baseline: "MyProject",
+              materialization: {
+                strategy: "copy",
+              },
+            },
+            {
+              repository: {
+                id: "dependency",
+                remoteUrl: "git@github.com:Example/Dependency.git",
+              },
+              sourceDirectory: "repository",
+              baseline: "Dependency",
+              materialization: {
+                strategy: "clone",
+                path: "image-local://{imageId}/pharo-local/iceberg/{repositoryId}",
+              },
+            },
+          ],
+        },
+        baseConfig.images[1],
+      ],
+    };
+
+    const image = parseProjectConfig(config).images[0];
+
+    expect(image.repositoryWorkspaces).toEqual(config.images[0].repositoryWorkspaces);
+    expect(image.repositoryWorkspace).toEqual(config.images[0].repositoryWorkspaces[0]);
+  });
+
   it("defaults image-local repository workspace materialization to copy", () => {
     const baseConfig = validProjectConfig();
     const config = {
@@ -667,6 +710,45 @@ describe("project config", () => {
           "images[0].repositoryWorkspace.materialization.strategy must be one of copy, git-worktree, clone",
           "active image repository workspace paths must be unique: /tmp/shared-pharo-repo",
         ]),
+      );
+    }
+  });
+
+  it("rejects duplicate repository workspace ids in one image", () => {
+    const baseConfig = validProjectConfig();
+    const config = {
+      ...baseConfig,
+      images: [
+        {
+          ...baseConfig.images[0],
+          repositoryWorkspaces: [
+            {
+              repository: {
+                id: "my-project",
+                componentId: "my-project",
+              },
+              sourceDirectory: "src",
+              baseline: "MyProject",
+            },
+            {
+              repository: {
+                id: "my-project",
+                remoteUrl: "git@github.com:Example/MyProject.git",
+              },
+              sourceDirectory: "repository",
+              baseline: "MyProjectDependency",
+            },
+          ],
+        },
+      ],
+    };
+
+    expect(() => parseProjectConfig(config)).toThrow(ProjectConfigError);
+    try {
+      parseProjectConfig(config);
+    } catch (error) {
+      expect((error as ProjectConfigError).issues).toContain(
+        "images[0] repository workspace ids must be unique: my-project",
       );
     }
   });

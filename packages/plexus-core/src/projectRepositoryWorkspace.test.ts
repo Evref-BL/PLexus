@@ -6,11 +6,13 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { ProjectImageConfig } from "./projectConfig.js";
 import {
   materializeProjectImageRepositoryWorkspace,
+  materializeProjectImageRepositoryWorkspaces,
   ProjectRepositoryWorkspaceError,
   resolveRepositoryWorkspacePath,
 } from "./projectRepositoryWorkspace.js";
 import {
   projectImageRepositoryWorkspaceState,
+  projectImageRepositoryWorkspaceStates,
   type ProjectImageState,
 } from "./projectState.js";
 
@@ -195,6 +197,97 @@ describe("project repository workspace materialization", () => {
       dirtyState: "clean",
       loadState: "not-loaded",
     });
+  });
+
+  it("materializes multiple editable repository workspaces", () => {
+    const firstSourceRoot = makeTempDir("plexus-source-");
+    const firstCommit = initRepository(firstSourceRoot);
+    const secondSourceRoot = makeTempDir("plexus-source-");
+    const secondCommit = initRepository(secondSourceRoot);
+    const firstTargetPath = path.join(makeTempDir("plexus-target-"), "first");
+    const secondTargetPath = path.join(makeTempDir("plexus-target-"), "second");
+    const config: ProjectImageConfig = {
+      id: "dev",
+      imageName: "MyProject-dev",
+      active: true,
+      mcp: {
+        loadScript: "pharo/load-mcp.st",
+      },
+      repositoryWorkspaces: [
+        {
+          repository: {
+            id: "my-project",
+            originPath: firstSourceRoot,
+          },
+          sourceDirectory: "src",
+          baseline: "MyProject",
+          materialization: {
+            strategy: "copy",
+            path: firstTargetPath,
+          },
+        },
+        {
+          repository: {
+            id: "dependency",
+            originPath: secondSourceRoot,
+          },
+          sourceDirectory: "src",
+          baseline: "Dependency",
+          materialization: {
+            strategy: "copy",
+            path: secondTargetPath,
+          },
+        },
+      ],
+    };
+    const state: ProjectImageState = {
+      id: "dev",
+      imageName: "MyProject-dev",
+      status: "starting",
+      localDirectoryPath: path.join(makeTempDir("plexus-image-local-"), "pharo-local"),
+      repositoryWorkspaces: projectImageRepositoryWorkspaceStates(config, {
+        projectId: "project-123",
+        projectName: "my-project",
+        workspaceId: "task-123",
+        targetId: "target-123",
+        imageId: "dev",
+      }),
+    };
+
+    const results = materializeProjectImageRepositoryWorkspaces({
+      projectRoot: makeTempDir("plexus-project-"),
+      imageConfig: config,
+      imageState: state,
+      env: gitEnv,
+    });
+
+    expect(results).toEqual([
+      expect.objectContaining({
+        repositoryId: "my-project",
+        targetPath: firstTargetPath,
+        currentCommit: firstCommit,
+      }),
+      expect.objectContaining({
+        repositoryId: "dependency",
+        targetPath: secondTargetPath,
+        currentCommit: secondCommit,
+      }),
+    ]);
+    expect(git(firstTargetPath, ["rev-parse", "HEAD"])).toBe(firstCommit);
+    expect(git(secondTargetPath, ["rev-parse", "HEAD"])).toBe(secondCommit);
+    expect(state.repositoryWorkspaces).toEqual([
+      expect.objectContaining({
+        repository: { id: "my-project", originPath: firstSourceRoot },
+        currentCommit: firstCommit,
+        materializationState: "ready",
+      }),
+      expect.objectContaining({
+        repository: { id: "dependency", originPath: secondSourceRoot },
+        currentCommit: secondCommit,
+        materializationState: "ready",
+      }),
+    ]);
+    expect(state.repositoryWorkspace).toBe(state.repositoryWorkspaces?.[0]);
   });
 
   it("reuses an existing repository workspace", () => {

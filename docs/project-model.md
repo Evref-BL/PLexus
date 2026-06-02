@@ -46,11 +46,21 @@ When no separate `sourcePath` is supplied, PLexus treats `projectRoot` as the
 source path. PLexus reports the resolved source path in scoped context; it does
 not decide how the caller created or owns that checkout.
 
-For image `repositoryWorkspace` declarations that use local materialization
-such as `copy` or `git-worktree`, an explicit `repository.originPath` wins. If
+Image repository workspaces are local editable repositories that PLexus
+materializes before image startup and keeps attached in Iceberg. Use
+`repositoryWorkspaces` when an image needs more than one editable repository.
+For a single editable repository, `repositoryWorkspace` is accepted as a
+shorthand; runtime state and scoped context expose it as the first repository
+workspace.
+
+For image repository workspace declarations that use local materialization such
+as `copy` or `git-worktree`, an explicit `repository.originPath` wins. If
 `originPath` is omitted, PLexus uses the workspace `sourcePath` as the local
-source checkout. This lets one project config stay shared while each workspace
-supplies its own source checkout.
+source checkout for that repository workspace. This lets one project config
+stay shared while each workspace supplies its own source checkout.
+
+Repository workspace ids are unique per image. Status files, cleanup
+resources, and diagnostics are tracked per image and repository workspace id.
 
 The `workspaceId` separates sibling worktrees for the same project. The default is the project root directory name, which works well for agent worktree directories. Callers can override it with:
 
@@ -284,8 +294,8 @@ records a no-network policy for PLexus-managed loads; missing dependency
 handling must fail clearly rather than silently mutate user image state.
 
 After PLexus-managed project and MCP loads, startup scripts unregister any
-Iceberg repository under that shared cache unless it is the declared editable
-`repositoryWorkspace` for the image. Loaded code remains in the image, but the
+Iceberg repository under that shared cache unless it matches a declared editable
+repository workspace for the image. Loaded code remains in the image, but the
 shared cache clone is no longer presented as an editable repository. Status
 diagnostics report the cache repositories that were detached.
 

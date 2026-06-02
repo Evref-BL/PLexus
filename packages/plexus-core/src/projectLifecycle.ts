@@ -68,7 +68,9 @@ import {
   ProjectOpenError,
   type ProjectOpenResult,
 } from "./projectOpen.js";
-import { inspectProjectImageRepositoryWorkspace } from "./projectRepositoryWorkspace.js";
+import {
+  inspectProjectImageRepositoryWorkspace,
+} from "./projectRepositoryWorkspace.js";
 import {
   defaultPlexusStateRoot,
   defaultTargetId,
@@ -76,7 +78,8 @@ import {
   loadProjectState,
   projectStateRootForConfig,
   projectStatePathForConfig,
-  projectImageRepositoryWorkspaceState,
+  projectImageRepositoryWorkspaceStates,
+  projectImageRepositoryWorkspaces,
   renderProjectImageName,
   runtimeStatusForImages,
   sanitizeRuntimeId,
@@ -1248,7 +1251,7 @@ function repositoryWorkspaceDiagnostics(
   },
 ): ProjectLifecycleRepositoryWorkspaceDiagnostic[] {
   return config.images
-    .map((imageConfig) => {
+    .flatMap((imageConfig) => {
       const imageState = state?.images.find((image) => image.id === imageConfig.id);
       const context = {
         projectId: scope.projectId,
@@ -1257,29 +1260,30 @@ function repositoryWorkspaceDiagnostics(
         targetId: scope.targetId,
         imageId: imageConfig.id,
       };
-      const workspace =
-        imageState?.repositoryWorkspace ??
-        projectImageRepositoryWorkspaceState(imageConfig, context);
-      if (!workspace) {
-        return undefined;
-      }
-      const inspection = imageState
-        ? inspectProjectImageRepositoryWorkspace({
-            projectRoot,
-            imageState,
-          })
-        : undefined;
-      const liveWorkspace = liveRepositoryWorkspaceState(workspace, inspection);
+      const workspaces = imageState
+        ? projectImageRepositoryWorkspaces(imageState)
+        : projectImageRepositoryWorkspaceStates(imageConfig, context);
 
-      return {
-        imageId: imageConfig.id,
-        imageName:
-          imageState?.imageName ??
-          renderProjectImageName(imageConfig.imageName, context),
-        status: imageState?.status ?? "declared",
-        workspace: liveWorkspace,
-        cleanup: repositoryWorkspaceCleanupDiagnostic(liveWorkspace, inspection),
-      };
+      return workspaces.map((workspace) => {
+        const inspection = imageState
+          ? inspectProjectImageRepositoryWorkspace({
+              projectRoot,
+              imageState,
+              workspace,
+            })
+          : undefined;
+        const liveWorkspace = liveRepositoryWorkspaceState(workspace, inspection);
+
+        return {
+          imageId: imageConfig.id,
+          imageName:
+            imageState?.imageName ??
+            renderProjectImageName(imageConfig.imageName, context),
+          status: imageState?.status ?? "declared",
+          workspace: liveWorkspace,
+          cleanup: repositoryWorkspaceCleanupDiagnostic(liveWorkspace, inspection),
+        };
+      });
     })
     .filter(
       (
