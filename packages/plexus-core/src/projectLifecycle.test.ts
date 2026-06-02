@@ -507,6 +507,25 @@ describe("project lifecycle tools", () => {
             workspaceId: "worktree-a",
             targetId: "project-123--worktree-a",
           },
+          workspace: {
+            projectRoot,
+            source: {
+              path: projectRoot,
+              policy: "caller-managed",
+              defaultLoadSource: true,
+            },
+            state: {
+              root: stateRoot,
+              path: statePath(stateRoot),
+            },
+            routes: {
+              serverName: "pharo_gateway",
+              imageArgument: "imageId",
+            },
+            cleanup: {
+              policy: "workspace_cleanup_only",
+            },
+          },
           images: [
             {
               imageId: "dev",
@@ -621,6 +640,7 @@ describe("project lifecycle tools", () => {
         },
         diagnostics: {
           scope: {
+            sourcePath: projectRoot,
             stateRoot: envStateRoot,
             statePath: statePath(envStateRoot),
           },
@@ -1709,6 +1729,7 @@ describe("project lifecycle tools", () => {
             runtimeImageCount: 0,
           },
           scope: {
+            sourcePath: projectRoot,
             stateRoot,
             statePath: stateFilePath,
             targetId: "project-123--worktree-a",

@@ -83,6 +83,7 @@ projectId
 workspaceId
 targetId
 projectRoot
+sourcePath
 stateRoot
 allowed image profiles/specs
 ```
@@ -90,6 +91,12 @@ allowed image profiles/specs
 Tool calls must resolve images through that scope. A caller must not be able to
 operate on an arbitrary Pharo Launcher image by providing a raw image name,
 image path, VM id, process id, or filesystem location.
+
+The scoped status context also reports stable workspace policies. The source
+path is caller-managed and is the default source checkout for project loading.
+Images come from project config declarations, routes go through
+`pharo_gateway` with explicit `imageId` arguments, and cleanup follows
+`workspace_cleanup_only`.
 
 PLexus generates the workspace MCP entries for this scope. The managed server
 names are `pharo-launcher` and `pharo_gateway`; unrelated user MCP entries

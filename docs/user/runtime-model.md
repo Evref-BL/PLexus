@@ -31,6 +31,11 @@ runtime routing when parallel workspaces are open.
 A workspace is one isolated runtime instance of a project. It is usually backed
 by one Git worktree.
 
+The workspace runtime contract is generic. A caller supplies a project root and
+may treat that same path as the workspace source path unless it explicitly
+declares another source path. PLexus reports the resolved source path in scoped
+status as the default place where project code should be loaded from.
+
 The `workspaceId` comes from:
 
 ```text
@@ -47,6 +52,15 @@ Workspace-scoped runtime state lives under:
 ```
 
 Use one shared state root across sibling workspaces.
+
+The scoped status context reports these workspace policies:
+
+```text
+source policy: caller-managed
+image policy: project-config declarations with scoped imageId handles
+route policy: pharo_gateway target route with imageId arguments
+cleanup policy: workspace_cleanup_only
+```
 
 ## Target
 

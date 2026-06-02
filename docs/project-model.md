@@ -32,6 +32,20 @@ That `id` identifies the logical project. It must not be used alone as a unique 
 
 A PLexus workspace is one isolated runtime instance of a PLexus project, usually backed by one Git worktree.
 
+The workspace runtime contract is intentionally generic:
+
+```text
+projectRoot    root that contains plexus.project.json
+sourcePath     caller-managed source checkout used as the default load source
+workspaceId    scoped runtime id for this isolated workspace
+targetId       routable identity registered with the gateway
+stateRoot      shared runtime state root for sibling workspaces
+```
+
+When no separate `sourcePath` is supplied, PLexus treats `projectRoot` as the
+source path. PLexus reports the resolved source path in scoped context; it does
+not decide how the caller created or owns that checkout.
+
 The `workspaceId` separates sibling worktrees for the same project. The default is the project root directory name, which works well for agent worktree directories. Callers can override it with:
 
 ```text
@@ -318,10 +332,10 @@ PLexus does not create naming conventions on behalf of projects. It only
 renders the configured image-name template. The project owns conventions like
 `SampleProject-{workspaceId}-dev`.
 
-## Scoped Context For Plugins
+## Scoped Context For Integrations
 
-DevNexus plugins and subagents should receive PLexus context as scoped data,
-not as host-wide PharoLauncher names. The core context model is keyed by:
+Integrations and agent runners should receive PLexus context as scoped data, not
+as host-wide PharoLauncher names. The core context model is keyed by:
 
 ```text
 projectId
@@ -333,6 +347,8 @@ imageId
 The scoped context includes:
 
 - the project id, project name, workspace id, and target id
+- the generic workspace runtime contract: project root, source path, state
+  root, state path, image policy, route policy, and cleanup policy
 - each declared image's public `imageId`
 - ownership metadata showing that the image belongs to the current
   project/workspace/target, is disposable with the workspace, and may carry a
