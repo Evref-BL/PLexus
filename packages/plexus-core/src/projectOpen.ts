@@ -110,6 +110,7 @@ export interface ProjectOpenImageMcpClient {
 
 export interface ProjectOpenOptions {
   projectRoot: string;
+  sourcePath?: string;
   stateRoot?: string;
   workspaceId?: string;
   targetId?: string;
@@ -1466,6 +1467,11 @@ export async function openProject(
   });
   const resolvedStateRoot = projectStateRootForConfig(config, options.stateRoot);
   const previousState = loadProjectState(statePath);
+  const requestedSourcePath = options.sourcePath ?? previousState?.sourcePath;
+  const sourcePath = requestedSourcePath
+    ? path.resolve(requestedSourcePath)
+    : undefined;
+  const loadSourcePath = sourcePath ?? projectRoot;
   const now = options.now ?? (() => new Date());
   const runtime = resolveProjectRuntimePolicy(config);
   const portRange = options.portRange ?? runtime.imagePorts.range;
@@ -1481,6 +1487,7 @@ export async function openProject(
     previousState,
     workspaceId,
     targetId: options.targetId,
+    sourcePath,
     reservedPorts: claimsRoot
       ? []
       : projectReservedOwners.map((owner) => owner.port),
@@ -1615,6 +1622,7 @@ export async function openProject(
 
         const startupScript = writeProjectImageStartupScript({
           projectRoot,
+          sourcePath: loadSourcePath,
           config,
           imageId: imageState.id,
           imageState,

@@ -110,6 +110,30 @@ describe("project startup scripts", () => {
     expect(source).toContain("Semaphore new wait.");
   });
 
+  it("resolves relative startup load scripts from the workspace source path", () => {
+    const projectRoot = path.join("C:", "dev", "code", "git", "my-project");
+    const sourcePath = path.join(
+      "C:",
+      "dev",
+      "code",
+      "git",
+      "my-project-worktree",
+    );
+    const source = generateImageStartupScript({
+      projectRoot,
+      sourcePath,
+      imageConfig: config.images[0],
+      imageState,
+    });
+
+    expect(source).toContain(
+      "'C:/dev/code/git/my-project-worktree/pharo/load-mcp.st' asFileReference",
+    );
+    expect(source).not.toContain(
+      "'C:/dev/code/git/my-project/pharo/load-mcp.st' asFileReference",
+    );
+  });
+
   it("generates a Pharo MCP load status writer when a status path is provided", () => {
     const projectRoot = path.join("C:", "dev", "code", "git", "my-project");
     const statusPath = path.join(
@@ -739,6 +763,60 @@ describe("project startup scripts", () => {
       fs.rmSync(projectRoot, { recursive: true, force: true });
       fs.rmSync(stateRoot, { recursive: true, force: true });
     }
+  });
+
+  it("keeps explicit image-local repository workspace loads separate from the workspace source path", () => {
+    const projectRoot = path.join("C:", "dev", "code", "git", "my-project");
+    const sourcePath = path.join(
+      "C:",
+      "dev",
+      "code",
+      "git",
+      "my-project-worktree",
+    );
+    const source = generateImageStartupScript({
+      projectRoot,
+      sourcePath,
+      imageConfig: config.images[0],
+      imageState: {
+        ...imageState,
+        repositoryWorkspace: {
+          repository: {
+            id: "my-project",
+            originPath: sourcePath,
+          },
+          path: "C:\\Users\\me\\Pharo\\images\\MyProject-dev\\pharo-local\\iceberg\\my-project",
+          materializationStrategy: "copy",
+          sourceDirectory: "src",
+          baseline: "MyProject",
+          materializationState: "ready",
+          diagnostics: [],
+          dirtyState: "clean",
+          loadState: "not-loaded",
+        },
+      },
+      repositoryWorkspaceLoadStatusPath: path.join(
+        "C:",
+        "dev",
+        "code",
+        "git",
+        "my-project",
+        ".plexus",
+        "projects",
+        "project-123",
+        "workspaces",
+        "worktree-a",
+        "scripts",
+        "repository-workspace-load-dev.properties",
+      ),
+    });
+
+    expect(source).toContain(
+      "repositorySourcePath := 'C:/Users/me/Pharo/images/MyProject-dev/pharo-local/iceberg/my-project/src'.",
+    );
+    expect(source).not.toContain(
+      "repositorySourcePath := 'C:/dev/code/git/my-project-worktree/src'.",
+    );
   });
 
   it("fails when the requested project image is missing", () => {

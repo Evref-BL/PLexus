@@ -284,6 +284,7 @@ export interface ProjectState {
   projectName: string;
   workspaceId: string;
   targetId: string;
+  sourcePath?: string;
   runtimeStatus?: ProjectRuntimeStatus;
   gateway?: ProjectGatewayState;
   pharoMcpContract?: PharoMcpContractReference;
@@ -303,6 +304,7 @@ export interface CreateProjectStateOptions {
   reservedPorts?: Iterable<number>;
   workspaceId?: string;
   targetId?: string;
+  sourcePath?: string;
 }
 
 interface NormalizedCreateProjectStateOptions {
@@ -312,6 +314,7 @@ interface NormalizedCreateProjectStateOptions {
   reservedPorts: Set<number>;
   workspaceId: string;
   targetId?: string;
+  sourcePath?: string;
 }
 
 export interface ProjectStatePathOptions {
@@ -536,6 +539,7 @@ function normalizeCreateProjectStateOptions(
       reservedPorts: new Set(),
       workspaceId,
       targetId: undefined,
+      sourcePath: undefined,
     };
   }
 
@@ -553,6 +557,8 @@ function normalizeCreateProjectStateOptions(
     workspaceId,
     targetId:
       optionsOrUpdatedAt?.targetId ?? optionsOrUpdatedAt?.previousState?.targetId,
+    sourcePath:
+      optionsOrUpdatedAt?.sourcePath ?? optionsOrUpdatedAt?.previousState?.sourcePath,
   };
 }
 
@@ -852,6 +858,9 @@ export function createProjectState(
     projectName: config.name,
     workspaceId: options.workspaceId,
     targetId,
+    ...(options.sourcePath ?? options.previousState?.sourcePath
+      ? { sourcePath: options.sourcePath ?? options.previousState?.sourcePath }
+      : {}),
     runtimeStatus: runtimeStatusForImages(images),
     ...(options.previousState?.gateway
       ? { gateway: options.previousState.gateway }

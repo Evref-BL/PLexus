@@ -157,6 +157,7 @@ export interface ProjectLifecycleOptions {
 
 export interface ProjectOpenToolInput {
   projectPath: string;
+  sourcePath?: string;
   stateRoot?: string;
   workspaceId?: string;
   targetId?: string;
@@ -173,6 +174,7 @@ export interface ProjectCloseToolInput {
 
 export interface ProjectStatusToolInput extends ProjectLifecycleRouteReference {
   projectPath?: string;
+  sourcePath?: string;
   stateRoot?: string;
   refreshHealth?: boolean;
   includeDiagnostics?: boolean;
@@ -1921,6 +1923,7 @@ export class PlexusProjectLifecycle {
     try {
       const openResult = await this.projectOpen({
         projectRoot: input.projectPath,
+        sourcePath: input.sourcePath,
         stateRoot: this.effectiveStateRoot(input.stateRoot),
         workspaceId: input.workspaceId,
         targetId: input.targetId,
@@ -2282,6 +2285,7 @@ export class PlexusProjectLifecycle {
         case "plexus_project_open":
           return this.open({
             projectPath: requireString(input, "projectPath"),
+            sourcePath: optionalString(input, "sourcePath"),
             stateRoot: optionalString(input, "stateRoot"),
             workspaceId: optionalString(input, "workspaceId"),
             targetId: optionalString(input, "targetId"),
@@ -2298,6 +2302,7 @@ export class PlexusProjectLifecycle {
         case "plexus_project_status":
           return this.status({
             projectPath: optionalString(input, "projectPath"),
+            sourcePath: optionalString(input, "sourcePath"),
             projectId: optionalString(input, "projectId"),
             workspaceId: optionalString(input, "workspaceId"),
             targetId: optionalString(input, "targetId"),
@@ -2405,6 +2410,10 @@ export class PlexusProjectLifecycle {
     if (gatewayReconciliation) {
       state = loadProjectState(statePath);
     }
+    const requestedSourcePath = input.sourcePath ?? state?.sourcePath;
+    const sourcePath = requestedSourcePath
+      ? path.resolve(requestedSourcePath)
+      : projectRoot;
     const gateway = gatewayReconciliation
       ? gatewayWithoutRuntimeIdentity(projectGatewayStatus(config, state))
       : projectGatewayStatus(config, state);
@@ -2464,6 +2473,7 @@ export class PlexusProjectLifecycle {
     });
     const context = buildScopedProjectContext({
       projectRoot,
+      sourcePath,
       projectConfig: config,
       workspaceId: scope.workspaceId,
       targetId: scope.targetId,
@@ -2503,7 +2513,7 @@ export class PlexusProjectLifecycle {
       project: projectDiagnostics(config, state),
       scope: {
         projectRoot,
-        sourcePath: projectRoot,
+        sourcePath,
         stateRoot,
         statePath,
         projectId: scope.projectId,

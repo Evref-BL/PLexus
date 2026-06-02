@@ -50,6 +50,7 @@ export interface ProjectImageStartupScriptPathOptions
 
 export interface GenerateImageStartupScriptOptions {
   projectRoot: string;
+  sourcePath?: string;
   imageConfig: ProjectImageConfig;
   imageState: ProjectImageState;
   endpointHandoffPath?: string;
@@ -67,6 +68,7 @@ export interface WriteImageStartupScriptOptions
 
 export interface WriteProjectImageStartupScriptOptions {
   projectRoot: string;
+  sourcePath?: string;
   config: ProjectConfig;
   imageId: string;
   imageState: ProjectImageState;
@@ -275,11 +277,12 @@ function generateGitConfigurationScript(imageConfig: ProjectImageConfig): string
 
 function resolveLoadScriptPath(
   projectRoot: string,
+  sourcePath: string | undefined,
   imageConfig: ProjectImageConfig,
 ): string {
   return isAbsolutePathLike(imageConfig.mcp.loadScript)
     ? resolvePathLike(imageConfig.mcp.loadScript)
-    : resolvePathLike(projectRoot, imageConfig.mcp.loadScript);
+    : resolvePathLike(sourcePath ?? projectRoot, imageConfig.mcp.loadScript);
 }
 
 function findProjectImageConfig(
@@ -601,7 +604,11 @@ Semaphore new wait.
   const loadScriptPath =
     loadPolicy === "never"
       ? undefined
-      : resolveLoadScriptPath(options.projectRoot, options.imageConfig);
+      : resolveLoadScriptPath(
+          options.projectRoot,
+          options.sourcePath,
+          options.imageConfig,
+        );
   const gitConfiguration = generateGitConfigurationScript(options.imageConfig);
   const pharoMcpLoadScript = generatePharoMcpLoadScript({
     imageId: options.imageState.id,
@@ -719,6 +726,7 @@ export function writeProjectImageStartupScript(
 
   return writeImageStartupScript({
     projectRoot: options.projectRoot,
+    sourcePath: options.sourcePath,
     projectId: projectConfigId(options.config),
     imageConfig,
     imageState: options.imageState,
