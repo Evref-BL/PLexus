@@ -446,6 +446,18 @@ export interface ProjectLifecycleImageRecoveryDiagnostic {
   actions: ProjectLifecycleImageRecoveryAction[];
 }
 
+export interface ProjectLifecycleRemoteTopologyDiagnostics {
+  nodeId: string;
+  policy: "flat-tree";
+  status: "local-only" | "flat";
+  remoteNodeIds: string[];
+  remoteNodes: Array<{
+    id: string;
+    parentNodeId?: string;
+    mappedWorkspaceIds: string[];
+  }>;
+}
+
 export interface ProjectLifecycleDiagnostics {
   toolRuntime: PlexusRuntimeIdentityDiagnostic;
   runtime: {
@@ -465,6 +477,7 @@ export interface ProjectLifecycleDiagnostics {
   };
   gateway: ProjectLifecycleGatewayDiagnostics;
   runtimePolicy: ProjectRuntimePolicy;
+  remoteTopology: ProjectLifecycleRemoteTopologyDiagnostics;
   imagePortPolicy: ProjectLifecycleImagePortPolicyDiagnostics;
   launcherProfile: PharoLauncherMcpProfileDiagnostic;
   agentAccess: ProjectLifecycleAgentAccessDiagnostics;
@@ -1085,6 +1098,27 @@ function projectDiagnostics(
     declaredImageCount: config.images.length,
     activeImageCount: config.images.filter((image) => image.active).length,
     runtimeImageCount: state?.images.length ?? 0,
+  };
+}
+
+function remoteTopologyDiagnostics(
+  config: ProjectConfig,
+  runtime: ProjectRuntimePolicy,
+): ProjectLifecycleRemoteTopologyDiagnostics {
+  const remoteNodes = runtime.remoteNodes ?? [];
+  return {
+    nodeId: runtime.nodeId ?? projectConfigId(config),
+    policy: "flat-tree",
+    status: remoteNodes.length === 0 ? "local-only" : "flat",
+    remoteNodeIds: remoteNodes.map((remoteNode) => remoteNode.id),
+    remoteNodes: remoteNodes.map((remoteNode) => ({
+      id: remoteNode.id,
+      ...(remoteNode.parentNodeId
+        ? { parentNodeId: remoteNode.parentNodeId }
+        : {}),
+      mappedWorkspaceIds:
+        remoteNode.workspaces?.map((workspace) => workspace.workspaceId) ?? [],
+    })),
   };
 }
 
@@ -2796,6 +2830,7 @@ export class PlexusProjectLifecycle {
       },
       gateway: gatewayDiagnostic(gateway, gatewayReconciliation, gatewayRepair),
       runtimePolicy: runtime,
+      remoteTopology: remoteTopologyDiagnostics(config, runtime),
       imagePortPolicy: imagePortPolicyDiagnostics(
         runtime,
         stateRoot,

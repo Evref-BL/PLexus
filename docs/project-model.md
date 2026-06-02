@@ -104,9 +104,11 @@ remote image paths, processes, or image-local ports directly.
 ```json
 {
   "runtime": {
+    "nodeId": "host-a",
     "remoteNodes": [
       {
         "id": "remote-a",
+        "parentNodeId": "host-a",
         "projectMcpUrl": "http://remote-a.local:7332/mcp",
         "gatewayMcpUrl": "http://remote-a.local:7331/mcp",
         "workspaces": [
@@ -129,7 +131,9 @@ remote image paths, processes, or image-local ports directly.
 ```
 
 This declaration is configuration only. Lifecycle forwarding and remote gateway
-upstream routing are separate runtime behaviors.
+upstream routing are separate runtime behaviors. The supported topology is a
+flat tree: each configured remote must either omit `parentNodeId` or point back
+to the local `runtime.nodeId`.
 
 ### Pharo Image
 

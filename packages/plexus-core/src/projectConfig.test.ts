@@ -515,9 +515,11 @@ describe("project config", () => {
     const config: ReturnType<typeof validProjectConfig> & { runtime?: unknown } =
       validProjectConfig();
     config.runtime = {
+      nodeId: "host-a",
       remoteNodes: [
         {
           id: "remote-a",
+          parentNodeId: "host-a",
           projectMcpUrl: "http://remote-a.local:7332/mcp",
           gatewayMcpUrl: "http://remote-a.local:7331/mcp",
           workspaces: [
@@ -537,9 +539,13 @@ describe("project config", () => {
       ],
     };
 
-    expect(parseProjectConfig(config).runtime?.remoteNodes).toEqual([
+    const parsed = parseProjectConfig(config);
+
+    expect(parsed.runtime?.nodeId).toBe("host-a");
+    expect(parsed.runtime?.remoteNodes).toEqual([
       {
         id: "remote-a",
+        parentNodeId: "host-a",
         projectMcpUrl: "http://remote-a.local:7332/mcp",
         gatewayMcpUrl: "http://remote-a.local:7331/mcp",
         workspaces: [
@@ -563,6 +569,7 @@ describe("project config", () => {
     const config: ReturnType<typeof validProjectConfig> & { runtime?: unknown } =
       validProjectConfig();
     config.runtime = {
+      nodeId: "host-a",
       remoteNodes: [
         {
           id: "",
@@ -582,7 +589,13 @@ describe("project config", () => {
           ],
         },
         {
+          id: "host-a",
+          projectMcpUrl: "http://local-cycle.local:7332/mcp",
+          gatewayMcpUrl: "http://local-cycle.local:7331/mcp",
+        },
+        {
           id: "remote-b",
+          parentNodeId: "remote-b",
           projectMcpUrl: "http://remote-b.local:7332/mcp",
           gatewayMcpUrl: "http://remote-b.local:7331/mcp",
           workspaces: [
@@ -601,6 +614,7 @@ describe("project config", () => {
         },
         {
           id: "remote-b",
+          parentNodeId: "another-host",
           projectMcpUrl: "http://remote-b2.local:7332/mcp",
           gatewayMcpUrl: "http://remote-b2.local:7331/mcp",
           workspaces: [
@@ -629,9 +643,12 @@ describe("project config", () => {
           "runtime.remoteNodes[0].workspaces[0].targets[0].targetId must be a non-empty string",
           "runtime.remoteNodes[0].workspaces[0].targets[1] must be an object",
           "runtime.remoteNodes[0].workspaces[1] must be an object",
+          "runtime.remoteNodes[1].id must differ from runtime node id: host-a",
+          "runtime.remoteNodes[2].parentNodeId must not equal its own id: remote-b",
+          "runtime.remoteNodes[3].parentNodeId must be omitted or match runtime node id host-a for flat-tree topology",
           "remote node ids must be unique: remote-b",
-          "runtime.remoteNodes[1].workspaces[0].targets.targetId must be unique: target-b",
-          "runtime.remoteNodes[2].workspaces.workspaceId must be unique: task-b",
+          "runtime.remoteNodes[2].workspaces[0].targets.targetId must be unique: target-b",
+          "runtime.remoteNodes[3].workspaces.workspaceId must be unique: task-b",
         ]),
       );
     }

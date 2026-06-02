@@ -603,6 +603,61 @@ describe("project lifecycle tools", () => {
     expect(JSON.stringify(result.data)).not.toContain("1234");
   });
 
+  it("reports configured remote PLexus topology in status diagnostics", async () => {
+    const projectRoot = makeTempDir("plexus-project-");
+    const stateRoot = makeTempDir("plexus-state-");
+    writeProjectConfig(projectRoot, {
+      runtime: {
+        nodeId: "host-a",
+        remoteNodes: [
+          {
+            id: "remote-a",
+            parentNodeId: "host-a",
+            projectMcpUrl: "http://remote-a.local:7332/mcp",
+            gatewayMcpUrl: "http://remote-a.local:7331/mcp",
+            workspaces: [
+              {
+                workspaceId: "worktree-a",
+                remoteWorkspaceId: "remote-worktree-a",
+              },
+            ],
+          },
+        ],
+      },
+    });
+    const lifecycle = new PlexusProjectLifecycle({
+      routeRegistry: new FakeRouteRegistry(),
+    });
+
+    const result = await lifecycle.handleTool("plexus_project_status", {
+      projectPath: projectRoot,
+      stateRoot,
+      workspaceId: "worktree-a",
+      includeDiagnostics: true,
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
+      data: {
+        diagnostics: {
+          remoteTopology: {
+            nodeId: "host-a",
+            policy: "flat-tree",
+            status: "flat",
+            remoteNodeIds: ["remote-a"],
+            remoteNodes: [
+              {
+                id: "remote-a",
+                parentNodeId: "host-a",
+                mappedWorkspaceIds: ["worktree-a"],
+              },
+            ],
+          },
+        },
+      },
+    });
+  });
+
   it("reports load-script repository hints without treating them as actual repositories", async () => {
     const projectRoot = makeTempDir("plexus-project-");
     const stateRoot = makeTempDir("plexus-state-");
