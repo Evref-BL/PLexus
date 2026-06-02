@@ -409,6 +409,13 @@ export interface ProjectLifecycleRepositoryWorkspaceDiagnostic {
   };
 }
 
+export interface ProjectLifecycleDependencyRepositoryDetachDiagnostic {
+  imageId: string;
+  imageName: string;
+  status: ProjectImageState["status"];
+  detach: NonNullable<ProjectImageState["dependencyRepositoryDetach"]>;
+}
+
 export interface ProjectLifecycleImageRecoveryAction {
   operation: Extract<ImageRescueOperation, "plan" | "prepareTarget">;
   toolName: "plexus_rescue_image";
@@ -459,6 +466,7 @@ export interface ProjectLifecycleDiagnostics {
   launcherProfile: PharoLauncherMcpProfileDiagnostic;
   agentAccess: ProjectLifecycleAgentAccessDiagnostics;
   repositoryWorkspaces: ProjectLifecycleRepositoryWorkspaceDiagnostic[];
+  dependencyRepositoryDetaches: ProjectLifecycleDependencyRepositoryDetachDiagnostic[];
   imageRecovery: ProjectLifecycleImageRecoveryDiagnostic[];
   imageMcpPorts: Array<{
     imageId: string;
@@ -1279,6 +1287,27 @@ function repositoryWorkspaceDiagnostics(
       ): item is ProjectLifecycleRepositoryWorkspaceDiagnostic =>
         item !== undefined,
     );
+}
+
+function dependencyRepositoryDetachDiagnostics(
+  state: ProjectState | undefined,
+): ProjectLifecycleDependencyRepositoryDetachDiagnostic[] {
+  return (state?.images ?? [])
+    .filter(
+      (
+        image,
+      ): image is ProjectImageState & {
+        dependencyRepositoryDetach: NonNullable<
+          ProjectImageState["dependencyRepositoryDetach"]
+        >;
+      } => image.dependencyRepositoryDetach !== undefined,
+    )
+    .map((image) => ({
+      imageId: image.id,
+      imageName: image.imageName,
+      status: image.status,
+      detach: image.dependencyRepositoryDetach,
+    }));
 }
 
 function imageRecoveryDiagnostics(input: {
@@ -2786,6 +2815,8 @@ export class PlexusProjectLifecycle {
         state,
         scope,
       ),
+      dependencyRepositoryDetaches:
+        dependencyRepositoryDetachDiagnostics(state),
       imageRecovery: imageRecoveryDiagnostics({
         projectRoot,
         stateRoot,

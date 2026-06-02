@@ -160,6 +160,11 @@ PLexus-managed images also point Iceberg/Metacello dependency clones at:
 <PLEXUS_HOME>/repositories/iceberg
 ```
 
+After managed loads, PLexus unregisters shared-cache repositories from Iceberg
+unless the path is the image's declared editable `repositoryWorkspace`. The
+loaded packages stay in the image; status diagnostics show which cache
+repositories were detached.
+
 Cache base images live in an explicit home-level pharo-launcher-mcp profile.
 Runtime images still belong to project-owned launcher profiles, so cache
 materialization remains a live launcher mutation and requires an approved runner

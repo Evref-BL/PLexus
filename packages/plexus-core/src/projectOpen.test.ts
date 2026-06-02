@@ -611,6 +611,23 @@ describe("project open", () => {
           ].join("\n"),
           "utf8",
         );
+        fs.writeFileSync(
+          path.join(
+            path.dirname(scriptPath),
+            "dependency-repository-detach-dev.properties",
+          ),
+          [
+            "status=detached",
+            "cachePath=/plexus-home/repositories/iceberg",
+            "detachedCount=2",
+            "repository.1.name=TinyLogger",
+            "repository.1.location=/plexus-home/repositories/iceberg/jecisc/TinyLogger",
+            "repository.2.name=JRPC",
+            "repository.2.location=/plexus-home/repositories/iceberg/juliendelplanque/JRPC",
+            "",
+          ].join("\n"),
+          "utf8",
+        );
       },
       imagesDir,
     );
@@ -695,6 +712,30 @@ describe("project open", () => {
         "scripts",
         "repository-workspace-load-dev.properties",
       ),
+    });
+    expect(result.state.images[0].dependencyRepositoryDetach).toEqual({
+      state: "detached",
+      statusPath: path.join(
+        stateRoot,
+        "projects",
+        "project-123",
+        "workspaces",
+        "worktree-a",
+        "scripts",
+        "dependency-repository-detach-dev.properties",
+      ),
+      cachePath: "/plexus-home/repositories/iceberg",
+      detachedCount: 2,
+      repositories: [
+        {
+          name: "TinyLogger",
+          location: "/plexus-home/repositories/iceberg/jecisc/TinyLogger",
+        },
+        {
+          name: "JRPC",
+          location: "/plexus-home/repositories/iceberg/juliendelplanque/JRPC",
+        },
+      ],
     });
   });
 

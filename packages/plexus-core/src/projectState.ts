@@ -99,6 +99,10 @@ export type ProjectImageRepositoryWorkspaceRegistrationState =
   | "registered"
   | "failed"
   | "skipped";
+export type ProjectImageDependencyRepositoryDetachState =
+  | "detached"
+  | "failed"
+  | "skipped";
 export type ProjectImagePharoMcpLoadState =
   | "provided"
   | "loaded"
@@ -194,6 +198,21 @@ export interface ProjectImageRepositoryWorkspaceState {
   cleanupState?: ProjectImageRepositoryWorkspaceCleanupRecord;
 }
 
+export interface ProjectImageDetachedDependencyRepositoryState {
+  location: string;
+  name?: string;
+}
+
+export interface ProjectImageDependencyRepositoryDetachStatus {
+  state: ProjectImageDependencyRepositoryDetachState;
+  statusPath: string;
+  cachePath?: string;
+  detachedCount: number;
+  repositories: ProjectImageDetachedDependencyRepositoryState[];
+  message?: string;
+  error?: string;
+}
+
 export interface ProjectImagePharoMcpLoadStatus {
   state: ProjectImagePharoMcpLoadState;
   statusPath: string;
@@ -218,6 +237,7 @@ export interface ProjectImageState {
   lease?: ProjectImageLeaseState;
   pharoMcpContract?: ProjectImagePharoMcpContractState;
   pharoMcpLoad?: ProjectImagePharoMcpLoadStatus;
+  dependencyRepositoryDetach?: ProjectImageDependencyRepositoryDetachStatus;
   repositoryWorkspace?: ProjectImageRepositoryWorkspaceState;
   imagePath?: string;
   imageDirectoryPath?: string;

@@ -2357,6 +2357,87 @@ describe("project lifecycle tools", () => {
     });
   });
 
+  it("reports detached dependency repositories from status diagnostics", async () => {
+    const projectRoot = makeTempDir("plexus-project-");
+    const stateRoot = makeTempDir("plexus-state-");
+    writeProjectConfig(projectRoot);
+    saveProjectState(statePath(stateRoot), {
+      projectId: "project-123",
+      projectName: "my-project",
+      workspaceId: "worktree-a",
+      targetId: "project-123--worktree-a",
+      updatedAt: "2026-04-25T10:00:00.000Z",
+      images: [
+        {
+          id: "dev",
+          imageName: "MyProject-dev",
+          status: "running",
+          dependencyRepositoryDetach: {
+            state: "detached",
+            statusPath: path.join(
+              stateRoot,
+              "projects",
+              "project-123",
+              "workspaces",
+              "worktree-a",
+              "scripts",
+              "dependency-repository-detach-dev.properties",
+            ),
+            cachePath: "/plexus-home/repositories/iceberg",
+            detachedCount: 1,
+            repositories: [
+              {
+                name: "TinyLogger",
+                location: "/plexus-home/repositories/iceberg/jecisc/TinyLogger",
+              },
+            ],
+          },
+        },
+      ],
+    });
+    const lifecycle = new PlexusProjectLifecycle({
+      gateway: {
+        checks: {
+          isPortListening: async () => false,
+        },
+      },
+    });
+
+    const result = await lifecycle.handleTool("plexus_project_status", {
+      projectPath: projectRoot,
+      stateRoot,
+      workspaceId: "worktree-a",
+      includeDiagnostics: true,
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
+      data: {
+        diagnostics: {
+          dependencyRepositoryDetaches: [
+            {
+              imageId: "dev",
+              imageName: "MyProject-dev",
+              status: "running",
+              detach: {
+                state: "detached",
+                cachePath: "/plexus-home/repositories/iceberg",
+                detachedCount: 1,
+                repositories: [
+                  {
+                    name: "TinyLogger",
+                    location:
+                      "/plexus-home/repositories/iceberg/jecisc/TinyLogger",
+                  },
+                ],
+              },
+            },
+          ],
+        },
+      },
+    });
+  });
+
   it("reports unrelated other-scope claims without degrading this scope", async () => {
     const projectRoot = makeTempDir("plexus-project-");
     const stateRoot = makeTempDir("plexus-state-");

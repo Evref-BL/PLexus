@@ -868,6 +868,18 @@ function clearPharoMcpLoadStatus(
   delete imageState.pharoMcpLoad;
 }
 
+function clearDependencyRepositoryDetachStatus(
+  imageState: ProjectImageState,
+  statusPath: string | undefined,
+): void {
+  if (!statusPath) {
+    return;
+  }
+
+  fs.rmSync(statusPath, { force: true });
+  delete imageState.dependencyRepositoryDetach;
+}
+
 function pharoMcpLoadStatusDetails(
   properties: Record<string, string>,
   statusPath: string,
@@ -918,6 +930,90 @@ function refreshPharoMcpLoadStatus(
 
   const message = `Invalid Pharo MCP load status at ${statusPath}: ${status ?? "(missing)"}`;
   imageState.pharoMcpLoad = {
+    state: "failed",
+    ...details,
+    error: message,
+  };
+  return message;
+}
+
+function dependencyRepositoryDetachRepositories(
+  properties: Record<string, string>,
+): Array<{ location: string; name?: string }> {
+  const byIndex = new Map<number, { location?: string; name?: string }>();
+  for (const [key, value] of Object.entries(properties)) {
+    const match = /^repository\.(\d+)\.(name|location)$/.exec(key);
+    if (!match) {
+      continue;
+    }
+
+    const index = Number.parseInt(match[1], 10);
+    const entry = byIndex.get(index) ?? {};
+    entry[match[2] as "name" | "location"] = value;
+    byIndex.set(index, entry);
+  }
+
+  return [...byIndex.entries()]
+    .sort(([left], [right]) => left - right)
+    .map(([, entry]) => entry)
+    .filter((entry): entry is { location: string; name?: string } =>
+      Boolean(entry.location),
+    )
+    .map((entry) => ({
+      location: entry.location,
+      ...(entry.name ? { name: entry.name } : {}),
+    }));
+}
+
+function dependencyRepositoryDetachCount(
+  properties: Record<string, string>,
+  repositories: readonly unknown[],
+): number {
+  const parsed = Number.parseInt(properties.detachedCount ?? "", 10);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : repositories.length;
+}
+
+function refreshDependencyRepositoryDetachStatus(
+  imageState: ProjectImageState,
+  statusPath: string | undefined,
+): string | undefined {
+  if (!statusPath || !fs.existsSync(statusPath)) {
+    return undefined;
+  }
+
+  const properties = parseStatusProperties(statusPath);
+  const status = properties.status;
+  const repositories = dependencyRepositoryDetachRepositories(properties);
+  const details = {
+    statusPath,
+    ...(properties.cachePath ? { cachePath: properties.cachePath } : {}),
+    detachedCount: dependencyRepositoryDetachCount(properties, repositories),
+    repositories,
+    ...(properties.message ? { message: properties.message } : {}),
+  };
+
+  if (status === "detached" || status === "skipped") {
+    imageState.dependencyRepositoryDetach = {
+      state: status,
+      ...details,
+    };
+    return undefined;
+  }
+
+  if (status === "failed") {
+    const message =
+      properties.message ??
+      "Dependency repository detach failed without a reported message.";
+    imageState.dependencyRepositoryDetach = {
+      state: "failed",
+      ...details,
+      error: message,
+    };
+    return `Dependency repository detach failed for image ${imageState.id}: ${message}`;
+  }
+
+  const message = `Invalid dependency repository detach status at ${statusPath}: ${status ?? "(missing)"}`;
+  imageState.dependencyRepositoryDetach = {
     state: "failed",
     ...details,
     error: message,
@@ -1567,6 +1663,7 @@ export async function openProject(
         imageState.displayMode = displayMode;
       }
       let pharoMcpLoadStatusPath: string | undefined;
+      let dependencyRepositoryDetachStatusPath: string | undefined;
 
       try {
         const homeMaterialization =
@@ -1630,7 +1727,13 @@ export async function openProject(
           stateRoot: resolvedStateRoot,
         });
         pharoMcpLoadStatusPath = startupScript.pharoMcpLoadStatusPath;
+        dependencyRepositoryDetachStatusPath =
+          startupScript.dependencyRepositoryDetachStatusPath;
         clearPharoMcpLoadStatus(imageState, pharoMcpLoadStatusPath);
+        clearDependencyRepositoryDetachStatus(
+          imageState,
+          dependencyRepositoryDetachStatusPath,
+        );
         prepareRepositoryWorkspaceLoadStatus(
           imageState,
           startupScript.repositoryWorkspaceLoadStatusPath,
@@ -1767,6 +1870,13 @@ export async function openProject(
           if (loadFailure) {
             throw new Error(loadFailure);
           }
+          const detachFailure = refreshDependencyRepositoryDetachStatus(
+            imageState,
+            dependencyRepositoryDetachStatusPath,
+          );
+          if (detachFailure) {
+            throw new Error(detachFailure);
+          }
           await ensureRepositoryWorkspaceRegistered({
             imageConfig,
             imageState,
@@ -1797,14 +1907,22 @@ export async function openProject(
           pharoMcpLoadStatusPath,
         );
         const loadFailure = refreshRepositoryWorkspaceLoadStatus(imageState);
+        const detachFailure = refreshDependencyRepositoryDetachStatus(
+          imageState,
+          dependencyRepositoryDetachStatusPath,
+        );
         failures.push({
           imageId: imageState.id,
           imageName: imageState.imageName,
-          message: loadFailure ?? pharoMcpLoadFailure ?? errorMessage(error),
-          ...(loadFailure || pharoMcpLoadFailure
+          message:
+            detachFailure ??
+            loadFailure ??
+            pharoMcpLoadFailure ??
+            errorMessage(error),
+          ...(detachFailure || loadFailure || pharoMcpLoadFailure
             ? {}
             : launcherFailureDetails(error)),
-          ...(loadFailure || pharoMcpLoadFailure
+          ...(detachFailure || loadFailure || pharoMcpLoadFailure
             ? {}
             : startupFailureDetails(error)),
         });

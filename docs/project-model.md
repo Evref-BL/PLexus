@@ -277,6 +277,12 @@ allows missing dependencies to be cloned into the shared cache. `local-only`
 records a no-network policy for PLexus-managed loads; missing dependency
 handling must fail clearly rather than silently mutate user image state.
 
+After PLexus-managed project and MCP loads, startup scripts unregister any
+Iceberg repository under that shared cache unless it is the declared editable
+`repositoryWorkspace` for the image. Loaded code remains in the image, but the
+shared cache clone is no longer presented as an editable repository. Status
+diagnostics report the cache repositories that were detached.
+
 Runtime workspace images must remain copies of home cache bases; agents must
 not operate directly on home cache images. If a template's Pharo version is not
 supported by the image-side Pharo MCP, PLexus may still cache the base image,

@@ -6,6 +6,7 @@ import type { ProjectConfig } from "./projectConfig.js";
 import type { ProjectImageState } from "./projectState.js";
 import {
   generateImageStartupScript,
+  imageDependencyRepositoryDetachStatusPath,
   imagePharoMcpLoadStatusPath,
   imageRepositoryWorkspaceLoadStatusPath,
   imageStartupScriptFileName,
@@ -141,6 +142,88 @@ describe("project startup scripts", () => {
     expect(source).toContain("shareRepositoriesBetweenImages: true;");
     expect(source).toContain(
       "sharedRepositoriesLocationString: plexusDependencyRepositoryCachePath",
+    );
+  });
+
+  it("detaches shared dependency repositories while preserving editable workspaces", () => {
+    const projectRoot = path.join("C:", "dev", "code", "git", "my-project");
+    const dependencyCachePath = path.join(
+      "C:",
+      "Users",
+      "ada",
+      ".plexus",
+      "repositories",
+      "iceberg",
+    );
+    const detachStatusPath = path.join(
+      "C:",
+      "dev",
+      "code",
+      "git",
+      "my-project",
+      ".plexus",
+      "projects",
+      "project-123",
+      "workspaces",
+      "worktree-a",
+      "scripts",
+      "dependency-repository-detach-dev.properties",
+    );
+    const editableRepositoryPath = path.join(
+      "C:",
+      "Pharo",
+      "images",
+      "dev",
+      "pharo-local",
+      "iceberg",
+      "my-project",
+    );
+    const source = generateImageStartupScript({
+      projectRoot,
+      imageConfig: config.images[0],
+      imageState: {
+        ...imageState,
+        repositoryWorkspace: {
+          repository: {
+            id: "my-project",
+            originPath: "C:\\dev\\code\\git\\my-project",
+          },
+          path: editableRepositoryPath,
+          materializationStrategy: "copy",
+          sourceDirectory: "src",
+          baseline: "MyProject",
+          materializationState: "ready",
+          diagnostics: [],
+          dirtyState: "clean",
+          loadState: "not-loaded",
+        },
+      },
+      dependencyRepositoryCachePath: dependencyCachePath,
+      dependencyRepositoryDetachStatusPath: detachStatusPath,
+    });
+
+    expect(source).toContain(
+      '"Detach shared dependency repositories that PLexus loaded from the home cache."',
+    );
+    expect(source).toContain(
+      "plexusDependencyRepositoryDetachStatusFile := 'C:/dev/code/git/my-project/.plexus/projects/project-123/workspaces/worktree-a/scripts/dependency-repository-detach-dev.properties' asFileReference.",
+    );
+    expect(source).toContain(
+      "plexusDependencyRepositoryCachePath := 'C:/Users/ada/.plexus/repositories/iceberg'.",
+    );
+    expect(source).toContain(
+      "plexusEditableRepositoryPaths := { 'C:/Pharo/images/dev/pharo-local/iceberg/my-project' }.",
+    );
+    expect(source).toContain(
+      "repositoryLocation beginsWith: cachePath , '/'",
+    );
+    expect(source).toContain("isEditable := editablePaths includes: repositoryLocation.");
+    expect(source).toContain("remove: repository");
+    expect(source.indexOf("Load the Pharo MCP project")).toBeLessThan(
+      source.indexOf("Detach shared dependency repositories"),
+    );
+    expect(source.indexOf("Detach shared dependency repositories")).toBeLessThan(
+      source.indexOf("Stop the previous server registered by PLexus"),
     );
   });
 
@@ -792,6 +875,38 @@ describe("project startup scripts", () => {
           workspaceId: "worktree-a",
           stateRoot,
         }),
+      );
+    } finally {
+      fs.rmSync(projectRoot, { recursive: true, force: true });
+      fs.rmSync(stateRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("reports the dependency repository detach status path when using the fixed PLexus home cache", () => {
+    const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), "plexus-project-"));
+    const stateRoot = fs.mkdtempSync(path.join(os.tmpdir(), "plexus-state-"));
+
+    try {
+      const written = writeProjectImageStartupScript({
+        projectRoot,
+        config,
+        imageId: "dev",
+        imageState,
+        workspaceId: "worktree-a",
+        stateRoot,
+      });
+
+      expect(written.dependencyRepositoryDetachStatusPath).toBe(
+        imageDependencyRepositoryDetachStatusPath({
+          projectRoot,
+          projectId: "project-123",
+          imageId: "dev",
+          workspaceId: "worktree-a",
+          stateRoot,
+        }),
+      );
+      expect(written.source).toContain(
+        "dependency-repository-detach-dev.properties",
       );
     } finally {
       fs.rmSync(projectRoot, { recursive: true, force: true });
