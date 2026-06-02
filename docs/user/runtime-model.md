@@ -37,8 +37,9 @@ declares another source path. PLexus reports the resolved source path in scoped
 status as the default place where project code should be loaded from.
 
 Editable image repository workspaces use `repository.originPath` when it is
-configured; otherwise local copy/worktree materialization uses the workspace
-source path supplied at open time.
+configured. Relative `originPath` values resolve under the workspace source path
+supplied at open time; when `originPath` is omitted, local copy/worktree
+materialization uses that workspace source path directly.
 
 The `workspaceId` comes from:
 

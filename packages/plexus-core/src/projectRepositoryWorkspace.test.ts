@@ -162,6 +162,50 @@ describe("project repository workspace materialization", () => {
     });
   });
 
+  it("resolves relative repository origins from the workspace source path", () => {
+    const workspaceSourceRoot = makeTempDir("plexus-workspace-source-");
+    const dependencyOrigin = path.join(
+      workspaceSourceRoot,
+      "dependencies",
+      "dependency",
+    );
+    fs.mkdirSync(dependencyOrigin, { recursive: true });
+    const dependencyCommit = initRepository(dependencyOrigin);
+    const targetPath = path.join(makeTempDir("plexus-target-"), "dependency");
+    const config = imageConfig({
+      originPath: path.join("dependencies", "dependency"),
+      path: targetPath,
+    });
+    const state = imageState(config);
+
+    const result = materializeProjectImageRepositoryWorkspace({
+      projectRoot: makeTempDir("plexus-project-"),
+      imageConfig: config,
+      imageState: state,
+      sourcePath: workspaceSourceRoot,
+      env: gitEnv,
+    });
+
+    expect(result).toMatchObject({
+      status: "ready",
+      strategy: "copy",
+      sourcePath: dependencyOrigin,
+      targetPath,
+      currentCommit: dependencyCommit,
+      dirtyState: "clean",
+    });
+    expect(git(targetPath, ["rev-parse", "HEAD"])).toBe(dependencyCommit);
+    expect(state.repositoryWorkspace).toMatchObject({
+      repository: {
+        originPath: path.join("dependencies", "dependency"),
+      },
+      sourcePath: dependencyOrigin,
+      currentCommit: dependencyCommit,
+      baseCommit: dependencyCommit,
+      materializationState: "ready",
+    });
+  });
+
   it("materializes a clean local source through copy strategy", () => {
     const sourceRoot = makeTempDir("plexus-source-");
     const sourceCommit = initRepository(sourceRoot);

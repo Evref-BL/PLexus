@@ -487,6 +487,22 @@ function updateWorkspaceState(
   }
 }
 
+function repositoryWorkspaceSourcePath(
+  workspace: ProjectImageRepositoryWorkspaceState,
+  workspaceSourcePath: string | undefined,
+): string | undefined {
+  const originPath = workspace.repository.originPath;
+  if (!originPath) {
+    return workspaceSourcePath ? resolvePathLike(workspaceSourcePath) : undefined;
+  }
+
+  if (isAbsolutePathLike(originPath) || !workspaceSourcePath) {
+    return resolvePathLike(originPath);
+  }
+
+  return resolvePathLike(workspaceSourcePath, originPath);
+}
+
 export function buildProjectImageRepositoryWorkspaceMaterializationPlan(
   options: MaterializeProjectImageRepositoryWorkspaceOptions,
 ): ProjectRepositoryWorkspaceMaterializationPlan | undefined {
@@ -501,9 +517,7 @@ export function buildProjectImageRepositoryWorkspaceMaterializationPlan(
     imageState: options.imageState,
     workspace,
   });
-  const sourcePath = (workspace.repository.originPath ?? options.sourcePath)
-    ? resolvePathLike(workspace.repository.originPath ?? options.sourcePath!)
-    : undefined;
+  const sourcePath = repositoryWorkspaceSourcePath(workspace, options.sourcePath);
   const baseRef = workspace.baseCommit ?? workspace.baseBranch;
   const diagnostics = [
     `Repository workspace ${workspace.repository.id} will use ${workspace.materializationStrategy} materialization.`,

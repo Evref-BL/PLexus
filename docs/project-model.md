@@ -55,9 +55,11 @@ workspace.
 
 For image repository workspace declarations that use local materialization such
 as `copy` or `git-worktree`, an explicit `repository.originPath` wins. If
-`originPath` is omitted, PLexus uses the workspace `sourcePath` as the local
+`originPath` is relative, PLexus resolves it under the workspace `sourcePath`.
+If `originPath` is omitted, PLexus uses the workspace `sourcePath` as the local
 source checkout for that repository workspace. This lets one project config
-stay shared while each workspace supplies its own source checkout.
+stay shared while each workspace supplies its own source checkout and
+workspace-relative dependency checkout layout.
 
 Repository workspace ids are unique per image. Status files, cleanup
 resources, and diagnostics are tracked per image and repository workspace id.
