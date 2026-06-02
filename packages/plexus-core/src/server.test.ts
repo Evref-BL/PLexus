@@ -40,6 +40,27 @@ describe("project lifecycle server", () => {
     });
   });
 
+  it("accepts workspace source paths on lifecycle tools", () => {
+    expect(
+      projectLifecycleTools.find((tool) => tool.name === "plexus_project_open"),
+    ).toMatchObject({
+      inputSchema: {
+        properties: {
+          sourcePath: { type: "string", minLength: 1 },
+        },
+      },
+    });
+    expect(
+      projectLifecycleTools.find((tool) => tool.name === "plexus_project_status"),
+    ).toMatchObject({
+      inputSchema: {
+        properties: {
+          sourcePath: { type: "string", minLength: 1 },
+        },
+      },
+    });
+  });
+
   it("returns lifecycle tool results over MCP", async () => {
     const lifecycle = new PlexusProjectLifecycle();
     const server = createProjectLifecycleServer(lifecycle);

@@ -649,6 +649,52 @@ describe("project lifecycle tools", () => {
     });
   });
 
+  it("reports the persisted workspace source path in status context and diagnostics", async () => {
+    const projectRoot = makeTempDir("plexus-project-");
+    const sourcePath = makeTempDir("plexus-source-");
+    const stateRoot = makeTempDir("plexus-state-");
+    writeProjectConfig(projectRoot);
+    saveProjectState(statePath(stateRoot), {
+      ...runningState,
+      sourcePath,
+    });
+    const lifecycle = new PlexusProjectLifecycle({
+      routeRegistry: new FakeRouteRegistry(),
+      gateway: {
+        checks: {
+          isPortListening: async () => false,
+        },
+      },
+    });
+
+    const result = await lifecycle.handleTool("plexus_project_status", {
+      projectPath: projectRoot,
+      stateRoot,
+      workspaceId: "worktree-a",
+      includeDiagnostics: true,
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
+      data: {
+        context: {
+          workspace: {
+            source: {
+              path: path.resolve(sourcePath),
+              policy: "caller-managed",
+              defaultLoadSource: true,
+            },
+          },
+        },
+        diagnostics: {
+          scope: {
+            sourcePath: path.resolve(sourcePath),
+          },
+        },
+      },
+    });
+  });
+
   it("reports PLexus home image cache entries", async () => {
     const projectRoot = makeTempDir("plexus-project-");
     const homePath = makeTempDir("plexus-home-");
