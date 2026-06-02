@@ -12,6 +12,7 @@ describe("project lifecycle server", () => {
     expect(projectLifecycleTools.map((tool) => tool.name)).toEqual([
       "plexus_project_open",
       "plexus_project_close",
+      "plexus_project_cleanup",
       "plexus_project_status",
       "plexus_home_image_cache_status",
       "plexus_home_image_cache_flush",
@@ -35,6 +36,19 @@ describe("project lifecycle server", () => {
       inputSchema: {
         properties: {
           includeDiagnostics: { type: "boolean" },
+        },
+      },
+    });
+  });
+
+  it("requires an explicit cleanup confirmation before mutation", () => {
+    expect(
+      projectLifecycleTools.find((tool) => tool.name === "plexus_project_cleanup"),
+    ).toMatchObject({
+      inputSchema: {
+        properties: {
+          confirm: { type: "boolean" },
+          deleteStateFile: { type: "boolean" },
         },
       },
     });

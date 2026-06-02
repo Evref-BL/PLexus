@@ -7,6 +7,7 @@ export * from "./pharoMcpHealth.js";
 export * from "./portClaims.js";
 export * from "./preparedImageCache.js";
 export * from "./projectClose.js";
+export * from "./projectCleanup.js";
 export * from "./projectConfig.js";
 export * from "./projectGateway.js";
 export * from "./projectLifecycle.js";

@@ -103,6 +103,27 @@ export const projectLifecycleTools = [
     ),
   },
   {
+    name: "plexus_project_cleanup",
+    description:
+      "Audit PLexus-owned leftover runtime resources, and clean them only when confirm: true is supplied.",
+    inputSchema: objectSchema(
+      {
+        projectPath: stringSchema,
+        workspaceId: optionalStringSchema,
+        stateRoot: optionalStringSchema,
+        confirm: { type: "boolean" },
+        deleteStateFile: { type: "boolean" },
+        deleteLauncherImages: { type: "boolean" },
+        repositoryWorkspaceCleanupPolicy: {
+          type: "string",
+          enum: ["preserve", "archive", "delete-disposable"],
+        },
+        repositoryWorkspaceArchiveRoot: optionalStringSchema,
+      },
+      ["projectPath"],
+    ),
+  },
+  {
     name: "plexus_project_status",
     description:
       "Return PLexus project lifecycle status from runtime state and registered routes.",
