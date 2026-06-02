@@ -263,12 +263,16 @@ function writeProjectConfig(
 }
 
 function statePath(stateRoot: string): string {
+  return statePathForWorkspace(stateRoot, "worktree-a");
+}
+
+function statePathForWorkspace(stateRoot: string, workspaceId: string): string {
   return path.join(
     stateRoot,
     "projects",
     "project-123",
     "workspaces",
-    "worktree-a",
+    workspaceId,
     "state.json",
   );
 }
@@ -773,6 +777,210 @@ describe("project lifecycle tools", () => {
         },
       },
     });
+  });
+
+  it("keeps two project workspaces isolated by state, source, ports, and routes", async () => {
+    const projectRoot = makeTempDir("plexus-project-");
+    const stateRoot = makeTempDir("plexus-state-");
+    const sourceA = makeTempDir("plexus-source-a-");
+    const sourceB = makeTempDir("plexus-source-b-");
+    const stateAPath = statePathForWorkspace(stateRoot, "worktree-a");
+    const stateBPath = statePathForWorkspace(stateRoot, "worktree-b");
+    const stateA: ProjectState = {
+      ...runningState,
+      workspaceId: "worktree-a",
+      targetId: "project-123--worktree-a",
+      sourcePath: sourceA,
+      images: [
+        {
+          id: "dev",
+          imageName: "MyProject-worktree-a-dev",
+          assignedPort: 7123,
+          pid: 1234,
+          status: "running",
+        },
+      ],
+    };
+    const stateB: ProjectState = {
+      ...runningState,
+      workspaceId: "worktree-b",
+      targetId: "project-123--worktree-b",
+      sourcePath: sourceB,
+      images: [
+        {
+          id: "dev",
+          imageName: "MyProject-worktree-b-dev",
+          assignedPort: 7124,
+          pid: 5678,
+          status: "running",
+        },
+      ],
+    };
+    const routesByTarget = new Map(
+      [stateA, stateB].map((state) => [
+        state.targetId,
+        {
+          projectId: state.projectId,
+          workspaceId: state.workspaceId,
+          targetId: state.targetId,
+          projectRoot,
+          statePath:
+            state.workspaceId === "worktree-a" ? stateAPath : stateBPath,
+          images: state.images.map((image) => ({
+            id: image.id,
+            imageName: image.imageName,
+            port: image.assignedPort,
+            status: image.status,
+            routable: {
+              ok: true,
+              code: "ready",
+              message: "Image is routable",
+            },
+          })),
+        },
+      ]),
+    );
+    writeProjectConfig(projectRoot, {
+      images: [
+        {
+          id: "dev",
+          imageName: "MyProject-{workspaceId}-dev",
+          active: true,
+          mcp: {
+            loadScript: "pharo/load-mcp.st",
+          },
+        },
+      ],
+    });
+    saveProjectState(stateAPath, stateA);
+    saveProjectState(stateBPath, stateB);
+    const lifecycle = new PlexusProjectLifecycle({
+      routeRegistry: {
+        async registerProjectRoute() {
+          return { ok: true, data: {} };
+        },
+        async unregisterProjectRoute() {
+          return { ok: true, data: {} };
+        },
+        async getRouteStatus(input) {
+          return {
+            ok: true,
+            data: routesByTarget.get(input.targetId ?? ""),
+          };
+        },
+      },
+      gateway: {
+        checks: {
+          isPortListening: async () => false,
+        },
+      },
+    });
+
+    const statusA = await lifecycle.handleTool("plexus_project_status", {
+      projectPath: projectRoot,
+      stateRoot,
+      workspaceId: "worktree-a",
+      includeDiagnostics: true,
+    });
+    const statusB = await lifecycle.handleTool("plexus_project_status", {
+      projectPath: projectRoot,
+      stateRoot,
+      workspaceId: "worktree-b",
+      includeDiagnostics: true,
+    });
+
+    expect(statusA).toMatchObject({
+      ok: true,
+      data: {
+        workspaceId: "worktree-a",
+        targetId: "project-123--worktree-a",
+        statePath: stateAPath,
+        context: {
+          workspace: {
+            source: {
+              path: sourceA,
+            },
+          },
+          images: [
+            {
+              imageId: "dev",
+              status: "running",
+            },
+          ],
+        },
+        route: {
+          statePath: stateAPath,
+          images: [
+            {
+              imageName: "MyProject-worktree-a-dev",
+              port: 7123,
+            },
+          ],
+        },
+        diagnostics: {
+          imageMcpPorts: [
+            {
+              imageId: "dev",
+              imageName: "MyProject-worktree-a-dev",
+              port: 7123,
+            },
+          ],
+          routeTable: {
+            statePath: stateAPath,
+            routableImages: [
+              {
+                imageId: "dev",
+                port: 7123,
+              },
+            ],
+          },
+        },
+      },
+    });
+    expect(statusB).toMatchObject({
+      ok: true,
+      data: {
+        workspaceId: "worktree-b",
+        targetId: "project-123--worktree-b",
+        statePath: stateBPath,
+        context: {
+          workspace: {
+            source: {
+              path: sourceB,
+            },
+          },
+        },
+        route: {
+          statePath: stateBPath,
+          images: [
+            {
+              imageName: "MyProject-worktree-b-dev",
+              port: 7124,
+            },
+          ],
+        },
+        diagnostics: {
+          imageMcpPorts: [
+            {
+              imageId: "dev",
+              imageName: "MyProject-worktree-b-dev",
+              port: 7124,
+            },
+          ],
+          routeTable: {
+            statePath: stateBPath,
+            routableImages: [
+              {
+                imageId: "dev",
+                port: 7124,
+              },
+            ],
+          },
+        },
+      },
+    });
+    expect(statusA.data?.statePath).not.toBe(statusB.data?.statePath);
+    expect(statusA.data?.route).not.toMatchObject(statusB.data?.route ?? {});
   });
 
   it("reports PLexus home image cache entries", async () => {
