@@ -46,6 +46,12 @@ When no separate `sourcePath` is supplied, PLexus treats `projectRoot` as the
 source path. PLexus reports the resolved source path in scoped context; it does
 not decide how the caller created or owns that checkout.
 
+For image `repositoryWorkspace` declarations that use local materialization
+such as `copy` or `git-worktree`, an explicit `repository.originPath` wins. If
+`originPath` is omitted, PLexus uses the workspace `sourcePath` as the local
+source checkout. This lets one project config stay shared while each workspace
+supplies its own source checkout.
+
 The `workspaceId` separates sibling worktrees for the same project. The default is the project root directory name, which works well for agent worktree directories. Callers can override it with:
 
 ```text

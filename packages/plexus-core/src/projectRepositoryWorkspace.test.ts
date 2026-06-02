@@ -54,6 +54,7 @@ function initRepository(sourceRoot: string): string {
 }
 
 function imageConfig(overrides: {
+  componentId?: string;
   originPath?: string;
   remoteUrl?: string;
   strategy?: "copy" | "git-worktree" | "clone";
@@ -70,6 +71,7 @@ function imageConfig(overrides: {
     repositoryWorkspace: {
       repository: {
         id: "my-project",
+        ...(overrides.componentId ? { componentId: overrides.componentId } : {}),
         ...(overrides.originPath ? { originPath: overrides.originPath } : {}),
         ...(overrides.remoteUrl ? { remoteUrl: overrides.remoteUrl } : {}),
       },
@@ -118,6 +120,44 @@ describe("project repository workspace materialization", () => {
         workspace: state.repositoryWorkspace!,
       }),
     ).toBe(path.join(state.localDirectoryPath!, "iceberg", "my-project"));
+  });
+
+  it("uses the workspace source path when a local repository workspace omits originPath", () => {
+    const sourceRoot = makeTempDir("plexus-source-");
+    const sourceCommit = initRepository(sourceRoot);
+    const targetPath = path.join(makeTempDir("plexus-target-"), "repo");
+    const config = imageConfig({
+      componentId: "my-project",
+      path: targetPath,
+    });
+    const state = imageState(config);
+
+    const result = materializeProjectImageRepositoryWorkspace({
+      projectRoot: makeTempDir("plexus-project-"),
+      imageConfig: config,
+      imageState: state,
+      sourcePath: sourceRoot,
+      env: gitEnv,
+    });
+
+    expect(result).toMatchObject({
+      status: "ready",
+      strategy: "copy",
+      sourcePath: sourceRoot,
+      targetPath,
+      currentCommit: sourceCommit,
+      dirtyState: "clean",
+    });
+    expect(git(targetPath, ["rev-parse", "HEAD"])).toBe(sourceCommit);
+    expect(state.repositoryWorkspace).toMatchObject({
+      repository: {
+        componentId: "my-project",
+      },
+      sourcePath: sourceRoot,
+      currentCommit: sourceCommit,
+      baseCommit: sourceCommit,
+      materializationState: "ready",
+    });
   });
 
   it("materializes a clean local source through copy strategy", () => {

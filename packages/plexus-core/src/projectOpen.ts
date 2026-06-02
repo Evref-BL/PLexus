@@ -1705,6 +1705,7 @@ export async function openProject(
           projectRoot,
           imageConfig,
           imageState,
+          sourcePath: loadSourcePath,
         });
 
         const endpointHandoffPath = imageMcpEndpointHandoffPath({

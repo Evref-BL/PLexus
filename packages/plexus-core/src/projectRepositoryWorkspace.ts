@@ -43,6 +43,7 @@ export interface MaterializeProjectImageRepositoryWorkspaceOptions {
   projectRoot: string;
   imageConfig: ProjectImageConfig;
   imageState: ProjectImageState;
+  sourcePath?: string | undefined;
   env?: NodeJS.ProcessEnv;
 }
 
@@ -493,8 +494,8 @@ export function buildProjectImageRepositoryWorkspaceMaterializationPlan(
     imageState: options.imageState,
     workspace,
   });
-  const sourcePath = workspace.repository.originPath
-    ? resolvePathLike(workspace.repository.originPath)
+  const sourcePath = (workspace.repository.originPath ?? options.sourcePath)
+    ? resolvePathLike(workspace.repository.originPath ?? options.sourcePath!)
     : undefined;
   const baseRef = workspace.baseCommit ?? workspace.baseBranch;
   const diagnostics = [

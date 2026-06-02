@@ -739,6 +739,122 @@ describe("project open", () => {
     });
   });
 
+  it("uses the project-open source path for repository workspaces without originPath", async () => {
+    const projectRoot = makeTempDir("plexus-project-");
+    const stateRoot = makeTempDir("plexus-state-");
+    const sourceRoot = makeTempDir("plexus-source-");
+    const imagesDir = makeTempDir("plexus-images-");
+    const sourceCommit = initRepository(sourceRoot, ["MyProject-Core"]);
+    writeProjectConfig(projectRoot, {
+      images: [
+        {
+          id: "dev",
+          imageName: "MyProject-dev",
+          active: true,
+          mcp: {
+            port: 7123,
+            loadScript: "pharo/load-mcp.st",
+          },
+          repositoryWorkspace: {
+            repository: {
+              id: "my-project",
+              componentId: "my-project",
+            },
+            sourceDirectory: "src",
+            baseline: "MyProject",
+            materialization: {
+              strategy: "copy",
+            },
+          },
+        },
+      ],
+    });
+    const pharoLauncherMcpClient = new FakePharoLauncherMcpClient(
+      [
+        {
+          pid: 1234,
+          imageName: "MyProject-dev",
+          commandLine: "PharoConsole.exe MyProject-dev.image",
+        },
+      ],
+      undefined,
+      (argumentsValue) => {
+        const scriptPath = argumentsValue.script as string;
+        fs.writeFileSync(
+          path.join(
+            path.dirname(scriptPath),
+            "repository-workspace-load-dev.properties",
+          ),
+          [
+            "status=loaded",
+            `sourcePath=${repositoryPath}/src`,
+            "sourceDirectory=src",
+            "baseline=MyProject",
+            "",
+          ].join("\n"),
+          "utf8",
+        );
+        fs.writeFileSync(
+          path.join(
+            path.dirname(scriptPath),
+            "dependency-repository-detach-dev.properties",
+          ),
+          [
+            "status=detached",
+            "cachePath=/plexus-home/repositories/iceberg",
+            "detachedCount=0",
+            "",
+          ].join("\n"),
+          "utf8",
+        );
+      },
+      imagesDir,
+    );
+    const repositoryPath = path.join(
+      imagesDir,
+      "MyProject-dev",
+      "pharo-local",
+      "iceberg",
+      "my-project",
+    );
+    const imageMcpClient = new FakeImageMcpClient();
+
+    const result = await openProject({
+      projectRoot,
+      sourcePath: sourceRoot,
+      stateRoot,
+      workspaceId: "worktree-a",
+      pharoLauncherMcpClient,
+      imageMcpClient,
+      healthClient: new FakeHealthClient(true),
+      now: fixedNow,
+      sleep: async () => {},
+      poll: {
+        intervalMs: 0,
+      },
+    });
+
+    expect(git(repositoryPath, ["rev-parse", "HEAD"])).toBe(sourceCommit);
+    expect(result.state.sourcePath).toBe(sourceRoot);
+    expect(result.state.images[0].repositoryWorkspace).toMatchObject({
+      repository: {
+        componentId: "my-project",
+      },
+      sourcePath: sourceRoot,
+      currentCommit: sourceCommit,
+      baseCommit: sourceCommit,
+      materializationState: "ready",
+      loadState: "loaded",
+      registrationState: "registered",
+    });
+    expect(imageMcpClient.calls[0]).toMatchObject({
+      name: "find-repositories",
+      argumentsValue: {
+        directoryPaths: [repositoryPath],
+      },
+    });
+  });
+
   it("updates and verifies an already registered repository workspace", async () => {
     const projectRoot = makeTempDir("plexus-project-");
     const stateRoot = makeTempDir("plexus-state-");
