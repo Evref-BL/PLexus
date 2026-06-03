@@ -5,6 +5,8 @@ node_modules/
 dist/
 coverage/
 *.tsbuildinfo
+.scannerwork/
+.quality/
 
 # Local runtime state
 .env

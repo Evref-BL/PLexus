@@ -24,6 +24,7 @@
     "check": "npm run typecheck && npm run build && npm test",
     "build": "npm run build -w @evref-bl/plexus-core && npm run build -w @evref-bl/plexus-gateway",
     "test": "npm run test --workspaces && npm run test:smoke-policy",
+    "coverage": "npm run coverage --workspaces",
     "test:smoke-policy": "node --test scripts/*.test.mjs",
     "typecheck": "npm run typecheck --workspaces",
     "clean": "npm run clean --workspaces",
@@ -33,6 +34,7 @@
   },
   "devDependencies": {
     "@types/node": "^22.12.0",
+    "@vitest/coverage-v8": "^4.0.0",
     "typescript": "^5.9.0",
     "vitest": "^4.0.0"
   }
