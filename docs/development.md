@@ -206,19 +206,35 @@ npm run smoke:open-route-close -- --copyFromImageName MCP12-2
 
 When no existing image is known to be copyable, let the smoke create a
 temporary source image from the local launcher templates and copy the runtime
-image from that source:
+image from that source. The smoke launches the temporary source image once with
+a generated preparation script, installs the PLexus dependency repository cache
+contract expected by managed startup scripts, snapshots the source image, and
+then copies runtime smoke images from that prepared source:
 
 ```sh
-npm run smoke:open-route-close -- --createSourceFromTemplate
+npm run smoke:open-route-close -- --profile pharo13-template-local
 ```
 
+Smoke profiles are JSON files in `scripts/smoke-profiles/`. They carry stable
+defaults such as the template selector, project id, required smoke prefixes, and
+timeout budget. Keep run-specific and machine-local values such as
+`--approvalProfile`, `--artifactRoot`, `--stateRoot`, `--runId`,
+`--workspaceId`, `--pharoLauncherMcpRepoDir`, and `--mcpPharoRepoDir` on the
+command line, environment, or an ignored local profile path such as
+`scripts/smoke-profiles/e2e.local.json`.
+
 The smoke creates a disposable PLexus project and isolated state root, copies
-the source image when `--copyFromImageName` is used, opens it through PLexus
-core lifecycle orchestration, registers the route, verifies `tools/list`
-exposes the current Pharo MCP `package_search` tool, routes that read-only probe
-into every active image, closes the images, checks that the processes are gone,
-checks that the closed target is unregistered from gateway status, then deletes
-copied images, temporary source images, and temp directories.
+the source image when `--copyFromImageName` is used, prepares temporary
+template-created sources before copying runtime images, opens them through
+PLexus core lifecycle orchestration, registers the route, verifies `tools/list`
+exposes the current Pharo MCP `package_search` tool, routes that read-only
+probe into every active image, closes the images, checks that the processes are
+gone, checks that the closed target is unregistered from gateway status, then
+deletes copied images, temporary source images, and temp directories.
+
+The `smoke:open-route-close` script builds the local PLexus packages before it
+runs and imports those local `dist` outputs directly. This keeps worktree smoke
+runs from accidentally using package symlinks projected from another checkout.
 
 Use `plexus_gateway_status` with `refreshTools: true` when checking whether a
 long-running gateway has caught up to image-side MCP changes. The gateway keeps
