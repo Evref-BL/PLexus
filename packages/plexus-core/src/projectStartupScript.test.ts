@@ -138,7 +138,10 @@ describe("project startup scripts", () => {
     expect(source).toContain(
       "plexusDependencyRepositoryNetworkPolicy := 'local-only'.",
     );
-    expect(source).toContain("enableMetacelloIntegration: true.");
+    expect(source).toContain("Iceberg enableMetacelloIntegration: true.");
+    expect(source).toContain(
+      "PLexus dependency repository cache setup failed:",
+    );
     expect(source).toContain("shareRepositoriesBetweenImages: true;");
     expect(source).toContain(
       "sharedRepositoriesLocationString: plexusDependencyRepositoryCachePath",
