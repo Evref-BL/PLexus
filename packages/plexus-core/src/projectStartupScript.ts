@@ -458,6 +458,8 @@ ${workspace.loadGroup
   Metacello new
     repository: 'tonel://', repositorySourceDirectory fullName;
     baseline: ${smalltalkString(workspace.baseline)};
+    onConflictUseIncoming;
+    onUpgrade: [ :ex :loaded :incoming | ex useIncoming ];
 ${loadCommand}.
   repositoryLoadStatusWriter value: 'loaded' value: nil
 ] on: Error do: [ :error |

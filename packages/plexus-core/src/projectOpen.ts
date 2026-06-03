@@ -582,6 +582,35 @@ function applyLauncherImageInfo(
   imageState.originTemplate = info.originTemplate ?? imageState.originTemplate;
 }
 
+function applyLauncherProfileImagePathFallback(
+  imageState: ProjectImageState,
+  imagesDirectory: string | undefined,
+): void {
+  if (!imagesDirectory || !repositoryWorkspaceNeedsLauncherPaths(imageState)) {
+    return;
+  }
+
+  const imageDirectoryPath = joinPathLike(imagesDirectory, imageState.imageName);
+  const imagePath = joinPathLike(
+    imageDirectoryPath,
+    `${imageState.imageName}.image`,
+  );
+  if (!fs.existsSync(imagePath)) {
+    return;
+  }
+
+  applyLauncherImageInfo(imageState, {
+    imagePath,
+    imageDirectoryPath,
+    changesPath: joinPathLike(
+      imageDirectoryPath,
+      `${imageState.imageName}.changes`,
+    ),
+    localDirectoryPath: joinPathLike(imageDirectoryPath, "pharo-local"),
+    ombuDirectoryPath: joinPathLike(imageDirectoryPath, "ombu"),
+  });
+}
+
 function repositoryWorkspaceNeedsLauncherPaths(imageState: ProjectImageState): boolean {
   return (
     !imageState.localDirectoryPath &&
@@ -709,6 +738,23 @@ async function callImageMcpToolForOpen(options: {
   return result;
 }
 
+async function callDiscoverableImageMcpToolForOpen(options: {
+  imageMcpClient: ProjectOpenImageMcpClient;
+  imageState: ProjectImageState;
+  toolName: string;
+  argumentsValue: Record<string, unknown>;
+}): Promise<unknown> {
+  return callImageMcpToolForOpen({
+    imageMcpClient: options.imageMcpClient,
+    imageState: options.imageState,
+    toolName: "tool_call",
+    argumentsValue: {
+      toolName: options.toolName,
+      arguments: options.argumentsValue,
+    },
+  });
+}
+
 function repositoryEntryName(
   entry: Record<string, unknown> | undefined,
   fallback: string,
@@ -769,10 +815,10 @@ async function ensureRepositoryWorkspaceRegistered(options: {
   const repositoryId = workspace.repository.id;
 
   try {
-    const findResult = await callImageMcpToolForOpen({
+    const findResult = await callDiscoverableImageMcpToolForOpen({
       imageMcpClient: options.imageMcpClient,
       imageState: options.imageState,
-      toolName: "find-repositories",
+      toolName: "repository_search",
       argumentsValue: {
         directoryPaths: [repositoryPath],
         limit: 1000,
@@ -790,35 +836,32 @@ async function ensureRepositoryWorkspaceRegistered(options: {
     };
 
     if (existingRepository) {
-      await callImageMcpToolForOpen({
+      await callDiscoverableImageMcpToolForOpen({
         imageMcpClient: options.imageMcpClient,
         imageState: options.imageState,
-        toolName: "edit-repository",
+        toolName: "repository_update",
         argumentsValue: {
-          operation: "update",
           repositoryName,
           ...repositoryArguments,
         },
       });
     } else {
-      await callImageMcpToolForOpen({
+      await callDiscoverableImageMcpToolForOpen({
         imageMcpClient: options.imageMcpClient,
         imageState: options.imageState,
-        toolName: "edit-repository",
+        toolName: "repository_attach",
         argumentsValue: {
-          operation: "attach",
           name: repositoryName,
           ...repositoryArguments,
         },
       });
     }
 
-    await callImageMcpToolForOpen({
+    await callDiscoverableImageMcpToolForOpen({
       imageMcpClient: options.imageMcpClient,
       imageState: options.imageState,
-      toolName: "edit-repository",
+      toolName: "repository_identity_verify",
       argumentsValue: {
-        operation: "verifyIdentity",
         repositoryName,
         ...repositoryArguments,
       },
@@ -1117,6 +1160,7 @@ function refreshRepositoryWorkspaceLoadStatuses(
 async function hydrateRepositoryWorkspaceImagePaths(
   client: PharoLauncherMcpToolClient,
   imageState: ProjectImageState,
+  fallbackImagesDirectory?: string,
 ): Promise<void> {
   if (!repositoryWorkspaceNeedsLauncherPaths(imageState)) {
     return;
@@ -1135,6 +1179,7 @@ async function hydrateRepositoryWorkspaceImagePaths(
       ? await launcherImagesDirectory(client)
       : undefined;
   applyLauncherImageInfo(imageState, info, imagesDirectory);
+  applyLauncherProfileImagePathFallback(imageState, fallbackImagesDirectory);
 }
 
 async function pollUntil<T>(
@@ -1732,7 +1777,11 @@ export async function openProject(
           });
         }
 
-        await hydrateRepositoryWorkspaceImagePaths(client, imageState);
+        await hydrateRepositoryWorkspaceImagePaths(
+          client,
+          imageState,
+          launcherProfileEnvironment?.PHARO_LAUNCHER_MCP_IMAGES_DIR,
+        );
         materializeProjectImageRepositoryWorkspaces({
           projectRoot,
           imageConfig,

@@ -590,6 +590,10 @@ describe("project startup scripts", () => {
       "repository: 'tonel://', repositorySourceDirectory fullName;",
     );
     expect(source).toContain("baseline: 'MyProject';");
+    expect(source).toContain("onConflictUseIncoming;");
+    expect(source).toContain(
+      "onUpgrade: [ :ex :loaded :incoming | ex useIncoming ];",
+    );
     expect(source).toContain("load: (Array with: 'tests').");
     expect(source).toContain("nextPutAll: 'currentCommit=';");
     expect(source).toContain("nextPutAll: 'abc123';");
