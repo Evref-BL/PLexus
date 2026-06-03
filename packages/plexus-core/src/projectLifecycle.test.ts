@@ -108,6 +108,15 @@ class FakeRouteRegistry implements ProjectLifecycleRouteRegistry {
   }
 }
 
+class UnreachableRouteRegistry extends FakeRouteRegistry {
+  async unregisterProjectRoute(
+    input: ProjectLifecycleRouteReference,
+  ): Promise<unknown> {
+    this.unregisters.push(input);
+    throw new Error("fetch failed");
+  }
+}
+
 class MissingRouteRegistry implements ProjectLifecycleRouteRegistry {
   registerProjectRoute(): Promise<unknown> {
     return Promise.resolve({ ok: true, data: {} });
@@ -556,6 +565,89 @@ describe("project lifecycle tools", () => {
     expect(routeRegistry.unregisters).toEqual([
       { targetId: "project-123--worktree-a" },
     ]);
+  });
+
+  it("deletes stopped scoped images when route cleanup endpoint is gone", async () => {
+    const projectRoot = makeTempDir("plexus-project-");
+    const stateRoot = makeTempDir("plexus-state-");
+    writeProjectConfig(projectRoot);
+    saveProjectState(statePath(stateRoot), {
+      ...runningState,
+      runtimeStatus: "idle",
+      images: runningState.images.map((image) => ({
+        ...image,
+        status: "stopped",
+        pid: undefined,
+        creation: {
+          source: {
+            kind: "template",
+            templateName: "Pharo 13",
+          },
+          cleanupPolicy: "workspace_cleanup_only",
+          route: {
+            serverName: "pharo_gateway",
+            targetKey: "targetId",
+            imageArgument: "imageId",
+            imageId: image.id,
+          },
+        },
+      })),
+    });
+    const routeRegistry = new UnreachableRouteRegistry();
+    const launcherClient = new FakeHomeImageCacheClient();
+    const lifecycle = new PlexusProjectLifecycle({
+      routeRegistry,
+      pharoLauncherMcpClient: launcherClient,
+      gateway: {
+        checks: {
+          isPortListening: () => false,
+          isProcessAlive: () => false,
+        },
+      },
+    });
+
+    const result = await lifecycle.handleTool("plexus_project_cleanup", {
+      projectPath: projectRoot,
+      stateRoot,
+      workspaceId: "worktree-a",
+      confirm: true,
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
+      data: {
+        confirmed: true,
+        failures: [],
+        deletedLauncherImages: ["MyProject-dev"],
+        resources: expect.arrayContaining([
+          expect.objectContaining({
+            kind: "launcher-image",
+            imageId: "dev",
+            status: "cleaned",
+          }),
+          expect.objectContaining({
+            kind: "route",
+            id: "project-123--worktree-a",
+            status: "skipped",
+            reason: expect.stringContaining("fetch failed"),
+          }),
+        ]),
+      },
+    });
+    expect(routeRegistry.unregisters).toEqual([
+      { targetId: "project-123--worktree-a" },
+    ]);
+    expect(launcherClient.calls).toEqual([
+      {
+        name: "pharo_launcher_image_delete",
+        argumentsValue: {
+          imageName: "MyProject-dev",
+          force: true,
+          confirm: true,
+        },
+      },
+    ]);
+    expect(loadProjectState(statePath(stateRoot))?.images).toEqual([]);
   });
 
   it("reports lifecycle status from project runtime state without starting images", async () => {

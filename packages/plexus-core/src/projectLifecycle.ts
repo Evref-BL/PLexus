@@ -189,6 +189,7 @@ export interface ProjectLifecycleOptions {
   routeRegistry?: ProjectLifecycleRouteRegistry;
   imageToolCaller?: ProjectLifecycleImageToolCaller;
   homeImageCacheClient?: PharoLauncherMcpToolClient;
+  pharoLauncherMcpClient?: PharoLauncherMcpToolClient;
   remoteClientFactory?: (
     remoteNode: ProjectRemoteNodeConfig,
   ) => ProjectLifecycleRemoteClient;
@@ -872,6 +873,20 @@ function routeCleanupResource(state: ProjectState): ProjectCleanupResource {
     workspaceId: state.workspaceId,
     targetId: state.targetId,
   };
+}
+
+function idempotentRouteCleanupReason(error: unknown): string | undefined {
+  const message = errorMessage(error);
+  if (
+    /\bfetch failed\b/i.test(message) ||
+    /\bECONNREFUSED\b/i.test(message) ||
+    /\bFailed to fetch\b/i.test(message) ||
+    /\bNo route is registered\b/i.test(message)
+  ) {
+    return `Route cleanup skipped because the route endpoint is already unreachable: ${message}`;
+  }
+
+  return undefined;
 }
 
 function assertLauncherOk(
@@ -2368,6 +2383,7 @@ export class PlexusProjectLifecycle {
   private readonly routeRegistry?: ProjectLifecycleRouteRegistry;
   private readonly imageToolCaller?: ProjectLifecycleImageToolCaller;
   private readonly homeImageCacheClient?: PharoLauncherMcpToolClient;
+  private readonly pharoLauncherMcpClient?: PharoLauncherMcpToolClient;
   private readonly defaultStateRoot?: string;
   private readonly projectOpen: typeof openProject;
   private readonly projectClose: typeof closeProject;
@@ -2381,6 +2397,7 @@ export class PlexusProjectLifecycle {
     this.routeRegistry = options.routeRegistry;
     this.imageToolCaller = options.imageToolCaller;
     this.homeImageCacheClient = options.homeImageCacheClient;
+    this.pharoLauncherMcpClient = options.pharoLauncherMcpClient;
     this.defaultStateRoot = options.defaultStateRoot;
     this.projectOpen = options.projectOpen ?? openProject;
     this.projectClose = options.projectClose ?? closeProject;
@@ -2861,13 +2878,19 @@ export class PlexusProjectLifecycle {
             );
             routeResource.status = "cleaned";
           } catch (error) {
-            routeResource.status = "failed";
-            routeResource.reason = errorMessage(error);
-            routeFailure = {
-              kind: "route",
-              id: state.targetId,
-              message: errorMessage(error),
-            };
+            const skipReason = idempotentRouteCleanupReason(error);
+            if (skipReason) {
+              routeResource.status = "skipped";
+              routeResource.reason = skipReason;
+            } else {
+              routeResource.status = "failed";
+              routeResource.reason = errorMessage(error);
+              routeFailure = {
+                kind: "route",
+                id: state.targetId,
+                message: errorMessage(error),
+              };
+            }
           }
         } else {
           routeResource.status = "skipped";
@@ -2883,6 +2906,7 @@ export class PlexusProjectLifecycle {
         confirm: input.confirm,
         deleteStateFile: input.deleteStateFile,
         deleteLauncherImages: input.deleteLauncherImages,
+        pharoLauncherMcpClient: this.pharoLauncherMcpClient,
         repositoryWorkspaceCleanupPolicy:
           input.repositoryWorkspaceCleanupPolicy,
         repositoryWorkspaceArchiveRoot: input.repositoryWorkspaceArchiveRoot,
