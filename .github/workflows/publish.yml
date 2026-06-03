@@ -15,11 +15,11 @@ on:
       dist_tag:
         description: npm dist-tag to publish under
         required: true
-        default: dogfood
+        default: latest
         type: choice
         options:
-          - dogfood
           - latest
+          - alpha
 
 permissions:
   contents: read
@@ -48,6 +48,11 @@ jobs:
           node-version: 22.12.0
           registry-url: https://registry.npmjs.org
           package-manager-cache: false
+
+      - name: Set up npm for trusted publishing
+        run: |
+          npm install -g npm@^11.5.1
+          npm --version
 
       - name: Check @evref-bl/plexus-core version is not published
         if: ${{ inputs.package == 'all' || inputs.package == '@evref-bl/plexus-core' }}
