@@ -56,6 +56,7 @@ class FakePharoLauncherMcpClient implements PharoLauncherMcpToolClient {
     private readonly launchResult?:
       | LauncherCommandResult
       | Promise<LauncherCommandResult>,
+    private readonly imageInfoMode: "paths" | "metadata-only" = "paths",
   ) {}
 
   private nextProcesses(): LauncherProcess[] {
@@ -114,7 +115,9 @@ class FakePharoLauncherMcpClient implements PharoLauncherMcpToolClient {
         ok: true,
         data: {
           name: imageName,
-          imagePath: path.join(imageName, `${imageName}.image`),
+          ...(this.imageInfoMode === "paths"
+            ? { imagePath: path.join(imageName, `${imageName}.image`) }
+            : {}),
           pharoVersion: "13",
           vmId: "vm-13",
         },
@@ -183,14 +186,23 @@ class FakeImageMcpClient {
     argumentsValue: Record<string, unknown> = {},
   ): Promise<unknown> {
     this.calls.push({ name, argumentsValue });
-    if (this.failure && (!this.failureTool || this.failureTool === name)) {
+    const targetToolName =
+      typeof argumentsValue.toolName === "string"
+        ? argumentsValue.toolName
+        : undefined;
+    if (
+      this.failure &&
+      (!this.failureTool ||
+        this.failureTool === name ||
+        this.failureTool === targetToolName)
+    ) {
       if (this.failure instanceof Error) {
         throw this.failure;
       }
       return this.failure.result;
     }
 
-    if (name === "find-repositories") {
+    if (name === "tool_call" && targetToolName === "repository_search") {
       return {
         structuredContent: {
           status: "ok",
@@ -556,7 +568,13 @@ describe("project open", () => {
     const projectRoot = makeTempDir("plexus-project-");
     const stateRoot = makeTempDir("plexus-state-");
     const sourceRoot = makeTempDir("plexus-source-");
-    const imagesDir = makeTempDir("plexus-images-");
+    const imagesDir = path.join(
+      stateRoot,
+      "profiles",
+      "pharo-launcher-mcp",
+      "project-123",
+      "images",
+    );
     const sourceCommit = initRepository(sourceRoot, [
       "MyProject-Core",
       "MyProject-Tests",
@@ -585,6 +603,10 @@ describe("project open", () => {
         },
       ],
     });
+    const launcherImageDir = path.join(imagesDir, "MyProject-dev");
+    fs.mkdirSync(launcherImageDir, { recursive: true });
+    fs.writeFileSync(path.join(launcherImageDir, "MyProject-dev.image"), "");
+    fs.writeFileSync(path.join(launcherImageDir, "MyProject-dev.changes"), "");
     const pharoLauncherMcpClient = new FakePharoLauncherMcpClient(
       [
         {
@@ -630,6 +652,8 @@ describe("project open", () => {
         );
       },
       imagesDir,
+      undefined,
+      "metadata-only",
     );
 
     const repositoryPath = path.join(
@@ -666,30 +690,37 @@ describe("project open", () => {
     expect(git(repositoryPath, ["rev-parse", "HEAD"])).toBe(sourceCommit);
     expect(imageMcpClient.calls).toEqual([
       {
-        name: "find-repositories",
+        name: "tool_call",
         argumentsValue: {
-          directoryPaths: [repositoryPath],
-          limit: 1000,
+          toolName: "repository_search",
+          arguments: {
+            directoryPaths: [repositoryPath],
+            limit: 1000,
+          },
         },
       },
       {
-        name: "edit-repository",
+        name: "tool_call",
         argumentsValue: {
-          operation: "attach",
-          name: "my-project",
-          location: repositoryPath,
-          subdirectory: "src",
-          packageNames: ["MyProject-Core", "MyProject-Tests"],
+          toolName: "repository_attach",
+          arguments: {
+            name: "my-project",
+            location: repositoryPath,
+            subdirectory: "src",
+            packageNames: ["MyProject-Core", "MyProject-Tests"],
+          },
         },
       },
       {
-        name: "edit-repository",
+        name: "tool_call",
         argumentsValue: {
-          operation: "verifyIdentity",
-          repositoryName: "my-project",
-          location: repositoryPath,
-          subdirectory: "src",
-          packageNames: ["MyProject-Core", "MyProject-Tests"],
+          toolName: "repository_identity_verify",
+          arguments: {
+            repositoryName: "my-project",
+            location: repositoryPath,
+            subdirectory: "src",
+            packageNames: ["MyProject-Core", "MyProject-Tests"],
+          },
         },
       },
     ]);
@@ -848,9 +879,12 @@ describe("project open", () => {
       registrationState: "registered",
     });
     expect(imageMcpClient.calls[0]).toMatchObject({
-      name: "find-repositories",
+      name: "tool_call",
       argumentsValue: {
-        directoryPaths: [repositoryPath],
+        toolName: "repository_search",
+        arguments: {
+          directoryPaths: [repositoryPath],
+        },
       },
     });
   });
@@ -943,28 +977,32 @@ describe("project open", () => {
     });
 
     expect(imageMcpClient.calls.map((call) => call.name)).toEqual([
-      "find-repositories",
-      "edit-repository",
-      "edit-repository",
+      "tool_call",
+      "tool_call",
+      "tool_call",
     ]);
     expect(imageMcpClient.calls[1]).toMatchObject({
-      name: "edit-repository",
+      name: "tool_call",
       argumentsValue: {
-        operation: "update",
-        repositoryName: "Existing Repository",
-        location: repositoryPath,
-        subdirectory: "src",
-        packageNames: ["MyProject-Core"],
+        toolName: "repository_update",
+        arguments: {
+          repositoryName: "Existing Repository",
+          location: repositoryPath,
+          subdirectory: "src",
+          packageNames: ["MyProject-Core"],
+        },
       },
     });
     expect(imageMcpClient.calls[2]).toMatchObject({
-      name: "edit-repository",
+      name: "tool_call",
       argumentsValue: {
-        operation: "verifyIdentity",
-        repositoryName: "Existing Repository",
-        location: repositoryPath,
-        subdirectory: "src",
-        packageNames: ["MyProject-Core"],
+        toolName: "repository_identity_verify",
+        arguments: {
+          repositoryName: "Existing Repository",
+          location: repositoryPath,
+          subdirectory: "src",
+          packageNames: ["MyProject-Core"],
+        },
       },
     });
     expect(result.state.images[0].repositoryWorkspace).toMatchObject({
@@ -1051,7 +1089,7 @@ describe("project open", () => {
           ],
         },
       },
-      "edit-repository",
+      "repository_attach",
     );
 
     await expect(
