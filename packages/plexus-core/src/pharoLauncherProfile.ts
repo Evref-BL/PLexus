@@ -181,7 +181,9 @@ export function describePharoLauncherMcpProfile(
       mode: "project-owned",
       profileScope,
       ...paths,
-      environmentKeys: Object.keys(environmentFromPaths(paths)).sort(),
+      environmentKeys: Object.keys(environmentFromPaths(paths)).sort((left, right) =>
+        left.localeCompare(right),
+      ),
       reason:
         profileScope === "project"
           ? "PLexus derives and passes a project-scoped pharo-launcher-mcp profile."
@@ -190,7 +192,9 @@ export function describePharoLauncherMcpProfile(
   }
 
   const env = options.env ?? process.env;
-  const environmentKeys = presentEnvironmentKeys(env).sort();
+  const environmentKeys = presentEnvironmentKeys(env).sort((left, right) =>
+    left.localeCompare(right),
+  );
   if (environmentKeys.length === 0) {
     return {
       ownership: "unknown",

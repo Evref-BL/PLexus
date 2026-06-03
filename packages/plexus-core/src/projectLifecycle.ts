@@ -2191,7 +2191,7 @@ async function fetchPharoMcpTools(options: {
       throw new Error("MCP tools/list response did not include result.tools");
     }
 
-    return result.tools.map(toolFromMcpListItem);
+    return result.tools.map((tool, index) => toolFromMcpListItem(tool, index));
   } finally {
     clearTimeout(timeout);
   }
