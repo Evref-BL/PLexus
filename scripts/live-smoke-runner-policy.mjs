@@ -13,6 +13,119 @@ export const defaultTimeoutBudget = {
 
 const timeoutBudgetKeys = Object.keys(defaultTimeoutBudget);
 
+const smokeProfileDefaultKeys = new Set([
+  "approvalProfile",
+  "launcherProfile",
+  "launcherProfileRoot",
+  "pharoLauncherMcpRepoDir",
+  "mcpPharoRepoDir",
+  "artifactRoot",
+  "runId",
+  "timeoutBudgetJson",
+  "requiredWorkspacePrefix",
+  "requiredTargetPrefix",
+  "stateRoot",
+  "fixtureRoot",
+  "projectRoot",
+  "homePath",
+  "homeImageCacheNetworkPolicy",
+  "workspaceId",
+  "targetId",
+  "projectId",
+  "imageId",
+  "port",
+  "loadScript",
+  "toolName",
+  "toolArgumentsJson",
+  "expectedText",
+  "keepOpen",
+  "keepTemp",
+  "allowRemoteMcpFallback",
+  "scenario",
+  "createSourceFromTemplate",
+  "sourceImageName",
+  "sourceTemplateName",
+  "sourceTemplateCategory",
+  "pollIntervalMs",
+  "processTimeoutMs",
+  "healthTimeoutMs",
+  "copyFromImageName",
+  "imageName",
+  "imageSpecs",
+  "stepSpecs",
+]);
+
+export function resolveSmokeProfilePath(profile, context = {}) {
+  const profileName = requiredString(profile, "--profile");
+  const repoRoot = path.resolve(requiredString(context.repoRoot, "repoRoot"));
+  if (
+    path.isAbsolute(profileName) ||
+    profileName.includes("/") ||
+    profileName.includes("\\")
+  ) {
+    return path.resolve(repoRoot, profileName);
+  }
+
+  const fileName = profileName.endsWith(".json")
+    ? profileName
+    : `${profileName}.json`;
+  return path.join(repoRoot, "scripts", "smoke-profiles", fileName);
+}
+
+export function loadSmokeProfile(profile, context = {}) {
+  const profilePath = resolveSmokeProfilePath(profile, context);
+  let parsed;
+  try {
+    parsed = JSON.parse(fs.readFileSync(profilePath, "utf8"));
+  } catch (error) {
+    throw new Error(
+      `Unable to load smoke profile ${profile}: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+  }
+
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error(`Smoke profile ${profile} must be a JSON object`);
+  }
+
+  return {
+    profile,
+    profilePath,
+    defaults: normalizeSmokeProfileDefaults(parsed, profile),
+  };
+}
+
+export function applySmokeProfileDefaults(options, profileDefaults, context = {}) {
+  const blockedKeys = new Set(context.blockedKeys ?? []);
+  const applied = [];
+  for (const [key, value] of Object.entries(profileDefaults ?? {})) {
+    if (value === undefined || blockedKeys.has(key)) {
+      continue;
+    }
+
+    if (key === "imageSpecs" || key === "stepSpecs") {
+      if ((options[key] ?? []).length > 0) {
+        continue;
+      }
+      options[key] = value.map((entry) => ({ ...entry }));
+      applied.push(key);
+      continue;
+    }
+
+    options[key] = value;
+    if (key === "loadScript") {
+      options.loadScriptExplicit = true;
+    }
+    if (key === "homePath") {
+      options.homePathExplicit = true;
+    }
+    applied.push(key);
+  }
+
+  return applied;
+}
+
 export function sanitizeRuntimeId(value) {
   const sanitized = String(value ?? "")
     .trim()
@@ -111,6 +224,50 @@ export function parseTimeoutBudget(value) {
   return budget;
 }
 
+function normalizeSmokeProfileDefaults(profile, profileName) {
+  const defaults = {};
+  for (const [key, value] of Object.entries(profile)) {
+    if (key === "description") {
+      continue;
+    }
+    if (key === "timeoutBudget") {
+      if (!value || typeof value !== "object" || Array.isArray(value)) {
+        throw new Error(
+          `Smoke profile ${profileName} timeoutBudget must be a JSON object`,
+        );
+      }
+      parseTimeoutBudget(JSON.stringify(value));
+      defaults.timeoutBudgetJson = JSON.stringify(value);
+      continue;
+    }
+    if (!smokeProfileDefaultKeys.has(key)) {
+      throw new Error(`Smoke profile ${profileName} has unknown key: ${key}`);
+    }
+    if (key === "imageSpecs" || key === "stepSpecs") {
+      defaults[key] = validateProfileObjectArray(value, key, profileName);
+      continue;
+    }
+    defaults[key] = value;
+  }
+
+  return defaults;
+}
+
+function validateProfileObjectArray(value, key, profileName) {
+  if (!Array.isArray(value)) {
+    throw new Error(`Smoke profile ${profileName} ${key} must be a JSON array`);
+  }
+
+  return value.map((entry, index) => {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+      throw new Error(
+        `Smoke profile ${profileName} ${key}[${index}] must be a JSON object`,
+      );
+    }
+    return { ...entry };
+  });
+}
+
 export function isPathInside(parent, candidate) {
   const normalizedParent = comparablePath(path.resolve(parent));
   const normalizedCandidate = comparablePath(path.resolve(candidate));
@@ -201,6 +358,38 @@ export function mcpPharoTonelLoadScriptSource(repoDir) {
     "  load: 'Core'.",
     "",
   ].join("\n");
+}
+
+export function dependencyCacheSourceImagePreparationScriptSource({ statusPath }) {
+  const statusFile = path
+    .resolve(requiredString(statusPath, "source dependency-cache statusPath"))
+    .replaceAll("\\", "/");
+  return `"Prepare a temporary PLexus smoke source image for the dependency repository cache contract."
+
+| plexusStatusFile plexusStatusWriter plexusDependencyProbePath |
+
+plexusStatusFile := ${smalltalkString(statusFile)} asFileReference.
+plexusStatusFile exists ifTrue: [ plexusStatusFile delete ].
+plexusStatusWriter := [ :status :message |
+  plexusStatusFile parent ensureCreateDirectory.
+  plexusStatusFile writeStreamDo: [ :stream |
+    stream nextPutAll: 'status='; nextPutAll: status; cr.
+    stream nextPutAll: 'preparedAt='; nextPutAll: DateAndTime now asString; cr.
+    message ifNotNil: [
+      stream nextPutAll: 'message='; nextPutAll: message asString; cr ] ] ].
+[
+  plexusDependencyProbePath := (plexusStatusFile parent / 'iceberg') pathString.
+  Iceberg enableMetacelloIntegration: true.
+  IceLibgitRepository
+    shareRepositoriesBetweenImages: true;
+    sharedRepositoriesLocationString: plexusDependencyProbePath.
+  plexusStatusWriter value: 'prepared' value: nil
+] on: Error do: [ :error |
+  plexusStatusWriter value: 'failed' value: error description.
+  error pass ].
+
+Smalltalk snapshot: true andQuit: true.
+`;
 }
 
 export function usesDefaultSmokeLoadScript({

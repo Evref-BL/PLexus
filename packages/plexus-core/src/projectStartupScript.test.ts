@@ -142,6 +142,7 @@ describe("project startup scripts", () => {
     expect(source).toContain(
       "PLexus dependency repository cache setup failed:",
     );
+    expect(source).toContain("IceLibgitRepository");
     expect(source).toContain("shareRepositoriesBetweenImages: true;");
     expect(source).toContain(
       "sharedRepositoriesLocationString: plexusDependencyRepositoryCachePath",

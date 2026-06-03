@@ -26,3 +26,5 @@ pharo-local/
 *.log
 npm-debug.log*
 
+# Local smoke runner profiles
+scripts/smoke-profiles/*.local.json

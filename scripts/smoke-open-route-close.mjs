@@ -11,9 +11,10 @@ import {
   loadPharoLauncherMcpConfig,
   loadProjectState,
   PlexusProjectLifecycle,
-} from "@evref-bl/plexus-core";
-import { PlexusGateway } from "@evref-bl/plexus-gateway";
+} from "../packages/plexus-core/dist/index.js";
+import { PlexusGateway } from "../packages/plexus-gateway/dist/index.js";
 import {
+  applySmokeProfileDefaults,
   assertKeepOpenShowcaseBoundary,
   assertPharoLauncherMcpDiscoveryMetadata,
   assertFreshPharoLauncherMcpHealth,
@@ -23,8 +24,10 @@ import {
   buildLiveSmokeRunPlan,
   collectLauncherLogFiles,
   defaultSmokeImageSpec,
+  dependencyCacheSourceImagePreparationScriptSource,
   formatToolFailure,
   isPathInside,
+  loadSmokeProfile,
   mcpPharoTonelLoadScriptSource,
   resolveRequestedSourceTemplate,
   resolvePharoLauncherMcpRepoDirOption,
@@ -53,6 +56,12 @@ function parseArgs(argv) {
     keepTemp: false,
     loadScriptExplicit: false,
   };
+  const explicitCliKeys = new Set();
+  const markCli = (...keys) => {
+    for (const key of keys) {
+      explicitCliKeys.add(key);
+    }
+  };
 
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
@@ -69,129 +78,184 @@ function parseArgs(argv) {
       case "-h":
         options.help = true;
         break;
+      case "--profile":
+        options.profile = next();
+        markCli("profile");
+        break;
       case "--copyFromImageName":
         options.copyFromImageName = next();
+        markCli("copyFromImageName");
         break;
       case "--imageName":
         options.imageName = next();
+        markCli("imageName");
         break;
       case "--imageSpecJson":
         options.imageSpecs.push(jsonObjectFromString(next(), "--imageSpecJson"));
+        markCli("imageSpecs");
         break;
       case "--projectRoot":
         options.projectRoot = next();
+        markCli("projectRoot");
         break;
       case "--approvalProfile":
         options.approvalProfile = next();
+        markCli("approvalProfile");
         break;
       case "--launcherProfile":
         options.launcherProfile = next();
+        markCli("launcherProfile");
         break;
       case "--launcherProfileRoot":
         options.launcherProfileRoot = next();
+        markCli("launcherProfileRoot");
         break;
       case "--pharoLauncherMcpRepoDir":
         options.pharoLauncherMcpRepoDir = next();
+        markCli("pharoLauncherMcpRepoDir");
         break;
       case "--mcpPharoRepoDir":
         options.mcpPharoRepoDir = next();
+        markCli("mcpPharoRepoDir");
         break;
       case "--artifactRoot":
         options.artifactRoot = next();
+        markCli("artifactRoot");
         break;
       case "--runId":
         options.runId = next();
+        markCli("runId");
         break;
       case "--timeoutBudgetJson":
         options.timeoutBudgetJson = next();
+        markCli("timeoutBudgetJson");
         break;
       case "--requiredWorkspacePrefix":
         options.requiredWorkspacePrefix = next();
+        markCli("requiredWorkspacePrefix");
         break;
       case "--requiredTargetPrefix":
         options.requiredTargetPrefix = next();
+        markCli("requiredTargetPrefix");
         break;
       case "--stateRoot":
         options.stateRoot = next();
+        markCli("stateRoot");
         break;
       case "--fixtureRoot":
         options.fixtureRoot = next();
+        markCli("fixtureRoot");
         break;
       case "--homePath":
         options.homePath = next();
         options.homePathExplicit = true;
+        markCli("homePath", "homePathExplicit");
         break;
       case "--homeImageCacheNetworkPolicy":
         options.homeImageCacheNetworkPolicy = next();
+        markCli("homeImageCacheNetworkPolicy");
         break;
       case "--workspaceId":
         options.workspaceId = next();
+        markCli("workspaceId");
         break;
       case "--targetId":
         options.targetId = next();
+        markCli("targetId");
         break;
       case "--projectId":
         options.projectId = next();
+        markCli("projectId");
         break;
       case "--imageId":
         options.imageId = next();
+        markCli("imageId");
         break;
       case "--port":
         options.port = Number(next());
+        markCli("port");
         break;
       case "--loadScript":
         options.loadScript = next();
         options.loadScriptExplicit = true;
+        markCli("loadScript", "loadScriptExplicit");
         break;
       case "--toolName":
         options.toolName = next();
+        markCli("toolName");
         break;
       case "--toolArgumentsJson":
         options.toolArgumentsJson = next();
+        markCli("toolArgumentsJson");
         break;
       case "--expectedText":
         options.expectedText = next();
+        markCli("expectedText");
         break;
       case "--keepOpen":
       case "--showcase":
         options.keepOpen = true;
+        markCli("keepOpen");
         break;
       case "--stepJson":
         options.stepSpecs.push(jsonObjectFromString(next(), "--stepJson"));
+        markCli("stepSpecs");
         break;
       case "--scenario":
         options.scenario = next();
+        markCli("scenario");
         break;
       case "--createSourceFromTemplate":
         options.createSourceFromTemplate = true;
+        markCli("createSourceFromTemplate");
         break;
       case "--sourceImageName":
         options.sourceImageName = next();
+        markCli("sourceImageName");
         break;
       case "--sourceTemplateName":
         options.sourceTemplateName = next();
+        markCli("sourceTemplateName");
         break;
       case "--sourceTemplateCategory":
         options.sourceTemplateCategory = next();
+        markCli("sourceTemplateCategory");
         break;
       case "--pollIntervalMs":
         options.pollIntervalMs = Number(next());
+        markCli("pollIntervalMs");
         break;
       case "--processTimeoutMs":
         options.processTimeoutMs = Number(next());
+        markCli("processTimeoutMs");
         break;
       case "--healthTimeoutMs":
         options.healthTimeoutMs = Number(next());
+        markCli("healthTimeoutMs");
         break;
       case "--keepTemp":
         options.keepTemp = true;
+        markCli("keepTemp");
         break;
       case "--allowRemoteMcpFallback":
         options.allowRemoteMcpFallback = true;
+        markCli("allowRemoteMcpFallback");
         break;
       default:
         throw new Error(`Unknown argument: ${arg}`);
     }
+  }
+
+  options.profile ??= process.env.PLEXUS_SMOKE_PROFILE;
+  if (options.profile) {
+    const smokeProfile = loadSmokeProfile(options.profile, { repoRoot });
+    options.profile = smokeProfile.profile;
+    options.profilePath = smokeProfile.profilePath;
+    options.profileDefaultsApplied = applySmokeProfileDefaults(
+      options,
+      smokeProfile.defaults,
+      { blockedKeys: explicitCliKeys },
+    );
   }
 
   options.copyFromImageName ??= process.env.PLEXUS_SMOKE_COPY_FROM_IMAGE_NAME;
@@ -280,6 +344,7 @@ function usage() {
     "  One image source via --copyFromImageName, --imageName, --imageSpecJson, --createSourceFromTemplate, or matching PLEXUS_SMOKE_* env vars",
     "",
     "Optional:",
+    "  --profile <name|path>       Load defaults from scripts/smoke-profiles/<name>.json or an explicit JSON path",
     "  --approvalProfile <id>       Required approval/profile id for live execution",
     "  --launcherProfile <id>       pharo-launcher-mcp profile id; defaults to project-owned profile",
     "  --launcherProfileRoot <path> Optional isolated pharo-launcher-mcp profile root; defaults to the project-owned root",
@@ -308,7 +373,7 @@ function usage() {
     "  --keepOpen, --showcase        Leave scoped disposable images open and retain route-control registration",
     "  --stepJson <json>             Adds a routed tool step; use forEachImage=true to fan out",
     "  --scenario <name>             basic or project-edit-export",
-    "  --createSourceFromTemplate    Create a temporary source image, then copy smoke images from it",
+    "  --createSourceFromTemplate    Create and prepare a temporary source image, then copy smoke images from it",
     "  --sourceImageName <name>       Overrides the temporary source image name",
     "  --sourceTemplateName <name>    Template used with --createSourceFromTemplate",
     "  --sourceTemplateCategory <cat> Template category used with --createSourceFromTemplate",
@@ -628,6 +693,9 @@ function initializeArtifacts(options) {
   const manifestPath = path.join(options.artifactDirectory, "manifest.json");
   const manifest = {
     runId: options.runId,
+    profile: options.profile,
+    profilePath: options.profilePath,
+    profileDefaultsApplied: options.profileDefaultsApplied,
     approvalProfile: options.approvalProfile,
     launcherProfile: options.launcherProfile,
     launcherProfileRoot: options.launcherProfileRoot,
@@ -1770,6 +1838,70 @@ async function prepareTemplateSourceImage(client, options) {
   }
 }
 
+async function prepareCreatedSourceImageDependencyCache(client, options) {
+  if (!options.createdSourceImageName) {
+    return;
+  }
+
+  const scriptPath = path.join(
+    options.artifactDirectory,
+    "prepare-source-dependency-cache.st",
+  );
+  const statusPath = path.join(
+    options.artifactDirectory,
+    "source-dependency-cache.properties",
+  );
+  fs.writeFileSync(
+    scriptPath,
+    dependencyCacheSourceImagePreparationScriptSource({ statusPath }),
+    "utf8",
+  );
+  recordEvent(options, "source-dependency-cache-script-written", {
+    imageName: options.createdSourceImageName,
+    scriptPath,
+    statusPath,
+  });
+  textResult("source dependency cache script", scriptPath);
+
+  const launchResult = await callLauncherTool(
+    client,
+    "pharo_launcher_image_launch",
+    {
+      imageName: options.createdSourceImageName,
+      detached: false,
+      displayMode: "headless",
+      script: scriptPath,
+    },
+  );
+  snapshotJsonArtifact(
+    options,
+    "source-dependency-cache-launch-result.json",
+    launchResult,
+  );
+  launcherData(launchResult);
+  if (!fs.existsSync(statusPath)) {
+    throw new Error(
+      `Source dependency-cache preparation did not write status: ${statusPath}`,
+    );
+  }
+  const statusText = fs.readFileSync(statusPath, "utf8");
+  if (!statusText.includes("status=prepared")) {
+    throw new Error(
+      `Source dependency-cache preparation did not finish as prepared: ${statusText}`,
+    );
+  }
+  snapshotFileArtifact(
+    options,
+    statusPath,
+    "source-dependency-cache.properties",
+  );
+  recordEvent(options, "source-dependency-cache-prepared", {
+    imageName: options.createdSourceImageName,
+    statusPath,
+  });
+  textResult("source dependency cache", "prepared");
+}
+
 async function prepareImages(client, options) {
   for (const image of options.images) {
     if (image.copyFromImageName) {
@@ -1968,6 +2100,7 @@ async function main() {
       await prepareTemplateSourceImage(client, options);
     });
     await withPhaseTimeout(options, "imagePrepare", async () => {
+      await prepareCreatedSourceImageDependencyCache(client, options);
       await prepareImages(client, options);
     });
     snapshotJsonArtifact(
@@ -2160,6 +2293,28 @@ async function main() {
           });
         }
       }
+
+      await cleanupStep("source process cleanup", async () => {
+        if (options.createdSourceImageName) {
+          const stillRunning = await processForImage(
+            client,
+            options.createdSourceImageName,
+          );
+          if (stillRunning) {
+            console.error(
+              `cleanup: killing source image ${options.createdSourceImageName} with pid ${stillRunning.pid}`,
+            );
+            recordEvent(options, "source-process-cleanup", {
+              imageName: options.createdSourceImageName,
+              pid: stillRunning.pid,
+            });
+            await callLauncherTool(client, "pharo_launcher_process_kill", {
+              imageName: options.createdSourceImageName,
+              confirm: true,
+            });
+          }
+        }
+      });
 
       for (const image of options.images ?? []) {
         await cleanupStep(`copied image delete ${image.id}`, async () => {

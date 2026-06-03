@@ -491,7 +491,7 @@ Smalltalk globals
   put: plexusDependencyRepositoryNetworkPolicy.
 [
   Iceberg enableMetacelloIntegration: true.
-  IceRepository
+  IceLibgitRepository
     shareRepositoriesBetweenImages: true;
     sharedRepositoriesLocationString: plexusDependencyRepositoryCachePath
 ]

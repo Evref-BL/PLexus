@@ -4,17 +4,20 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import {
+  applySmokeProfileDefaults,
   assertKeepOpenShowcaseBoundary,
   assertSmokeLoadScriptsReady,
   buildKeepOpenCleanupContext,
   collectLauncherLogFiles,
   defaultSmokeImageSpec,
+  dependencyCacheSourceImagePreparationScriptSource,
   assertPharoLauncherMcpDiscoveryMetadata,
   assertFreshPharoLauncherMcpHealth,
   buildLiveSmokeRunPlan,
   defaultRunId,
   formatToolFailure,
   isPathInside,
+  loadSmokeProfile,
   mcpPharoTonelLoadScriptSource,
   parseTimeoutBudget,
   resolveRequestedSourceTemplate,
@@ -263,6 +266,88 @@ test("records Git transport for explicit remote MCP fallback", () => {
   }
 });
 
+test("loads named smoke profile defaults from scripts/smoke-profiles", () => {
+  const tempRepoRoot = fs.mkdtempSync(path.join(os.tmpdir(), "plexus-smoke-profile-"));
+  const profileDirectory = path.join(tempRepoRoot, "scripts", "smoke-profiles");
+  fs.mkdirSync(profileDirectory, { recursive: true });
+  fs.writeFileSync(
+    path.join(profileDirectory, "pharo13-template-local.json"),
+    JSON.stringify({
+      description: "Profile fixture",
+      createSourceFromTemplate: true,
+      sourceTemplateName: "Pharo 13.0 - 64bit (stable)",
+      timeoutBudget: {
+        openMs: 600_000,
+        routingMs: 180_000,
+      },
+    }),
+    "utf8",
+  );
+
+  try {
+    const profile = loadSmokeProfile("pharo13-template-local", {
+      repoRoot: tempRepoRoot,
+    });
+
+    assert.equal(
+      profile.profilePath,
+      path.join(profileDirectory, "pharo13-template-local.json"),
+    );
+    assert.equal(profile.defaults.createSourceFromTemplate, true);
+    assert.equal(
+      profile.defaults.sourceTemplateName,
+      "Pharo 13.0 - 64bit (stable)",
+    );
+    assert.equal(
+      profile.defaults.timeoutBudgetJson,
+      JSON.stringify({
+        openMs: 600_000,
+        routingMs: 180_000,
+      }),
+    );
+  } finally {
+    fs.rmSync(tempRepoRoot, { recursive: true, force: true });
+  }
+});
+
+test("applies smoke profile defaults while preserving explicit CLI values", () => {
+  const options = {
+    projectId: "cli-project",
+    imageSpecs: [],
+  };
+  const applied = applySmokeProfileDefaults(
+    options,
+    {
+      projectId: "profile-project",
+      createSourceFromTemplate: true,
+      sourceTemplateName: "Pharo 13.0 - 64bit (stable)",
+      imageSpecs: [
+        {
+          id: "dev",
+          copyFromImageName: "PreparedSource",
+        },
+      ],
+    },
+    {
+      blockedKeys: new Set(["projectId"]),
+    },
+  );
+
+  assert.deepEqual(applied, [
+    "createSourceFromTemplate",
+    "sourceTemplateName",
+    "imageSpecs",
+  ]);
+  assert.equal(options.projectId, "cli-project");
+  assert.equal(options.createSourceFromTemplate, true);
+  assert.deepEqual(options.imageSpecs, [
+    {
+      id: "dev",
+      copyFromImageName: "PreparedSource",
+    },
+  ]);
+});
+
 test("renders image Git transport into smoke project config", () => {
   const config = smokeProjectConfig({
     projectId: "smoke-transport",
@@ -399,6 +484,18 @@ test("renders local MCP-Pharo Tonel load script source", () => {
 
   assert.match(source, new RegExp(`repository: '${expectedRepository}'`));
   assert.match(source, /load: 'Core'\./);
+});
+
+test("renders source image dependency-cache preparation script", () => {
+  const source = dependencyCacheSourceImagePreparationScriptSource({
+    statusPath: "/tmp/plexus-smoke/source-cache.properties",
+  });
+
+  assert.match(source, /Iceberg enableMetacelloIntegration: true\./);
+  assert.match(source, /IceLibgitRepository\s+shareRepositoriesBetweenImages: true;/);
+  assert.match(source, /sharedRepositoriesLocationString: plexusDependencyProbePath/);
+  assert.match(source, /plexusStatusWriter value: 'prepared' value: nil/);
+  assert.match(source, /Smalltalk snapshot: true andQuit: true\./);
 });
 
 test("only replaces implicit smoke load scripts with generated local MCP-Pharo loader", () => {
