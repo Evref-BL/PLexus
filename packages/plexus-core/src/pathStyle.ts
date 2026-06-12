@@ -40,3 +40,37 @@ export function basenamePathLike(value: string): string {
   const pathApi = pathApiForPath(value);
   return pathApi.basename(pathApi.resolve(value));
 }
+
+export function sanitizePathSegment(value: string, fallback: string): string {
+  let result = "";
+  let previousWasSeparator = false;
+
+  for (const char of value) {
+    const allowed =
+      (char >= "A" && char <= "Z") ||
+      (char >= "a" && char <= "z") ||
+      (char >= "0" && char <= "9") ||
+      char === "." ||
+      char === "_" ||
+      char === "-";
+    if (allowed) {
+      result += char;
+      previousWasSeparator = false;
+      continue;
+    }
+
+    if (!previousWasSeparator) {
+      result += "-";
+      previousWasSeparator = true;
+    }
+  }
+
+  while (result.startsWith("-")) {
+    result = result.slice(1);
+  }
+  while (result.endsWith("-")) {
+    result = result.slice(0, -1);
+  }
+
+  return result || fallback;
+}

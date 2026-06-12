@@ -19,6 +19,7 @@ import {
   basenamePathLike,
   dirnamePathLike,
   joinPathLike,
+  sanitizePathSegment,
 } from "./pathStyle.js";
 
 export const plexusStateDirectoryName = ".plexus";
@@ -382,8 +383,7 @@ export function defaultPlexusStateRoot(projectRoot: string): string {
 }
 
 export function sanitizeRuntimeId(value: string): string {
-  const sanitized = value.trim().replace(/[^A-Za-z0-9._-]+/g, "-");
-  return sanitized.replace(/^-+|-+$/g, "") || defaultWorkspaceIdValue;
+  return sanitizePathSegment(value.trim(), defaultWorkspaceIdValue);
 }
 
 export function defaultWorkspaceId(projectRoot: string): string {
