@@ -49,6 +49,94 @@ interface ParsedCommand {
   deleteLauncherImages?: boolean;
 }
 
+type ParsedDisplayMode = NonNullable<ParsedCommand["displayMode"]>;
+type ParsedRepositoryWorkspaceCleanupPolicy = NonNullable<
+  ParsedCommand["repositoryWorkspaceCleanupPolicy"]
+>;
+
+function applyFlagOption(parsed: ParsedCommand, arg: string): boolean {
+  switch (arg) {
+    case "--confirm":
+      parsed.confirm = true;
+      return true;
+    case "--delete-state":
+      parsed.deleteStateFile = true;
+      return true;
+    case "--keep-launcher-images":
+      parsed.deleteLauncherImages = false;
+      return true;
+    default:
+      return false;
+  }
+}
+
+function requiredOptionValue(rest: string[], index: number): string {
+  const arg = rest[index];
+  const value = rest[index + 1];
+  if (!value) {
+    throw new Error(`${arg} requires a value`);
+  }
+
+  return value;
+}
+
+function parseDisplayMode(value: string): ParsedDisplayMode {
+  if (value !== "headless" && value !== "interactive") {
+    throw new Error("--display-mode must be headless or interactive");
+  }
+
+  return value;
+}
+
+function parseRepositoryWorkspaceCleanupPolicy(
+  value: string,
+): ParsedRepositoryWorkspaceCleanupPolicy {
+  if (
+    value !== "preserve" &&
+    value !== "archive" &&
+    value !== "delete-disposable"
+  ) {
+    throw new Error(
+      "--repository-workspace-cleanup-policy must be preserve, archive, or delete-disposable",
+    );
+  }
+
+  return value;
+}
+
+function applyValueOption(
+  parsed: ParsedCommand,
+  arg: string,
+  value: string,
+): void {
+  switch (arg) {
+    case "--project-path":
+      parsed.projectPath = value;
+      return;
+    case "--state-root":
+      parsed.stateRoot = value;
+      return;
+    case "--workspace-id":
+      parsed.workspaceId = value;
+      return;
+    case "--target-id":
+      parsed.targetId = value;
+      return;
+    case "--display-mode":
+      parsed.displayMode = parseDisplayMode(value);
+      return;
+    case "--repository-workspace-cleanup-policy":
+      parsed.repositoryWorkspaceCleanupPolicy =
+        parseRepositoryWorkspaceCleanupPolicy(value);
+      return;
+    case "--repository-workspace-archive-root":
+      parsed.repositoryWorkspaceArchiveRoot = value;
+      return;
+    default:
+      throw new Error(`Unknown option: ${arg}`);
+  }
+}
+
 function parseCommand(argv: string[]): ParsedCommand {
   const [scope, command] = argv;
   const projectCommandHasPath = scope === "project";
@@ -58,69 +146,209 @@ function parseCommand(argv: string[]): ParsedCommand {
 
   for (let index = 0; index < rest.length; index += 1) {
     const arg = rest[index];
-    switch (arg) {
-      case "--confirm":
-        parsed.confirm = true;
+    if (applyFlagOption(parsed, arg)) {
         continue;
-      case "--delete-state":
-        parsed.deleteStateFile = true;
-        continue;
-      case "--keep-launcher-images":
-        parsed.deleteLauncherImages = false;
-        continue;
-      default:
-        break;
     }
 
-    const value = rest[index + 1];
-    if (!value) {
-      throw new Error(`${arg} requires a value`);
-    }
-
-    switch (arg) {
-      case "--project-path":
-      case "--state-root":
-        if (arg === "--project-path") {
-          parsed.projectPath = value;
-        } else {
-          parsed.stateRoot = value;
-        }
-        break;
-      case "--workspace-id":
-        parsed.workspaceId = value;
-        break;
-      case "--target-id":
-        parsed.targetId = value;
-        break;
-      case "--display-mode":
-        if (value !== "headless" && value !== "interactive") {
-          throw new Error("--display-mode must be headless or interactive");
-        }
-        parsed.displayMode = value;
-        break;
-      case "--repository-workspace-cleanup-policy":
-        if (
-          value !== "preserve" &&
-          value !== "archive" &&
-          value !== "delete-disposable"
-        ) {
-          throw new Error(
-            "--repository-workspace-cleanup-policy must be preserve, archive, or delete-disposable",
-          );
-        }
-        parsed.repositoryWorkspaceCleanupPolicy = value;
-        break;
-      case "--repository-workspace-archive-root":
-        parsed.repositoryWorkspaceArchiveRoot = value;
-        break;
-      default:
-        throw new Error(`Unknown option: ${arg}`);
-    }
-
+    applyValueOption(parsed, arg, requiredOptionValue(rest, index));
     index += 1;
   }
 
   return parsed;
+}
+
+type ProjectLifecycleCommandName = "open" | "close" | "cleanup" | "status";
+
+interface ProjectLifecycleCliCommand extends ParsedCommand {
+  scope: "project";
+  command: ProjectLifecycleCommandName;
+  projectPath: string;
+}
+
+function projectLifecycleCommand(
+  parsed: ParsedCommand,
+): ProjectLifecycleCliCommand | undefined {
+  if (parsed.scope !== "project" || !parsed.projectPath) {
+    return undefined;
+  }
+
+  switch (parsed.command) {
+    case "open":
+    case "close":
+    case "cleanup":
+    case "status":
+      return parsed as ProjectLifecycleCliCommand;
+    default:
+      return undefined;
+  }
+}
+
+function repositoryWorkspaceOptions(parsed: ParsedCommand): {
+  repositoryWorkspaceCleanupPolicy?: ParsedRepositoryWorkspaceCleanupPolicy;
+  repositoryWorkspaceArchiveRoot?: string;
+} {
+  return {
+    ...(parsed.repositoryWorkspaceCleanupPolicy
+      ? {
+          repositoryWorkspaceCleanupPolicy:
+            parsed.repositoryWorkspaceCleanupPolicy,
+        }
+      : {}),
+    ...(parsed.repositoryWorkspaceArchiveRoot
+      ? { repositoryWorkspaceArchiveRoot: parsed.repositoryWorkspaceArchiveRoot }
+      : {}),
+  };
+}
+
+function printJson(value: unknown, error = false): void {
+  const output = JSON.stringify(value, null, 2);
+  if (error) {
+    console.error(output);
+    return;
+  }
+
+  console.log(output);
+}
+
+async function runOpenCommand(
+  parsed: ProjectLifecycleCliCommand,
+  stateRoot: string | undefined,
+  workspaceId: string | undefined,
+): Promise<number> {
+  const lifecycle = new PlexusProjectLifecycle();
+  const lifecycleResult = await lifecycle.open({
+    projectPath: parsed.projectPath,
+    stateRoot,
+    workspaceId,
+    targetId: parsed.targetId ?? process.env.PLEXUS_TARGET_ID,
+    displayMode: parsed.displayMode,
+  });
+  if (!lifecycleResult.ok || !lifecycleResult.data) {
+    printJson(lifecycleResult, true);
+    return 1;
+  }
+
+  const result = lifecycleResult.data;
+  printJson({
+    ok: result.ok,
+    statePath: result.statePath,
+    gateway: result.state.gateway,
+    images: result.state.images,
+  });
+  return 0;
+}
+
+async function runStatusCommand(
+  parsed: ProjectLifecycleCliCommand,
+  stateRoot: string | undefined,
+  workspaceId: string | undefined,
+): Promise<number> {
+  const lifecycle = new PlexusProjectLifecycle();
+  const status = await lifecycle.status({
+    projectPath: parsed.projectPath,
+    stateRoot,
+    workspaceId,
+  });
+  printJson(status);
+  return status.ok ? 0 : 1;
+}
+
+async function runCleanupCommand(
+  parsed: ProjectLifecycleCliCommand,
+  stateRoot: string | undefined,
+  workspaceId: string | undefined,
+): Promise<number> {
+  const lifecycle = new PlexusProjectLifecycle();
+  const cleanup = await lifecycle.cleanup({
+    projectPath: parsed.projectPath,
+    stateRoot,
+    workspaceId,
+    confirm: parsed.confirm,
+    deleteStateFile: parsed.deleteStateFile,
+    deleteLauncherImages: parsed.deleteLauncherImages,
+    ...repositoryWorkspaceOptions(parsed),
+  });
+  printJson(cleanup);
+  return cleanup.ok ? 0 : 1;
+}
+
+async function runCloseCommand(
+  parsed: ProjectLifecycleCliCommand,
+  stateRoot: string | undefined,
+  workspaceId: string | undefined,
+): Promise<number> {
+  const lifecycle = new PlexusProjectLifecycle();
+  const lifecycleResult = await lifecycle.close({
+    projectPath: parsed.projectPath,
+    stateRoot,
+    workspaceId,
+    ...repositoryWorkspaceOptions(parsed),
+  });
+  if (!lifecycleResult.ok || !lifecycleResult.data) {
+    printJson(lifecycleResult, true);
+    return 1;
+  }
+
+  const result = lifecycleResult.data;
+  printJson({
+    ok: result.ok,
+    statePath: result.statePath,
+    gateway: result.state?.gateway,
+    images: result.state?.images ?? [],
+    stoppedImages: result.stoppedImages,
+    repositoryWorkspaceCleanups: result.repositoryWorkspaceCleanups,
+  });
+  return 0;
+}
+
+async function runProjectLifecycleCommand(
+  parsed: ProjectLifecycleCliCommand,
+  stateRoot: string | undefined,
+  workspaceId: string | undefined,
+): Promise<number> {
+  switch (parsed.command) {
+    case "open":
+      return runOpenCommand(parsed, stateRoot, workspaceId);
+    case "status":
+      return runStatusCommand(parsed, stateRoot, workspaceId);
+    case "cleanup":
+      return runCleanupCommand(parsed, stateRoot, workspaceId);
+    case "close":
+      return runCloseCommand(parsed, stateRoot, workspaceId);
+  }
+}
+
+function handleProjectLifecycleError(error: unknown): number {
+  if (error instanceof ProjectOpenError) {
+    printJson(
+      {
+        ok: false,
+        statePath: error.result.statePath,
+        failures: error.result.failures,
+        images: error.result.state.images,
+      },
+      true,
+    );
+    return 1;
+  }
+
+  if (error instanceof ProjectCloseError) {
+    printJson(
+      {
+        ok: false,
+        statePath: error.result.statePath,
+        failures: error.result.failures,
+        images: error.result.state?.images ?? [],
+        stoppedImages: error.result.stoppedImages,
+        repositoryWorkspaceCleanups: error.result.repositoryWorkspaceCleanups,
+      },
+      true,
+    );
+    return 1;
+  }
+
+  console.error(error instanceof Error ? error.message : String(error));
+  return 1;
 }
 
 async function main(argv: string[]): Promise<number> {
@@ -160,165 +388,20 @@ async function main(argv: string[]): Promise<number> {
     return 0;
   }
 
-  if (
-    parsed.scope !== "project" ||
-    (parsed.command !== "open" &&
-      parsed.command !== "close" &&
-      parsed.command !== "cleanup" &&
-      parsed.command !== "status") ||
-    !parsed.projectPath
-  ) {
+  const lifecycleCommand = projectLifecycleCommand(parsed);
+  if (!lifecycleCommand) {
     console.error(usage());
     return 2;
   }
 
   try {
-    if (parsed.command === "open") {
-      const lifecycle = new PlexusProjectLifecycle();
-      const lifecycleResult = await lifecycle.open({
-        projectPath: parsed.projectPath,
-        stateRoot,
-        workspaceId,
-        targetId: parsed.targetId ?? process.env.PLEXUS_TARGET_ID,
-        displayMode: parsed.displayMode,
-      });
-      if (!lifecycleResult.ok || !lifecycleResult.data) {
-        console.error(JSON.stringify(lifecycleResult, null, 2));
-        return 1;
-      }
-
-      const result = lifecycleResult.data;
-
-      console.log(
-        JSON.stringify(
-          {
-            ok: result.ok,
-            statePath: result.statePath,
-            gateway: result.state.gateway,
-            images: result.state.images,
-          },
-          null,
-          2,
-        ),
-      );
-      return 0;
-    }
-
-    if (parsed.command === "status") {
-      const lifecycle = new PlexusProjectLifecycle();
-      const status = await lifecycle.status({
-        projectPath: parsed.projectPath,
-        stateRoot,
-        workspaceId,
-      });
-      console.log(JSON.stringify(status, null, 2));
-      return status.ok ? 0 : 1;
-    }
-
-    if (parsed.command === "cleanup") {
-      const lifecycle = new PlexusProjectLifecycle();
-      const cleanup = await lifecycle.cleanup({
-        projectPath: parsed.projectPath,
-        stateRoot,
-        workspaceId,
-        confirm: parsed.confirm,
-        deleteStateFile: parsed.deleteStateFile,
-        deleteLauncherImages: parsed.deleteLauncherImages,
-        ...(parsed.repositoryWorkspaceCleanupPolicy
-          ? {
-              repositoryWorkspaceCleanupPolicy:
-                parsed.repositoryWorkspaceCleanupPolicy,
-            }
-          : {}),
-        ...(parsed.repositoryWorkspaceArchiveRoot
-          ? {
-              repositoryWorkspaceArchiveRoot:
-                parsed.repositoryWorkspaceArchiveRoot,
-            }
-          : {}),
-      });
-      console.log(JSON.stringify(cleanup, null, 2));
-      return cleanup.ok ? 0 : 1;
-    }
-
-    const lifecycle = new PlexusProjectLifecycle();
-    const lifecycleResult = await lifecycle.close({
-      projectPath: parsed.projectPath,
+    return await runProjectLifecycleCommand(
+      lifecycleCommand,
       stateRoot,
       workspaceId,
-      ...(parsed.repositoryWorkspaceCleanupPolicy
-        ? {
-            repositoryWorkspaceCleanupPolicy:
-              parsed.repositoryWorkspaceCleanupPolicy,
-          }
-        : {}),
-      ...(parsed.repositoryWorkspaceArchiveRoot
-        ? {
-            repositoryWorkspaceArchiveRoot:
-              parsed.repositoryWorkspaceArchiveRoot,
-          }
-        : {}),
-    });
-    if (!lifecycleResult.ok || !lifecycleResult.data) {
-      console.error(JSON.stringify(lifecycleResult, null, 2));
-      return 1;
-    }
-
-    const result = lifecycleResult.data;
-
-    console.log(
-      JSON.stringify(
-        {
-          ok: result.ok,
-          statePath: result.statePath,
-          gateway: result.state?.gateway,
-          images: result.state?.images ?? [],
-          stoppedImages: result.stoppedImages,
-          repositoryWorkspaceCleanups: result.repositoryWorkspaceCleanups,
-        },
-        null,
-        2,
-      ),
     );
-    return 0;
   } catch (error) {
-    if (error instanceof ProjectOpenError) {
-      console.error(
-        JSON.stringify(
-          {
-            ok: false,
-            statePath: error.result.statePath,
-            failures: error.result.failures,
-            images: error.result.state.images,
-          },
-          null,
-          2,
-        ),
-      );
-      return 1;
-    }
-
-    if (error instanceof ProjectCloseError) {
-      console.error(
-        JSON.stringify(
-          {
-            ok: false,
-            statePath: error.result.statePath,
-            failures: error.result.failures,
-            images: error.result.state?.images ?? [],
-            stoppedImages: error.result.stoppedImages,
-            repositoryWorkspaceCleanups:
-              error.result.repositoryWorkspaceCleanups,
-          },
-          null,
-          2,
-        ),
-      );
-      return 1;
-    }
-
-    console.error(error instanceof Error ? error.message : String(error));
-    return 1;
+    return handleProjectLifecycleError(error);
   }
 }
 

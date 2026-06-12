@@ -756,6 +756,68 @@ function parseKanban(
   };
 }
 
+function parseHomeImageCache(
+  value: unknown,
+  issues: string[],
+): ProjectHomeImageCacheConfig {
+  const fallback: ProjectHomeImageCacheConfig = {
+    enabled: true,
+    networkPolicy: "online",
+  };
+  if (value === undefined) {
+    return fallback;
+  }
+  if (!isObject(value)) {
+    issues.push("home.imageCache must be an object");
+    return fallback;
+  }
+
+  const networkPolicy = value.networkPolicy ?? "online";
+  if (networkPolicy !== "online" && networkPolicy !== "local-only") {
+    issues.push(
+      "home.imageCache.networkPolicy must be one of online, local-only",
+    );
+  }
+
+  return {
+    enabled: booleanFieldWithDefault(
+      value,
+      "enabled",
+      issues,
+      "home.imageCache",
+      true,
+    ),
+    networkPolicy: networkPolicy === "local-only" ? "local-only" : "online",
+  };
+}
+
+function parseHomeDependencyRepositories(
+  value: unknown,
+  issues: string[],
+): ProjectHomeDependencyRepositoriesConfig {
+  const fallback: ProjectHomeDependencyRepositoriesConfig = {
+    networkPolicy: "online",
+  };
+  if (value === undefined) {
+    return fallback;
+  }
+  if (!isObject(value)) {
+    issues.push("home.dependencyRepositories must be an object");
+    return fallback;
+  }
+
+  const networkPolicy = value.networkPolicy ?? "online";
+  if (networkPolicy !== "online" && networkPolicy !== "local-only") {
+    issues.push(
+      "home.dependencyRepositories.networkPolicy must be one of online, local-only",
+    );
+  }
+
+  return {
+    networkPolicy: networkPolicy === "local-only" ? "local-only" : "online",
+  };
+}
+
 function parseHome(value: unknown, issues: string[]): ProjectHomeConfig | undefined {
   if (value === undefined) {
     return undefined;
@@ -766,55 +828,11 @@ function parseHome(value: unknown, issues: string[]): ProjectHomeConfig | undefi
     return undefined;
   }
 
-  const imageCacheValue = value.imageCache;
-  let imageCache: ProjectHomeImageCacheConfig = {
-    enabled: true,
-    networkPolicy: "online",
-  };
-  if (imageCacheValue !== undefined) {
-    if (!isObject(imageCacheValue)) {
-      issues.push("home.imageCache must be an object");
-    } else {
-      const networkPolicy = imageCacheValue.networkPolicy ?? "online";
-      if (networkPolicy !== "online" && networkPolicy !== "local-only") {
-        issues.push(
-          "home.imageCache.networkPolicy must be one of online, local-only",
-        );
-      }
-      imageCache = {
-        enabled: booleanFieldWithDefault(
-          imageCacheValue,
-          "enabled",
-          issues,
-          "home.imageCache",
-          true,
-        ),
-        networkPolicy:
-          networkPolicy === "local-only" ? "local-only" : "online",
-      };
-    }
-  }
-  const dependencyRepositoriesValue = value.dependencyRepositories;
-  let dependencyRepositories: ProjectHomeDependencyRepositoriesConfig = {
-    networkPolicy: "online",
-  };
-  if (dependencyRepositoriesValue !== undefined) {
-    if (!isObject(dependencyRepositoriesValue)) {
-      issues.push("home.dependencyRepositories must be an object");
-    } else {
-      const networkPolicy =
-        dependencyRepositoriesValue.networkPolicy ?? "online";
-      if (networkPolicy !== "online" && networkPolicy !== "local-only") {
-        issues.push(
-          "home.dependencyRepositories.networkPolicy must be one of online, local-only",
-        );
-      }
-      dependencyRepositories = {
-        networkPolicy:
-          networkPolicy === "local-only" ? "local-only" : "online",
-      };
-    }
-  }
+  const imageCache = parseHomeImageCache(value.imageCache, issues);
+  const dependencyRepositories = parseHomeDependencyRepositories(
+    value.dependencyRepositories,
+    issues,
+  );
 
   const path = optionalStringField(value, "path", issues, "home");
   return {

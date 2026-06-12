@@ -1510,6 +1510,24 @@ export class ScopedPharoLauncher {
     return this.imageInfo(imageId);
   }
 
+  private assertResetImageConfig(
+    imageId: string,
+    imageConfig: ProjectImageConfig,
+  ): asserts imageConfig is ProjectImageConfig & {
+    create: NonNullable<ProjectImageConfig["create"]>;
+  } {
+    if (!imageConfig.active) {
+      throw new ScopedPharoLauncherError(
+        `Image ${imageId} is not active in project config; scoped reset is rejected`,
+      );
+    }
+    if (!imageConfig.create) {
+      throw new ScopedPharoLauncherError(
+        `Image ${imageId} has no approved create policy in project config; scoped reset is rejected`,
+      );
+    }
+  }
+
   async resetImage(
     imageId: string,
     options: ResetImageOptions = {},
@@ -1522,16 +1540,7 @@ export class ScopedPharoLauncher {
     const scope = resolveScope(this.options);
     const projectConfig = loadProjectConfig(scope.projectRoot);
     const imageConfig = findImageConfig(projectConfig, imageId);
-    if (!imageConfig.active) {
-      throw new ScopedPharoLauncherError(
-        `Image ${imageId} is not active in project config; scoped reset is rejected`,
-      );
-    }
-    if (!imageConfig.create) {
-      throw new ScopedPharoLauncherError(
-        `Image ${imageId} has no approved create policy in project config; scoped reset is rejected`,
-      );
-    }
+    this.assertResetImageConfig(imageId, imageConfig);
 
     const statePath = statePathForScope(scope, projectConfig);
     const previousState = loadProjectState(statePath);
