@@ -176,6 +176,132 @@ function applyRepositoryWorkspaceCleanup(options: {
   return records;
 }
 
+type LoadedProjectCloseState = NonNullable<ProjectCloseResult["state"]>;
+
+function addProjectCloseFailure(
+  failures: ProjectCloseFailure[],
+  imageState: ProjectImageState,
+  error: unknown,
+): void {
+  failures.push({
+    imageId: imageState.id,
+    imageName: imageState.imageName,
+    message: errorMessage(error),
+  });
+}
+
+async function releaseProjectImagePortClaims(options: {
+  state: LoadedProjectCloseState;
+  imageStates: ProjectImageState[];
+  claimsRoot: string | undefined;
+  checks: PortClaimChecks;
+  failures: ProjectCloseFailure[];
+}): Promise<void> {
+  if (!options.claimsRoot) {
+    return;
+  }
+
+  for (const imageState of options.imageStates) {
+    try {
+      await releaseImagePortClaimIfOwned({
+        state: options.state,
+        image: imageState,
+        claimsRoot: options.claimsRoot,
+        checks: options.checks,
+      });
+    } catch (error) {
+      addProjectCloseFailure(options.failures, imageState, error);
+    }
+  }
+}
+
+function clearImageEndpointRuntimeStates(options: {
+  projectRoot: string;
+  projectId: string;
+  workspaceId: string;
+  stateRoot: string | undefined;
+  imageStates: ProjectImageState[];
+}): void {
+  for (const imageState of options.imageStates) {
+    clearImageEndpointRuntimeState({
+      projectRoot: options.projectRoot,
+      projectId: options.projectId,
+      workspaceId: options.workspaceId,
+      stateRoot: options.stateRoot,
+      imageState,
+    });
+  }
+}
+
+function finalizeProjectCloseResult(options: {
+  projectRoot: string;
+  statePath: string;
+  state: LoadedProjectCloseState;
+  stoppedImages: ProjectImageState[];
+  repositoryWorkspaceCleanups: ProjectImageRepositoryWorkspaceCleanupRecord[];
+  failures: ProjectCloseFailure[];
+  now: () => Date;
+}): ProjectCloseResult {
+  options.state.updatedAt = options.now().toISOString();
+  options.state.runtimeStatus = runtimeStatusForImages(options.state.images);
+  saveProjectState(options.statePath, options.state);
+
+  const result: ProjectCloseResult = {
+    ok: options.failures.length === 0,
+    projectRoot: options.projectRoot,
+    statePath: options.statePath,
+    state: options.state,
+    stoppedImages: options.stoppedImages,
+    repositoryWorkspaceCleanups: options.repositoryWorkspaceCleanups,
+    failures: options.failures,
+  };
+  if (!result.ok) {
+    throw new ProjectCloseError(
+      "One or more project images failed to close",
+      result,
+    );
+  }
+
+  return result;
+}
+
+async function stopProjectImages(options: {
+  client: PharoLauncherMcpToolClient;
+  projectRoot: string;
+  state: LoadedProjectCloseState;
+  workspaceId: string;
+  stateRoot: string | undefined;
+  images: ProjectImageState[];
+  stoppedImages: ProjectImageState[];
+  failures: ProjectCloseFailure[];
+}): Promise<void> {
+  for (const imageState of options.images) {
+    try {
+      const killResult = await options.client.callTool<LauncherCommandResult>(
+        "pharo_launcher_process_kill",
+        {
+          imageName: imageState.imageName,
+          confirm: true,
+        },
+      );
+
+      assertLauncherOk(killResult, "pharo_launcher_process_kill");
+      imageState.status = "stopped";
+      delete imageState.pid;
+      clearImageEndpointRuntimeState({
+        projectRoot: options.projectRoot,
+        projectId: options.state.projectId,
+        workspaceId: options.workspaceId,
+        stateRoot: options.stateRoot,
+        imageState,
+      });
+      options.stoppedImages.push({ ...imageState });
+    } catch (error) {
+      addProjectCloseFailure(options.failures, imageState, error);
+    }
+  }
+}
+
 export async function closeProject(
   options: ProjectCloseOptions,
 ): Promise<ProjectCloseResult> {
@@ -216,33 +342,20 @@ export async function closeProject(
     options.repositoryWorkspaceCleanupPolicy ?? "preserve";
 
   if (images.length === 0) {
-    if (claimsRoot) {
-      for (const imageState of selected) {
-        try {
-          await releaseImagePortClaimIfOwned({
-            state,
-            image: imageState,
-            claimsRoot,
-            checks: portClaimChecks,
-          });
-        } catch (error) {
-          failures.push({
-            imageId: imageState.id,
-            imageName: imageState.imageName,
-            message: errorMessage(error),
-          });
-        }
-      }
-    }
-    for (const imageState of selected) {
-      clearImageEndpointRuntimeState({
-        projectRoot,
-        projectId: state.projectId,
-        workspaceId,
-        stateRoot: resolvedStateRoot,
-        imageState,
-      });
-    }
+    await releaseProjectImagePortClaims({
+      state,
+      imageStates: selected,
+      claimsRoot,
+      checks: portClaimChecks,
+      failures,
+    });
+    clearImageEndpointRuntimeStates({
+      projectRoot,
+      projectId: state.projectId,
+      workspaceId,
+      stateRoot: resolvedStateRoot,
+      imageStates: selected,
+    });
     const repositoryWorkspaceCleanups = applyRepositoryWorkspaceCleanup({
       projectRoot,
       statePath,
@@ -254,28 +367,15 @@ export async function closeProject(
       failures,
     });
 
-    state.updatedAt = now().toISOString();
-    state.runtimeStatus = runtimeStatusForImages(state.images);
-    saveProjectState(statePath, state);
-
-    const result: ProjectCloseResult = {
-      ok: failures.length === 0,
+    return finalizeProjectCloseResult({
       projectRoot,
       statePath,
       state,
       stoppedImages: [],
       repositoryWorkspaceCleanups,
       failures,
-    };
-
-    if (!result.ok) {
-      throw new ProjectCloseError(
-        "One or more project images failed to close",
-        result,
-      );
-    }
-
-    return result;
+      now,
+    });
   }
 
   const client =
@@ -292,56 +392,24 @@ export async function closeProject(
   const ownsClient = !options.pharoLauncherMcpClient;
 
   try {
-    for (const imageState of images) {
-      try {
-        const killResult = await client.callTool<LauncherCommandResult>(
-          "pharo_launcher_process_kill",
-          {
-            imageName: imageState.imageName,
-            confirm: true,
-          },
-        );
-        assertLauncherOk(killResult, "pharo_launcher_process_kill");
+    await stopProjectImages({
+      client,
+      projectRoot,
+      state,
+      workspaceId,
+      stateRoot: resolvedStateRoot,
+      images,
+      stoppedImages,
+      failures,
+    });
 
-        imageState.status = "stopped";
-        delete imageState.pid;
-        clearImageEndpointRuntimeState({
-          projectRoot,
-          projectId: state.projectId,
-          workspaceId,
-          stateRoot: resolvedStateRoot,
-          imageState,
-        });
-        stoppedImages.push({ ...imageState });
-      } catch (error) {
-        failures.push({
-          imageId: imageState.id,
-          imageName: imageState.imageName,
-          message: errorMessage(error),
-        });
-      }
-    }
-
-    if (claimsRoot) {
-      for (const imageState of selected.filter(
-        (image) => image.status !== "running",
-      )) {
-        try {
-          await releaseImagePortClaimIfOwned({
-            state,
-            image: imageState,
-            claimsRoot,
-            checks: portClaimChecks,
-          });
-        } catch (error) {
-          failures.push({
-            imageId: imageState.id,
-            imageName: imageState.imageName,
-            message: errorMessage(error),
-          });
-        }
-      }
-    }
+    await releaseProjectImagePortClaims({
+      state,
+      imageStates: selected.filter((image) => image.status !== "running"),
+      claimsRoot,
+      checks: portClaimChecks,
+      failures,
+    });
 
     const repositoryWorkspaceCleanups = applyRepositoryWorkspaceCleanup({
       projectRoot,
@@ -354,28 +422,15 @@ export async function closeProject(
       failures,
     });
 
-    state.updatedAt = now().toISOString();
-    state.runtimeStatus = runtimeStatusForImages(state.images);
-    saveProjectState(statePath, state);
-
-    const result: ProjectCloseResult = {
-      ok: failures.length === 0,
+    return finalizeProjectCloseResult({
       projectRoot,
       statePath,
       state,
       stoppedImages,
       repositoryWorkspaceCleanups,
       failures,
-    };
-
-    if (!result.ok) {
-      throw new ProjectCloseError(
-        "One or more project images failed to close",
-        result,
-      );
-    }
-
-    return result;
+      now,
+    });
   } finally {
     if (ownsClient) {
       await client.close?.();
