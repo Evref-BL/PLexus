@@ -9,6 +9,12 @@ import {
   type Tool,
 } from "@modelcontextprotocol/sdk/types.js";
 import { PlexusGateway, type GatewayRouteReferenceInput } from "./gateway.js";
+import {
+  formatToolResultPayload,
+  toolResultDetailFromArguments,
+  toolResultDetailSchema,
+  type ToolResultDetail,
+} from "./toolResultFormatting.js";
 
 const stringSchema = { type: "string", minLength: 1 } as const;
 const optionalStringSchema = { type: "string", minLength: 1 } as const;
@@ -29,6 +35,7 @@ const routeReferenceProperties = {
   projectId: optionalStringSchema,
   workspaceId: optionalStringSchema,
   targetId: optionalStringSchema,
+  detail: toolResultDetailSchema,
 } as const;
 
 const projectStateSchema = {
@@ -46,6 +53,7 @@ export const gatewayTools = [
         projectRoot: stringSchema,
         statePath: stringSchema,
         state: projectStateSchema,
+        detail: toolResultDetailSchema,
       },
       ["projectRoot", "statePath", "state"],
     ),
@@ -71,7 +79,7 @@ export const gatewayTools = [
     name: "plexus_gateway_cleanup_stale_routes",
     description:
       "Remove registered gateway target routes whose runtime state files are gone.",
-    inputSchema: objectSchema({}),
+    inputSchema: objectSchema({ detail: toolResultDetailSchema }),
   },
 ] as const;
 
@@ -208,9 +216,18 @@ export interface GatewayCliOptions {
 
 type ToolResult = CallToolResult;
 
-function jsonResult(value: unknown, isError = false): ToolResult {
+function jsonResult(
+  value: unknown,
+  isError = false,
+  detail: ToolResultDetail = "summary",
+): ToolResult {
   return {
-    content: [{ type: "text", text: JSON.stringify(value, null, 2) }],
+    content: [
+      {
+        type: "text",
+        text: JSON.stringify(formatToolResultPayload(value, detail), null, 2),
+      },
+    ],
     ...(isError ? { isError } : {}),
   };
 }
@@ -243,12 +260,13 @@ function withToolMeta(
 function directToolResult(
   value: unknown,
   meta?: Record<string, unknown>,
+  detail: ToolResultDetail = "summary",
 ): ToolResult {
   if (isCallToolResult(value)) {
-    return withToolMeta(value as ToolResult, meta);
+    return withToolMeta(value, meta);
   }
 
-  return withToolMeta(jsonResult(value), meta);
+  return withToolMeta(jsonResult(value, false, detail), meta);
 }
 
 export function createGatewayServer(gateway = new PlexusGateway()): Server {
@@ -278,6 +296,8 @@ export function createGatewayServerWithOptions(
   }));
 
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
+    const detail = toolResultDetailFromArguments(request.params.arguments);
+
     if (gateway.isPharoTool(request.params.name) && pharoToolsVisible(surface)) {
       const result = await gateway.callPharoTool(
         request.params.name,
@@ -285,13 +305,13 @@ export function createGatewayServerWithOptions(
       );
 
       if (!result.ok) {
-        return jsonResult(result, true);
+        return jsonResult(result, true, detail);
       }
 
       return directToolResult(result.data);
     }
 
-    if (request.params.name === "plexus_route_to_image") {
+    if (request.params.name === rawRoutingTool.name) {
       if (!exposeRawRoutingTool) {
         return jsonResult(
           {
@@ -300,6 +320,7 @@ export function createGatewayServerWithOptions(
               "Raw image routing is disabled; set PLEXUS_EXPOSE_RAW_ROUTING_TOOL=true to expose plexus_route_to_image.",
           },
           true,
+          detail,
         );
       }
 
@@ -309,12 +330,13 @@ export function createGatewayServerWithOptions(
       );
 
       if (!result.ok) {
-        return jsonResult(result, true);
+        return jsonResult(result, true, detail);
       }
 
       return directToolResult(
         result.data,
         result.route ? { plexusRoute: result.route } : undefined,
+        detail,
       );
     }
 
@@ -325,6 +347,7 @@ export function createGatewayServerWithOptions(
           error: `Unknown Pharo tool: ${request.params.name}`,
         },
         true,
+        detail,
       );
     }
 
@@ -334,10 +357,10 @@ export function createGatewayServerWithOptions(
     );
 
     if (!result.ok) {
-      return jsonResult(result, true);
+      return jsonResult(result, true, detail);
     }
 
-    return jsonResult(result);
+    return jsonResult(result, false, detail);
   });
 
   return server;
