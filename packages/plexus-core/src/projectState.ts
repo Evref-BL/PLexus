@@ -839,6 +839,38 @@ export function runtimeStatusForImages(
   return "idle";
 }
 
+function assignedProjectImagePort(input: {
+  image: ProjectImageConfig;
+  canUsePharoMcpPort: boolean;
+  previousPort: number | undefined;
+  configuredPorts: ReadonlySet<number>;
+  unavailablePorts: Set<number>;
+  reservedPorts: ReadonlySet<number>;
+  portRange: ProjectRuntimePortRange;
+}): number | undefined {
+  if (!input.canUsePharoMcpPort) {
+    return undefined;
+  }
+
+  const configuredPort = input.image.mcp.port;
+  if (configuredPort !== undefined && input.reservedPorts.has(configuredPort)) {
+    throw new PortAllocationError(
+      `Configured port ${configuredPort} is already reserved by another workspace`,
+    );
+  }
+
+  const assignedPort =
+    configuredPort ??
+    (input.previousPort !== undefined &&
+    !input.configuredPorts.has(input.previousPort) &&
+    !input.unavailablePorts.has(input.previousPort)
+      ? input.previousPort
+      : nextAvailablePort(input.portRange, input.unavailablePorts));
+
+  input.unavailablePorts.add(assignedPort);
+  return assignedPort;
+}
+
 export function createProjectState(
   config: ProjectConfig,
   optionsOrUpdatedAt?: string | CreateProjectStateOptions,
@@ -878,31 +910,15 @@ export function createProjectState(
       image,
       imageContext,
     );
-    let assignedPort = image.mcp.port;
-
-    if (canUsePharoMcpPort) {
-      if (assignedPort !== undefined && options.reservedPorts.has(assignedPort)) {
-        throw new PortAllocationError(
-          `Configured port ${assignedPort} is already reserved by another workspace`,
-        );
-      }
-
-      if (assignedPort === undefined) {
-        if (
-          previousPort !== undefined &&
-          !configuredPorts.has(previousPort) &&
-          !unavailablePorts.has(previousPort)
-        ) {
-          assignedPort = previousPort;
-        } else {
-          assignedPort = nextAvailablePort(portRange, unavailablePorts);
-        }
-      }
-
-      unavailablePorts.add(assignedPort);
-    } else {
-      assignedPort = undefined;
-    }
+    const assignedPort = assignedProjectImagePort({
+      image,
+      canUsePharoMcpPort,
+      previousPort,
+      configuredPorts,
+      unavailablePorts,
+      reservedPorts: options.reservedPorts,
+      portRange,
+    });
 
     return {
       id: image.id,

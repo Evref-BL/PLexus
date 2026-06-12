@@ -156,13 +156,114 @@ function endpointHandoffPath(input: {
   });
 }
 
-function cleanupResources(input: {
+interface CleanupResourcesInput {
   projectRoot: string;
   stateRoot: string;
   statePath: string;
   state: ProjectState;
   imageClaimsRoot?: string;
-}): ProjectCleanupResource[] {
+}
+
+function imageCleanupResources(
+  input: CleanupResourcesInput,
+  image: ProjectImageState,
+): ProjectCleanupResource[] {
+  const resources: ProjectCleanupResource[] = [
+  ];
+
+  if (image.status === "running" || image.pid !== undefined) {
+    resources.push({
+      ...resourceBase(input.state),
+      kind: "image-process",
+      id: image.id,
+      imageId: image.id,
+      imageName: image.imageName,
+      ...(image.pid !== undefined ? { pid: image.pid } : {}),
+    });
+  }
+
+  if (image.creation) {
+    resources.push({
+      ...resourceBase(input.state),
+      kind: "launcher-image",
+      id: image.imageName,
+      imageId: image.id,
+      imageName: image.imageName,
+      reason: "Image has PLexus creation ownership metadata.",
+    });
+  }
+
+  if (input.imageClaimsRoot && image.assignedPort !== undefined) {
+    resources.push({
+      ...resourceBase(input.state),
+      kind: "image-port-claim",
+      id: `${input.imageClaimsRoot}:${image.assignedPort}`,
+      imageId: image.id,
+      imageName: image.imageName,
+      path: input.imageClaimsRoot,
+      port: image.assignedPort,
+    });
+  }
+
+  const handoffPath = endpointHandoffPath({
+    projectRoot: input.projectRoot,
+    stateRoot: input.stateRoot,
+    state: input.state,
+    image,
+  });
+  if (image.mcpEndpoint || fs.existsSync(handoffPath)) {
+    resources.push({
+      ...resourceBase(input.state),
+      kind: "endpoint-handoff",
+      id: handoffPath,
+      imageId: image.id,
+      imageName: image.imageName,
+      path: handoffPath,
+    });
+  }
+
+  for (const workspace of projectImageRepositoryWorkspaces(image)) {
+    resources.push({
+      ...resourceBase(input.state),
+      kind: "repository-workspace",
+      id: `${image.id}:${workspace.repository.id}`,
+      imageId: image.id,
+      imageName: image.imageName,
+      path: workspace.path,
+    });
+  }
+
+  return resources;
+}
+
+function gatewayCleanupResources(
+  state: ProjectState,
+): ProjectCleanupResource[] {
+  const resources: ProjectCleanupResource[] = [];
+  if (state.gateway?.managedByProject) {
+    resources.push({
+      ...resourceBase(state),
+      kind: "gateway",
+      id: state.gateway.endpoint ?? state.gateway.controlEndpoint ?? "gateway",
+      ...(state.gateway.port !== undefined ? { port: state.gateway.port } : {}),
+      ...(state.gateway.pid !== undefined ? { pid: state.gateway.pid } : {}),
+    });
+  }
+
+  if (state.gateway?.managedByProject && state.gateway.claim) {
+    resources.push({
+      ...resourceBase(state),
+      kind: "gateway-port-claim",
+      id: `${state.gateway.claim.claimsRoot}:${state.gateway.claim.assignedPort}`,
+      path: state.gateway.claim.claimsRoot,
+      port: state.gateway.claim.assignedPort,
+    });
+  }
+
+  return resources;
+}
+
+function cleanupResources(input: CleanupResourcesInput): ProjectCleanupResource[] {
   const resources: ProjectCleanupResource[] = [
     {
       ...resourceBase(input.state),
@@ -173,91 +274,10 @@ function cleanupResources(input: {
   ];
 
   for (const image of input.state.images) {
-    if (image.status === "running" || image.pid !== undefined) {
-      resources.push({
-        ...resourceBase(input.state),
-        kind: "image-process",
-        id: image.id,
-        imageId: image.id,
-        imageName: image.imageName,
-        ...(image.pid !== undefined ? { pid: image.pid } : {}),
-      });
-    }
-
-    if (image.creation) {
-      resources.push({
-        ...resourceBase(input.state),
-        kind: "launcher-image",
-        id: image.imageName,
-        imageId: image.id,
-        imageName: image.imageName,
-        reason: "Image has PLexus creation ownership metadata.",
-      });
-    }
-
-    if (input.imageClaimsRoot && image.assignedPort !== undefined) {
-      resources.push({
-        ...resourceBase(input.state),
-        kind: "image-port-claim",
-        id: `${input.imageClaimsRoot}:${image.assignedPort}`,
-        imageId: image.id,
-        imageName: image.imageName,
-        path: input.imageClaimsRoot,
-        port: image.assignedPort,
-      });
-    }
-
-    const handoffPath = endpointHandoffPath({
-      projectRoot: input.projectRoot,
-      stateRoot: input.stateRoot,
-      state: input.state,
-      image,
-    });
-    if (image.mcpEndpoint || fs.existsSync(handoffPath)) {
-      resources.push({
-        ...resourceBase(input.state),
-        kind: "endpoint-handoff",
-        id: handoffPath,
-        imageId: image.id,
-        imageName: image.imageName,
-        path: handoffPath,
-      });
-    }
-
-    for (const workspace of projectImageRepositoryWorkspaces(image)) {
-      resources.push({
-        ...resourceBase(input.state),
-        kind: "repository-workspace",
-        id: `${image.id}:${workspace.repository.id}`,
-        imageId: image.id,
-        imageName: image.imageName,
-        path: workspace.path,
-      });
-    }
+    resources.push(...imageCleanupResources(input, image));
   }
 
-  if (input.state.gateway?.managedByProject) {
-    resources.push({
-      ...resourceBase(input.state),
-      kind: "gateway",
-      id: input.state.gateway.endpoint ?? input.state.gateway.controlEndpoint ?? "gateway",
-      ...(input.state.gateway.port !== undefined
-        ? { port: input.state.gateway.port }
-        : {}),
-      ...(input.state.gateway.pid !== undefined ? { pid: input.state.gateway.pid } : {}),
-    });
-  }
-
-  if (input.state.gateway?.managedByProject && input.state.gateway.claim) {
-    resources.push({
-      ...resourceBase(input.state),
-      kind: "gateway-port-claim",
-      id: `${input.state.gateway.claim.claimsRoot}:${input.state.gateway.claim.assignedPort}`,
-      path: input.state.gateway.claim.claimsRoot,
-      port: input.state.gateway.claim.assignedPort,
-    });
-  }
-
+  resources.push(...gatewayCleanupResources(input.state));
   return resources;
 }
 
