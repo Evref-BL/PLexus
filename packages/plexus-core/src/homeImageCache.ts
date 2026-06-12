@@ -1019,6 +1019,159 @@ Smalltalk snapshot: true andQuit: true.
 `;
 }
 
+type HomeImageCachePlanOperationFields = Pick<
+  HomeImageCachePlan,
+  | "refreshTemplateCatalog"
+  | "createCacheImage"
+  | "prepareCacheImage"
+  | "runtimeCopy"
+>;
+
+type HomeImageCacheDestinationProfile = ReturnType<
+  typeof profilePathsFromEnvironment
+>;
+
+function buildHomeImageCacheDiagnostics(options: {
+  enabled: boolean;
+  manifest: HomeImageCacheManifestReadResult;
+  lock: HomeImageCacheLockReadResult;
+  imageState: BuildHomeImageCachePlanOptions["imageState"];
+  destinationProfile: HomeImageCacheDestinationProfile;
+  offlineReadiness: HomeImageCacheOfflineReadiness;
+}): string[] {
+  const diagnostics: string[] = [];
+
+  if (!options.enabled) {
+    diagnostics.push("PLexus home image cache is disabled by project config.");
+  }
+  if (options.manifest.status === "corrupt") {
+    diagnostics.push(
+      `Home image cache manifest is unreadable: ${options.manifest.error}`,
+    );
+  }
+  if (options.lock.status === "ok") {
+    diagnostics.push(
+      `Home image cache entry is already being prepared by ${options.lock.lock.owner}.`,
+    );
+  }
+  if (options.lock.status === "corrupt") {
+    diagnostics.push(
+      `Home image cache lock is unreadable: ${options.lock.error}`,
+    );
+  }
+  if (options.imageState && !options.destinationProfile) {
+    diagnostics.push(
+      "Runtime copy from the home image cache requires an explicit destination launcher profile.",
+    );
+  }
+
+  diagnostics.push(...options.offlineReadiness.diagnostics);
+  return diagnostics;
+}
+
+function homeImageCacheCanPrepareEntry(options: {
+  enabled: boolean;
+  status: HomeImageCachePlanStatus;
+  networkPolicy: ProjectHomeImageCacheNetworkPolicy;
+  offlineReadiness: HomeImageCacheOfflineReadiness;
+}): boolean {
+  const shouldPrepare =
+    options.status === "miss" || options.status === "corrupt";
+  return (
+    options.enabled &&
+    shouldPrepare &&
+    (options.networkPolicy === "online" ||
+      options.offlineReadiness.status === "ready")
+  );
+}
+
+function buildHomeImageCachePlanOperations(options: {
+  canPrepareCacheEntry: boolean;
+  networkPolicy: ProjectHomeImageCacheNetworkPolicy;
+  homeProfile: Required<PharoLauncherMcpProfilePaths>;
+  source: HomeImageCacheSource;
+  cacheImageName: string;
+  keyMaterial: HomeImageCacheKeyMaterial;
+  mcp: ProjectPreparedImageMcpConfig | ProjectImageMcpConfig;
+  preparationScriptPath: string;
+  enabled: boolean;
+  imageState: BuildHomeImageCachePlanOptions["imageState"];
+  destinationProfile: HomeImageCacheDestinationProfile;
+  status: HomeImageCachePlanStatus;
+}): HomeImageCachePlanOperationFields {
+  const refreshTemplateCatalog =
+    options.canPrepareCacheEntry && options.networkPolicy === "online"
+      ? {
+          toolName: "pharo_launcher_template_update",
+          profileEnvironment: profileEnvironmentFromPaths(options.homeProfile),
+          argumentsValue: {},
+          requiresApproval: true as const,
+          reason:
+            "A fresh PLexus home image cache profile must have a launcher template catalog before creating a cache base.",
+        }
+      : undefined;
+  const createCacheImage = options.canPrepareCacheEntry
+    ? {
+        toolName: "pharo_launcher_image_create",
+        profileEnvironment: profileEnvironmentFromPaths(options.homeProfile),
+        argumentsValue: {
+          newImageName: options.cacheImageName,
+          templateName: options.source.templateName,
+          ...(options.source.templateCategory
+            ? { templateCategory: options.source.templateCategory }
+            : {}),
+          noLaunch: true,
+        },
+        requiresApproval: true as const,
+        reason:
+          "Creating a PLexus home image cache base mutates the explicit home launcher profile.",
+      }
+    : undefined;
+  const prepareCacheImage =
+    options.canPrepareCacheEntry &&
+    options.keyMaterial.pharoMcp.support.status === "supported" &&
+    projectMcpStartupMode(options.mcp) !== "disabled"
+      ? {
+          toolName: "pharo_launcher_image_launch",
+          profileEnvironment: profileEnvironmentFromPaths(options.homeProfile),
+          argumentsValue: {
+            imageName: options.cacheImageName,
+            detached: false,
+            displayMode: "headless",
+            script: options.preparationScriptPath,
+          },
+          requiresApproval: true as const,
+          reason:
+            "Preparing a supported Pharo MCP cache image must run headlessly, snapshot, and quit.",
+        }
+      : undefined;
+  const runtimeCopy =
+    options.enabled &&
+    options.imageState &&
+    options.destinationProfile &&
+    (options.status === "hit" || options.canPrepareCacheEntry)
+      ? {
+          toolName: "pharo_launcher_image_copy_between_profiles",
+          argumentsValue: {
+            sourceProfile: options.homeProfile,
+            destinationProfile: options.destinationProfile,
+            sourceImageName: options.cacheImageName,
+            destinationImageName: options.imageState.imageName,
+          },
+          requiresApproval: true as const,
+          reason:
+            "Runtime images must be copies of home cache bases and must stay in the project launcher profile.",
+        }
+      : undefined;
+
+  return {
+    ...(refreshTemplateCatalog ? { refreshTemplateCatalog } : {}),
+    ...(createCacheImage ? { createCacheImage } : {}),
+    ...(prepareCacheImage ? { prepareCacheImage } : {}),
+    ...(runtimeCopy ? { runtimeCopy } : {}),
+  };
+}
+
 export function buildHomeImageCachePlan(
   options: BuildHomeImageCachePlanOptions,
 ): HomeImageCachePlan {
@@ -1045,23 +1198,6 @@ export function buildHomeImageCachePlan(
   const enabled = homeImageCacheEnabled(options.config);
   const networkPolicy = homeImageCacheNetworkPolicy(options.config);
   const status = planStatus(enabled, manifest, lock);
-  const diagnostics: string[] = [];
-
-  if (!enabled) {
-    diagnostics.push("PLexus home image cache is disabled by project config.");
-  }
-  if (manifest.status === "corrupt") {
-    diagnostics.push(`Home image cache manifest is unreadable: ${manifest.error}`);
-  }
-  if (lock.status === "ok") {
-    diagnostics.push(
-      `Home image cache entry is already being prepared by ${lock.lock.owner}.`,
-    );
-  }
-  if (lock.status === "corrupt") {
-    diagnostics.push(`Home image cache lock is unreadable: ${lock.error}`);
-  }
-
   const destinationProfile = profilePathsFromEnvironment(
     pharoLauncherMcpProfileEnvironment({
       projectRoot: options.projectRoot,
@@ -1073,12 +1209,6 @@ export function buildHomeImageCachePlan(
       stateRoot: options.stateRoot,
     }),
   );
-  if (options.imageState && !destinationProfile) {
-    diagnostics.push(
-      "Runtime copy from the home image cache requires an explicit destination launcher profile.",
-    );
-  }
-
   const offlineReadiness = localOnlyReadiness({
     networkPolicy,
     status,
@@ -1088,13 +1218,20 @@ export function buildHomeImageCachePlan(
     templateMetadata: options.templateMetadata,
     localInputs: options.localInputs,
   });
-  diagnostics.push(...offlineReadiness.diagnostics);
-
+  const diagnostics = buildHomeImageCacheDiagnostics({
+    enabled,
+    manifest,
+    lock,
+    imageState: options.imageState,
+    destinationProfile,
+    offlineReadiness,
+  });
+  const now = options.now ?? (() => new Date());
   const expectedManifest: HomeImageCacheManifest = {
     schemaVersion: homeImageCacheSchemaVersion,
     key,
-    createdAt: (options.now ?? (() => new Date()))().toISOString(),
-    updatedAt: (options.now ?? (() => new Date()))().toISOString(),
+    createdAt: now().toISOString(),
+    updatedAt: now().toISOString(),
     cacheImageName,
     source,
     ...(options.templateMetadata ? { templateMetadata: options.templateMetadata } : {}),
@@ -1115,77 +1252,26 @@ export function buildHomeImageCachePlan(
       profileStateRoot: homeProfile.stateRoot,
     },
   };
-
-  const shouldPrepare = status === "miss" || status === "corrupt";
-  const canPrepareCacheEntry =
-    enabled &&
-    shouldPrepare &&
-    (networkPolicy === "online" || offlineReadiness.status === "ready");
-  const refreshTemplateCatalog =
-    canPrepareCacheEntry && networkPolicy === "online"
-      ? {
-          toolName: "pharo_launcher_template_update",
-          profileEnvironment: profileEnvironmentFromPaths(homeProfile),
-          argumentsValue: {},
-          requiresApproval: true as const,
-          reason:
-            "A fresh PLexus home image cache profile must have a launcher template catalog before creating a cache base.",
-        }
-      : undefined;
-  const createCacheImage =
-    canPrepareCacheEntry
-      ? {
-          toolName: "pharo_launcher_image_create",
-          profileEnvironment: profileEnvironmentFromPaths(homeProfile),
-          argumentsValue: {
-            newImageName: cacheImageName,
-            templateName: source.templateName,
-            ...(source.templateCategory
-              ? { templateCategory: source.templateCategory }
-              : {}),
-            noLaunch: true,
-          },
-          requiresApproval: true as const,
-          reason:
-            "Creating a PLexus home image cache base mutates the explicit home launcher profile.",
-        }
-      : undefined;
-  const prepareCacheImage =
-    canPrepareCacheEntry &&
-    keyMaterial.pharoMcp.support.status === "supported" &&
-    projectMcpStartupMode(mcp) !== "disabled"
-      ? {
-          toolName: "pharo_launcher_image_launch",
-          profileEnvironment: profileEnvironmentFromPaths(homeProfile),
-          argumentsValue: {
-            imageName: cacheImageName,
-            detached: false,
-            displayMode: "headless",
-            script: preparationScriptPath,
-          },
-          requiresApproval: true as const,
-          reason:
-            "Preparing a supported Pharo MCP cache image must run headlessly, snapshot, and quit.",
-        }
-      : undefined;
-  const runtimeCopy =
-    enabled &&
-    options.imageState &&
-    destinationProfile &&
-    (status === "hit" || canPrepareCacheEntry)
-      ? {
-          toolName: "pharo_launcher_image_copy_between_profiles",
-          argumentsValue: {
-            sourceProfile: homeProfile,
-            destinationProfile,
-            sourceImageName: cacheImageName,
-            destinationImageName: options.imageState.imageName,
-          },
-          requiresApproval: true as const,
-          reason:
-            "Runtime images must be copies of home cache bases and must stay in the project launcher profile.",
-        }
-      : undefined;
+  const canPrepareCacheEntry = homeImageCacheCanPrepareEntry({
+    enabled,
+    status,
+    networkPolicy,
+    offlineReadiness,
+  });
+  const operations = buildHomeImageCachePlanOperations({
+    canPrepareCacheEntry,
+    networkPolicy,
+    homeProfile,
+    source,
+    cacheImageName,
+    keyMaterial,
+    mcp,
+    preparationScriptPath,
+    enabled,
+    imageState: options.imageState,
+    destinationProfile,
+    status,
+  });
 
   return {
     status,
@@ -1207,10 +1293,7 @@ export function buildHomeImageCachePlan(
     homeProfile,
     keyMaterial,
     expectedManifest,
-    ...(refreshTemplateCatalog ? { refreshTemplateCatalog } : {}),
-    ...(createCacheImage ? { createCacheImage } : {}),
-    ...(prepareCacheImage ? { prepareCacheImage } : {}),
-    ...(runtimeCopy ? { runtimeCopy } : {}),
+    ...operations,
     diagnostics,
   };
 }

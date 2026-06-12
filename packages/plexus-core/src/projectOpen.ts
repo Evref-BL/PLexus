@@ -1331,7 +1331,7 @@ type ImageMcpReadiness =
   | { kind: "loadFailed"; message: string }
   | { kind: "processExited" };
 
-async function pollPharoMcpReadiness(options: {
+interface PollPharoMcpReadinessOptions {
   imageState: ProjectImageState;
   endpointHandoffPath: string;
   preferEndpointHandoff: boolean;
@@ -1344,67 +1344,106 @@ async function pollPharoMcpReadiness(options: {
   timeoutMs: number;
   intervalMs: number;
   sleep: (durationMs: number) => Promise<void>;
-}): Promise<ImageMcpReadiness | undefined> {
+}
+
+function pharoMcpLoadFailureReadiness(
+  options: PollPharoMcpReadinessOptions,
+): ImageMcpReadiness | undefined {
+  const loadFailure = refreshPharoMcpLoadStatus(
+    options.imageState,
+    options.pharoMcpLoadStatusPath,
+  );
+  if (!loadFailure) {
+    return undefined;
+  }
+
+  if (options.failOnLoadFailure) {
+    throw new Error(loadFailure);
+  }
+  return { kind: "loadFailed", message: loadFailure };
+}
+
+async function endpointHandoffReadiness(
+  options: PollPharoMcpReadinessOptions,
+): Promise<ImageMcpReadiness | undefined> {
+  if (!options.preferEndpointHandoff) {
+    return undefined;
+  }
+
+  const handoff = readImageMcpEndpointHandoff(options.endpointHandoffPath);
+  if (handoff.status === "invalid") {
+    throw new Error(
+      `Invalid Pharo MCP endpoint handoff at ${handoff.path}: ${handoff.error}`,
+    );
+  }
+  if (
+    handoff.status === "valid" &&
+    (await pollEndpointHealth(options.healthClient, handoff.endpoint))
+  ) {
+    return { kind: "endpoint", endpoint: handoff.endpoint };
+  }
+
+  return undefined;
+}
+
+async function assignedPortReadiness(
+  options: PollPharoMcpReadinessOptions,
+): Promise<ImageMcpReadiness | undefined> {
+  if (options.imageState.assignedPort === undefined) {
+    return undefined;
+  }
+  if (!(await options.healthClient.check(options.imageState.assignedPort))) {
+    return undefined;
+  }
+
+  return { kind: "assignedPort", port: options.imageState.assignedPort };
+}
+
+async function processExitReadiness(
+  options: PollPharoMcpReadinessOptions,
+): Promise<ImageMcpReadiness | undefined> {
+  if (!options.processClient || !options.imageName) {
+    return undefined;
+  }
+
+  const process = await processForImage(options.processClient, options.imageName);
+  if (process) {
+    return undefined;
+  }
+  if (!options.launchedProcess) {
+    return { kind: "processExited" };
+  }
+  if (!isPidAlive(options.launchedProcess.pid)) {
+    return { kind: "processExited" };
+  }
+
+  return undefined;
+}
+
+async function pollPharoMcpReadiness(
+  options: PollPharoMcpReadinessOptions,
+): Promise<ImageMcpReadiness | undefined> {
   return pollUntil(
     options.timeoutMs,
     options.intervalMs,
     options.sleep,
     async () => {
-      const loadFailure = refreshPharoMcpLoadStatus(
-        options.imageState,
-        options.pharoMcpLoadStatusPath,
-      );
+      const loadFailure = pharoMcpLoadFailureReadiness(options);
       if (loadFailure) {
-        if (options.failOnLoadFailure) {
-          throw new Error(loadFailure);
-        }
-
-        return { kind: "loadFailed", message: loadFailure };
+        return loadFailure;
       }
 
-      if (options.preferEndpointHandoff) {
-        const handoff = readImageMcpEndpointHandoff(options.endpointHandoffPath);
-        if (handoff.status === "invalid") {
-          throw new Error(
-            `Invalid Pharo MCP endpoint handoff at ${handoff.path}: ${handoff.error}`,
-          );
-        }
-
-        if (
-          handoff.status === "valid" &&
-          (await pollEndpointHealth(options.healthClient, handoff.endpoint))
-        ) {
-          return { kind: "endpoint", endpoint: handoff.endpoint };
-        }
+      const handoff = await endpointHandoffReadiness(options);
+      if (handoff) {
+        return handoff;
       }
 
-      if (
-        options.imageState.assignedPort !== undefined &&
-        (await options.healthClient.check(options.imageState.assignedPort))
-      ) {
-        return {
-          kind: "assignedPort",
-          port: options.imageState.assignedPort,
-        };
+      const assignedPort = await assignedPortReadiness(options);
+      if (assignedPort) {
+        return assignedPort;
       }
 
-      if (options.processClient && options.imageName) {
-        const process = await processForImage(
-          options.processClient,
-          options.imageName,
-        );
-        if (!process) {
-          if (!options.launchedProcess) {
-            return { kind: "processExited" };
-          }
-
-          if (!isPidAlive(options.launchedProcess.pid)) {
-            return { kind: "processExited" };
-          }
-        }
-      }
-
-      return undefined;
+      return processExitReadiness(options);
     },
   );
 }
