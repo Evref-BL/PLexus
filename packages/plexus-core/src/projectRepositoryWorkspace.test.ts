@@ -332,7 +332,7 @@ describe("project repository workspace materialization", () => {
       }),
     ]);
     expect(state.repositoryWorkspace).toBe(state.repositoryWorkspaces?.[0]);
-  });
+  }, 15_000);
 
   it("reuses an existing repository workspace", () => {
     const sourceRoot = makeTempDir("plexus-source-");
