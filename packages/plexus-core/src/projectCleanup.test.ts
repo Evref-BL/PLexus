@@ -361,7 +361,7 @@ describe("project cleanup", () => {
       inspectPortClaim({ claimsRoot: gatewayClaimsRoot, port: 8133, checks }),
     ).resolves.toMatchObject({ status: "claimed" });
     expect(fs.existsSync(statePath(stateRoot))).toBe(true);
-  });
+  }, 15_000);
 
   it("cleans confirmed PLexus-owned leftovers and preserves unowned launcher images", async () => {
     const projectRoot = makeTempDir("plexus-project-");

@@ -6,6 +6,7 @@ import {
   projectConfigId,
   projectMcpStartupMode,
   resolveProjectRuntimePolicy,
+  type ProjectConfig,
   type ProjectImageDisplayMode,
   type ProjectImageConfig,
 } from "./projectConfig.js";
@@ -1678,14 +1679,557 @@ function shouldMaterializeImageFromHomeCache(options: {
   );
 }
 
+interface ProjectOpenContext {
+  options: ProjectOpenOptions;
+  projectRoot: string;
+  config: ProjectConfig;
+  previousState: ProjectState | undefined;
+  sourcePath: string | undefined;
+  loadSourcePath: string;
+  workspaceId: string;
+  resolvedStateRoot: string | undefined;
+  statePath: string;
+  state: ProjectState;
+  claimsRoot: string | undefined;
+  projectReservedOwners: ReturnType<typeof collectReservedProjectPortOwners>;
+  portClaimChecks: PortClaimChecks;
+  launcherProfileEnvironment: ReturnType<
+    typeof pharoLauncherMcpProfileEnvironment
+  >;
+  preparedPortClaims: PreparedImagePortClaim[];
+  client: PharoLauncherMcpToolClient;
+  ownsClient: boolean;
+  healthClient: PharoMcpHealthClient;
+  imageMcpClient: ProjectOpenImageMcpClient;
+  poll: Required<ProjectOpenPollOptions>;
+  sleep: (durationMs: number) => Promise<void>;
+  failures: ProjectOpenFailure[];
+  now: () => Date;
+}
+
+interface ProjectImageOpenSetup {
+  displayMode: ProjectImageDisplayMode;
+  endpointHandoffPath: string;
+  pharoMcpLoadStatusPath?: string;
+  dependencyRepositoryDetachStatusPath?: string;
+  startupScript: ReturnType<typeof writeProjectImageStartupScript>;
+  launchClient: PharoLauncherMcpToolClient;
+  ownsLaunchClient: boolean;
+}
+
+function resolveProjectOpenWorkspace(
+  projectRoot: string,
+  workspaceId: string | undefined,
+): string {
+  return workspaceId ? sanitizeRuntimeId(workspaceId) : defaultWorkspaceId(projectRoot);
+}
+
+function resolveProjectOpenSourcePath(options: {
+  requestedSourcePath: string | undefined;
+  projectRoot: string;
+}): string | undefined {
+  return options.requestedSourcePath
+    ? path.resolve(options.requestedSourcePath)
+    : undefined;
+}
+
+function applyProjectImageDisplayMode(
+  imageConfig: ProjectImageConfig,
+  imageState: ProjectImageState,
+  displayMode: ProjectImageDisplayMode,
+  requestedDisplayMode: ProjectImageDisplayMode | undefined,
+): void {
+  if (
+    requestedDisplayMode !== undefined ||
+    imageConfig.displayMode !== undefined ||
+    imageState.displayMode !== undefined
+  ) {
+    imageState.displayMode = displayMode;
+  }
+}
+
+async function materializeProjectImageForOpen(
+  context: ProjectOpenContext,
+  imageConfig: ProjectImageConfig,
+  imageState: ProjectImageState,
+): Promise<void> {
+  const homeMaterialization = shouldMaterializeImageFromHomeCache({
+    previousState: context.previousState,
+    imageConfig,
+    imageState,
+    approval: context.options.homeImageCacheApproval,
+  })
+    ? await materializeProjectImageFromHomeCache({
+        runtimeClient: context.client,
+        homeClient:
+          context.options.homeImageCacheClient ??
+          (context.options.pharoLauncherMcpClient ? context.client : undefined),
+        projectRoot: context.projectRoot,
+        config: context.config,
+        imageConfig,
+        imageState,
+        workspaceId: context.workspaceId,
+        targetId: context.state.targetId,
+        stateRoot: context.resolvedStateRoot,
+        approval: context.options.homeImageCacheApproval,
+        now: context.now,
+      })
+    : undefined;
+
+  if (!homeMaterialization) {
+    await copyProjectImageFromPreparedCache({
+      client: context.client,
+      projectRoot: context.projectRoot,
+      config: context.config,
+      imageConfig,
+      imageState,
+      approval: context.options.preparedImageCacheApproval,
+    });
+  }
+
+  await hydrateRepositoryWorkspaceImagePaths(
+    context.client,
+    imageState,
+    context.launcherProfileEnvironment?.PHARO_LAUNCHER_MCP_IMAGES_DIR,
+  );
+  materializeProjectImageRepositoryWorkspaces({
+    projectRoot: context.projectRoot,
+    imageConfig,
+    imageState,
+    sourcePath: context.loadSourcePath,
+  });
+}
+
+async function setupProjectImageForOpen(
+  context: ProjectOpenContext,
+  imageConfig: ProjectImageConfig,
+  imageState: ProjectImageState,
+  displayMode: ProjectImageDisplayMode,
+): Promise<ProjectImageOpenSetup> {
+  await materializeProjectImageForOpen(context, imageConfig, imageState);
+
+  const endpointHandoffPath = imageMcpEndpointHandoffPath({
+    projectRoot: context.projectRoot,
+    projectId: context.state.projectId,
+    workspaceId: context.workspaceId,
+    imageId: imageState.id,
+    stateRoot: context.resolvedStateRoot,
+  });
+  removeImageMcpEndpointHandoff(endpointHandoffPath);
+  delete imageState.mcpEndpoint;
+
+  const startupScript = writeProjectImageStartupScript({
+    projectRoot: context.projectRoot,
+    sourcePath: context.loadSourcePath,
+    config: context.config,
+    imageId: imageState.id,
+    imageState,
+    workspaceId: context.workspaceId,
+    stateRoot: context.resolvedStateRoot,
+  });
+  clearPharoMcpLoadStatus(imageState, startupScript.pharoMcpLoadStatusPath);
+  clearDependencyRepositoryDetachStatus(
+    imageState,
+    startupScript.dependencyRepositoryDetachStatusPath,
+  );
+  clearRepositoryWorkspaceLoadStatuses(
+    startupScript.repositoryWorkspaceLoadStatusPaths,
+  );
+  prepareRepositoryWorkspaceLoadStatuses(
+    imageState,
+    startupScript.repositoryWorkspaceLoadStatusPaths,
+  );
+
+  const launchClient = context.options.pharoLauncherMcpClient
+    ? context.client
+    : await createStdioPharoLauncherMcpClient(undefined, {
+        profileEnvironment: context.launcherProfileEnvironment,
+      });
+
+  return {
+    displayMode,
+    endpointHandoffPath,
+    pharoMcpLoadStatusPath: startupScript.pharoMcpLoadStatusPath,
+    dependencyRepositoryDetachStatusPath:
+      startupScript.dependencyRepositoryDetachStatusPath,
+    startupScript,
+    launchClient,
+    ownsLaunchClient: !context.options.pharoLauncherMcpClient,
+  };
+}
+
+function removePreparedPortClaimsForImage(
+  context: ProjectOpenContext,
+  imageId: string,
+): void {
+  context.preparedPortClaims = context.preparedPortClaims.filter(
+    (candidate) => candidate.imageId !== imageId,
+  );
+}
+
+async function recordLaunchedImagePortClaim(
+  context: ProjectOpenContext,
+  imageState: ProjectImageState,
+  pid: number,
+): Promise<void> {
+  if (!context.claimsRoot) {
+    return;
+  }
+
+  const preparedClaim = context.preparedPortClaims.find(
+    (candidate) => candidate.imageId === imageState.id,
+  );
+  if (preparedClaim) {
+    await recordImagePortClaimProcess({
+      claimsRoot: context.claimsRoot,
+      preparedClaim,
+      pid,
+      now: context.now,
+    });
+  }
+}
+
+async function releaseOptionalRouteForImage(
+  context: ProjectOpenContext,
+  imageState: ProjectImageState,
+): Promise<void> {
+  await releaseOptionalPharoMcpRoute({
+    state: context.state,
+    imageState,
+    claimsRoot: context.claimsRoot,
+    checks: context.portClaimChecks,
+  });
+  removePreparedPortClaimsForImage(context, imageState.id);
+}
+
+async function handleMissingPharoMcpReadiness(options: {
+  context: ProjectOpenContext;
+  imageState: ProjectImageState;
+  endpointHandoffPath: string;
+  preferEndpointHandoff: boolean;
+  requiresHealth: boolean;
+}): Promise<void> {
+  if (!options.requiresHealth) {
+    await releaseOptionalRouteForImage(options.context, options.imageState);
+    return;
+  }
+
+  const endpointHint = options.preferEndpointHandoff
+    ? ` or endpoint handoff at ${options.endpointHandoffPath}`
+    : "";
+  const portHint =
+    options.imageState.assignedPort === undefined
+      ? ""
+      : ` on port ${options.imageState.assignedPort}`;
+  throw new Error(
+    `Timed out waiting for Pharo MCP health${portHint}${endpointHint}`,
+  );
+}
+
+async function handleEndpointReadiness(options: {
+  context: ProjectOpenContext;
+  imageState: ProjectImageState;
+  endpoint: ProjectImageMcpEndpoint;
+}): Promise<void> {
+  options.imageState.mcpEndpoint = options.endpoint;
+  if (
+    options.context.claimsRoot &&
+    options.imageState.assignedPort !== undefined
+  ) {
+    await releaseImagePortClaimIfOwned({
+      state: options.context.state,
+      image: options.imageState,
+      claimsRoot: options.context.claimsRoot,
+      checks: options.context.portClaimChecks,
+    });
+    removePreparedPortClaimsForImage(options.context, options.imageState.id);
+  }
+  delete options.imageState.assignedPort;
+}
+
+async function handlePharoMcpReadinessResult(options: {
+  context: ProjectOpenContext;
+  imageState: ProjectImageState;
+  readiness: ImageMcpReadiness | undefined;
+  endpointHandoffPath: string;
+  preferEndpointHandoff: boolean;
+  requiresHealth: boolean;
+  launchRuntime: ImageLaunchRuntime;
+}): Promise<void> {
+  if (!options.readiness) {
+    await handleMissingPharoMcpReadiness(options);
+    return;
+  }
+
+  if (options.readiness.kind === "processExited") {
+    throw imageStartupExitedBeforeHealthError({
+      imageName: options.imageState.imageName,
+      assignedPort: options.imageState.assignedPort,
+      endpointHandoffPath: options.endpointHandoffPath,
+      preferEndpointHandoff: options.preferEndpointHandoff,
+      launcherResult: options.launchRuntime.launcherResult,
+      process: options.launchRuntime.process,
+    });
+  }
+
+  if (options.readiness.kind === "loadFailed") {
+    await releaseOptionalRouteForImage(options.context, options.imageState);
+  }
+
+  if (options.readiness.kind === "endpoint") {
+    await handleEndpointReadiness({
+      context: options.context,
+      imageState: options.imageState,
+      endpoint: options.readiness.endpoint,
+    });
+  }
+}
+
+async function routeProjectImageMcp(options: {
+  context: ProjectOpenContext;
+  imageConfig: ProjectImageConfig;
+  imageState: ProjectImageState;
+  setup: ProjectImageOpenSetup;
+  launchRuntime: ImageLaunchRuntime;
+}): Promise<void> {
+  if (!imageCanRouteToPharoMcp(options.imageConfig, options.imageState)) {
+    return;
+  }
+
+  const preferEndpointHandoff = options.imageConfig.mcp.port === undefined;
+  const requiresHealth = imageRequiresPharoMcpHealth(
+    options.imageConfig,
+    options.imageState,
+  );
+  const readiness = await pollPharoMcpReadiness({
+    imageState: options.imageState,
+    endpointHandoffPath: options.setup.endpointHandoffPath,
+    preferEndpointHandoff,
+    healthClient: options.context.healthClient,
+    processClient: options.context.client,
+    imageName: options.imageState.imageName,
+    launchedProcess: options.launchRuntime.process,
+    pharoMcpLoadStatusPath: options.setup.pharoMcpLoadStatusPath,
+    failOnLoadFailure: requiresHealth,
+    timeoutMs: requiresHealth ? options.context.poll.healthTimeoutMs : 0,
+    intervalMs: options.context.poll.intervalMs,
+    sleep: options.context.sleep,
+  });
+  await handlePharoMcpReadinessResult({
+    context: options.context,
+    imageState: options.imageState,
+    readiness,
+    endpointHandoffPath: options.setup.endpointHandoffPath,
+    preferEndpointHandoff,
+    requiresHealth,
+    launchRuntime: options.launchRuntime,
+  });
+}
+
+function assertProjectImageLoadStatuses(options: {
+  imageConfig: ProjectImageConfig;
+  imageState: ProjectImageState;
+  pharoMcpLoadStatusPath: string | undefined;
+  dependencyRepositoryDetachStatusPath: string | undefined;
+}): void {
+  const pharoMcpLoadFailure = refreshPharoMcpLoadStatus(
+    options.imageState,
+    options.pharoMcpLoadStatusPath,
+  );
+  if (
+    pharoMcpLoadFailure &&
+    imageRequiresPharoMcpHealth(options.imageConfig, options.imageState)
+  ) {
+    throw new Error(pharoMcpLoadFailure);
+  }
+
+  const loadFailure = refreshRepositoryWorkspaceLoadStatuses(
+    options.imageState,
+  );
+  if (loadFailure) {
+    throw new Error(loadFailure);
+  }
+
+  const detachFailure = refreshDependencyRepositoryDetachStatus(
+    options.imageState,
+    options.dependencyRepositoryDetachStatusPath,
+  );
+  if (detachFailure) {
+    throw new Error(detachFailure);
+  }
+}
+
+async function ensureProjectImageRepositoryWorkspaces(options: {
+  imageConfig: ProjectImageConfig;
+  imageState: ProjectImageState;
+  imageMcpClient: ProjectOpenImageMcpClient;
+}): Promise<void> {
+  for (const workspace of projectImageRepositoryWorkspaces(options.imageState)) {
+    await ensureRepositoryWorkspaceRegistered({
+      imageConfig: options.imageConfig,
+      imageState: options.imageState,
+      workspace,
+      imageMcpClient: options.imageMcpClient,
+    });
+  }
+}
+
+async function launchProjectImage(options: {
+  context: ProjectOpenContext;
+  imageConfig: ProjectImageConfig;
+  imageState: ProjectImageState;
+  setup: ProjectImageOpenSetup;
+}): Promise<void> {
+  const { context, imageConfig, imageState, setup } = options;
+  try {
+    const launchRuntime = await launchImageAndPollProcess(
+      setup.launchClient,
+      context.client,
+      imageState.imageName,
+      setup.displayMode,
+      setup.startupScript.filePath,
+      context.poll.processTimeoutMs,
+      context.poll.intervalMs,
+      context.sleep,
+    );
+    const process = launchRuntime.process;
+    imageState.pid = process.pid;
+    await recordLaunchedImagePortClaim(context, imageState, process.pid);
+    await routeProjectImageMcp({
+      context,
+      imageConfig,
+      imageState,
+      setup,
+      launchRuntime,
+    });
+    assertProjectImageLoadStatuses({
+      imageConfig,
+      imageState,
+      pharoMcpLoadStatusPath: setup.pharoMcpLoadStatusPath,
+      dependencyRepositoryDetachStatusPath:
+        setup.dependencyRepositoryDetachStatusPath,
+    });
+    await ensureProjectImageRepositoryWorkspaces({
+      imageConfig,
+      imageState,
+      imageMcpClient: context.imageMcpClient,
+    });
+  } finally {
+    if (setup.ownsLaunchClient) {
+      closeClientQuietly(setup.launchClient);
+    }
+  }
+}
+
+async function releaseCreatedPreparedPortClaim(
+  context: ProjectOpenContext,
+  imageState: ProjectImageState,
+): Promise<void> {
+  if (!context.claimsRoot) {
+    return;
+  }
+
+  const claim = context.preparedPortClaims.find(
+    (candidate) => candidate.imageId === imageState.id,
+  );
+  if (claim?.created) {
+    await releasePreparedImagePortClaims(context.claimsRoot, [claim]);
+    context.preparedPortClaims = context.preparedPortClaims.filter(
+      (candidate) => candidate !== claim,
+    );
+  }
+}
+
+async function recordProjectImageOpenFailure(options: {
+  context: ProjectOpenContext;
+  imageState: ProjectImageState;
+  setup: ProjectImageOpenSetup | undefined;
+  error: unknown;
+}): Promise<void> {
+  options.imageState.status = "failed";
+  await releaseCreatedPreparedPortClaim(options.context, options.imageState);
+
+  const pharoMcpLoadFailure = refreshPharoMcpLoadStatus(
+    options.imageState,
+    options.setup?.pharoMcpLoadStatusPath,
+  );
+  const loadFailure = refreshRepositoryWorkspaceLoadStatuses(
+    options.imageState,
+  );
+  const detachFailure = refreshDependencyRepositoryDetachStatus(
+    options.imageState,
+    options.setup?.dependencyRepositoryDetachStatusPath,
+  );
+  options.context.failures.push({
+    imageId: options.imageState.id,
+    imageName: options.imageState.imageName,
+    message:
+      detachFailure ??
+      loadFailure ??
+      pharoMcpLoadFailure ??
+      errorMessage(options.error),
+    ...(detachFailure || loadFailure || pharoMcpLoadFailure
+      ? {}
+      : launcherFailureDetails(options.error)),
+    ...(detachFailure || loadFailure || pharoMcpLoadFailure
+      ? {}
+      : startupFailureDetails(options.error)),
+  });
+}
+
+async function openProjectImage(
+  context: ProjectOpenContext,
+  imageState: ProjectImageState,
+): Promise<void> {
+  const imageConfig = context.config.images.find(
+    (image) => image.id === imageState.id,
+  );
+  if (!imageConfig) {
+    return;
+  }
+
+  const displayMode =
+    context.options.displayMode ?? projectImageDisplayMode(imageConfig);
+  applyProjectImageDisplayMode(
+    imageConfig,
+    imageState,
+    displayMode,
+    context.options.displayMode,
+  );
+
+  let setup: ProjectImageOpenSetup | undefined;
+  try {
+    setup = await setupProjectImageForOpen(
+      context,
+      imageConfig,
+      imageState,
+      displayMode,
+    );
+    await launchProjectImage({ context, imageConfig, imageState, setup });
+    imageState.status = "running";
+  } catch (error) {
+    await recordProjectImageOpenFailure({ context, imageState, setup, error });
+  }
+}
+
+async function openActiveProjectImages(
+  context: ProjectOpenContext,
+  imagesToOpen: ProjectImageState[],
+): Promise<void> {
+  for (const imageState of imagesToOpen) {
+    await openProjectImage(context, imageState);
+  }
+}
+
 export async function openProject(
   options: ProjectOpenOptions,
 ): Promise<ProjectOpenResult> {
   const projectRoot = path.resolve(options.projectRoot);
   const config = loadProjectConfig(projectRoot);
-  const workspaceId = options.workspaceId
-    ? sanitizeRuntimeId(options.workspaceId)
-    : defaultWorkspaceId(projectRoot);
+  const workspaceId = resolveProjectOpenWorkspace(
+    projectRoot,
+    options.workspaceId,
+  );
   const statePath = projectStatePathForConfig({
     projectRoot,
     config,
@@ -1695,9 +2239,10 @@ export async function openProject(
   const resolvedStateRoot = projectStateRootForConfig(config, options.stateRoot);
   const previousState = loadProjectState(statePath);
   const requestedSourcePath = options.sourcePath ?? previousState?.sourcePath;
-  const sourcePath = requestedSourcePath
-    ? path.resolve(requestedSourcePath)
-    : undefined;
+  const sourcePath = resolveProjectOpenSourcePath({
+    requestedSourcePath,
+    projectRoot,
+  });
   const loadSourcePath = sourcePath ?? projectRoot;
   const now = options.now ?? (() => new Date());
   const runtime = resolveProjectRuntimePolicy(config);
@@ -1716,9 +2261,8 @@ export async function openProject(
     targetId: options.targetId,
     sourcePath,
     reservedPorts: claimsRoot
-      ? []
-      : projectReservedOwners.map((owner) => owner.port),
-    portRange,
+      ? projectReservedOwners.map((owner) => owner.port)
+      : undefined,
   });
   applyScopedImageSelection(state, previousState, options.imageIds);
   const imagesToOpen = activeStateImages(state);
@@ -1778,299 +2322,34 @@ export async function openProject(
     healthTimeoutMs: options.poll?.healthTimeoutMs ?? 5 * 60_000,
   };
   const sleep = options.sleep ?? defaultSleep;
+  const context: ProjectOpenContext = {
+    options,
+    projectRoot,
+    config,
+    previousState,
+    sourcePath,
+    loadSourcePath,
+    workspaceId,
+    resolvedStateRoot,
+    statePath,
+    state,
+    claimsRoot,
+    projectReservedOwners,
+    portClaimChecks,
+    launcherProfileEnvironment,
+    preparedPortClaims,
+    client,
+    ownsClient,
+    healthClient,
+    imageMcpClient,
+    poll,
+    sleep,
+    failures,
+    now,
+  };
 
   try {
-    for (const imageState of imagesToOpen) {
-      const imageConfig = config.images.find((image) => image.id === imageState.id);
-      if (!imageConfig) {
-        continue;
-      }
-      const displayMode = options.displayMode ?? projectImageDisplayMode(imageConfig);
-      if (
-        options.displayMode !== undefined ||
-        imageConfig.displayMode !== undefined ||
-        imageState.displayMode !== undefined
-      ) {
-        imageState.displayMode = displayMode;
-      }
-      let pharoMcpLoadStatusPath: string | undefined;
-      let dependencyRepositoryDetachStatusPath: string | undefined;
-
-      try {
-        const homeMaterialization =
-          shouldMaterializeImageFromHomeCache({
-            previousState,
-            imageConfig,
-            imageState,
-            approval: options.homeImageCacheApproval,
-          })
-            ? await materializeProjectImageFromHomeCache({
-                runtimeClient: client,
-                homeClient: options.homeImageCacheClient ??
-                  (options.pharoLauncherMcpClient ? client : undefined),
-                projectRoot,
-                config,
-                imageConfig,
-                imageState,
-                workspaceId,
-                targetId: state.targetId,
-                stateRoot: resolvedStateRoot,
-                approval: options.homeImageCacheApproval,
-                now,
-              })
-            : undefined;
-
-        if (!homeMaterialization) {
-          await copyProjectImageFromPreparedCache({
-            client,
-            projectRoot,
-            config,
-            imageConfig,
-            imageState,
-            approval: options.preparedImageCacheApproval,
-          });
-        }
-
-        await hydrateRepositoryWorkspaceImagePaths(
-          client,
-          imageState,
-          launcherProfileEnvironment?.PHARO_LAUNCHER_MCP_IMAGES_DIR,
-        );
-        materializeProjectImageRepositoryWorkspaces({
-          projectRoot,
-          imageConfig,
-          imageState,
-          sourcePath: loadSourcePath,
-        });
-
-        const endpointHandoffPath = imageMcpEndpointHandoffPath({
-          projectRoot,
-          projectId: state.projectId,
-          workspaceId,
-          imageId: imageState.id,
-          stateRoot: resolvedStateRoot,
-        });
-        removeImageMcpEndpointHandoff(endpointHandoffPath);
-        delete imageState.mcpEndpoint;
-
-        const startupScript = writeProjectImageStartupScript({
-          projectRoot,
-          sourcePath: loadSourcePath,
-          config,
-          imageId: imageState.id,
-          imageState,
-          workspaceId,
-          stateRoot: resolvedStateRoot,
-        });
-        pharoMcpLoadStatusPath = startupScript.pharoMcpLoadStatusPath;
-        dependencyRepositoryDetachStatusPath =
-          startupScript.dependencyRepositoryDetachStatusPath;
-        clearPharoMcpLoadStatus(imageState, pharoMcpLoadStatusPath);
-        clearDependencyRepositoryDetachStatus(
-          imageState,
-          dependencyRepositoryDetachStatusPath,
-        );
-        clearRepositoryWorkspaceLoadStatuses(
-          startupScript.repositoryWorkspaceLoadStatusPaths,
-        );
-        prepareRepositoryWorkspaceLoadStatuses(
-          imageState,
-          startupScript.repositoryWorkspaceLoadStatusPaths,
-        );
-
-        const launchClient = options.pharoLauncherMcpClient
-          ? client
-          : await createStdioPharoLauncherMcpClient(undefined, {
-              profileEnvironment: launcherProfileEnvironment,
-            });
-        const ownsLaunchClient = !options.pharoLauncherMcpClient;
-        try {
-          const launchRuntime = await launchImageAndPollProcess(
-            launchClient,
-            client,
-            imageState.imageName,
-            displayMode,
-            startupScript.filePath,
-            poll.processTimeoutMs,
-            poll.intervalMs,
-            sleep,
-          );
-          const process = launchRuntime.process;
-          imageState.pid = process.pid;
-          if (claimsRoot) {
-            const preparedClaim = preparedPortClaims.find(
-              (candidate) => candidate.imageId === imageState.id,
-            );
-            if (preparedClaim) {
-              await recordImagePortClaimProcess({
-                claimsRoot,
-                preparedClaim,
-                pid: process.pid,
-                now,
-              });
-            }
-          }
-
-          if (imageCanRouteToPharoMcp(imageConfig, imageState)) {
-            const preferEndpointHandoff = imageConfig.mcp.port === undefined;
-            const requiresHealth = imageRequiresPharoMcpHealth(
-              imageConfig,
-              imageState,
-            );
-            const readiness = await pollPharoMcpReadiness({
-              imageState,
-              endpointHandoffPath,
-              preferEndpointHandoff,
-              healthClient,
-              processClient: client,
-              imageName: imageState.imageName,
-              launchedProcess: process,
-              pharoMcpLoadStatusPath,
-              failOnLoadFailure: requiresHealth,
-              timeoutMs: requiresHealth ? poll.healthTimeoutMs : 0,
-              intervalMs: poll.intervalMs,
-              sleep,
-            });
-            if (!readiness) {
-              if (!requiresHealth) {
-                await releaseOptionalPharoMcpRoute({
-                  state,
-                  imageState,
-                  claimsRoot,
-                  checks: portClaimChecks,
-                });
-                preparedPortClaims = preparedPortClaims.filter(
-                  (candidate) => candidate.imageId !== imageState.id,
-                );
-              } else {
-                const endpointHint = preferEndpointHandoff
-                  ? ` or endpoint handoff at ${endpointHandoffPath}`
-                  : "";
-                const portHint =
-                  imageState.assignedPort === undefined
-                    ? ""
-                    : ` on port ${imageState.assignedPort}`;
-                throw new Error(
-                  `Timed out waiting for Pharo MCP health${portHint}${endpointHint}`,
-                );
-              }
-            }
-
-            if (readiness?.kind === "processExited") {
-              throw imageStartupExitedBeforeHealthError({
-                imageName: imageState.imageName,
-                assignedPort: imageState.assignedPort,
-                endpointHandoffPath,
-                preferEndpointHandoff,
-                launcherResult: launchRuntime.launcherResult,
-                process,
-              });
-            }
-
-            if (readiness?.kind === "loadFailed") {
-              await releaseOptionalPharoMcpRoute({
-                state,
-                imageState,
-                claimsRoot,
-                checks: portClaimChecks,
-              });
-              preparedPortClaims = preparedPortClaims.filter(
-                (candidate) => candidate.imageId !== imageState.id,
-              );
-            }
-
-            if (readiness?.kind === "endpoint") {
-              imageState.mcpEndpoint = readiness.endpoint;
-              if (claimsRoot && imageState.assignedPort !== undefined) {
-                await releaseImagePortClaimIfOwned({
-                  state,
-                  image: imageState,
-                  claimsRoot,
-                  checks: portClaimChecks,
-                });
-                preparedPortClaims = preparedPortClaims.filter(
-                  (candidate) => candidate.imageId !== imageState.id,
-                );
-              }
-              delete imageState.assignedPort;
-            }
-          }
-          const pharoMcpLoadFailure = refreshPharoMcpLoadStatus(
-            imageState,
-            pharoMcpLoadStatusPath,
-          );
-          if (
-            pharoMcpLoadFailure &&
-            imageRequiresPharoMcpHealth(imageConfig, imageState)
-          ) {
-            throw new Error(pharoMcpLoadFailure);
-          }
-          const loadFailure = refreshRepositoryWorkspaceLoadStatuses(imageState);
-          if (loadFailure) {
-            throw new Error(loadFailure);
-          }
-          const detachFailure = refreshDependencyRepositoryDetachStatus(
-            imageState,
-            dependencyRepositoryDetachStatusPath,
-          );
-          if (detachFailure) {
-            throw new Error(detachFailure);
-          }
-          for (const workspace of projectImageRepositoryWorkspaces(imageState)) {
-            await ensureRepositoryWorkspaceRegistered({
-              imageConfig,
-              imageState,
-              workspace,
-              imageMcpClient,
-            });
-          }
-        } finally {
-          if (ownsLaunchClient) {
-            closeClientQuietly(launchClient);
-          }
-        }
-
-        imageState.status = "running";
-      } catch (error) {
-        imageState.status = "failed";
-        if (claimsRoot) {
-          const claim = preparedPortClaims.find(
-            (candidate) => candidate.imageId === imageState.id,
-          );
-          if (claim?.created) {
-            await releasePreparedImagePortClaims(claimsRoot, [claim]);
-            preparedPortClaims = preparedPortClaims.filter(
-              (candidate) => candidate !== claim,
-            );
-          }
-        }
-        const pharoMcpLoadFailure = refreshPharoMcpLoadStatus(
-          imageState,
-          pharoMcpLoadStatusPath,
-        );
-        const loadFailure = refreshRepositoryWorkspaceLoadStatuses(imageState);
-        const detachFailure = refreshDependencyRepositoryDetachStatus(
-          imageState,
-          dependencyRepositoryDetachStatusPath,
-        );
-        failures.push({
-          imageId: imageState.id,
-          imageName: imageState.imageName,
-          message:
-            detachFailure ??
-            loadFailure ??
-            pharoMcpLoadFailure ??
-            errorMessage(error),
-          ...(detachFailure || loadFailure || pharoMcpLoadFailure
-            ? {}
-            : launcherFailureDetails(error)),
-          ...(detachFailure || loadFailure || pharoMcpLoadFailure
-            ? {}
-            : startupFailureDetails(error)),
-        });
-      }
-    }
-
+    await openActiveProjectImages(context, imagesToOpen);
     state.runtimeStatus = runtimeStatusForImages(state.images);
     state.updatedAt = now().toISOString();
     saveProjectState(statePath, state);
@@ -2082,14 +2361,12 @@ export async function openProject(
       state,
       failures,
     };
-
     if (!result.ok) {
       throw new ProjectOpenError("One or more project images failed to open", result);
     }
-
     return result;
   } finally {
-    if (ownsClient) {
+    if (context.ownsClient) {
       await client.close?.();
     }
   }

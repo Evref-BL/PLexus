@@ -1076,9 +1076,40 @@ function buildTargetPlan(input: {
   };
 }
 
-export async function rescueImage(
+interface ImageRescueContext {
+  options: ImageRescueOptions;
+  projectRoot: string;
+  config: ProjectConfig;
+  workspaceId: string;
+  resolvedStateRoot: string | undefined;
+  statePath: string;
+  state: ProjectState;
+  now: () => Date;
+  capturedAt: string;
+  sourceImage: ProjectImageState;
+  sourceConfig: ProjectImageConfig;
+  launcherClient: PharoLauncherMcpToolClient;
+  ownsLauncherClient: boolean;
+  warnings: string[];
+}
+
+interface ImageRescueSourceContext {
+  sourceSnapshot: ImageRescueSourceSnapshot;
+  repositorySnapshot?: ImageRescueRepositorySnapshot;
+  historyDirectoryPath?: string;
+  historyFiles: ImageRescueHistoryFile[];
+  selectedHistoryFilePath?: string;
+}
+
+interface ImageRescueTargetContext {
+  targetImageId: string;
+  targetImage?: ProjectImageState;
+  replacementPlan?: ImageRescueTargetPlan;
+}
+
+async function createImageRescueContext(
   options: ImageRescueOptions,
-): Promise<ImageRescueResult> {
+): Promise<ImageRescueContext> {
   const projectRoot = path.resolve(options.projectRoot);
   const config = loadProjectConfig(projectRoot);
   const workspaceId = resolveWorkspaceId(projectRoot, options.workspaceId);
@@ -1091,7 +1122,9 @@ export async function rescueImage(
   });
   const state = loadProjectState(statePath);
   if (!state) {
-    throw new ImageRescueError(`No PLexus runtime state found at ${statePath}`);
+    throw new ImageRescueError(
+      `No PLexus runtime state found at ${statePath}`,
+    );
   }
 
   const now = options.now ?? (() => new Date());
@@ -1109,277 +1142,379 @@ export async function rescueImage(
         stateRoot: resolvedStateRoot,
       }),
     }));
-  const ownsLauncherClient = !options.pharoLauncherMcpClient;
-  const warnings: string[] = [];
+
+  return {
+    options,
+    projectRoot,
+    config,
+    workspaceId,
+    resolvedStateRoot,
+    statePath,
+    state,
+    now,
+    capturedAt,
+    sourceImage,
+    sourceConfig,
+    launcherClient,
+    ownsLauncherClient: !options.pharoLauncherMcpClient,
+    warnings: [],
+  };
+}
+
+async function captureImageRescueSource(
+  context: ImageRescueContext,
+): Promise<ImageRescueSourceContext> {
+  const { capturedAt, launcherClient, options, sourceImage } = context;
+  const [configReport, launcherImage] = await Promise.all([
+    launcherConfigReport(launcherClient),
+    launcherImageInfo(launcherClient, sourceImage.imageName),
+  ]);
+  const paths = resolveImagePaths(
+    sourceImage.imageName,
+    launcherImage,
+    configReport,
+  );
+  const repositorySnapshot =
+    (await snapshotRepositories(
+      sourceImage,
+      options.imageMcpClient,
+      capturedAt,
+    )) ?? sourceImage.rescueSnapshot?.repositories;
+  const sourceSnapshot: ImageRescueSourceSnapshot = {
+    capturedAt,
+    ...(launcherImage ? { launcherImage } : {}),
+    paths,
+    ...(repositorySnapshot ? { repositories: repositorySnapshot } : {}),
+  };
+  const historyDirectoryPath =
+    options.sourceHistoryDirectoryPath ?? paths.ombuDirectoryPath;
+  if (options.sourceHistoryDirectoryPath) {
+    assertPathInsideDirectory(
+      options.sourceHistoryDirectoryPath,
+      paths.localDirectoryPath ?? paths.imageDirectoryPath,
+      "sourceHistoryDirectoryPath",
+    );
+  }
+  const historyFiles = listOmbuFiles(historyDirectoryPath);
+  const selectedHistoryFilePath = selectedHistoryFile(
+    options.historyFilePath,
+    historyFiles,
+  );
+  if (selectedHistoryFilePath) {
+    assertPathInsideDirectory(
+      selectedHistoryFilePath,
+      historyDirectoryPath,
+      "historyFilePath",
+    );
+  }
+
+  return {
+    sourceSnapshot,
+    repositorySnapshot,
+    historyDirectoryPath,
+    historyFiles,
+    selectedHistoryFilePath,
+  };
+}
+
+function planImageRescueTarget(
+  context: ImageRescueContext,
+  launcherImage?: LauncherImageInfo,
+): ImageRescueTargetContext {
+  const { config, now, options, sourceImage, state } = context;
+  const targetImageId =
+    options.targetImageId ?? defaultTargetImageId(options.sourceImageId);
+  const targetImage = state.images.find((image) => image.id === targetImageId);
+  const shouldPlanReplacement =
+    options.operation === "plan" || options.operation === "prepareTarget";
+  const plannedTargetImageName = shouldPlanReplacement
+    ? options.targetImageName ??
+      defaultTargetImageName(sourceImage.imageName, now)
+    : undefined;
+  const plannedTemplateName = shouldPlanReplacement
+    ? options.targetTemplateName ?? launcherImage?.originTemplate?.name
+    : undefined;
+  const replacementPlan =
+    shouldPlanReplacement &&
+    !targetImage &&
+    plannedTargetImageName &&
+    plannedTemplateName
+      ? buildTargetPlan({
+          state,
+          config,
+          targetImageId,
+          targetImageName: plannedTargetImageName,
+          targetMcpPort: options.targetMcpPort,
+          templateName: plannedTemplateName,
+          templateCategory: options.targetTemplateCategory,
+          portRange: options.portRange,
+        })
+      : undefined;
+
+  return { targetImageId, targetImage, replacementPlan };
+}
+
+async function collectImageRescueHistoryListing(
+  context: ImageRescueContext,
+  source: ImageRescueSourceContext,
+  target: ImageRescueTargetContext,
+): Promise<unknown | undefined> {
+  const { options, sourceImage, warnings } = context;
+  if (options.operation !== "plan" || !options.includeEntryCounts) {
+    return undefined;
+  }
+
+  const historyReader =
+    target.targetImage?.status === "running" ? target.targetImage : sourceImage;
+  try {
+    return await listHistoryFilesThroughImage(
+      options.imageMcpClient,
+      historyReader,
+      source.historyDirectoryPath,
+      options.includeEntryCounts,
+    );
+  } catch (error) {
+    warnings.push(
+      `Could not list history files through Pharo: ${errorMessage(error)}`,
+    );
+    return undefined;
+  }
+}
+
+function warnWhenRepositorySnapshotUnavailable(
+  context: ImageRescueContext,
+  source: ImageRescueSourceContext,
+): void {
+  if (
+    (context.options.operation === "snapshotSource" ||
+      context.options.operation === "prepareTarget") &&
+    source.repositorySnapshot?.status === "unavailable"
+  ) {
+    context.warnings.push(
+      `Repository snapshot is unavailable: ${source.repositorySnapshot.error ?? "unknown error"}`,
+    );
+  }
+}
+
+function saveSourceSnapshot(
+  context: ImageRescueContext,
+  source: ImageRescueSourceContext,
+): void {
+  updateImageMetadata(context.sourceImage, source.sourceSnapshot);
+  context.state.updatedAt = context.capturedAt;
+  saveImageRescueState(context.statePath, context.state);
+}
+
+function imageRescueResultBase(
+  context: ImageRescueContext,
+  source: ImageRescueSourceContext,
+  target: ImageRescueTargetContext,
+  historyListing: unknown | undefined,
+): Omit<ImageRescueResult, "ok" | "repositoryResults" | "changeResult"> {
+  return {
+    operation: context.options.operation,
+    projectRoot: context.projectRoot,
+    statePath: context.statePath,
+    state: context.state,
+    sourceImage: context.sourceImage,
+    ...(target.targetImage ? { targetImage: target.targetImage } : {}),
+    sourceSnapshot: source.sourceSnapshot,
+    historyDirectoryPath: source.historyDirectoryPath,
+    historyFiles: source.historyFiles,
+    historyListing,
+    selectedHistoryFilePath: source.selectedHistoryFilePath,
+    ...(target.replacementPlan ? { targetPlan: target.replacementPlan } : {}),
+    warnings: context.warnings,
+  };
+}
+
+function snapshotSourceResult(
+  context: ImageRescueContext,
+  source: ImageRescueSourceContext,
+  target: ImageRescueTargetContext,
+  historyListing: unknown | undefined,
+): ImageRescueResult {
+  saveSourceSnapshot(context, source);
+  return {
+    ok: true,
+    ...imageRescueResultBase(context, source, target, historyListing),
+  };
+}
+
+async function prepareRescueTarget(
+  context: ImageRescueContext,
+  source: ImageRescueSourceContext,
+  target: ImageRescueTargetContext,
+  historyListing: unknown | undefined,
+): Promise<ImageRescueResult> {
+  if (target.targetImage) {
+    throw new ImageRescueError(
+      `Target image id already exists: ${target.targetImageId}`,
+    );
+  }
+
+  if (!target.replacementPlan) {
+    throw new ImageRescueError(
+      "targetTemplateName is required because the source image origin template is unknown",
+    );
+  }
+
+  const replacementPlan = target.replacementPlan;
+  await createTargetImage(
+    context.launcherClient,
+    replacementPlan.targetImageName,
+    replacementPlan.templateName,
+    replacementPlan.templateCategory,
+  );
+  const targetImage: ProjectImageState = {
+    id: target.targetImageId,
+    imageName: replacementPlan.targetImageName,
+    assignedPort: replacementPlan.targetMcpPort,
+    status: "starting",
+    creation: {
+      role: "rescue",
+      source: {
+        kind: "template",
+        ...(context.sourceConfig.create?.profileId
+          ? { profileId: context.sourceConfig.create.profileId }
+          : {}),
+        templateName: replacementPlan.templateName,
+        ...(replacementPlan.templateCategory
+          ? { templateCategory: replacementPlan.templateCategory }
+          : {}),
+      },
+      cleanupPolicy: replacementPlan.cleanupPolicy,
+      route: replacementPlan.route,
+    },
+  };
+  target.targetImage = targetImage;
+  context.state.images.push(targetImage);
+  saveSourceSnapshot(context, source);
+
+  const targetConfig = targetConfigFromSource(
+    context.sourceConfig,
+    target.targetImageId,
+    replacementPlan.targetImageName,
+    replacementPlan.targetMcpPort,
+  );
+  const startupScript = writeImageStartupScript({
+    projectRoot: context.projectRoot,
+    projectId: projectConfigId(context.config),
+    workspaceId: context.workspaceId,
+    stateRoot: context.resolvedStateRoot,
+    imageConfig: targetConfig,
+    imageState: targetImage,
+  });
+  const poll = {
+    ...defaultPoll,
+    ...context.options.poll,
+  };
+  try {
+    const pid = await launchImage(
+      context.launcherClient,
+      context.options.healthClient ?? new HttpPharoMcpHealthClient(),
+      targetImage,
+      startupScript.filePath,
+      poll,
+      context.options.sleep ?? defaultSleep,
+    );
+    targetImage.pid = pid;
+    targetImage.status = "running";
+    context.state.updatedAt = context.now().toISOString();
+    saveImageRescueState(context.statePath, context.state);
+  } catch (error) {
+    targetImage.status = "failed";
+    context.state.updatedAt = context.now().toISOString();
+    saveImageRescueState(context.statePath, context.state);
+    throw error;
+  }
+
+  return {
+    ok: true,
+    ...imageRescueResultBase(context, source, target, historyListing),
+  };
+}
+
+async function applyImageRescuePlan(
+  context: ImageRescueContext,
+  source: ImageRescueSourceContext,
+  target: ImageRescueTargetContext,
+  historyListing: unknown | undefined,
+): Promise<ImageRescueResult> {
+  if (!target.targetImage) {
+    throw new ImageRescueError(
+      `Target image id is not in runtime state: ${target.targetImageId}`,
+    );
+  }
+
+  const actionSource =
+    context.options.repositoryActions ??
+    ((context.options.loadRepositories ?? true)
+      ? defaultRepositoryActions(source.repositorySnapshot)
+      : []);
+  const repositoryResults = await runRepositoryActions(
+    context.options.imageMcpClient,
+    target.targetImage,
+    actionSource,
+    context.options.confirm === true,
+  );
+  const changeResult = await applyHistoryEntries(
+    context.options.imageMcpClient,
+    target.targetImage,
+    source.selectedHistoryFilePath,
+    context.options.selection,
+    context.options.exclude,
+    context.options.codeChangesOnly ?? true,
+    context.options.confirm === true,
+  );
+
+  return {
+    ok:
+      repositoryResults.every((repository) => repository.status !== "failed") &&
+      changeResult?.status !== "failed",
+    ...imageRescueResultBase(context, source, target, historyListing),
+    repositoryResults,
+    changeResult,
+  };
+}
+
+export async function rescueImage(
+  options: ImageRescueOptions,
+): Promise<ImageRescueResult> {
+  const context = await createImageRescueContext(options);
 
   try {
-    const [configReport, launcherImage] = await Promise.all([
-      launcherConfigReport(launcherClient),
-      launcherImageInfo(launcherClient, sourceImage.imageName),
-    ]);
-    const paths = resolveImagePaths(
-      sourceImage.imageName,
-      launcherImage,
-      configReport,
+    const source = await captureImageRescueSource(context);
+    const target = planImageRescueTarget(
+      context,
+      source.sourceSnapshot.launcherImage,
     );
-    const repositorySnapshot =
-      (await snapshotRepositories(
-        sourceImage,
-        options.imageMcpClient,
-        capturedAt,
-      )) ?? sourceImage.rescueSnapshot?.repositories;
-    const sourceSnapshot: ImageRescueSourceSnapshot = {
-      capturedAt,
-      ...(launcherImage ? { launcherImage } : {}),
-      paths,
-      ...(repositorySnapshot ? { repositories: repositorySnapshot } : {}),
-    };
-    const historyDirectoryPath =
-      options.sourceHistoryDirectoryPath ?? paths.ombuDirectoryPath;
-    if (options.sourceHistoryDirectoryPath) {
-      assertPathInsideDirectory(
-        options.sourceHistoryDirectoryPath,
-        paths.localDirectoryPath ?? paths.imageDirectoryPath,
-        "sourceHistoryDirectoryPath",
-      );
-    }
-    const historyFiles = listOmbuFiles(historyDirectoryPath);
-    const selectedHistoryFilePath = selectedHistoryFile(
-      options.historyFilePath,
-      historyFiles,
+    const historyListing = await collectImageRescueHistoryListing(
+      context,
+      source,
+      target,
     );
-    if (selectedHistoryFilePath) {
-      assertPathInsideDirectory(
-        selectedHistoryFilePath,
-        historyDirectoryPath,
-        "historyFilePath",
-      );
-    }
-    const targetImageId =
-      options.targetImageId ?? defaultTargetImageId(options.sourceImageId);
-    let targetImage = state.images.find((image) => image.id === targetImageId);
-    const shouldPlanReplacement =
-      options.operation === "plan" || options.operation === "prepareTarget";
-    const plannedTargetImageName = shouldPlanReplacement
-      ? options.targetImageName ??
-        defaultTargetImageName(sourceImage.imageName, now)
-      : undefined;
-    const plannedTemplateName = shouldPlanReplacement
-      ? options.targetTemplateName ?? launcherImage?.originTemplate?.name
-      : undefined;
-    const replacementPlan =
-      shouldPlanReplacement &&
-      !targetImage &&
-      plannedTargetImageName &&
-      plannedTemplateName
-        ? buildTargetPlan({
-            state,
-            config,
-            targetImageId,
-            targetImageName: plannedTargetImageName,
-            targetMcpPort: options.targetMcpPort,
-            templateName: plannedTemplateName,
-            templateCategory: options.targetTemplateCategory,
-            portRange: options.portRange,
-          })
-        : undefined;
-    let historyListing: unknown;
-
-    if (options.operation === "plan" && options.includeEntryCounts) {
-      const historyReader =
-        targetImage?.status === "running" ? targetImage : sourceImage;
-      try {
-        historyListing = await listHistoryFilesThroughImage(
-          options.imageMcpClient,
-          historyReader,
-          historyDirectoryPath,
-          options.includeEntryCounts,
-        );
-      } catch (error) {
-        warnings.push(`Could not list history files through Pharo: ${errorMessage(error)}`);
-      }
-    }
-
-    if (
-      (options.operation === "snapshotSource" || options.operation === "prepareTarget") &&
-      repositorySnapshot?.status === "unavailable"
-    ) {
-      warnings.push(
-        `Repository snapshot is unavailable: ${repositorySnapshot.error ?? "unknown error"}`,
-      );
-    }
+    warnWhenRepositorySnapshotUnavailable(context, source);
 
     if (options.operation === "snapshotSource") {
-      updateImageMetadata(sourceImage, sourceSnapshot);
-      state.updatedAt = capturedAt;
-      saveImageRescueState(statePath, state);
-
-      return {
-        ok: true,
-        operation: options.operation,
-        projectRoot,
-        statePath,
-        state,
-        sourceImage,
-        sourceSnapshot,
-        historyDirectoryPath,
-        historyFiles,
-        historyListing,
-        selectedHistoryFilePath,
-        ...(replacementPlan ? { targetPlan: replacementPlan } : {}),
-        warnings,
-      };
+      return snapshotSourceResult(context, source, target, historyListing);
     }
 
     if (options.operation === "prepareTarget") {
-      if (targetImage) {
-        throw new ImageRescueError(`Target image id already exists: ${targetImageId}`);
-      }
-
-      if (!replacementPlan) {
-        throw new ImageRescueError(
-          "targetTemplateName is required because the source image origin template is unknown",
-        );
-      }
-
-      await createTargetImage(
-        launcherClient,
-        replacementPlan.targetImageName,
-        replacementPlan.templateName,
-        replacementPlan.templateCategory,
-      );
-      targetImage = {
-        id: targetImageId,
-        imageName: replacementPlan.targetImageName,
-        assignedPort: replacementPlan.targetMcpPort,
-        status: "starting",
-        creation: {
-          role: "rescue",
-          source: {
-            kind: "template",
-            ...(sourceConfig.create?.profileId
-              ? { profileId: sourceConfig.create.profileId }
-              : {}),
-            templateName: replacementPlan.templateName,
-            ...(replacementPlan.templateCategory
-              ? { templateCategory: replacementPlan.templateCategory }
-              : {}),
-          },
-          cleanupPolicy: replacementPlan.cleanupPolicy,
-          route: replacementPlan.route,
-        },
-      };
-      state.images.push(targetImage);
-      updateImageMetadata(sourceImage, sourceSnapshot);
-      state.updatedAt = capturedAt;
-      saveImageRescueState(statePath, state);
-
-      const targetConfig = targetConfigFromSource(
-        sourceConfig,
-        targetImageId,
-        replacementPlan.targetImageName,
-        replacementPlan.targetMcpPort,
-      );
-      const startupScript = writeImageStartupScript({
-        projectRoot,
-        projectId: projectConfigId(config),
-        workspaceId,
-        stateRoot: resolvedStateRoot,
-        imageConfig: targetConfig,
-        imageState: targetImage,
-      });
-      const poll = {
-        ...defaultPoll,
-        ...options.poll,
-      };
-      try {
-        const pid = await launchImage(
-          launcherClient,
-          options.healthClient ?? new HttpPharoMcpHealthClient(),
-          targetImage,
-          startupScript.filePath,
-          poll,
-          options.sleep ?? defaultSleep,
-        );
-        targetImage.pid = pid;
-        targetImage.status = "running";
-        state.updatedAt = now().toISOString();
-        saveImageRescueState(statePath, state);
-      } catch (error) {
-        targetImage.status = "failed";
-        state.updatedAt = now().toISOString();
-        saveImageRescueState(statePath, state);
-        throw error;
-      }
+      return prepareRescueTarget(context, source, target, historyListing);
     }
 
     if (options.operation === "applyPlan") {
-      if (!targetImage) {
-        throw new ImageRescueError(`Target image id is not in runtime state: ${targetImageId}`);
-      }
-
-      const actionSource =
-        options.repositoryActions ??
-        ((options.loadRepositories ?? true)
-          ? defaultRepositoryActions(repositorySnapshot)
-          : []);
-      const repositoryResults = await runRepositoryActions(
-        options.imageMcpClient,
-        targetImage,
-        actionSource,
-        options.confirm === true,
-      );
-      const changeResult = await applyHistoryEntries(
-        options.imageMcpClient,
-        targetImage,
-        selectedHistoryFilePath,
-        options.selection,
-        options.exclude,
-        options.codeChangesOnly ?? true,
-        options.confirm === true,
-      );
-
-      return {
-        ok:
-          repositoryResults.every((repository) => repository.status !== "failed") &&
-          changeResult?.status !== "failed",
-        operation: options.operation,
-        projectRoot,
-        statePath,
-        state,
-        sourceImage,
-        targetImage,
-        sourceSnapshot,
-        historyDirectoryPath,
-        historyFiles,
-        historyListing,
-        selectedHistoryFilePath,
-        ...(replacementPlan ? { targetPlan: replacementPlan } : {}),
-        repositoryResults,
-        changeResult,
-        warnings,
-      };
+      return applyImageRescuePlan(context, source, target, historyListing);
     }
 
     return {
       ok: true,
-      operation: options.operation,
-      projectRoot,
-      statePath,
-      state,
-      sourceImage,
-      targetImage,
-      sourceSnapshot,
-      historyDirectoryPath,
-      historyFiles,
-      historyListing,
-      selectedHistoryFilePath,
-      ...(replacementPlan ? { targetPlan: replacementPlan } : {}),
-      warnings,
+      ...imageRescueResultBase(context, source, target, historyListing),
     };
   } finally {
-    if (ownsLauncherClient) {
-      await launcherClient.close?.();
+    if (context.ownsLauncherClient) {
+      await context.launcherClient.close?.();
     }
   }
 }
