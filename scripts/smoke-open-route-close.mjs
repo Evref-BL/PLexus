@@ -1902,63 +1902,76 @@ async function prepareCreatedSourceImageDependencyCache(client, options) {
   textResult("source dependency cache", "prepared");
 }
 
+async function copySmokeImage(client, image) {
+  image.imageName ??= generatedSmokeImageName(image);
+  textResult("copy source image", `${image.id}=${image.copyFromImageName}`);
+  textResult("copy target image", `${image.id}=${image.imageName}`);
+
+  if (!(await imageExists(client, image.copyFromImageName))) {
+    throw new Error(
+      `Source image does not exist in PharoLauncher: ${image.copyFromImageName}`,
+    );
+  }
+
+  if (await imageExists(client, image.imageName)) {
+    throw new Error(
+      `Target smoke image already exists in PharoLauncher: ${image.imageName}`,
+    );
+  }
+
+  const copyResult = await callLauncherTool(
+    client,
+    "pharo_launcher_image_copy",
+    {
+      imageName: image.copyFromImageName,
+      newImageName: image.imageName,
+    },
+  );
+  launcherData(copyResult);
+  image.copied = true;
+  textResult("image copied", image.id);
+
+  if (!(await waitForImageExists(client, image.imageName))) {
+    throw new Error(
+      `Copied image did not become visible in PharoLauncher: ${
+        image.imageName
+      }. Copy result: ${JSON.stringify(copyResult)}`,
+    );
+  }
+}
+
+async function assertSmokeImageExistsOrCanBeCreated(client, image) {
+  if (image.create && !image.copyFromImageName) {
+    textResult("template-created target image", `${image.id}=${image.imageName}`);
+    if (await imageExists(client, image.imageName)) {
+      throw new Error(
+        `Target smoke image already exists in PharoLauncher: ${image.imageName}`,
+      );
+    }
+    return;
+  }
+
+  if (!(await imageExists(client, image.imageName))) {
+    throw new Error(`Image does not exist in PharoLauncher: ${image.imageName}`);
+  }
+}
+
+async function assertSmokeImageIsStopped(client, image) {
+  const preExistingProcess = await processForImage(client, image.imageName);
+  if (preExistingProcess) {
+    throw new Error(
+      `Image ${image.id} is already running with pid ${preExistingProcess.pid}; stop it before running this smoke.`,
+    );
+  }
+}
+
 async function prepareImages(client, options) {
   for (const image of options.images) {
     if (image.copyFromImageName) {
-      image.imageName ??= generatedSmokeImageName(image);
-      textResult("copy source image", `${image.id}=${image.copyFromImageName}`);
-      textResult("copy target image", `${image.id}=${image.imageName}`);
-
-      if (!(await imageExists(client, image.copyFromImageName))) {
-        throw new Error(
-          `Source image does not exist in PharoLauncher: ${image.copyFromImageName}`,
-        );
-      }
-
-      if (await imageExists(client, image.imageName)) {
-        throw new Error(
-          `Target smoke image already exists in PharoLauncher: ${image.imageName}`,
-        );
-      }
-
-      const copyResult = await callLauncherTool(
-        client,
-        "pharo_launcher_image_copy",
-        {
-          imageName: image.copyFromImageName,
-          newImageName: image.imageName,
-        },
-      );
-      launcherData(copyResult);
-      image.copied = true;
-      textResult("image copied", image.id);
-
-      if (!(await waitForImageExists(client, image.imageName))) {
-        throw new Error(
-          `Copied image did not become visible in PharoLauncher: ${
-            image.imageName
-          }. Copy result: ${JSON.stringify(copyResult)}`,
-        );
-      }
+      await copySmokeImage(client, image);
     }
-
-    if (image.create && !image.copyFromImageName) {
-      textResult("template-created target image", `${image.id}=${image.imageName}`);
-      if (await imageExists(client, image.imageName)) {
-        throw new Error(
-          `Target smoke image already exists in PharoLauncher: ${image.imageName}`,
-        );
-      }
-    } else if (!(await imageExists(client, image.imageName))) {
-      throw new Error(`Image does not exist in PharoLauncher: ${image.imageName}`);
-    }
-
-    const preExistingProcess = await processForImage(client, image.imageName);
-    if (preExistingProcess) {
-      throw new Error(
-        `Image ${image.id} is already running with pid ${preExistingProcess.pid}; stop it before running this smoke.`,
-      );
-    }
+    await assertSmokeImageExistsOrCanBeCreated(client, image);
+    await assertSmokeImageIsStopped(client, image);
   }
 }
 

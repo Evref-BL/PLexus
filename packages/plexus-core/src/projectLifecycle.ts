@@ -163,6 +163,38 @@ interface ProjectRemoteLifecycleMapping {
   workspaceId: string;
 }
 
+function remoteWorkspaceTargetForInput(
+  workspace: ProjectRemoteNodeWorkspaceMappingConfig,
+  targetId: string | undefined,
+) {
+  return targetId
+    ? workspace.targets?.find((candidate) => candidate.targetId === targetId)
+    : undefined;
+}
+
+function remoteLifecycleMappingForWorkspace(
+  remoteNode: ProjectRemoteNodeConfig,
+  workspace: ProjectRemoteNodeWorkspaceMappingConfig,
+  workspaceId: string,
+  targetId: string | undefined,
+): ProjectRemoteLifecycleMapping | undefined {
+  const target = remoteWorkspaceTargetForInput(workspace, targetId);
+  if (targetId && workspace.targets && !target) {
+    return undefined;
+  }
+
+  if (workspace.workspaceId !== workspaceId && !target) {
+    return undefined;
+  }
+
+  return {
+    remoteNode,
+    workspace,
+    ...(target ? { target } : {}),
+    workspaceId,
+  };
+}
+
 interface ProjectHostRemoteRouteContext {
   projectRoot: string;
   config: ProjectConfig;
@@ -1632,46 +1664,75 @@ function gatewayWithoutRuntimeIdentity(
   return result;
 }
 
+function staleGatewayRuntimeIdentity(stale: ProjectGatewayState) {
+  return {
+    ...(stale.endpoint ? { endpoint: stale.endpoint } : {}),
+    ...(stale.controlEndpoint
+      ? { controlEndpoint: stale.controlEndpoint }
+      : {}),
+    ...(stale.port !== undefined ? { port: stale.port } : {}),
+    ...(stale.pid !== undefined ? { pid: stale.pid } : {}),
+    ...(stale.claim ? { claim: stale.claim } : {}),
+  };
+}
+
+function staleGatewayDiagnostic(
+  reconciliation: ProjectLifecycleGatewayReconciliation,
+  repair: ProjectLifecycleGatewayRepairAffordance,
+): ProjectLifecycleGatewayDiagnostics {
+  const stale = reconciliation.staleGateway;
+  return {
+    mode: stale.mode,
+    status: "dead",
+    health: "degraded",
+    reason: reconciliation.reason,
+    host: stale.host,
+    portRange: stale.portRange,
+    managedByProject: stale.managedByProject,
+    stale: staleGatewayRuntimeIdentity(stale),
+    repair,
+  };
+}
+
+function gatewayDiagnosticStatus(
+  gateway: ProjectGatewayState,
+): ProjectLifecycleGatewayDiagnostics["status"] {
+  if (gateway.mode === "shared") {
+    return "shared";
+  }
+
+  return gateway.endpoint && gateway.controlEndpoint ? "running" : "not-started";
+}
+
+function gatewayDiagnosticHealth(
+  status: ProjectLifecycleGatewayDiagnostics["status"],
+): ProjectLifecycleGatewayDiagnostics["health"] {
+  return status === "not-started" ? "unknown" : "operational";
+}
+
+function gatewayDiagnosticReason(
+  status: ProjectLifecycleGatewayDiagnostics["status"],
+): string {
+  return status === "not-started"
+    ? "No project-local gateway endpoint is recorded for this scope yet."
+    : "Gateway state is available for this scope.";
+}
+
 function gatewayDiagnostic(
   gateway: ProjectGatewayState,
   reconciliation: ProjectLifecycleGatewayReconciliation | undefined,
   repair: ProjectLifecycleGatewayRepairAffordance,
 ): ProjectLifecycleGatewayDiagnostics {
   if (reconciliation) {
-    const stale = reconciliation.staleGateway;
-    return {
-      mode: stale.mode,
-      status: "dead",
-      health: "degraded",
-      reason: reconciliation.reason,
-      host: stale.host,
-      portRange: stale.portRange,
-      managedByProject: stale.managedByProject,
-      stale: {
-        ...(stale.endpoint ? { endpoint: stale.endpoint } : {}),
-        ...(stale.controlEndpoint ? { controlEndpoint: stale.controlEndpoint } : {}),
-        ...(stale.port !== undefined ? { port: stale.port } : {}),
-        ...(stale.pid !== undefined ? { pid: stale.pid } : {}),
-        ...(stale.claim ? { claim: stale.claim } : {}),
-      },
-      repair,
-    };
+    return staleGatewayDiagnostic(reconciliation, repair);
   }
 
-  const status: ProjectLifecycleGatewayDiagnostics["status"] =
-    gateway.mode === "shared"
-      ? "shared"
-      : gateway.endpoint && gateway.controlEndpoint
-        ? "running"
-        : "not-started";
+  const status = gatewayDiagnosticStatus(gateway);
   return {
     mode: gateway.mode,
     status,
-    health: status === "not-started" ? "unknown" : "operational",
-    reason:
-      status === "not-started"
-        ? "No project-local gateway endpoint is recorded for this scope yet."
-        : "Gateway state is available for this scope.",
+    health: gatewayDiagnosticHealth(status),
+    reason: gatewayDiagnosticReason(status),
     endpoint: gateway.endpoint,
     controlEndpoint: gateway.controlEndpoint,
     host: gateway.host,
@@ -2255,23 +2316,14 @@ function remoteLifecycleMappingForInput(
 
   for (const remoteNode of remoteNodes) {
     for (const workspace of remoteNode.workspaces ?? []) {
-      const target = input.targetId
-        ? workspace.targets?.find(
-            (candidate) => candidate.targetId === input.targetId,
-          )
-        : undefined;
-
-      if (input.targetId && workspace.targets && !target) {
-        continue;
-      }
-
-      if (workspace.workspaceId === workspaceId || target) {
-        return {
-          remoteNode,
-          workspace,
-          ...(target ? { target } : {}),
-          workspaceId,
-        };
+      const mapping = remoteLifecycleMappingForWorkspace(
+        remoteNode,
+        workspace,
+        workspaceId,
+        input.targetId,
+      );
+      if (mapping) {
+        return mapping;
       }
     }
   }

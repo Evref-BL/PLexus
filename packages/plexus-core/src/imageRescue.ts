@@ -456,6 +456,24 @@ function launcherImagesDirectory(configReport: LauncherConfigReport): string | u
   );
 }
 
+function resolveLauncherImagePath(
+  imageName: string,
+  rawImagePath: string | undefined,
+  imagesDirectory: string | undefined,
+): string | undefined {
+  if (rawImagePath) {
+    return path.isAbsolute(rawImagePath)
+      ? rawImagePath
+      : imagesDirectory
+        ? path.resolve(imagesDirectory, rawImagePath)
+        : path.resolve(rawImagePath);
+  }
+
+  return imagesDirectory
+    ? path.join(imagesDirectory, imageName, `${imageName}.image`)
+    : undefined;
+}
+
 function resolveImagePaths(
   imageName: string,
   launcherImage: LauncherImageInfo | undefined,
@@ -463,15 +481,11 @@ function resolveImagePaths(
 ): ResolvedImagePaths {
   const rawImagePath = launcherImage?.imagePath;
   const imagesDirectory = launcherImagesDirectory(configReport);
-  const imagePath = rawImagePath
-    ? path.isAbsolute(rawImagePath)
-      ? rawImagePath
-      : imagesDirectory
-        ? path.resolve(imagesDirectory, rawImagePath)
-        : path.resolve(rawImagePath)
-    : imagesDirectory
-      ? path.join(imagesDirectory, imageName, `${imageName}.image`)
-      : undefined;
+  const imagePath = resolveLauncherImagePath(
+    imageName,
+    rawImagePath,
+    imagesDirectory,
+  );
   const imageDirectoryPath = imagePath ? path.dirname(imagePath) : undefined;
   const changesPath = imagePath
     ? imagePath.replace(/\.image$/i, ".changes")
