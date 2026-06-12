@@ -13,7 +13,10 @@ import {
   PlexusRoutingTable,
   type GatewayImageMcpEndpoint,
   type GatewayImageRoute,
+  type GatewayProjectImageCreationRouteState,
+  type GatewayProjectImageCreationSourceState,
   type GatewayProjectImageCreationState,
+  type GatewayProjectImageState,
   type GatewayProjectRoute,
   type GatewayProjectState,
   type GatewayRemoteGatewayUpstream,
@@ -422,6 +425,60 @@ function requireCreationString(
   return value;
 }
 
+function optionalCreationObject(
+  input: Record<string, unknown>,
+  pathLabel: string,
+  key: string,
+): Record<string, unknown> | undefined {
+  const value = input[key];
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (!isObject(value)) {
+    throw new GatewayInputError(`${pathLabel}.${key} must be an object`);
+  }
+
+  return value;
+}
+
+function imageCreationSourceInput(
+  source: Record<string, unknown>,
+  pathLabel: string,
+): GatewayProjectImageCreationSourceState {
+  const profileId = optionalCreationString(source, pathLabel, "profileId");
+  const templateName = optionalCreationString(source, pathLabel, "templateName");
+  const templateCategory = optionalCreationString(
+    source,
+    pathLabel,
+    "templateCategory",
+  );
+
+  return {
+    kind: requireCreationString(source, pathLabel, "kind"),
+    ...(profileId ? { profileId } : {}),
+    ...(templateName ? { templateName } : {}),
+    ...(templateCategory ? { templateCategory } : {}),
+  };
+}
+
+function imageCreationRouteInput(
+  route: Record<string, unknown>,
+  pathLabel: string,
+): GatewayProjectImageCreationRouteState {
+  const serverName = optionalCreationString(route, pathLabel, "serverName");
+  const targetKey = optionalCreationString(route, pathLabel, "targetKey");
+  const imageArgument = optionalCreationString(route, pathLabel, "imageArgument");
+  const imageId = optionalCreationString(route, pathLabel, "imageId");
+
+  return {
+    ...(serverName ? { serverName } : {}),
+    ...(targetKey ? { targetKey } : {}),
+    ...(imageArgument ? { imageArgument } : {}),
+    ...(imageId ? { imageId } : {}),
+  };
+}
+
 function imageCreationInput(
   image: Record<string, unknown>,
   index: number,
@@ -436,18 +493,8 @@ function imageCreationInput(
     throw new GatewayInputError(`${basePath} must be an object`);
   }
 
-  const sourceValue = value.source;
-  const source = sourceValue === undefined ? undefined : sourceValue;
-  if (source !== undefined && !isObject(source)) {
-    throw new GatewayInputError(`${basePath}.source must be an object`);
-  }
-
-  const routeValue = value.route;
-  const route = routeValue === undefined ? undefined : routeValue;
-  if (route !== undefined && !isObject(route)) {
-    throw new GatewayInputError(`${basePath}.route must be an object`);
-  }
-
+  const source = optionalCreationObject(value, basePath, "source");
+  const route = optionalCreationObject(value, basePath, "route");
   const creation: GatewayProjectImageCreationState = {};
   const role = optionalCreationString(value, basePath, "role");
   const cleanupPolicy = optionalCreationString(value, basePath, "cleanupPolicy");
@@ -459,56 +506,11 @@ function imageCreationInput(
   }
 
   if (source) {
-    const profileId = optionalCreationString(
-      source,
-      `${basePath}.source`,
-      "profileId",
-    );
-    const templateName = optionalCreationString(
-      source,
-      `${basePath}.source`,
-      "templateName",
-    );
-    const templateCategory = optionalCreationString(
-      source,
-      `${basePath}.source`,
-      "templateCategory",
-    );
-    creation.source = {
-      kind: requireCreationString(source, `${basePath}.source`, "kind"),
-      ...(profileId ? { profileId } : {}),
-      ...(templateName ? { templateName } : {}),
-      ...(templateCategory ? { templateCategory } : {}),
-    };
+    creation.source = imageCreationSourceInput(source, `${basePath}.source`);
   }
 
   if (route) {
-    const serverName = optionalCreationString(
-      route,
-      `${basePath}.route`,
-      "serverName",
-    );
-    const targetKey = optionalCreationString(
-      route,
-      `${basePath}.route`,
-      "targetKey",
-    );
-    const imageArgument = optionalCreationString(
-      route,
-      `${basePath}.route`,
-      "imageArgument",
-    );
-    const imageId = optionalCreationString(
-      route,
-      `${basePath}.route`,
-      "imageId",
-    );
-    creation.route = {
-      ...(serverName ? { serverName } : {}),
-      ...(targetKey ? { targetKey } : {}),
-      ...(imageArgument ? { imageArgument } : {}),
-      ...(imageId ? { imageId } : {}),
-    };
+    creation.route = imageCreationRouteInput(route, `${basePath}.route`);
   }
 
   return creation;
@@ -543,6 +545,73 @@ function remoteGatewayInput(
   };
 }
 
+function gatewayImageStatusInput(
+  image: Record<string, unknown>,
+  index: number,
+): GatewayProjectImageState["status"] {
+  const status = requireString(image, "status");
+  if (
+    status !== "starting" &&
+    status !== "running" &&
+    status !== "stopped" &&
+    status !== "failed"
+  ) {
+    throw new GatewayInputError(
+      `state.images[${index}].status must be starting, running, stopped, or failed`,
+    );
+  }
+
+  return status;
+}
+
+function imageRouteInput(
+  image: unknown,
+  index: number,
+  remoteGateway: GatewayRemoteGatewayUpstream | undefined,
+): GatewayProjectImageState {
+  if (!isObject(image)) {
+    throw new GatewayInputError(`state.images[${index}] must be an object`);
+  }
+
+  const assignedPort = image.assignedPort;
+  const mcpEndpoint = endpointInput(image, index);
+  const pharoMcpContract = isObject(image.pharoMcpContract)
+    ? (image.pharoMcpContract as GatewayProjectImageState["pharoMcpContract"])
+    : undefined;
+  const creation = imageCreationInput(image, index);
+  const unsupportedPharoMcp = pharoMcpContract?.status === "unsupported";
+  const pid = image.pid;
+  if (
+    assignedPort !== undefined &&
+    (typeof assignedPort !== "number" || !Number.isInteger(assignedPort))
+  ) {
+    throw new GatewayInputError(
+      `state.images[${index}].assignedPort must be an integer`,
+    );
+  }
+  if (assignedPort === undefined && !mcpEndpoint && !unsupportedPharoMcp) {
+    if (!remoteGateway) {
+      throw new GatewayInputError(
+        `state.images[${index}] must include assignedPort or mcpEndpoint`,
+      );
+    }
+  }
+  if (pid !== undefined && (typeof pid !== "number" || !Number.isInteger(pid))) {
+    throw new GatewayInputError(`state.images[${index}].pid must be an integer`);
+  }
+
+  return {
+    id: requireString(image, "id"),
+    imageName: requireString(image, "imageName"),
+    ...(assignedPort !== undefined ? { assignedPort } : {}),
+    ...(mcpEndpoint ? { mcpEndpoint } : {}),
+    ...(pid ? { pid } : {}),
+    status: gatewayImageStatusInput(image, index),
+    ...(creation ? { creation } : {}),
+    ...(pharoMcpContract ? { pharoMcpContract } : {}),
+  };
+}
+
 function stateInput(input: Record<string, unknown>): GatewayProjectState {
   const value = input.state;
   if (!isObject(value)) {
@@ -565,64 +634,9 @@ function stateInput(input: Record<string, unknown>): GatewayProjectState {
     ...(isObject(value.pharoMcpContract)
       ? { pharoMcpContract: value.pharoMcpContract }
       : {}),
-    images: images.map((image, index) => {
-      if (!isObject(image)) {
-        throw new GatewayInputError(`state.images[${index}] must be an object`);
-      }
-
-      const assignedPort = image.assignedPort;
-      const mcpEndpoint = endpointInput(image, index);
-      const pharoMcpContract = isObject(image.pharoMcpContract)
-        ? image.pharoMcpContract
-        : undefined;
-      const creation = imageCreationInput(image, index);
-      const unsupportedPharoMcp =
-        pharoMcpContract?.status === "unsupported";
-      const pid = image.pid;
-      if (
-        assignedPort !== undefined &&
-        (typeof assignedPort !== "number" || !Number.isInteger(assignedPort))
-      ) {
-        throw new GatewayInputError(
-          `state.images[${index}].assignedPort must be an integer`,
-        );
-      }
-      if (assignedPort === undefined && !mcpEndpoint && !unsupportedPharoMcp) {
-        if (!remoteGateway) {
-          throw new GatewayInputError(
-            `state.images[${index}] must include assignedPort or mcpEndpoint`,
-          );
-        }
-      }
-      if (pid !== undefined && (typeof pid !== "number" || !Number.isInteger(pid))) {
-        throw new GatewayInputError(
-          `state.images[${index}].pid must be an integer`,
-        );
-      }
-
-      const status = requireString(image, "status");
-      if (
-        status !== "starting" &&
-        status !== "running" &&
-        status !== "stopped" &&
-        status !== "failed"
-      ) {
-        throw new GatewayInputError(
-          `state.images[${index}].status must be starting, running, stopped, or failed`,
-        );
-      }
-
-      return {
-        id: requireString(image, "id"),
-        imageName: requireString(image, "imageName"),
-        ...(assignedPort !== undefined ? { assignedPort } : {}),
-        ...(mcpEndpoint ? { mcpEndpoint } : {}),
-        ...(pid ? { pid } : {}),
-        status,
-        ...(creation ? { creation } : {}),
-        ...(pharoMcpContract ? { pharoMcpContract } : {}),
-      };
-    }),
+    images: images.map((image, index) =>
+      imageRouteInput(image, index, remoteGateway),
+    ),
   };
 }
 

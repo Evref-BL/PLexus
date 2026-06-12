@@ -396,69 +396,76 @@ export async function startProjectLifecycleHttpServer(
   return server;
 }
 
+interface MutableProjectLifecycleCliOptions {
+  transport: ProjectLifecycleCliOptions["transport"];
+  host: string;
+  portValue: string;
+  mcpPath: string;
+}
+
+function projectLifecycleCliOptionValue(
+  args: string[],
+  index: number,
+  arg: string,
+): string {
+  const next = args[index + 1];
+  if (!next) {
+    throw new Error(`${arg} requires a value`);
+  }
+
+  return next;
+}
+
+function applyProjectLifecycleCliArgument(
+  options: MutableProjectLifecycleCliOptions,
+  args: string[],
+  index: number,
+): number {
+  const arg = args[index];
+
+  switch (arg) {
+    case "serve":
+    case "http":
+    case "--http":
+      options.transport = "http";
+      return index;
+    case "--stdio":
+      options.transport = "stdio";
+      return index;
+    case "--host":
+      options.host = projectLifecycleCliOptionValue(args, index, arg);
+      return index + 1;
+    case "--port":
+      options.portValue = projectLifecycleCliOptionValue(args, index, arg);
+      return index + 1;
+    case "--mcp-path":
+      options.mcpPath = projectLifecycleCliOptionValue(args, index, arg);
+      return index + 1;
+    default:
+      throw new Error(`Unknown plexus project MCP argument: ${arg}`);
+  }
+}
+
 export function parseProjectLifecycleServerCliOptions(
   args: string[] = process.argv.slice(2),
   env: NodeJS.ProcessEnv = process.env,
 ): ProjectLifecycleCliOptions {
-  let transport: ProjectLifecycleCliOptions["transport"] = "stdio";
-  let host = env.PLEXUS_HOST ?? "127.0.0.1";
-  let portValue = env.PLEXUS_PROJECT_MCP_PORT ?? env.PORT ?? "7332";
-  let mcpPath = env.PLEXUS_PROJECT_MCP_PATH ?? "/mcp";
+  const options: MutableProjectLifecycleCliOptions = {
+    transport: "stdio",
+    host: env.PLEXUS_HOST ?? "127.0.0.1",
+    portValue: env.PLEXUS_PROJECT_MCP_PORT ?? env.PORT ?? "7332",
+    mcpPath: env.PLEXUS_PROJECT_MCP_PATH ?? "/mcp",
+  };
 
   for (let index = 0; index < args.length; index += 1) {
-    const arg = args[index];
-
-    if (arg === "serve" || arg === "http" || arg === "--http") {
-      transport = "http";
-      continue;
-    }
-
-    if (arg === "--stdio") {
-      transport = "stdio";
-      continue;
-    }
-
-    if (arg === "--host") {
-      const next = args[index + 1];
-      if (!next) {
-        throw new Error("--host requires a value");
-      }
-
-      host = next;
-      index += 1;
-      continue;
-    }
-
-    if (arg === "--port") {
-      const next = args[index + 1];
-      if (!next) {
-        throw new Error("--port requires a value");
-      }
-
-      portValue = next;
-      index += 1;
-      continue;
-    }
-
-    if (arg === "--mcp-path") {
-      const next = args[index + 1];
-      if (!next) {
-        throw new Error("--mcp-path requires a value");
-      }
-
-      mcpPath = next;
-      index += 1;
-      continue;
-    }
-
-    throw new Error(`Unknown plexus project MCP argument: ${arg}`);
+    index = applyProjectLifecycleCliArgument(options, args, index);
   }
 
   return {
-    transport,
-    host,
-    port: parsePort(portValue, "PLexus project MCP port"),
-    mcpPath: parseHttpPath(mcpPath, "PLexus project MCP path"),
+    transport: options.transport,
+    host: options.host,
+    port: parsePort(options.portValue, "PLexus project MCP port"),
+    mcpPath: parseHttpPath(options.mcpPath, "PLexus project MCP path"),
   };
 }
 

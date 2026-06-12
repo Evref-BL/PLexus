@@ -1414,29 +1414,11 @@ async function prepareHomeImageCacheEntry(options: {
   }
 }
 
-export async function materializeProjectImageFromHomeCache(
-  options: MaterializeProjectImageFromHomeCacheOptions,
-): Promise<HomeImageCacheMaterializationResult | undefined> {
-  if (!projectImageCanUseHomeImageCache(options.imageConfig)) {
-    return undefined;
-  }
-
-  const plan = buildHomeImageCachePlan({
-    projectRoot: options.projectRoot,
-    config: options.config,
-    imageConfig: options.imageConfig,
-    imageState: options.imageState,
-    workspaceId: options.workspaceId,
-    targetId: options.targetId,
-    stateRoot: options.stateRoot,
-    env: options.env,
-    homeDirectory: options.homeDirectory,
-    now: options.now,
-    templateMetadata: options.templateMetadata,
-    localInputs: options.localInputs,
-  });
+function ensureMaterializableHomeImageCachePlan(
+  plan: HomeImageCachePlan,
+): boolean {
   if (plan.status === "disabled") {
-    return undefined;
+    return false;
   }
   if (plan.offlineReadiness.status === "missing") {
     throw new HomeImageCacheError(
@@ -1458,6 +1440,71 @@ export async function materializeProjectImageFromHomeCache(
     );
   }
 
+  return true;
+}
+
+function materializationNeedsHomeClient(plan: HomeImageCachePlan): boolean {
+  return plan.status === "miss" || plan.status === "corrupt";
+}
+
+async function runHomeCacheMaterializationOperations(options: {
+  plan: HomeImageCachePlan;
+  approval: HomeImageCacheMutationApproval;
+  now?: () => Date;
+  runtimeClient: PharoLauncherMcpToolClient;
+  homeClient: PharoLauncherMcpToolClient | undefined;
+}): Promise<HomeImageCacheLiveOperation[]> {
+  const operations: HomeImageCacheLiveOperation[] = [];
+
+  if (materializationNeedsHomeClient(options.plan)) {
+    if (!options.homeClient) {
+      throw new HomeImageCacheError(
+        "Home image cache preparation requires a home launcher client",
+      );
+    }
+    operations.push(
+      ...(await prepareHomeImageCacheEntry({
+        plan: options.plan,
+        homeClient: options.homeClient,
+        approval: options.approval,
+        now: options.now,
+      })),
+    );
+  }
+
+  if (options.plan.runtimeCopy) {
+    await callLauncherOperation(options.runtimeClient, options.plan.runtimeCopy);
+    operations.push(options.plan.runtimeCopy);
+  }
+
+  return operations;
+}
+
+export async function materializeProjectImageFromHomeCache(
+  options: MaterializeProjectImageFromHomeCacheOptions,
+): Promise<HomeImageCacheMaterializationResult | undefined> {
+  if (!projectImageCanUseHomeImageCache(options.imageConfig)) {
+    return undefined;
+  }
+
+  const plan = buildHomeImageCachePlan({
+    projectRoot: options.projectRoot,
+    config: options.config,
+    imageConfig: options.imageConfig,
+    imageState: options.imageState,
+    workspaceId: options.workspaceId,
+    targetId: options.targetId,
+    stateRoot: options.stateRoot,
+    env: options.env,
+    homeDirectory: options.homeDirectory,
+    now: options.now,
+    templateMetadata: options.templateMetadata,
+    localInputs: options.localInputs,
+  });
+  if (!ensureMaterializableHomeImageCachePlan(plan)) {
+    return undefined;
+  }
+
   const approval = requireMutationApproval(
     options.approval,
     `Materializing image ${options.imageState.id} from the home image cache`,
@@ -1467,33 +1514,22 @@ export async function materializeProjectImageFromHomeCache(
   let ownsHomeClient = false;
 
   try {
-    if ((plan.status === "miss" || plan.status === "corrupt") && !homeClient) {
+    if (materializationNeedsHomeClient(plan) && !homeClient) {
       homeClient = await createStdioPharoLauncherMcpClient(undefined, {
         profileEnvironment: profileEnvironmentFromPaths(plan.homeProfile),
       });
       ownsHomeClient = true;
     }
 
-    if (plan.status === "miss" || plan.status === "corrupt") {
-      if (!homeClient) {
-        throw new HomeImageCacheError(
-          "Home image cache preparation requires a home launcher client",
-        );
-      }
-      operations.push(
-        ...(await prepareHomeImageCacheEntry({
-          plan,
-          homeClient,
-          approval,
-          now: options.now,
-        })),
-      );
-    }
-
-    if (plan.runtimeCopy) {
-      await callLauncherOperation(options.runtimeClient, plan.runtimeCopy);
-      operations.push(plan.runtimeCopy);
-    }
+    operations.push(
+      ...(await runHomeCacheMaterializationOperations({
+        plan,
+        approval,
+        now: options.now,
+        runtimeClient: options.runtimeClient,
+        homeClient,
+      })),
+    );
 
     return { plan, operations };
   } finally {
