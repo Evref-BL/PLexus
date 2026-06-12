@@ -159,6 +159,8 @@ Expose project lifecycle tools to an agent:
 plexus mcp project
 ```
 
+PLexus MCP tools return compact JSON summaries by default. Large arrays such as image lists, route tables, cache entries, and cleanup inventories are reported with counts and leading items. Long log-like strings such as launcher stdout/stderr are returned as bounded head/tail summaries. Pass `detail: "full"` in the tool arguments when debugging requires the complete raw response. Raw launcher logs remain available through the log paths and artifacts reported by the lifecycle operation.
+
 For remote or service use, keep stdio local and serve the same lifecycle tools
 over Streamable HTTP MCP:
 

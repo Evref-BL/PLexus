@@ -27,6 +27,12 @@ import {
 } from "./projectLifecycle.js";
 import { openProject } from "./projectOpen.js";
 import {
+  formatToolResultPayload,
+  toolResultDetailFromArguments,
+  toolResultDetailSchema,
+  type ToolResultDetail,
+} from "./toolResultFormatting.js";
+import {
   homeImageCacheNetworkPolicy,
   materializeProjectImageFromHomeCache,
   type HomeImageCacheMutationApproval,
@@ -215,9 +221,18 @@ export class ScopedPharoLauncherError extends Error {
   }
 }
 
-function textResult(value: unknown, isError = false) {
+function textResult(
+  value: unknown,
+  isError = false,
+  detail: ToolResultDetail = "summary",
+) {
   return {
-    content: [{ type: "text" as const, text: JSON.stringify(value, null, 2) }],
+    content: [
+      {
+        type: "text" as const,
+        text: JSON.stringify(formatToolResultPayload(value, detail), null, 2),
+      },
+    ],
     ...(isError ? { isError } : {}),
   };
 }
@@ -1651,13 +1666,13 @@ export const scopedPharoLauncherTools = [
     name: "pharo_launcher_image_list",
     description:
       "List Pharo images declared in the current PLexus project/workspace scope.",
-    inputSchema: objectSchema({}),
+    inputSchema: objectSchema({ detail: toolResultDetailSchema }),
   },
   {
     name: "pharo_launcher_image_info",
     description:
       "Return scoped state for one Pharo image handle in the current PLexus workspace.",
-    inputSchema: objectSchema({ imageId: stringSchema }, ["imageId"]),
+    inputSchema: objectSchema({ imageId: stringSchema, detail: toolResultDetailSchema }, ["imageId"]),
   },
   {
     name: "pharo_launcher_image_create",
@@ -1667,6 +1682,7 @@ export const scopedPharoLauncherTools = [
       {
         imageId: stringSchema,
         profileId: stringSchema,
+      detail: toolResultDetailSchema,
       },
       ["imageId"],
     ),
@@ -1684,19 +1700,19 @@ export const scopedPharoLauncherTools = [
     name: "pharo_launcher_image_open_interactive",
     description:
       "Explicitly open a workspace-scoped active image in interactive display mode for human image work.",
-    inputSchema: objectSchema({ imageId: stringSchema }, ["imageId"]),
+    inputSchema: objectSchema({ imageId: stringSchema, detail: toolResultDetailSchema }, ["imageId"]),
   },
   {
     name: "pharo_launcher_image_show",
     description:
       "Switch a workspace-scoped active image to interactive display mode through PLexus lifecycle policy.",
-    inputSchema: objectSchema({ imageId: stringSchema }, ["imageId"]),
+    inputSchema: objectSchema({ imageId: stringSchema, detail: toolResultDetailSchema }, ["imageId"]),
   },
   {
     name: "pharo_launcher_image_hide",
     description:
       "Switch a workspace-scoped active image to headless display mode through PLexus lifecycle policy.",
-    inputSchema: objectSchema({ imageId: stringSchema }, ["imageId"]),
+    inputSchema: objectSchema({ imageId: stringSchema, detail: toolResultDetailSchema }, ["imageId"]),
   },
   {
     name: "pharo_launcher_image_stop",
@@ -1706,6 +1722,7 @@ export const scopedPharoLauncherTools = [
       {
         imageId: stringSchema,
         confirm: { type: "boolean" },
+      detail: toolResultDetailSchema,
       },
       ["imageId", "confirm"],
     ),
@@ -1720,6 +1737,7 @@ export const scopedPharoLauncherTools = [
         confirm: { type: "boolean" },
         start: { type: "boolean" },
         displayMode: displayModeSchema,
+      detail: toolResultDetailSchema,
       },
       ["imageId", "confirm"],
     ),
@@ -1747,14 +1765,20 @@ export function createScopedPharoLauncherServer(
   }));
 
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
+    const input = request.params.arguments ?? {};
+    const detail = toolResultDetailFromArguments(input);
+
     try {
-      const input = objectInput(request.params.arguments ?? {});
       switch (request.params.name) {
         case "pharo_launcher_image_list":
-          return textResult(facade.listImages());
+          return textResult(facade.listImages(), false, detail);
 
         case "pharo_launcher_image_info":
-          return textResult(facade.imageInfo(requireString(input, "imageId")));
+          return textResult(
+            facade.imageInfo(requireString(input, "imageId")),
+            false,
+            detail,
+          );
 
         case "pharo_launcher_image_create":
           return textResult(
@@ -1762,6 +1786,8 @@ export function createScopedPharoLauncherServer(
               requireString(input, "imageId"),
               optionalString(input, "profileId"),
             ),
+            false,
+            detail,
           );
 
         case "pharo_launcher_image_start":
@@ -1770,22 +1796,38 @@ export function createScopedPharoLauncherServer(
               requireString(input, "imageId"),
               optionalDisplayMode(input, "displayMode"),
             ),
+            false,
+            detail,
           );
 
         case "pharo_launcher_image_open_interactive":
           return textResult(
             await facade.openImageInteractive(requireString(input, "imageId")),
+            false,
+            detail,
           );
 
         case "pharo_launcher_image_show":
-          return textResult(await facade.showImage(requireString(input, "imageId")));
+          return textResult(
+            await facade.showImage(requireString(input, "imageId")),
+            false,
+            detail,
+          );
 
         case "pharo_launcher_image_hide":
-          return textResult(await facade.hideImage(requireString(input, "imageId")));
+          return textResult(
+            await facade.hideImage(requireString(input, "imageId")),
+            false,
+            detail,
+          );
 
         case "pharo_launcher_image_stop":
           requireConfirm(input);
-          return textResult(await facade.stopImage(requireString(input, "imageId")));
+          return textResult(
+            await facade.stopImage(requireString(input, "imageId")),
+            false,
+            detail,
+          );
 
         case "pharo_launcher_image_reset":
           requireConfirm(input);
@@ -1794,16 +1836,19 @@ export function createScopedPharoLauncherServer(
               start: optionalBoolean(input, "start"),
               displayMode: optionalDisplayMode(input, "displayMode"),
             }),
+            false,
+            detail,
           );
 
         default:
           return textResult(
             { ok: false, error: `Unknown tool: ${request.params.name}` },
             true,
+            detail,
           );
       }
     } catch (error) {
-      return textResult(scopedErrorPayload(error), true);
+      return textResult(scopedErrorPayload(error), true, detail);
     }
   });
 

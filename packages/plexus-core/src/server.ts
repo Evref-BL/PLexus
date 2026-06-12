@@ -11,6 +11,12 @@ import {
   PlexusProjectLifecycle,
   createProjectLifecycleFromEnvironment,
 } from "./projectLifecycle.js";
+import {
+  formatToolResultPayload,
+  toolResultDetailFromArguments,
+  toolResultDetailSchema,
+  type ToolResultDetail,
+} from "./toolResultFormatting.js";
 
 const stringSchema = { type: "string", minLength: 1 } as const;
 const optionalStringSchema = { type: "string", minLength: 1 } as const;
@@ -38,6 +44,7 @@ const projectReferenceProperties = {
   workspaceId: optionalStringSchema,
   targetId: optionalStringSchema,
   stateRoot: optionalStringSchema,
+  detail: toolResultDetailSchema,
 } as const;
 
 const historyEntrySelectionSchema = objectSchema({
@@ -100,6 +107,7 @@ export const projectLifecycleTools = [
           enum: ["preserve", "archive", "delete-disposable"],
         },
         repositoryWorkspaceArchiveRoot: optionalStringSchema,
+      detail: toolResultDetailSchema,
       },
       ["projectPath"],
     ),
@@ -143,6 +151,7 @@ export const projectLifecycleTools = [
       {
         projectPath: stringSchema,
         key: optionalStringSchema,
+      detail: toolResultDetailSchema,
       },
       ["projectPath"],
     ),
@@ -156,6 +165,7 @@ export const projectLifecycleTools = [
         projectPath: stringSchema,
         key: optionalStringSchema,
         confirm: { type: "boolean" },
+      detail: toolResultDetailSchema,
       },
       ["projectPath", "confirm"],
     ),
@@ -189,6 +199,7 @@ export const projectLifecycleTools = [
           items: repositoryActionSchema,
         },
         confirm: { type: "boolean" },
+      detail: toolResultDetailSchema,
       },
       ["projectPath", "operation", "sourceImageId"],
     ),
@@ -210,9 +221,18 @@ export interface ProjectLifecycleCliOptions {
   mcpPath: string;
 }
 
-function jsonResult(value: unknown, isError = false): CallToolResult {
+function jsonResult(
+  value: unknown,
+  isError = false,
+  detail: ToolResultDetail = "summary",
+): CallToolResult {
   return {
-    content: [{ type: "text", text: JSON.stringify(value, null, 2) }],
+    content: [
+      {
+        type: "text",
+        text: JSON.stringify(formatToolResultPayload(value, detail), null, 2),
+      },
+    ],
     ...(isError ? { isError } : {}),
   };
 }
@@ -237,12 +257,13 @@ export function createProjectLifecycleServer(
   }));
 
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
+    const detail = toolResultDetailFromArguments(request.params.arguments);
     const result = await lifecycle.handleTool(
       request.params.name,
       request.params.arguments ?? {},
     );
 
-    return jsonResult(result, !result.ok);
+    return jsonResult(result, !result.ok, detail);
   });
 
   return server;
