@@ -1103,6 +1103,54 @@ function portClaimDiagnostic(
   };
 }
 
+type PortClaimDiagnosticBuckets = Pick<
+  ProjectLifecyclePortClaimsDiagnostics,
+  "active" | "stale" | "conflicts" | "otherScopes"
+>;
+
+function addCurrentScopePortClaimDiagnostic(
+  buckets: PortClaimDiagnosticBuckets,
+  diagnostic: ProjectLifecyclePortClaimDiagnostic,
+): void {
+  if (diagnostic.status === "stale") {
+    buckets.stale.push(diagnostic);
+    return;
+  }
+
+  buckets.active.push(diagnostic);
+}
+
+function addForeignScopePortClaimDiagnostic(
+  buckets: PortClaimDiagnosticBuckets,
+  diagnostic: ProjectLifecyclePortClaimDiagnostic,
+  currentScopePorts: Set<number>,
+): void {
+  if (!currentScopePorts.has(diagnostic.port)) {
+    buckets.otherScopes.push(diagnostic);
+    return;
+  }
+
+  if (diagnostic.status === "stale") {
+    buckets.stale.push(diagnostic);
+    return;
+  }
+
+  buckets.conflicts.push(diagnostic);
+}
+
+function addPortClaimDiagnostic(
+  buckets: PortClaimDiagnosticBuckets,
+  diagnostic: ProjectLifecyclePortClaimDiagnostic,
+  currentScopePorts: Set<number>,
+): void {
+  if (diagnostic.ownedByCurrentScope) {
+    addCurrentScopePortClaimDiagnostic(buckets, diagnostic);
+    return;
+  }
+
+  addForeignScopePortClaimDiagnostic(buckets, diagnostic, currentScopePorts);
+}
+
 async function inspectClaimRoots(
   claimsRoots: string[],
   checks: PortClaimChecks,
@@ -1131,25 +1179,11 @@ async function inspectClaimRoots(
       }
 
       const diagnostic = portClaimDiagnostic(claimsRoot, inspection, scope);
-      if (!diagnostic.ownedByCurrentScope) {
-        if (currentScopePorts.has(diagnostic.port)) {
-          if (diagnostic.status === "stale") {
-            stale.push(diagnostic);
-          } else {
-            conflicts.push(diagnostic);
-          }
-        } else {
-          otherScopes.push(diagnostic);
-        }
-        continue;
-      }
-
-      if (diagnostic.status === "stale") {
-        stale.push(diagnostic);
-        continue;
-      }
-
-      active.push(diagnostic);
+      addPortClaimDiagnostic(
+        { active, stale, conflicts, otherScopes },
+        diagnostic,
+        currentScopePorts,
+      );
     }
   }
 
@@ -2797,6 +2831,90 @@ export class PlexusProjectLifecycle {
     }
   }
 
+  private routeRegistryForCloseResult(
+    config: ProjectConfig | undefined,
+    closeResult: ProjectCloseResult,
+  ): ProjectLifecycleRouteRegistry | undefined {
+    return (
+      this.routeRegistry ??
+      (config && closeResult.state
+        ? this.routeRegistryForProject(config, closeResult.state)
+        : undefined)
+    );
+  }
+
+  private async unregisterClosedProjectRoute(
+    input: ProjectCloseToolInput,
+    projectRoot: string,
+    config: ProjectConfig | undefined,
+    closeResult: ProjectCloseResult,
+    routeRegistry: ProjectLifecycleRouteRegistry | undefined,
+  ): Promise<void> {
+    if (closeResult.state) {
+      await this.unregisterRoute(
+        { targetId: closeResult.state.targetId },
+        routeRegistry,
+      );
+      return;
+    }
+
+    const workspaceId = input.workspaceId
+      ? sanitizeRuntimeId(input.workspaceId)
+      : defaultWorkspaceId(projectRoot);
+    await this.unregisterRoute(
+      {
+        projectId: config ? projectConfigId(config) : undefined,
+        workspaceId,
+      },
+      routeRegistry,
+    );
+  }
+
+  private async closeManagedProjectGateway(
+    closeResult: ProjectCloseResult,
+  ): Promise<void> {
+    if (!closeResult.state?.gateway?.managedByProject) {
+      return;
+    }
+
+    await closeProjectGateway({
+      ...this.gateway,
+      state: closeResult.state,
+    });
+    closeResult.state.updatedAt = (
+      this.gateway.now ?? (() => new Date())
+    )().toISOString();
+    saveProjectState(closeResult.statePath, closeResult.state);
+  }
+
+  private async unregisterClosedProjectRouteAndGateway(
+    input: ProjectCloseToolInput,
+    projectRoot: string,
+    config: ProjectConfig | undefined,
+    closeResult: ProjectCloseResult,
+    routeRegistry: ProjectLifecycleRouteRegistry | undefined,
+  ): Promise<void> {
+    let unregisterError: unknown;
+
+    try {
+      await this.unregisterClosedProjectRoute(
+        input,
+        projectRoot,
+        config,
+        closeResult,
+        routeRegistry,
+      );
+    } catch (error) {
+      unregisterError = error;
+    } finally {
+      await this.closeManagedProjectGateway(closeResult);
+    }
+
+    if (unregisterError) {
+      throw unregisterError;
+    }
+  }
+
   async close(
     input: ProjectCloseToolInput,
   ): Promise<ProjectLifecycleToolResult<ProjectCloseResult>> {
@@ -2834,51 +2952,61 @@ export class PlexusProjectLifecycle {
         !this.routeRegistry || !closeResult.state
           ? loadProjectConfig(projectRoot)
           : undefined;
-      const routeRegistry =
-        this.routeRegistry ??
-        (config ? this.routeRegistryForProject(config, closeResult.state) : undefined);
-      let unregisterError: unknown;
-
-      try {
-        if (closeResult.state) {
-          await this.unregisterRoute(
-            { targetId: closeResult.state.targetId },
-            routeRegistry,
-          );
-        } else {
-          const workspaceId = input.workspaceId
-            ? sanitizeRuntimeId(input.workspaceId)
-            : defaultWorkspaceId(projectRoot);
-          await this.unregisterRoute(
-            {
-              projectId: config ? projectConfigId(config) : undefined,
-              workspaceId,
-            },
-            routeRegistry,
-          );
-        }
-      } catch (error) {
-        unregisterError = error;
-      } finally {
-        if (closeResult.state?.gateway?.managedByProject) {
-          await closeProjectGateway({
-            ...this.gateway,
-            state: closeResult.state,
-          });
-          closeResult.state.updatedAt = (
-            this.gateway.now ?? (() => new Date())
-          )().toISOString();
-          saveProjectState(closeResult.statePath, closeResult.state);
-        }
-      }
-
-      if (unregisterError) {
-        throw unregisterError;
-      }
+      await this.unregisterClosedProjectRouteAndGateway(
+        input,
+        projectRoot,
+        config,
+        closeResult,
+        this.routeRegistryForCloseResult(config, closeResult),
+      );
 
       return result(closeResult);
     } catch (error) {
       return failure(error);
+    }
+  }
+
+  private async cleanupRouteResource(
+    config: ProjectConfig,
+    state: ProjectState | undefined,
+    routeResource: ReturnType<typeof routeCleanupResource> | undefined,
+    confirm: boolean | undefined,
+  ): Promise<ProjectCleanupResult["failures"][number] | undefined> {
+    if (!(confirm === true && routeResource && state)) {
+      return undefined;
+    }
+
+    const routeRegistry = this.routeRegistryForProject(config, state);
+    if (!routeRegistry) {
+      routeResource.status = "skipped";
+      routeResource.reason =
+        "No route registry is configured for this project scope.";
+      return undefined;
+    }
+
+    try {
+      await this.unregisterRoute(
+        { targetId: state.targetId },
+        routeRegistry,
+      );
+      routeResource.status = "cleaned";
+      return undefined;
+    } catch (error) {
+      const skipReason = idempotentRouteCleanupReason(error);
+      if (skipReason) {
+        routeResource.status = "skipped";
+        routeResource.reason = skipReason;
+        return undefined;
+      }
+
+      const message = errorMessage(error);
+      routeResource.status = "failed";
+      routeResource.reason = message;
+      return {
+        kind: "route",
+        id: state.targetId,
+        message,
+      };
     }
   }
 
@@ -2918,38 +3046,12 @@ export class PlexusProjectLifecycle {
       });
       const state = loadProjectState(statePath);
       const routeResource = state ? routeCleanupResource(state) : undefined;
-      let routeFailure: ProjectCleanupResult["failures"][number] | undefined;
-
-      if (input.confirm === true && routeResource && state) {
-        const routeRegistry = this.routeRegistryForProject(config, state);
-        if (routeRegistry) {
-          try {
-            await this.unregisterRoute(
-              { targetId: state.targetId },
-              routeRegistry,
-            );
-            routeResource.status = "cleaned";
-          } catch (error) {
-            const skipReason = idempotentRouteCleanupReason(error);
-            if (skipReason) {
-              routeResource.status = "skipped";
-              routeResource.reason = skipReason;
-            } else {
-              routeResource.status = "failed";
-              routeResource.reason = errorMessage(error);
-              routeFailure = {
-                kind: "route",
-                id: state.targetId,
-                message: errorMessage(error),
-              };
-            }
-          }
-        } else {
-          routeResource.status = "skipped";
-          routeResource.reason =
-            "No route registry is configured for this project scope.";
-        }
-      }
+      const routeFailure = await this.cleanupRouteResource(
+        config,
+        state,
+        routeResource,
+        input.confirm,
+      );
 
       const cleanupResult = await cleanupProjectOwnedResources({
         projectRoot,

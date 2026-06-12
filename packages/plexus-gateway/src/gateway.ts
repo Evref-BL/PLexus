@@ -265,6 +265,11 @@ type GatewayPharoToolSchemaCandidate = {
   tools: Tool[];
 };
 
+type GatewayPharoToolSchemaProbe = {
+  source: GatewayPharoToolSchemaSource;
+  tools: Tool[];
+};
+
 export interface RouteToImageResult {
   route: RouteToImageRoute;
   result: unknown;
@@ -1383,6 +1388,58 @@ export class PlexusGateway {
     };
   }
 
+  private async probePharoToolSchemaSource(
+    project: GatewayProjectRoute,
+    image: GatewayImageRoute,
+    listTools: NonNullable<ImageMcpToolRouter["listTools"]>,
+  ): Promise<GatewayPharoToolSchemaProbe> {
+    const route = this.imageRouteReference(project, image);
+
+    try {
+      const tools = project.remoteGateway
+        ? await this.listRemoteGatewayTools(project.remoteGateway)
+        : await listTools(route);
+      const connectionInfo = project.remoteGateway
+        ? undefined
+        : this.imageRouter.connectionInfo?.(route);
+      if (tools.length > 0) {
+        return {
+          source: {
+            targetId: project.targetId,
+            imageId: image.id,
+            fingerprint: toolSchemaFingerprint(tools),
+            toolCount: tools.length,
+            ...schemaSourceConnectionFields(connectionInfo),
+          },
+          tools,
+        };
+      }
+
+      const error = "MCP tools/list returned no tools";
+      return {
+        source: {
+          targetId: project.targetId,
+          imageId: image.id,
+          ...schemaSourceConnectionFields(connectionInfo),
+          error,
+        },
+        tools: [],
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      const connectionInfo = this.imageRouter.connectionInfo?.(route);
+      return {
+        source: {
+          targetId: project.targetId,
+          imageId: image.id,
+          ...schemaSourceConnectionFields(connectionInfo),
+          error: message,
+        },
+        tools: [],
+      };
+    }
+  }
+
   private async refreshPharoToolsForScope(
     scope: GatewayRouteReferenceInput,
     options: { toolSchemaImageId?: string } = {},
@@ -1390,6 +1447,7 @@ export class PlexusGateway {
     if (!this.imageRouter.listTools) {
       return undefined;
     }
+    const listTools = this.imageRouter.listTools.bind(this.imageRouter);
 
     let routes: GatewayProjectRoute[];
     try {
@@ -1399,10 +1457,7 @@ export class PlexusGateway {
     }
 
     const errors: string[] = [];
-    const successes: Array<{
-      source: GatewayPharoToolSchemaSource;
-      tools: Tool[];
-    }> = [];
+    const successes: GatewayPharoToolSchemaProbe[] = [];
     let attempted = false;
     for (const project of routes) {
       for (const image of project.images) {
@@ -1411,53 +1466,15 @@ export class PlexusGateway {
         }
 
         attempted = true;
-        const route = this.imageRouteReference(project, image);
-
-        try {
-          const tools = project.remoteGateway
-            ? await this.listRemoteGatewayTools(project.remoteGateway)
-            : await this.imageRouter.listTools(route);
-          const connectionInfo = project.remoteGateway
-            ? undefined
-            : this.imageRouter.connectionInfo?.(route);
-          if (tools.length > 0) {
-            successes.push({
-              source: {
-                targetId: project.targetId,
-                imageId: image.id,
-                fingerprint: toolSchemaFingerprint(tools),
-                toolCount: tools.length,
-                ...schemaSourceConnectionFields(connectionInfo),
-              },
-              tools,
-            });
-            continue;
-          }
-          const error = "MCP tools/list returned no tools";
-          errors.push(`${project.targetId}/${image.id}: ${error}`);
-          successes.push({
-            source: {
-              targetId: project.targetId,
-              imageId: image.id,
-              ...schemaSourceConnectionFields(connectionInfo),
-              error,
-            },
-            tools: [],
-          });
-        } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
-          const connectionInfo = this.imageRouter.connectionInfo?.(route);
-          errors.push(`${project.targetId}/${image.id}: ${message}`);
-          successes.push({
-            source: {
-              targetId: project.targetId,
-              imageId: image.id,
-              ...schemaSourceConnectionFields(connectionInfo),
-              error: message,
-            },
-            tools: [],
-          });
+        const probe = await this.probePharoToolSchemaSource(
+          project,
+          image,
+          listTools,
+        );
+        if (probe.source.error) {
+          errors.push(`${project.targetId}/${image.id}: ${probe.source.error}`);
         }
+        successes.push(probe);
       }
     }
 
@@ -1466,62 +1483,86 @@ export class PlexusGateway {
     const validSources = successes.filter(sourceHasFingerprint);
 
     if (validSources.length > 0) {
-      const currentFingerprint = this.pharoToolSchemaStatus.fingerprint;
-      const requestedToolSchemaImageId = options.toolSchemaImageId;
-      const active =
-        (requestedToolSchemaImageId
-          ? this.requestedPharoToolSchemaSource(
-              validSources,
-              requestedToolSchemaImageId,
-            )
-          : undefined) ??
-        validSources.find(
-          (success) => success.source.fingerprint === currentFingerprint,
-        ) ?? validSources[0];
-      const compatibleSources = sources.map((source) =>
-        markSchemaSourceCompatibility(source, active.source),
-      );
-      const hasExcludedSources = compatibleSources.some(
-        (source) =>
-          source.compatibility === "incompatible" ||
-          source.compatibility === "unavailable",
-      );
-      const statusErrors = [
-        ...(hasExcludedSources
-          ? [
-              "Some registered image routes are not compatible with the active Pharo MCP schema",
-            ]
-          : []),
-        ...(errors.length > 0 ? [errors.join("; ")] : []),
-      ];
-
-      this.pharoToolSchemaStatus = {
-        state: hasExcludedSources ? "mismatched" : "matching",
+      return this.applyAvailablePharoToolSchemaRefresh(
+        sources,
+        validSources,
+        errors,
         refreshedAt,
-        fingerprint: active.source.fingerprint,
-        activeVersion: schemaSourceActiveVersion(active.source),
-        sourceCount: sources.length,
-        sources: compatibleSources,
-        ...(statusErrors.length > 0 ? { error: statusErrors.join("; ") } : {}),
-      };
-      this.setPharoTools(active.tools);
-      return this.listPharoTools();
+        options.toolSchemaImageId,
+      );
     }
 
     if (attempted) {
-      this.pharoToolSchemaStatus = {
-        state: "unavailable",
-        refreshedAt,
-        sourceCount: sources.length,
-        sources,
-        error: errors.join("; "),
-      };
-      throw new GatewayInputError(
-        `Unable to refresh Pharo tool schemas from registered image routes: ${errors.join("; ")}`,
-      );
+      this.applyUnavailablePharoToolSchemaRefresh(sources, errors, refreshedAt);
     }
 
     return undefined;
+  }
+
+  private applyAvailablePharoToolSchemaRefresh(
+    sources: GatewayPharoToolSchemaSource[],
+    validSources: GatewayPharoToolSchemaCandidate[],
+    errors: string[],
+    refreshedAt: string,
+    requestedToolSchemaImageId: string | undefined,
+  ): Tool[] {
+    const currentFingerprint = this.pharoToolSchemaStatus.fingerprint;
+    const active =
+      (requestedToolSchemaImageId
+        ? this.requestedPharoToolSchemaSource(
+            validSources,
+            requestedToolSchemaImageId,
+          )
+        : undefined) ??
+      validSources.find(
+        (success) => success.source.fingerprint === currentFingerprint,
+      ) ??
+      validSources[0]!;
+    const compatibleSources = sources.map((source) =>
+      markSchemaSourceCompatibility(source, active.source),
+    );
+    const hasExcludedSources = compatibleSources.some(
+      (source) =>
+        source.compatibility === "incompatible" ||
+        source.compatibility === "unavailable",
+    );
+    const statusErrors = [
+      ...(hasExcludedSources
+        ? [
+            "Some registered image routes are not compatible with the active Pharo MCP schema",
+          ]
+        : []),
+      ...(errors.length > 0 ? [errors.join("; ")] : []),
+    ];
+
+    this.pharoToolSchemaStatus = {
+      state: hasExcludedSources ? "mismatched" : "matching",
+      refreshedAt,
+      fingerprint: active.source.fingerprint,
+      activeVersion: schemaSourceActiveVersion(active.source),
+      sourceCount: sources.length,
+      sources: compatibleSources,
+      ...(statusErrors.length > 0 ? { error: statusErrors.join("; ") } : {}),
+    };
+    this.setPharoTools(active.tools);
+    return this.listPharoTools();
+  }
+
+  private applyUnavailablePharoToolSchemaRefresh(
+    sources: GatewayPharoToolSchemaSource[],
+    errors: string[],
+    refreshedAt: string,
+  ): void {
+    this.pharoToolSchemaStatus = {
+      state: "unavailable",
+      refreshedAt,
+      sourceCount: sources.length,
+      sources,
+      error: errors.join("; "),
+    };
+    throw new GatewayInputError(
+      `Unable to refresh Pharo tool schemas from registered image routes: ${errors.join("; ")}`,
+    );
   }
 
   private requestedPharoToolSchemaSource(
