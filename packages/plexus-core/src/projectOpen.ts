@@ -389,10 +389,25 @@ function launcherImageInfo(value: unknown): LauncherImageInfo | undefined {
   };
 }
 
+function logPathFromLine(line: string): string | undefined {
+  const separator = line.indexOf(":");
+  if (separator < 0) {
+    return undefined;
+  }
+
+  const key = line.slice(0, separator).trim().toLowerCase();
+  if (key !== "stdout" && key !== "stderr" && key !== "log" && key !== "logpath") {
+    return undefined;
+  }
+
+  const value = line.slice(separator + 1).trim();
+  return value.length > 0 ? value : undefined;
+}
+
 function logPathsFromText(value: string): string[] {
   return value
     .split(/\r?\n/)
-    .map((line) => line.match(/^\s*(?:stdout|stderr|log(?:Path)?):\s*(.+?)\s*$/i)?.[1])
+    .map(logPathFromLine)
     .filter((path): path is string => Boolean(path));
 }
 

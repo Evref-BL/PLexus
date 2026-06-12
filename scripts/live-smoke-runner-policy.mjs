@@ -127,11 +127,41 @@ export function applySmokeProfileDefaults(options, profileDefaults, context = {}
 }
 
 export function sanitizeRuntimeId(value) {
-  const sanitized = String(value ?? "")
-    .trim()
-    .replace(/[^A-Za-z0-9._-]+/g, "-")
-    .replace(/^-+|-+$/g, "");
+  const sanitized = sanitizedPathSegment(String(value ?? "").trim());
   return sanitized || "default";
+}
+
+function sanitizedPathSegment(value) {
+  let result = "";
+  let previousWasSeparator = false;
+
+  for (const char of value) {
+    const allowed =
+      (char >= "A" && char <= "Z") ||
+      (char >= "a" && char <= "z") ||
+      (char >= "0" && char <= "9") ||
+      char === "." ||
+      char === "_" ||
+      char === "-";
+    if (allowed) {
+      result += char;
+      previousWasSeparator = false;
+      continue;
+    }
+
+    if (!previousWasSeparator) {
+      result += "-";
+      previousWasSeparator = true;
+    }
+  }
+
+  while (result.startsWith("-")) {
+    result = result.slice(1);
+  }
+  while (result.endsWith("-")) {
+    result = result.slice(0, -1);
+  }
+  return result;
 }
 
 export function defaultProjectOwnedLauncherProfileName(projectId) {

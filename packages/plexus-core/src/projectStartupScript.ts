@@ -19,6 +19,7 @@ import {
   isAbsolutePathLike,
   joinPathLike,
   resolvePathLike,
+  sanitizePathSegment,
 } from "./pathStyle.js";
 import {
   projectImageRepositoryWorkspaces,
@@ -151,7 +152,7 @@ export function imageRepositoryWorkspaceLoadStatusPath(
 }
 
 function statusPathSegment(value: string): string {
-  return value.replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || "repo";
+  return sanitizePathSegment(value, "repo");
 }
 
 export function imagePharoMcpLoadStatusPath(

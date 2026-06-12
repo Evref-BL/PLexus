@@ -6,6 +6,7 @@ import {
   isAbsolutePathLike,
   joinPathLike,
   resolvePathLike,
+  sanitizePathSegment,
 } from "./pathStyle.js";
 import type { ProjectImageConfig } from "./projectConfig.js";
 import type {
@@ -353,7 +354,7 @@ function dirtyState(
 }
 
 function sanitizedPathSegment(value: string): string {
-  return value.replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || "repo";
+  return sanitizePathSegment(value, "repo");
 }
 
 function safeArchivePath(options: {
