@@ -3,15 +3,15 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-export * from "./gateway.js";
-export * from "./imageMcpRouter.js";
-export * from "./pharoFacade.js";
-export * from "./routingTable.js";
-export * from "./server.js";
-export * from "./sourceBuildPreflight.js";
+export * from "./routing/gateway.js";
+export * from "./routing/imageMcpRouter.js";
+export * from "./routing/pharoFacade.js";
+export * from "./routing/routingTable.js";
+export * from "./mcp/server.js";
+export * from "./support/sourceBuildPreflight.js";
 
-import { startGatewayServerFromCli } from "./server.js";
-import { assertFreshSourceBuildForEntrypoint } from "./sourceBuildPreflight.js";
+import { startGatewayServerFromCli } from "./mcp/server.js";
+import { assertFreshSourceBuildForEntrypoint } from "./support/sourceBuildPreflight.js";
 
 function comparablePath(filePath: string): string {
   const resolvedPath = path.resolve(filePath);

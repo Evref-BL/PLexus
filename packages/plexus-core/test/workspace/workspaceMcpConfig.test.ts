@@ -1,0 +1,295 @@
+import path from "node:path";
+import type { Tool } from "@modelcontextprotocol/sdk/types.js";
+import { describe, expect, it } from "vitest";
+import type { ProjectConfig } from "../../src/config/projectConfig.js";
+import {
+  buildPlexusWorkspaceMcpConfig,
+  buildPharoLauncherMcpServerConfig,
+  buildPharoMcpServerConfig,
+  defaultPharoMcpServerName,
+  mergeWorkspaceMcpServers,
+  resolvePlexusWorkspaceMcpScope,
+} from "../../src/workspace/workspaceMcpConfig.js";
+
+const projectConfig: ProjectConfig = {
+  id: "project-123",
+  name: "my-project",
+  images: [
+    {
+      id: "dev",
+      imageName: "MyProject-{workspaceId}-dev",
+      active: true,
+      mcp: {
+        loadScript: "pharo/load-mcp.st",
+      },
+    },
+  ],
+};
+
+const pharoEvalTool: Tool = {
+  name: "pharo_eval",
+  description: "Evaluate Smalltalk code.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      code: { type: "string" },
+    },
+    required: ["code"],
+  },
+};
+
+describe("workspace MCP config", () => {
+  it("resolves the workspace scope from project config and caller overrides", () => {
+    expect(
+      resolvePlexusWorkspaceMcpScope({
+        projectRoot: "C:\\dev\\code\\git\\Project-worktree",
+        projectConfig,
+        workspaceId: "task-123",
+        stateRoot: "C:\\dev\\code\\git\\.plexus-state",
+      }),
+    ).toEqual({
+      projectRoot: path.win32.resolve("C:\\dev\\code\\git\\Project-worktree"),
+      projectId: "project-123",
+      workspaceId: "task-123",
+      targetId: "project-123--task-123",
+      stateRoot: path.win32.resolve("C:\\dev\\code\\git\\.plexus-state"),
+    });
+  });
+
+  it.each([
+    [
+      "Windows",
+      "C:\\dev\\code\\git\\Project-worktree",
+      "C:\\dev\\code\\git\\.plexus-state",
+      path.win32.resolve("C:\\dev\\code\\git\\Project-worktree"),
+      path.win32.resolve("C:\\dev\\code\\git\\.plexus-state"),
+    ],
+    [
+      "POSIX",
+      "/srv/git/Project-worktree",
+      "/srv/git/.plexus-state",
+      path.posix.resolve("/srv/git/Project-worktree"),
+      path.posix.resolve("/srv/git/.plexus-state"),
+    ],
+  ])(
+    "preserves %s absolute path style in generated MCP server environments",
+    (
+      _style,
+      projectRoot,
+      stateRoot,
+      expectedProjectRoot,
+      expectedStateRoot,
+    ) => {
+      const config = buildPlexusWorkspaceMcpConfig({
+        projectRoot,
+        projectConfig,
+        workspaceId: "task-123",
+        stateRoot,
+        pharoTools: [pharoEvalTool],
+      });
+
+      for (const server of [
+        config.servers["pharo-launcher"],
+        config.servers.pharo_gateway,
+      ]) {
+        expect(server.env).toMatchObject({
+          PLEXUS_PROJECT_ROOT: expectedProjectRoot,
+          PLEXUS_STATE_ROOT: expectedStateRoot,
+        });
+      }
+    },
+  );
+
+  it("builds a scoped pharo-launcher server entry without raw host-wide pharo-launcher-mcp access", () => {
+    expect(
+      buildPharoLauncherMcpServerConfig({
+        projectRoot: "C:\\dev\\code\\git\\Project-worktree",
+        projectConfig,
+        workspaceId: "task-123",
+        targetId: "target-123",
+        stateRoot: "C:\\dev\\code\\git\\.plexus-state",
+        plexusCommand: "plexus",
+        pharoTools: [pharoEvalTool],
+      }),
+    ).toEqual({
+      command: "plexus",
+      args: ["mcp", "pharo-launcher"],
+      env: {
+        PLEXUS_AGENT_MCP_SURFACE: "pharo-launcher",
+        PLEXUS_PROJECT_ROOT: path.win32.resolve("C:\\dev\\code\\git\\Project-worktree"),
+        PLEXUS_PROJECT_ID: "project-123",
+        PLEXUS_WORKSPACE_ID: "task-123",
+        VIBE_KANBAN_WORKSPACE_ID: "task-123",
+        PLEXUS_TARGET_ID: "target-123",
+        PLEXUS_STATE_ROOT: path.win32.resolve("C:\\dev\\code\\git\\.plexus-state"),
+        PLEXUS_IMAGE_LEASE_OWNER_ID: "target-123",
+        PLEXUS_IMAGE_LEASE_OWNER_KIND: "target",
+        PLEXUS_IMAGE_LEASE_PURPOSE: "PLexus scoped Pharo image lifecycle",
+      },
+    });
+  });
+
+  it("allows generated pharo-launcher entries to carry explicit image lease ownership", () => {
+    expect(
+      buildPharoLauncherMcpServerConfig({
+        projectRoot: "C:\\dev\\code\\git\\Project-worktree",
+        projectConfig,
+        workspaceId: "task-123",
+        targetId: "target-123",
+        stateRoot: "C:\\dev\\code\\git\\.plexus-state",
+        pharoTools: [pharoEvalTool],
+        imageLease: {
+          ownerId: "thread-456",
+          ownerKind: "thread",
+          purpose: "Work on PLexus issue 24",
+          repositoryPath: "C:\\dev\\code\\git\\Project-worktree",
+          branch: "codex/plexus-24-image-leases",
+          ttlMs: 3_600_000,
+          cleanupCommand: "plexus project close C:\\dev\\code\\git\\Project-worktree",
+        },
+      }).env,
+    ).toMatchObject({
+      PLEXUS_IMAGE_LEASE_OWNER_ID: "thread-456",
+      PLEXUS_IMAGE_LEASE_OWNER_KIND: "thread",
+      PLEXUS_IMAGE_LEASE_PURPOSE: "Work on PLexus issue 24",
+      PLEXUS_IMAGE_LEASE_REPOSITORY_PATH:
+        "C:\\dev\\code\\git\\Project-worktree",
+      PLEXUS_IMAGE_LEASE_BRANCH: "codex/plexus-24-image-leases",
+      PLEXUS_IMAGE_LEASE_TTL_MS: "3600000",
+      PLEXUS_IMAGE_LEASE_CLEANUP_COMMAND:
+        "plexus project close C:\\dev\\code\\git\\Project-worktree",
+    });
+  });
+
+  it("uses pharo_gateway as the default agent-facing Pharo proxy server name", () => {
+    const config = buildPlexusWorkspaceMcpConfig({
+      projectRoot: "C:\\dev\\code\\git\\Project-worktree",
+      projectConfig,
+      workspaceId: "task-123",
+      stateRoot: "C:\\dev\\code\\git\\.plexus-state",
+      pharoTools: [pharoEvalTool],
+    });
+
+    expect(defaultPharoMcpServerName).toBe("pharo_gateway");
+    expect(Object.keys(config.servers).sort()).toEqual([
+      "pharo-launcher",
+      "pharo_gateway",
+    ]);
+    expect(config.servers.pharo_gateway).toMatchObject({
+      command: "plexus-gateway",
+      args: ["--stdio"],
+      env: {
+        PLEXUS_GATEWAY_SURFACE: "gateway",
+        PLEXUS_WORKSPACE_ID: "task-123",
+      },
+    });
+    expect(config.servers.pharo_gateway.env).not.toHaveProperty(
+      "PLEXUS_EXPOSE_RAW_ROUTING_TOOL",
+    );
+    expect(config.servers).not.toHaveProperty("pharo");
+    expect(config.servers).not.toHaveProperty("gateway");
+  });
+
+  it("builds a scoped pharo_gateway server entry with the project tool contract", () => {
+    const server = buildPharoMcpServerConfig({
+      projectRoot: "C:\\dev\\code\\git\\Project-worktree",
+      projectConfig,
+      workspaceId: "task-123",
+      targetId: "target-123",
+      stateRoot: "C:\\dev\\code\\git\\.plexus-state",
+      plexusGatewayCommand: "plexus-gateway",
+      pharoTools: [pharoEvalTool],
+      pharoMcpContract: {
+        id: "project-contract",
+        hash: "sha256:expected",
+      },
+    });
+
+    expect(server).toMatchObject({
+      command: "plexus-gateway",
+      args: ["--stdio"],
+      env: {
+        PLEXUS_GATEWAY_SURFACE: "gateway",
+        PLEXUS_PROJECT_ROOT: path.win32.resolve("C:\\dev\\code\\git\\Project-worktree"),
+        PLEXUS_PROJECT_ID: "project-123",
+        PLEXUS_WORKSPACE_ID: "task-123",
+        VIBE_KANBAN_WORKSPACE_ID: "task-123",
+        PLEXUS_TARGET_ID: "target-123",
+        PLEXUS_STATE_ROOT: path.win32.resolve("C:\\dev\\code\\git\\.plexus-state"),
+        PLEXUS_PHARO_MCP_CONTRACT_JSON: JSON.stringify({
+          id: "project-contract",
+          hash: "sha256:expected",
+        }),
+      },
+    });
+    expect(JSON.parse(server.env?.PLEXUS_PHARO_TOOLS_JSON ?? "")).toEqual([
+      pharoEvalTool,
+    ]);
+  });
+
+  it("merges generated MCP servers without dropping unrelated entries", () => {
+    expect(
+      buildPlexusWorkspaceMcpConfig({
+        projectRoot: "C:\\dev\\code\\git\\Project-worktree",
+        projectConfig,
+        workspaceId: "task-123",
+        pharoTools: [pharoEvalTool],
+        existingServers: {
+          existing: {
+            command: "node",
+            args: ["existing.js"],
+          },
+        },
+      }).servers,
+    ).toMatchObject({
+      existing: {
+        command: "node",
+        args: ["existing.js"],
+      },
+      "pharo-launcher": {
+        env: {
+          PLEXUS_AGENT_MCP_SURFACE: "pharo-launcher",
+          PLEXUS_WORKSPACE_ID: "task-123",
+        },
+      },
+      pharo_gateway: {
+        env: {
+          PLEXUS_GATEWAY_SURFACE: "gateway",
+          PLEXUS_WORKSPACE_ID: "task-123",
+        },
+      },
+    });
+  });
+
+  it("lets generated servers replace only their managed names", () => {
+    expect(
+      mergeWorkspaceMcpServers(
+        {
+          pharo_gateway: {
+            command: "old-pharo-gateway",
+            args: [],
+          },
+          unrelated: {
+            command: "keep",
+            args: [],
+          },
+        },
+        {
+          pharo_gateway: {
+            command: "new-pharo-gateway",
+            args: ["--stdio"],
+          },
+        },
+      ),
+    ).toEqual({
+      pharo_gateway: {
+        command: "new-pharo-gateway",
+        args: ["--stdio"],
+      },
+      unrelated: {
+        command: "keep",
+        args: [],
+      },
+    });
+  });
+});
