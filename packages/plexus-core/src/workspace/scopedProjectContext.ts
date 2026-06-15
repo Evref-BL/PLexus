@@ -1,0 +1,742 @@
+import {
+  loadProjectConfig,
+  projectImageDisplayMode,
+  projectConfigId,
+  resolveProjectRuntimePolicy,
+  type ProjectImageDisplayMode,
+  type ProjectConfig,
+  type ProjectImageConfig,
+} from "../config/projectConfig.js";
+import {
+  defaultPlexusStateRoot,
+  defaultTargetId,
+  defaultWorkspaceId,
+  loadProjectState,
+  projectStatePathForConfig,
+  projectImageRepositoryWorkspaceStates,
+  projectImageRepositoryWorkspaces,
+  renderProjectImageName,
+  sanitizeRuntimeId,
+  type ProjectImageState,
+  type ProjectImageRepositoryWorkspaceState,
+  type ProjectImageStatus,
+  type ProjectState,
+} from "./projectState.js";
+import { resolvePathLike } from "../support/pathStyle.js";
+
+export type ScopedProjectContextSchemaVersion = 1;
+export type ScopedImageStatus = ProjectImageStatus | "declared";
+export type ScopedImageCleanupPolicy = "workspace_cleanup_only";
+export type ScopedWorkspaceSourcePolicy = "caller-managed";
+export type ScopedWorkspaceImageDeclarationPolicy = "project-config";
+export type ScopedWorkspaceImageLifecyclePolicy = "scoped-affordances";
+export type ScopedWorkspaceRoutePolicy = "pharo-gateway-target-route";
+
+export interface ScopedProjectContextScope {
+  projectId: string;
+  projectName: string;
+  workspaceId: string;
+  targetId: string;
+}
+
+export interface ScopedProjectContextDiagnosticScope
+  extends ScopedProjectContextScope {
+  projectRoot: string;
+  sourcePath: string;
+  stateRoot: string;
+  statePath: string;
+}
+
+export interface ScopedWorkspaceSourceContext {
+  path: string;
+  policy: ScopedWorkspaceSourcePolicy;
+  defaultLoadSource: true;
+}
+
+export interface ScopedWorkspaceStateContext {
+  root: string;
+  path: string;
+}
+
+export interface ScopedWorkspaceImagePolicyContext {
+  declaration: ScopedWorkspaceImageDeclarationPolicy;
+  lifecycle: ScopedWorkspaceImageLifecyclePolicy;
+  handle: "imageId";
+  creation: "project-policy";
+  maxCount?: number;
+}
+
+export interface ScopedWorkspaceRoutePolicyContext {
+  policy: ScopedWorkspaceRoutePolicy;
+  serverName: "pharo_gateway";
+  targetKey: "targetId";
+  imageArgument: "imageId";
+}
+
+export interface ScopedWorkspaceCleanupPolicyContext {
+  policy: ScopedImageCleanupPolicy;
+  deletionSurface: "workspace-cleanup";
+}
+
+export interface ScopedWorkspaceRuntimeContract {
+  projectRoot: string;
+  source: ScopedWorkspaceSourceContext;
+  state: ScopedWorkspaceStateContext;
+  images: ScopedWorkspaceImagePolicyContext;
+  routes: ScopedWorkspaceRoutePolicyContext;
+  cleanup: ScopedWorkspaceCleanupPolicyContext;
+}
+
+export interface ScopedImageOwnership {
+  projectId: string;
+  workspaceId: string;
+  targetId: string;
+  owned: true;
+  disposable: true;
+  lease?: ProjectImageState["lease"];
+}
+
+export interface ScopedImageAffordanceAllowed {
+  allowed: true;
+  toolName: string;
+  arguments: Record<string, unknown>;
+}
+
+export interface ScopedImageAffordanceDenied {
+  allowed: false;
+  reason: string;
+}
+
+export type ScopedImageAffordance =
+  | ScopedImageAffordanceAllowed
+  | ScopedImageAffordanceDenied;
+
+export interface ScopedImageAffordances {
+  create: ScopedImageAffordance;
+  start: ScopedImageAffordance;
+  openInteractive: ScopedImageAffordance;
+  show: ScopedImageAffordance;
+  hide: ScopedImageAffordance;
+  stop: ScopedImageAffordance;
+  reset: ScopedImageAffordance;
+  delete: ScopedImageAffordanceDenied;
+}
+
+export interface ScopedImageCleanupPaths {
+  imagePath?: string;
+  imageDirectoryPath?: string;
+  changesPath?: string;
+  localDirectoryPath?: string;
+  ombuDirectoryPath?: string;
+}
+
+export interface ScopedImageRepositoryWorkspaceCleanupMetadata {
+  path: string;
+  dirtyState: ProjectImageRepositoryWorkspaceState["dirtyState"];
+  defaultPolicy: "preserve";
+  destructivePolicyRequired: true;
+  lastDecision?: ProjectImageRepositoryWorkspaceState["cleanupState"];
+}
+
+export interface ScopedImageCleanupMetadata {
+  disposable: true;
+  statePath: string;
+  launcherImageName: string;
+  policy: ScopedImageCleanupPolicy;
+  paths: ScopedImageCleanupPaths;
+  repositoryWorkspace?: ScopedImageRepositoryWorkspaceCleanupMetadata;
+  repositoryWorkspaces?: ScopedImageRepositoryWorkspaceCleanupMetadata[];
+}
+
+export interface ScopedImageGatewayRouteMetadata {
+  serverName: "pharo_gateway";
+  requiredArgument: "imageId";
+  imageId: string;
+  routeReference: {
+    projectId: string;
+    workspaceId: string;
+    targetId: string;
+  };
+  imageIdSource: string;
+  recordHint: string;
+}
+
+export interface ScopedImageContext {
+  imageId: string;
+  active: boolean;
+  status: ScopedImageStatus;
+  displayMode: ProjectImageDisplayMode;
+  ownership: ScopedImageOwnership;
+  affordances: ScopedImageAffordances;
+  route: ScopedImageGatewayRouteMetadata;
+  repositoryWorkspace?: ProjectImageRepositoryWorkspaceState;
+  repositoryWorkspaces?: ProjectImageRepositoryWorkspaceState[];
+}
+
+export interface ScopedProjectContext {
+  schemaVersion: ScopedProjectContextSchemaVersion;
+  scope: ScopedProjectContextScope;
+  workspace: ScopedWorkspaceRuntimeContract;
+  images: ScopedImageContext[];
+}
+
+export interface ScopedImageDiagnosticContext {
+  imageId: string;
+  launcherImageName: string;
+  active: boolean;
+  status: ScopedImageStatus;
+  displayMode: ProjectImageDisplayMode;
+  assignedPort?: number;
+  mcpEndpoint?: ProjectImageState["mcpEndpoint"];
+  pid?: number;
+  repositoryWorkspace?: ProjectImageRepositoryWorkspaceState;
+  repositoryWorkspaces?: ProjectImageRepositoryWorkspaceState[];
+  cleanup: ScopedImageCleanupMetadata;
+}
+
+export interface ScopedProjectContextDiagnostics {
+  schemaVersion: ScopedProjectContextSchemaVersion;
+  scope: ScopedProjectContextDiagnosticScope;
+  workspace: ScopedWorkspaceRuntimeContract;
+  images: ScopedImageDiagnosticContext[];
+}
+
+export interface BuildScopedProjectContextOptions {
+  projectRoot: string;
+  sourcePath?: string;
+  projectConfig?: ProjectConfig;
+  workspaceId?: string;
+  targetId?: string;
+  stateRoot?: string;
+  projectState?: ProjectState;
+}
+
+export class ScopedProjectContextError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ScopedProjectContextError";
+  }
+}
+
+function allowed(
+  toolName: string,
+  argumentsValue: Record<string, unknown>,
+): ScopedImageAffordanceAllowed {
+  return {
+    allowed: true,
+    toolName,
+    arguments: argumentsValue,
+  };
+}
+
+function denied(reason: string): ScopedImageAffordanceDenied {
+  return {
+    allowed: false,
+    reason,
+  };
+}
+
+function cleanupPaths(
+  imageState: ProjectImageState | undefined,
+): ScopedImageCleanupPaths {
+  return {
+    ...(imageState?.imagePath ? { imagePath: imageState.imagePath } : {}),
+    ...(imageState?.imageDirectoryPath
+      ? { imageDirectoryPath: imageState.imageDirectoryPath }
+      : {}),
+    ...(imageState?.changesPath ? { changesPath: imageState.changesPath } : {}),
+    ...(imageState?.localDirectoryPath
+      ? { localDirectoryPath: imageState.localDirectoryPath }
+      : {}),
+    ...(imageState?.ombuDirectoryPath
+      ? { ombuDirectoryPath: imageState.ombuDirectoryPath }
+      : {}),
+  };
+}
+
+function repositoryWorkspaceCleanupMetadata(
+  repositoryWorkspaceState: ProjectImageRepositoryWorkspaceState | undefined,
+): ScopedImageRepositoryWorkspaceCleanupMetadata | undefined {
+  if (!repositoryWorkspaceState) {
+    return undefined;
+  }
+
+  return {
+    path: repositoryWorkspaceState.path,
+    dirtyState: repositoryWorkspaceState.dirtyState,
+    defaultPolicy: "preserve",
+    destructivePolicyRequired: true,
+    ...(repositoryWorkspaceState.cleanupState
+      ? { lastDecision: repositoryWorkspaceState.cleanupState }
+      : {}),
+  };
+}
+
+function imageStatus(
+  imageState: ProjectImageState | undefined,
+): ScopedImageStatus {
+  return imageState?.status ?? "declared";
+}
+
+function createAffordance(
+  imageConfig: ProjectImageConfig,
+  imageState: ProjectImageState | undefined,
+): ScopedImageAffordance {
+  if (imageState) {
+    return denied("Image already has runtime state");
+  }
+
+  if (!imageConfig.create) {
+    return denied("Image has no approved create policy");
+  }
+
+  return allowed("pharo_launcher_image_create", {
+    imageId: imageConfig.id,
+    ...(imageConfig.create.profileId
+      ? { profileId: imageConfig.create.profileId }
+      : {}),
+  });
+}
+
+function startAffordance(
+  imageConfig: ProjectImageConfig,
+  status: ScopedImageStatus,
+): ScopedImageAffordance {
+  if (!imageConfig.active) {
+    return denied("Image is inactive in project config");
+  }
+
+  if (status === "running") {
+    return denied("Image is already running");
+  }
+
+  if (status === "starting") {
+    return denied("Image is already starting");
+  }
+
+  return allowed("pharo_launcher_image_start", {
+    imageId: imageConfig.id,
+    ...(imageConfig.displayMode ? { displayMode: imageConfig.displayMode } : {}),
+  });
+}
+
+function openInteractiveAffordance(
+  imageConfig: ProjectImageConfig,
+  status: ScopedImageStatus,
+): ScopedImageAffordance {
+  if (!imageConfig.active) {
+    return denied("Image is inactive in project config");
+  }
+
+  if (status === "starting") {
+    return denied("Image is already starting");
+  }
+
+  return allowed("pharo_launcher_image_open_interactive", {
+    imageId: imageConfig.id,
+  });
+}
+
+function displayModeAffordance(
+  imageConfig: ProjectImageConfig,
+  status: ScopedImageStatus,
+  toolName: "pharo_launcher_image_show" | "pharo_launcher_image_hide",
+): ScopedImageAffordance {
+  if (!imageConfig.active) {
+    return denied("Image is inactive in project config");
+  }
+
+  if (status === "starting") {
+    return denied("Image is already starting");
+  }
+
+  return allowed(toolName, { imageId: imageConfig.id });
+}
+
+function stopAffordance(
+  imageId: string,
+  status: ScopedImageStatus,
+): ScopedImageAffordance {
+  if (status !== "running" && status !== "starting") {
+    return denied("Image is not running");
+  }
+
+  return allowed("pharo_launcher_image_stop", {
+    imageId,
+    confirm: true,
+  });
+}
+
+function resetAffordance(
+  imageConfig: ProjectImageConfig,
+  status: ScopedImageStatus,
+): ScopedImageAffordance {
+  if (!imageConfig.active) {
+    return denied("Image is inactive in project config");
+  }
+
+  if (status === "starting") {
+    return denied("Image is already starting");
+  }
+
+  if (!imageConfig.create) {
+    return denied("Image has no approved create policy");
+  }
+
+  return allowed("pharo_launcher_image_reset", {
+    imageId: imageConfig.id,
+    confirm: true,
+  });
+}
+
+function lifecycleAffordances(
+  imageConfig: ProjectImageConfig,
+  imageState: ProjectImageState | undefined,
+): ScopedImageAffordances {
+  const status = imageStatus(imageState);
+  return {
+    create: createAffordance(imageConfig, imageState),
+    start: startAffordance(imageConfig, status),
+    openInteractive: openInteractiveAffordance(imageConfig, status),
+    show: displayModeAffordance(
+      imageConfig,
+      status,
+      "pharo_launcher_image_show",
+    ),
+    hide: displayModeAffordance(
+      imageConfig,
+      status,
+      "pharo_launcher_image_hide",
+    ),
+    stop: stopAffordance(imageConfig.id, status),
+    reset: resetAffordance(imageConfig, status),
+    delete: denied(
+      "Deletion is reserved for PLexus workspace cleanup policy, not the agent launcher surface",
+    ),
+  };
+}
+
+function routeMetadata(
+  scope: ScopedProjectContextScope,
+  imageId: string,
+): ScopedImageGatewayRouteMetadata {
+  return {
+    serverName: "pharo_gateway",
+    requiredArgument: "imageId",
+    imageId,
+    routeReference: {
+      projectId: scope.projectId,
+      workspaceId: scope.workspaceId,
+      targetId: scope.targetId,
+    },
+    imageIdSource:
+      "Read images[].imageId from this scoped context",
+    recordHint:
+      "Store the selected imageId with the scoped project/workspace/target before calling pharo_gateway tools",
+  };
+}
+
+function workspaceContract(
+  scope: ScopedProjectContextDiagnosticScope,
+  projectConfig: ProjectConfig,
+): ScopedWorkspaceRuntimeContract {
+  const workspaceImagePolicy =
+    resolveProjectRuntimePolicy(projectConfig).workspaceImages;
+
+  return {
+    projectRoot: scope.projectRoot,
+    source: {
+      path: scope.sourcePath,
+      policy: "caller-managed",
+      defaultLoadSource: true,
+    },
+    state: {
+      root: scope.stateRoot,
+      path: scope.statePath,
+    },
+    images: {
+      declaration: "project-config",
+      lifecycle: "scoped-affordances",
+      handle: "imageId",
+      creation: "project-policy",
+      ...(workspaceImagePolicy?.maxCount !== undefined
+        ? { maxCount: workspaceImagePolicy.maxCount }
+        : {}),
+    },
+    routes: {
+      policy: "pharo-gateway-target-route",
+      serverName: "pharo_gateway",
+      targetKey: "targetId",
+      imageArgument: "imageId",
+    },
+    cleanup: {
+      policy: "workspace_cleanup_only",
+      deletionSurface: "workspace-cleanup",
+    },
+  };
+}
+
+function validateProjectState(
+  scope: ScopedProjectContextScope,
+  projectState: ProjectState | undefined,
+  imageIds: Set<string>,
+): void {
+  if (!projectState) {
+    return;
+  }
+
+  if (projectState.projectId !== scope.projectId) {
+    throw new ScopedProjectContextError(
+      `Project state projectId ${projectState.projectId} does not match scoped project ${scope.projectId}`,
+    );
+  }
+
+  if (projectState.workspaceId !== scope.workspaceId) {
+    throw new ScopedProjectContextError(
+      `Project state workspaceId ${projectState.workspaceId} does not match scoped workspace ${scope.workspaceId}`,
+    );
+  }
+
+  if (projectState.targetId !== scope.targetId) {
+    throw new ScopedProjectContextError(
+      `Project state targetId ${projectState.targetId} does not match scoped target ${scope.targetId}`,
+    );
+  }
+
+  for (const image of projectState.images) {
+    if (!imageIds.has(image.id)) {
+      throw new ScopedProjectContextError(
+        `State image ${image.id} is not declared in project config`,
+      );
+    }
+  }
+}
+
+interface ResolvedScopedProjectContext {
+  projectConfig: ProjectConfig;
+  projectState?: ProjectState;
+  scope: ScopedProjectContextDiagnosticScope;
+}
+
+function renderedLauncherImageName(
+  scope: ScopedProjectContextScope,
+  imageConfig: ProjectImageConfig,
+  imageState: ProjectImageState | undefined,
+): string {
+  return (
+    imageState?.imageName ??
+    renderProjectImageName(imageConfig.imageName, {
+      projectId: scope.projectId,
+      projectName: scope.projectName,
+      workspaceId: scope.workspaceId,
+      targetId: scope.targetId,
+      imageId: imageConfig.id,
+    })
+  );
+}
+
+function repositoryWorkspaces(
+  scope: ScopedProjectContextScope,
+  imageConfig: ProjectImageConfig,
+  imageState: ProjectImageState | undefined,
+): ProjectImageRepositoryWorkspaceState[] {
+  return imageState
+    ? projectImageRepositoryWorkspaces(imageState)
+    : projectImageRepositoryWorkspaceStates(imageConfig, {
+      projectId: scope.projectId,
+      projectName: scope.projectName,
+      workspaceId: scope.workspaceId,
+      targetId: scope.targetId,
+      imageId: imageConfig.id,
+    });
+}
+
+function scopedImageContext(
+  scope: ScopedProjectContextScope,
+  imageConfig: ProjectImageConfig,
+  imageState: ProjectImageState | undefined,
+): ScopedImageContext {
+  const repositoryWorkspaceStates = repositoryWorkspaces(
+    scope,
+    imageConfig,
+    imageState,
+  );
+  const repositoryWorkspaceState = repositoryWorkspaceStates[0];
+
+  return {
+    imageId: imageConfig.id,
+    active: imageConfig.active,
+    status: imageStatus(imageState),
+    displayMode: imageState?.displayMode ?? projectImageDisplayMode(imageConfig),
+    ownership: {
+      projectId: scope.projectId,
+      workspaceId: scope.workspaceId,
+      targetId: scope.targetId,
+      owned: true,
+      disposable: true,
+      ...(imageState?.lease ? { lease: imageState.lease } : {}),
+    },
+    affordances: lifecycleAffordances(imageConfig, imageState),
+    route: routeMetadata(scope, imageConfig.id),
+    ...(repositoryWorkspaceState
+      ? { repositoryWorkspace: repositoryWorkspaceState }
+      : {}),
+    ...(repositoryWorkspaceStates.length > 0
+      ? { repositoryWorkspaces: repositoryWorkspaceStates }
+      : {}),
+  };
+}
+
+function scopedImageDiagnostics(
+  scope: ScopedProjectContextDiagnosticScope,
+  imageConfig: ProjectImageConfig,
+  imageState: ProjectImageState | undefined,
+): ScopedImageDiagnosticContext {
+  const launcherImageName = renderedLauncherImageName(
+    scope,
+    imageConfig,
+    imageState,
+  );
+  const repositoryWorkspaceStates = repositoryWorkspaces(
+    scope,
+    imageConfig,
+    imageState,
+  );
+  const repositoryWorkspaceState = repositoryWorkspaceStates[0];
+  const repositoryWorkspaceCleanup =
+    repositoryWorkspaceCleanupMetadata(repositoryWorkspaceState);
+  const repositoryWorkspaceCleanups = repositoryWorkspaceStates
+    .map((workspace) => repositoryWorkspaceCleanupMetadata(workspace))
+    .filter(
+      (
+        cleanup,
+      ): cleanup is ScopedImageRepositoryWorkspaceCleanupMetadata =>
+        cleanup !== undefined,
+    );
+
+  return {
+    imageId: imageConfig.id,
+    launcherImageName,
+    active: imageConfig.active,
+    status: imageStatus(imageState),
+    displayMode: imageState?.displayMode ?? projectImageDisplayMode(imageConfig),
+    ...(imageState?.assignedPort
+      ? { assignedPort: imageState.assignedPort }
+      : {}),
+    ...(imageState?.mcpEndpoint ? { mcpEndpoint: imageState.mcpEndpoint } : {}),
+    ...(imageState?.pid ? { pid: imageState.pid } : {}),
+    ...(repositoryWorkspaceState
+      ? { repositoryWorkspace: repositoryWorkspaceState }
+      : {}),
+    ...(repositoryWorkspaceStates.length > 0
+      ? { repositoryWorkspaces: repositoryWorkspaceStates }
+      : {}),
+    cleanup: {
+      disposable: true,
+      statePath: scope.statePath,
+      launcherImageName,
+      policy: "workspace_cleanup_only",
+      paths: cleanupPaths(imageState),
+      ...(repositoryWorkspaceCleanup
+        ? { repositoryWorkspace: repositoryWorkspaceCleanup }
+        : {}),
+      ...(repositoryWorkspaceCleanups.length > 0
+        ? { repositoryWorkspaces: repositoryWorkspaceCleanups }
+        : {}),
+    },
+  };
+}
+
+function resolveScopedProjectContext(
+  options: BuildScopedProjectContextOptions,
+): ResolvedScopedProjectContext {
+  const projectRoot = resolvePathLike(options.projectRoot);
+  const sourcePath = resolvePathLike(options.sourcePath ?? projectRoot);
+  const projectConfig = options.projectConfig ?? loadProjectConfig(projectRoot);
+  const workspaceId = options.workspaceId
+    ? sanitizeRuntimeId(options.workspaceId)
+    : defaultWorkspaceId(projectRoot);
+  const targetId =
+    options.targetId ??
+    defaultTargetId(projectConfigId(projectConfig), workspaceId);
+  const runtime = resolveProjectRuntimePolicy(projectConfig);
+  const configuredStateRoot =
+    runtime.stateRoot.mode === "external" ? runtime.stateRoot.path : undefined;
+  const stateRoot = options.stateRoot ?? configuredStateRoot;
+  const resolvedStateRoot = stateRoot
+    ? resolvePathLike(stateRoot)
+    : defaultPlexusStateRoot(projectRoot);
+  const statePath = projectStatePathForConfig({
+    projectRoot,
+    config: projectConfig,
+    workspaceId,
+    stateRoot: resolvedStateRoot,
+  });
+  const projectState = options.projectState ?? loadProjectState(statePath);
+  const scope: ScopedProjectContextDiagnosticScope = {
+    projectRoot,
+    sourcePath,
+    projectId: projectConfigId(projectConfig),
+    projectName: projectConfig.name,
+    workspaceId,
+    targetId,
+    stateRoot: resolvedStateRoot,
+    statePath,
+  };
+  const configuredImageIds = new Set(
+    projectConfig.images.map((image) => image.id),
+  );
+
+  validateProjectState(scope, projectState, configuredImageIds);
+
+  return {
+    projectConfig,
+    projectState,
+    scope,
+  };
+}
+
+export function buildScopedProjectContext(
+  options: BuildScopedProjectContextOptions,
+): ScopedProjectContext {
+  const { projectConfig, projectState, scope } =
+    resolveScopedProjectContext(options);
+
+  return {
+    schemaVersion: 1,
+    scope: {
+      projectId: scope.projectId,
+      projectName: scope.projectName,
+      workspaceId: scope.workspaceId,
+      targetId: scope.targetId,
+    },
+    workspace: workspaceContract(scope, projectConfig),
+    images: projectConfig.images.map((imageConfig) =>
+      scopedImageContext(
+        scope,
+        imageConfig,
+        projectState?.images.find((image) => image.id === imageConfig.id),
+      ),
+    ),
+  };
+}
+
+export function buildScopedProjectContextDiagnostics(
+  options: BuildScopedProjectContextOptions,
+): ScopedProjectContextDiagnostics {
+  const { projectConfig, projectState, scope } =
+    resolveScopedProjectContext(options);
+
+  return {
+    schemaVersion: 1,
+    scope,
+    workspace: workspaceContract(scope, projectConfig),
+    images: projectConfig.images.map((imageConfig) =>
+      scopedImageDiagnostics(
+        scope,
+        imageConfig,
+        projectState?.images.find((image) => image.id === imageConfig.id),
+      ),
+    ),
+  };
+}

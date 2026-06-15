@@ -1,15 +1,15 @@
 #!/usr/bin/env node
-import { ProjectCloseError } from "./projectClose.js";
-import { PlexusProjectLifecycle } from "./projectLifecycle.js";
-import { ProjectOpenError } from "./projectOpen.js";
+import { ProjectCloseError } from "./lifecycle/projectClose.js";
+import { PlexusProjectLifecycle } from "./lifecycle/projectLifecycle.js";
+import { ProjectOpenError } from "./lifecycle/projectOpen.js";
 import {
   scopedImageLeaseOptionsFromEnvironment,
   startScopedPharoLauncherServer,
-} from "./scopedPharoLauncherServer.js";
+} from "./launcher/scopedPharoLauncherServer.js";
 import {
   parseProjectLifecycleServerCliOptions,
   startProjectLifecycleServerFromCli,
-} from "./server.js";
+} from "./mcp/server.js";
 
 function usage(): string {
   return [

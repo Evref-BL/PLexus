@@ -26,7 +26,7 @@
     "test": "npm run test --workspaces && npm run test:smoke-policy",
     "coverage": "npm run coverage --workspaces",
     "coverage:all": "npm run coverage",
-    "test:smoke-policy": "node --test scripts/*.test.mjs",
+    "test:smoke-policy": "node --test test/scripts/*.test.mjs",
     "typecheck": "npm run typecheck --workspaces",
     "clean": "npm run clean --workspaces",
     "prototype:open-close": "node scripts/prototype-open-close.mjs",
