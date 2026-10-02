@@ -235,16 +235,16 @@ function sharedGatewayState(
   policy: ProjectSharedGatewayPolicy,
   owningProjectId: string,
 ): ProjectGatewayState {
-  const agentUrl = new URL(policy.agentMcpUrl);
+  const gatewayUrl = new URL(policy.mcpUrl);
   const controlUrl = new URL(policy.routeControlMcpUrl);
 
   return {
     mode: "shared",
-    endpoint: policy.agentMcpUrl,
+    endpoint: policy.mcpUrl,
     controlEndpoint: policy.routeControlMcpUrl,
-    host: agentUrl.hostname,
-    ...(urlPort(agentUrl) ? { port: urlPort(agentUrl) } : {}),
-    routePath: agentUrl.pathname,
+    host: gatewayUrl.hostname,
+    ...(urlPort(gatewayUrl) ? { port: urlPort(gatewayUrl) } : {}),
+    routePath: gatewayUrl.pathname,
     controlPath: controlUrl.pathname,
     owningProjectId,
     managedByProject: false,
@@ -264,11 +264,11 @@ function localGatewayState(
     host: policy.host,
     ...(port !== undefined ? { port } : {}),
     ...(policy.portRange ? { portRange: { ...policy.portRange } } : {}),
-    routePath: policy.agentMcpPath,
+    routePath: policy.mcpPath,
     controlPath: policy.routeControlMcpPath,
     ...(port !== undefined
       ? {
-          endpoint: endpointUrl(policy.host, port, policy.agentMcpPath),
+          endpoint: endpointUrl(policy.host, port, policy.mcpPath),
           controlEndpoint: endpointUrl(
             policy.host,
             port,
@@ -352,7 +352,7 @@ function existingGatewayMatchesPolicy(
 
   if (
     gateway.host !== policy.host ||
-    gateway.routePath !== policy.agentMcpPath ||
+    gateway.routePath !== policy.mcpPath ||
     gateway.controlPath !== policy.routeControlMcpPath ||
     gateway.claim.claimsRoot !== claimsRoot
   ) {
@@ -564,7 +564,7 @@ async function ensureProjectLocalGateway(
       projectRoot: options.projectRoot,
       host: policy.host,
       port: claim.assignedPort,
-      routePath: policy.agentMcpPath,
+      routePath: policy.mcpPath,
       controlPath: policy.routeControlMcpPath,
       state: options.state,
       ...(options.pharoTools !== undefined

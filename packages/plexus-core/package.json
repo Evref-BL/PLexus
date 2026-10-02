@@ -1,8 +1,8 @@
 {
-  "name": "@evref-bl/plexus-core",
-  "version": "0.1.0-alpha.0",
+  "name": "@evref-bl/plexus",
+  "version": "0.1.0",
   "private": false,
-  "description": "PLexus project, workspace, and image lifecycle orchestration tools.",
+  "description": "PLexus CLI for project-scoped Pharo runtime orchestration.",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
@@ -10,15 +10,14 @@
     "directory": "packages/plexus-core"
   },
   "type": "module",
-  "main": "./dist/index.js",
   "exports": {
-    ".": "./dist/index.js"
+    "./package.json": "./package.json"
   },
-  "types": "./dist/index.d.ts",
   "bin": {
     "plexus": "dist/cli.js"
   },
   "files": [
+    "README.md",
     "dist",
     "package.json"
   ],

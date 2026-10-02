@@ -211,7 +211,7 @@ function imageCleanupResources(
     state: input.state,
     image,
   });
-  if (image.mcpEndpoint || fs.existsSync(handoffPath)) {
+  if (image.mcpServers?.length || fs.existsSync(handoffPath)) {
     resources.push({
       ...resourceBase(input.state),
       kind: "endpoint-handoff",

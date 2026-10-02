@@ -1,0 +1,106 @@
+name: Release
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  actions: write
+  contents: write
+
+jobs:
+  release:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success')
+    runs-on: ubuntu-latest
+    env:
+      RELEASE_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+    steps:
+      - name: Require main
+        env:
+          RELEASE_BRANCH: ${{ github.event.workflow_run.head_branch || github.ref_name }}
+        run: |
+          if [ "$RELEASE_BRANCH" != "main" ]; then
+            echo "Run this workflow from main." >&2
+            exit 1
+          fi
+
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          ref: ${{ env.RELEASE_SHA }}
+
+      - name: Determine whether a release is needed
+        id: version
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          plexus_version=$(node -p "require('./packages/plexus-core/package.json').version")
+          gateway_version=$(node -p "require('./packages/plexus-gateway/package.json').version")
+
+          if [ "$gateway_version" != "$plexus_version" ]; then
+            echo "Published PLexus workspaces must share one version: $plexus_version and $gateway_version." >&2
+            exit 1
+          fi
+
+          if [[ "$plexus_version" == *-* ]]; then
+            echo "Prerelease version $plexus_version; skipping release."
+            printf 'should_release=false\n' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if ! [[ "$plexus_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "@evref-bl/plexus must use a release SemVer version: $plexus_version" >&2
+            exit 1
+          fi
+
+          tag="v$plexus_version"
+          if git ls-remote --exit-code --refs origin "refs/tags/$tag" >/dev/null; then
+            if [ "$EVENT_NAME" = "workflow_run" ]; then
+              echo "Release $tag already exists; nothing to release."
+              printf 'should_release=false\n' >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+
+            echo "Tag $tag already exists." >&2
+            exit 1
+          fi
+
+          {
+            printf 'tag=%s\n' "$tag"
+            printf 'should_release=true\n'
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Verify CI
+        if: steps.version.outputs.should_release == 'true' && github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          successful_runs="$(gh run list --commit "$RELEASE_SHA" --workflow CI --status completed --json conclusion --jq '[.[] | select(.conclusion == "success")] | length')"
+          if [ "$successful_runs" -eq 0 ]; then
+            echo "CI must succeed for this commit before releasing it." >&2
+            exit 1
+          fi
+
+      - name: Create GitHub release
+        if: steps.version.outputs.should_release == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ steps.version.outputs.tag }}" \
+            --target "$RELEASE_SHA" \
+            --title "${{ steps.version.outputs.tag }}" \
+            --generate-notes
+
+      - name: Publish npm packages
+        if: steps.version.outputs.should_release == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh workflow run Publish \
+            --ref "${{ steps.version.outputs.tag }}" \
+            -f release_tag="${{ steps.version.outputs.tag }}"

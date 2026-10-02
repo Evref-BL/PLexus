@@ -70,7 +70,7 @@ export interface ScopedWorkspaceRoutePolicyContext {
   policy: ScopedWorkspaceRoutePolicy;
   serverName: "pharo_gateway";
   targetKey: "targetId";
-  imageArgument: "imageId";
+  imageArgument: "mcpServerId";
 }
 
 export interface ScopedWorkspaceCleanupPolicyContext {
@@ -150,14 +150,14 @@ export interface ScopedImageCleanupMetadata {
 
 export interface ScopedImageGatewayRouteMetadata {
   serverName: "pharo_gateway";
-  requiredArgument: "imageId";
-  imageId: string;
+  requiredArgument: "mcpServerId";
+  mcpServerId: string;
   routeReference: {
     projectId: string;
     workspaceId: string;
     targetId: string;
   };
-  imageIdSource: string;
+  mcpServerIdSource: string;
   recordHint: string;
 }
 
@@ -187,7 +187,7 @@ export interface ScopedImageDiagnosticContext {
   status: ScopedImageStatus;
   displayMode: ProjectImageDisplayMode;
   assignedPort?: number;
-  mcpEndpoint?: ProjectImageState["mcpEndpoint"];
+  mcpServers?: ProjectImageState["mcpServers"];
   pid?: number;
   repositoryWorkspace?: ProjectImageRepositoryWorkspaceState;
   repositoryWorkspaces?: ProjectImageRepositoryWorkspaceState[];
@@ -411,7 +411,7 @@ function lifecycleAffordances(
     stop: stopAffordance(imageConfig.id, status),
     reset: resetAffordance(imageConfig, status),
     delete: denied(
-      "Deletion is reserved for PLexus workspace cleanup policy, not the agent launcher surface",
+      "Deletion is reserved for PLexus workspace cleanup policy, not the scoped launcher surface",
     ),
   };
 }
@@ -422,17 +422,17 @@ function routeMetadata(
 ): ScopedImageGatewayRouteMetadata {
   return {
     serverName: "pharo_gateway",
-    requiredArgument: "imageId",
-    imageId,
+    requiredArgument: "mcpServerId",
+    mcpServerId: imageId,
     routeReference: {
       projectId: scope.projectId,
       workspaceId: scope.workspaceId,
       targetId: scope.targetId,
     },
-    imageIdSource:
-      "Read images[].imageId from this scoped context",
+    mcpServerIdSource:
+      "Read a server id from images[].mcpServers[] in this scoped context",
     recordHint:
-      "Store the selected imageId with the scoped project/workspace/target before calling pharo_gateway tools",
+      "Store the selected mcpServerId with the scoped project/workspace/target before calling pharo_gateway tools",
   };
 }
 
@@ -467,7 +467,7 @@ function workspaceContract(
       policy: "pharo-gateway-target-route",
       serverName: "pharo_gateway",
       targetKey: "targetId",
-      imageArgument: "imageId",
+      imageArgument: "mcpServerId",
     },
     cleanup: {
       policy: "workspace_cleanup_only",
@@ -623,7 +623,7 @@ function scopedImageDiagnostics(
     ...(imageState?.assignedPort
       ? { assignedPort: imageState.assignedPort }
       : {}),
-    ...(imageState?.mcpEndpoint ? { mcpEndpoint: imageState.mcpEndpoint } : {}),
+    ...(imageState?.mcpServers ? { mcpServers: imageState.mcpServers } : {}),
     ...(imageState?.pid ? { pid: imageState.pid } : {}),
     ...(repositoryWorkspaceState
       ? { repositoryWorkspace: repositoryWorkspaceState }

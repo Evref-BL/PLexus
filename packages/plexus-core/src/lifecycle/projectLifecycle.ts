@@ -88,6 +88,7 @@ import {
   sanitizeRuntimeId,
   saveProjectState,
   type ProjectImageMcpEndpoint,
+  type ProjectImageMcpServer,
   type ProjectImageRepositoryWorkspaceCleanupPolicy,
   type ProjectImageRepositoryWorkspaceCleanupRecord,
   type ProjectImageRepositoryWorkspaceState,
@@ -402,9 +403,10 @@ export interface ProjectLifecycleRouteTableDiagnostics {
   expectedStatePath?: string;
   routableImages: Array<{
     imageId: string;
+    mcpServerId?: string;
     port?: number;
-    mcpEndpoint?: ProjectImageState["mcpEndpoint"];
-    routingMode?: "endpoint" | "fixed-port" | "none";
+    endpoint?: ProjectImageMcpEndpoint;
+    routingMode?: "endpoint" | "none";
     status?: string;
     routable?: unknown;
   }>;
@@ -425,13 +427,6 @@ export interface ProjectLifecycleImagePortPolicyDiagnostics {
   effectiveClaimsRoot?: string;
   projectStateRoot: string;
   basis: "host-local-claims" | "project-state";
-}
-
-export interface ProjectLifecycleAgentAccessDiagnostics {
-  expectedSurface: "pharo_gateway";
-  gatewayRouted: boolean;
-  portsHiddenFromAgents: boolean;
-  reason: string;
 }
 
 export interface ProjectLifecycleGatewayRepairAffordance {
@@ -551,7 +546,6 @@ export interface ProjectLifecycleDiagnostics {
   remoteTopology: ProjectLifecycleRemoteTopologyDiagnostics;
   imagePortPolicy: ProjectLifecycleImagePortPolicyDiagnostics;
   launcherProfile: PharoLauncherMcpProfileDiagnostic;
-  agentAccess: ProjectLifecycleAgentAccessDiagnostics;
   repositoryWorkspaces: ProjectLifecycleRepositoryWorkspaceDiagnostic[];
   dependencyRepositoryDetaches: ProjectLifecycleDependencyRepositoryDetachDiagnostic[];
   imageRecovery: ProjectLifecycleImageRecoveryDiagnostic[];
@@ -560,8 +554,8 @@ export interface ProjectLifecycleDiagnostics {
     imageName: string;
     displayMode?: ProjectImageDisplayMode;
     port?: number;
-    mcpEndpoint?: ProjectImageState["mcpEndpoint"];
-    routingMode: "endpoint" | "fixed-port" | "none";
+    mcpServers?: ProjectImageMcpServer[];
+    routingMode: "endpoint" | "none";
     status: ProjectImageState["status"];
     pid?: number;
   }>;
@@ -1284,29 +1278,6 @@ function imagePortCoordinationDiagnostics(
   };
 }
 
-function agentAccessDiagnostics(
-  gateway: ProjectGatewayState,
-  reconciliation?: ProjectLifecycleGatewayReconciliation,
-): ProjectLifecycleAgentAccessDiagnostics {
-  if (reconciliation?.status === "dead") {
-    return {
-      expectedSurface: "pharo_gateway",
-      gatewayRouted: false,
-      portsHiddenFromAgents: true,
-      reason:
-        "The scoped pharo_gateway is expected, but the recorded project-local gateway is dead. Reopen the project instead of using direct image ports.",
-    };
-  }
-
-  return {
-    expectedSurface: "pharo_gateway",
-    gatewayRouted: Boolean(gateway.endpoint),
-    portsHiddenFromAgents: true,
-    reason:
-      "Normal agent Pharo MCP calls should use pharo_gateway imageId routing; image MCP ports are diagnostics only.",
-  };
-}
-
 function repositoryWorkspaceCleanupDiagnostic(
   workspace: ProjectImageRepositoryWorkspaceState,
   inspection:
@@ -1533,13 +1504,8 @@ function imageMcpPorts(
     imageName: image.imageName,
     ...(image.displayMode ? { displayMode: image.displayMode } : {}),
     ...(image.assignedPort !== undefined ? { port: image.assignedPort } : {}),
-    ...(image.mcpEndpoint !== undefined ? { mcpEndpoint: image.mcpEndpoint } : {}),
-    routingMode:
-      image.mcpEndpoint !== undefined
-        ? "endpoint"
-        : image.assignedPort !== undefined
-          ? "fixed-port"
-          : "none",
+    ...(image.mcpServers ? { mcpServers: image.mcpServers } : {}),
+    routingMode: image.mcpServers?.length ? "endpoint" : "none",
     status: image.status,
     ...(image.pid !== undefined ? { pid: image.pid } : {}),
   }));
@@ -1611,19 +1577,18 @@ function routeTableDiagnostics(
   const routableImages: ProjectLifecycleRouteTableDiagnostics["routableImages"] = images
     .filter(isObject)
     .map((image) => {
-      const mcpEndpoint = isProjectImageMcpEndpoint(image.mcpEndpoint)
-        ? image.mcpEndpoint
+      const endpoint = isProjectImageMcpEndpoint(image.endpoint)
+        ? image.endpoint
         : undefined;
-      const routingMode: "endpoint" | "fixed-port" | "none" = mcpEndpoint
-        ? "endpoint"
-        : typeof image.port === "number"
-          ? "fixed-port"
-          : "none";
+      const routingMode: "endpoint" | "none" = endpoint ? "endpoint" : "none";
 
       return {
         imageId: typeof image.id === "string" ? image.id : "",
+        ...(typeof image.mcpServerId === "string"
+          ? { mcpServerId: image.mcpServerId }
+          : {}),
         ...(typeof image.port === "number" ? { port: image.port } : {}),
-        ...(mcpEndpoint ? { mcpEndpoint } : {}),
+        ...(endpoint ? { endpoint } : {}),
         routingMode,
         ...(typeof image.status === "string" ? { status: image.status } : {}),
         ...(statePathMismatch
@@ -2175,27 +2140,14 @@ function imageMcpEndpointForToolDiscovery(
     return undefined;
   }
 
-  if (image.mcpEndpoint) {
-    return image.mcpEndpoint;
-  }
-
-  if (image.assignedPort !== undefined) {
-    return {
-      transport: "http",
-      host: "127.0.0.1",
-      port: image.assignedPort,
-      path: "/",
-    };
-  }
-
-  return undefined;
+  return image.mcpServers?.find((server) => server.id === image.id)?.endpoint;
 }
 
 function stateHasRunningRoutableImage(state: ProjectState): boolean {
   return state.images.some(
     (image) =>
       image.status === "running" &&
-      (image.mcpEndpoint !== undefined || image.assignedPort !== undefined),
+      Boolean(image.mcpServers?.length),
   );
 }
 
@@ -2638,11 +2590,11 @@ export class PlexusProjectLifecycle {
         displayMode: input.displayMode,
         preparedImageCacheApproval: {
           approved: true,
-          runnerId: "plexus-project-open",
+          approvalId: "plexus-project-open",
         },
         homeImageCacheApproval: {
           approved: true,
-          runnerId: "plexus-project-open",
+          approvalId: "plexus-project-open",
         },
       });
       await this.ensureGatewayRouteForOpenResult(openResult);
@@ -3479,10 +3431,6 @@ export class PlexusProjectLifecycle {
         stateRoot,
         env: this.gateway.env,
       }),
-      agentAccess: agentAccessDiagnostics(
-        gateway,
-        gatewayReconciliation,
-      ),
       repositoryWorkspaces: repositoryWorkspaceDiagnostics(
         projectRoot,
         config,

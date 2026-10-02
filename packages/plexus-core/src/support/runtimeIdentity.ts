@@ -4,8 +4,6 @@ import { fileURLToPath } from "node:url";
 
 export interface PlexusProjectConfigSchemaDiagnostic {
   identityField: "id";
-  legacyIdentityField: "kanban.projectId";
-  legacyCompatibility: string;
 }
 
 export interface PlexusRuntimeIdentityDiagnostic {
@@ -51,7 +49,7 @@ export function plexusRuntimeIdentity(): PlexusRuntimeIdentityDiagnostic {
     packageName:
       typeof packageJson.name === "string"
         ? packageJson.name
-        : "@evref-bl/plexus-core",
+        : "@evref-bl/plexus",
     packageVersion:
       typeof packageJson.version === "string" ? packageJson.version : "unknown",
     packageJsonPath,
@@ -59,9 +57,6 @@ export function plexusRuntimeIdentity(): PlexusRuntimeIdentityDiagnostic {
     entrypointPath: process.argv[1] ?? process.execPath,
     projectConfigSchema: {
       identityField: "id",
-      legacyIdentityField: "kanban.projectId",
-      legacyCompatibility:
-        "kanban.projectId is accepted only as compatibility input when config.id is absent",
     },
   };
 }

@@ -163,7 +163,7 @@ describe("prepared image cache", () => {
     );
   });
 
-  it("builds an approved-runner live operation plan without mutating launcher state", () => {
+  it("builds an approved live operation plan without mutating launcher state", () => {
     const plan = buildPreparedImageCachePlan({
       projectRoot: "/repo/my-project",
       config,
@@ -232,7 +232,7 @@ describe("prepared image cache", () => {
     );
   });
 
-  it("requires explicit runner approval before copying a prepared cache image", async () => {
+  it("requires explicit approval before copying a prepared cache image", async () => {
     const client = new FakeLauncherClient();
 
     await expect(
@@ -243,7 +243,7 @@ describe("prepared image cache", () => {
         imageConfig,
         imageState,
       }),
-    ).rejects.toThrow("requires an approved prepared-image runner");
+    ).rejects.toThrow("requires approved prepared-image mutation");
     expect(client.calls).toEqual([]);
 
     await copyProjectImageFromPreparedCache({
@@ -254,7 +254,7 @@ describe("prepared image cache", () => {
       imageState,
       approval: {
         approved: true,
-        runnerId: "isolated-runner-1",
+        approvalId: "isolated-approval-1",
       },
     });
 

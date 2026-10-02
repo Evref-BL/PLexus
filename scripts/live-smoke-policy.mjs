@@ -505,7 +505,7 @@ export function resolveRequestedSourceTemplate(request, templates) {
       templateCategoryMatches(requestedCategory, templateCategory(candidate))
     );
   });
-  const legacyNameMatch =
+  const compatibleNameMatch =
     exact ??
     candidates.find((candidate) => {
       const candidateName = templateName(candidate);
@@ -515,7 +515,7 @@ export function resolveRequestedSourceTemplate(request, templates) {
         templateCategoryMatches(requestedCategory, templateCategory(candidate))
       );
     });
-  const resolved = sourceTemplateFromCandidate(legacyNameMatch);
+  const resolved = sourceTemplateFromCandidate(compatibleNameMatch);
   if (resolved) {
     return resolved;
   }
@@ -717,7 +717,7 @@ export function buildKeepOpenCleanupContext({
   return {
     mode: "keep-open",
     reason:
-      "Runner was asked to retain the scoped disposable project and images after successful smoke validation.",
+      "The smoke operation retained the scoped disposable project and images after successful validation.",
     closeCommand,
     closeCommandString: shellCommand(closeCommand),
     statusCommand,

@@ -17,6 +17,20 @@ import type { GatewayProjectState } from "../../src/routing/routingTable.js";
 
 const tempDirs: string[] = [];
 
+function mcpServers(id: string, port: number) {
+  return [
+    {
+      id,
+      endpoint: {
+        transport: "http" as const,
+        host: "127.0.0.1",
+        port,
+        path: "/",
+      },
+    },
+  ];
+}
+
 const runningState: GatewayProjectState = {
   projectId: "project-123",
   projectName: "my-project",
@@ -28,6 +42,7 @@ const runningState: GatewayProjectState = {
       id: "dev",
       imageName: "MyProject-dev",
       assignedPort: 7123,
+      mcpServers: mcpServers("dev", 7123),
       pid: 1234,
       status: "running",
     },
@@ -35,6 +50,7 @@ const runningState: GatewayProjectState = {
       id: "baseline",
       imageName: "MyProject-baseline",
       assignedPort: 7124,
+      mcpServers: mcpServers("baseline", 7124),
       status: "stopped",
     },
   ],
@@ -46,6 +62,9 @@ const pharoEvalTool: Tool = {
   inputSchema: {
     type: "object",
     properties: {
+      imageId: {
+        type: "string",
+      },
       code: {
         type: "string",
       },
@@ -216,7 +235,7 @@ describe("PlexusGateway", () => {
     expect(status).toMatchObject(registerResult);
   });
 
-  it("includes route metadata explaining how subagents should carry imageId", async () => {
+  it("includes route metadata explaining how callers provide mcpServerId", async () => {
     const gateway = new PlexusGateway();
 
     await registerTarget(gateway);
@@ -235,17 +254,17 @@ describe("PlexusGateway", () => {
             id: "dev",
             routeMetadata: {
               serverName: "pharo_gateway",
-              requiredArgument: "imageId",
-              imageId: "dev",
+              requiredArgument: "mcpServerId",
+              mcpServerId: "dev",
               routeReference: {
                 projectId: "project-123",
                 workspaceId: "worktree-a",
                 targetId: "project-123--worktree-a",
               },
-              imageIdSource:
-                "Read images[].imageId from PLexus scoped context, pharo-launcher image list, or gateway status",
+              mcpServerIdSource:
+                "Read images[].mcpServers[].id from gateway status",
               recordHint:
-                "Record the selected imageId with the scoped project/workspace/target before calling pharo_gateway tools",
+                "Record the selected mcpServerId with the scoped project/workspace/target before calling pharo_gateway tools",
             },
           }),
         ]),
@@ -343,6 +362,7 @@ describe("PlexusGateway", () => {
           id: "dev",
           imageName: "MyProject-dev",
           assignedPort: 7125,
+          mcpServers: mcpServers("dev", 7125),
           pid: 1234,
           status: "running",
         },
@@ -375,7 +395,7 @@ describe("PlexusGateway", () => {
       gateway.handleTool("plexus_route_to_image", {
         projectId: "project-123",
         workspaceId: "worktree-a",
-        imageId: "dev",
+        mcpServerId: "dev",
         toolName: "pharo_eval",
       }),
     ).resolves.toMatchObject({
@@ -393,7 +413,7 @@ describe("PlexusGateway", () => {
     const routeResult = await gateway.handleTool("plexus_route_to_image", {
       projectId: "project-123",
       workspaceId: "worktree-a",
-      imageId: "dev",
+      mcpServerId: "dev",
       toolName: "pharo_eval",
       arguments: {
         code: "Smalltalk version",
@@ -401,13 +421,14 @@ describe("PlexusGateway", () => {
     });
     const routed = data(routeResult);
 
-    expect(imageRouter.calls).toEqual([
+    expect(imageRouter.calls).toMatchObject([
       {
         route: {
           projectId: "project-123",
           workspaceId: "worktree-a",
           targetId: "project-123--worktree-a",
           imageId: "dev",
+          mcpServerId: "dev",
           imageName: "MyProject-dev",
           port: 7123,
         },
@@ -431,7 +452,7 @@ describe("PlexusGateway", () => {
     });
   });
 
-  it("routes Pharo MCP calls through a registered endpoint without requiring an assigned port", async () => {
+  it("routes Pharo MCP calls through an explicit MCP server endpoint", async () => {
     const imageRouter = new FakeImageRouter();
     const endpointState: GatewayProjectState = {
       ...runningState,
@@ -439,12 +460,17 @@ describe("PlexusGateway", () => {
         {
           id: "dev",
           imageName: "MyProject-dev",
-          mcpEndpoint: {
-            transport: "http",
-            host: "127.0.0.1",
-            port: 9123,
-            path: "/mcp",
-          },
+          mcpServers: [
+            {
+              id: "dev",
+              endpoint: {
+                transport: "http",
+                host: "127.0.0.1",
+                port: 9123,
+                path: "/mcp",
+              },
+            },
+          ],
           pid: 1234,
           status: "running",
         },
@@ -462,7 +488,7 @@ describe("PlexusGateway", () => {
     const routeResult = await gateway.handleTool("plexus_route_to_image", {
       projectId: "project-123",
       workspaceId: "worktree-a",
-      imageId: "dev",
+      mcpServerId: "dev",
       toolName: "pharo_eval",
       arguments: {
         code: "Smalltalk version",
@@ -474,7 +500,7 @@ describe("PlexusGateway", () => {
         {
           id: "dev",
           port: 9123,
-          mcpEndpoint: {
+          endpoint: {
             transport: "http",
             host: "127.0.0.1",
             port: 9123,
@@ -491,7 +517,7 @@ describe("PlexusGateway", () => {
         imageId: "dev",
         imageName: "MyProject-dev",
         port: 9123,
-        mcpEndpoint: {
+        endpoint: {
           transport: "http",
           host: "127.0.0.1",
           port: 9123,
@@ -499,16 +525,17 @@ describe("PlexusGateway", () => {
         },
       },
     });
-    expect(imageRouter.calls).toEqual([
+    expect(imageRouter.calls).toMatchObject([
       {
         route: {
           projectId: "project-123",
           workspaceId: "worktree-a",
           targetId: "project-123--worktree-a",
           imageId: "dev",
+          mcpServerId: "dev",
           imageName: "MyProject-dev",
           port: 9123,
-          mcpEndpoint: {
+          endpoint: {
             transport: "http",
             host: "127.0.0.1",
             port: 9123,
@@ -521,6 +548,155 @@ describe("PlexusGateway", () => {
         },
       },
     ]);
+  });
+
+  it("rejects the removed mcpEndpoint state field", async () => {
+    const gateway = new PlexusGateway();
+
+    await expect(
+      gateway.handleTool("plexus_gateway_register_target", {
+        projectRoot: makeTempDir("plexus-project-"),
+        statePath: "state.json",
+        state: {
+          ...runningState,
+          images: [
+            {
+              ...runningState.images[0],
+              mcpEndpoint: {
+                transport: "http",
+                host: "127.0.0.1",
+                port: 7123,
+                path: "/",
+              },
+            },
+          ],
+        },
+      }),
+    ).resolves.toMatchObject({
+      ok: false,
+      error: "state.images[0].mcpEndpoint is not supported; use mcpServers",
+    });
+  });
+
+  it("routes distinct MCP servers on one image by mcpServerId", async () => {
+    const imageRouter = new FakeImageRouter();
+    const gateway = new PlexusGateway({
+      imageRouter,
+      pharoTools: [pharoEvalTool],
+    });
+    const multiServerState: GatewayProjectState = {
+      ...runningState,
+      images: [
+        {
+          id: "dev",
+          imageName: "MyProject-dev",
+          mcpServers: [
+            {
+              id: "dev-code",
+              endpoint: {
+                transport: "http",
+                host: "127.0.0.1",
+                port: 9123,
+                path: "/mcp",
+              },
+            },
+            {
+              id: "dev-tools",
+              endpoint: {
+                transport: "http",
+                host: "127.0.0.1",
+                port: 9124,
+                path: "/mcp",
+              },
+            },
+          ],
+          status: "running",
+        },
+      ],
+    };
+
+    await registerTarget(gateway, multiServerState);
+    await gateway.callPharoTool("pharo_eval", {
+      mcpServerId: "dev-code",
+      imageId: "tool-owned-image-id",
+      code: "1 + 1",
+    });
+    await gateway.callPharoTool("pharo_eval", {
+      mcpServerId: "dev-tools",
+      code: "2 + 2",
+    });
+
+    expect(imageRouter.calls).toMatchObject([
+      {
+        route: {
+          imageId: "dev",
+          port: 9123,
+        },
+        argumentsValue: {
+          imageId: "tool-owned-image-id",
+          code: "1 + 1",
+        },
+      },
+      {
+        route: {
+          imageId: "dev",
+          port: 9124,
+        },
+        argumentsValue: {
+          code: "2 + 2",
+        },
+      },
+    ]);
+  });
+
+  it("rejects duplicate MCP server ids within a target", async () => {
+    const gateway = new PlexusGateway();
+    const result = await gateway.handleTool("plexus_gateway_register_target", {
+      projectRoot: makeTempDir("plexus-project-"),
+      statePath: "state.json",
+      state: {
+        ...runningState,
+        images: [
+        {
+          id: "dev",
+          imageName: "MyProject-dev",
+          mcpServers: [
+            {
+              id: "shared",
+              endpoint: {
+                transport: "http",
+                host: "127.0.0.1",
+                port: 9123,
+                path: "/mcp",
+              },
+            },
+          ],
+          status: "running",
+        },
+        {
+          id: "tools",
+          imageName: "MyProject-tools",
+          mcpServers: [
+            {
+              id: "shared",
+              endpoint: {
+                transport: "http",
+                host: "127.0.0.1",
+                port: 9124,
+                path: "/mcp",
+              },
+            },
+          ],
+          status: "running",
+        },
+        ],
+      },
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      error: "MCP server id shared is duplicated in target project-123--worktree-a",
+    });
   });
 
   it("routes Pharo MCP calls through a remote gateway upstream", async () => {
@@ -547,6 +723,17 @@ describe("PlexusGateway", () => {
         {
           id: "dev",
           imageName: "MyProject-dev",
+          mcpServers: [
+            {
+              id: "dev",
+              endpoint: {
+                transport: "http",
+                host: "127.0.0.1",
+                port: 7123,
+                path: "/",
+              },
+            },
+          ],
           status: "running",
         },
       ],
@@ -587,7 +774,7 @@ describe("PlexusGateway", () => {
     const routeResult = await gateway.handleTool("plexus_route_to_image", {
       projectId: "project-123",
       workspaceId: "worktree-a",
-      imageId: "dev",
+      mcpServerId: "dev",
       toolName: "pharo_eval",
       arguments: {
         code: "Smalltalk version",
@@ -638,7 +825,7 @@ describe("PlexusGateway", () => {
           params: {
             name: "pharo_eval",
             arguments: {
-              imageId: "dev",
+              mcpServerId: "dev",
               code: "Smalltalk version",
             },
           },
@@ -667,6 +854,17 @@ describe("PlexusGateway", () => {
         {
           id: "dev",
           imageName: "MyProject-dev",
+          mcpServers: [
+            {
+              id: "dev",
+              endpoint: {
+                transport: "http",
+                host: "127.0.0.1",
+                port: 7123,
+                path: "/",
+              },
+            },
+          ],
           status: "running",
         },
       ],
@@ -702,7 +900,7 @@ describe("PlexusGateway", () => {
       {
         name: "pharo_eval",
         inputSchema: {
-          required: ["imageId", "code"],
+          required: ["mcpServerId", "code"],
         },
       },
     ]);
@@ -716,7 +914,7 @@ describe("PlexusGateway", () => {
     ]);
   });
 
-  it("exposes stable Pharo facade tools with a required imageId route field", () => {
+  it("exposes stable Pharo facade tools with a required mcpServerId route field", () => {
     const gateway = new PlexusGateway({
       pharoTools: [pharoEvalTool],
     });
@@ -727,22 +925,25 @@ describe("PlexusGateway", () => {
         inputSchema: {
           type: "object",
           properties: {
-            imageId: {
+            mcpServerId: {
               type: "string",
               minLength: 1,
+            },
+            imageId: {
+              type: "string",
             },
             code: {
               type: "string",
             },
           },
-          required: ["imageId", "code"],
+          required: ["mcpServerId", "code"],
           additionalProperties: false,
         },
       },
     ]);
   });
 
-  it("routes Pharo facade calls to the selected image and strips imageId", async () => {
+  it("routes Pharo facade calls by mcpServerId without consuming a tool imageId", async () => {
     const imageRouter = new FakeImageRouter();
     const twoImageState: GatewayProjectState = {
       ...runningState,
@@ -766,7 +967,8 @@ describe("PlexusGateway", () => {
     expect(
       data(
         await gateway.callPharoTool("pharo_eval", {
-          imageId: "dev",
+          mcpServerId: "dev",
+          imageId: "tool-owned-image",
           code: "1 + 1",
         }),
       ),
@@ -776,7 +978,7 @@ describe("PlexusGateway", () => {
     expect(
       data(
         await gateway.callPharoTool("pharo_eval", {
-          imageId: "baseline",
+          mcpServerId: "baseline",
           code: "2 + 2",
         }),
       ),
@@ -784,18 +986,20 @@ describe("PlexusGateway", () => {
       content: [{ type: "text", text: "routed" }],
     });
 
-    expect(imageRouter.calls).toEqual([
+    expect(imageRouter.calls).toMatchObject([
       {
         route: {
           projectId: "project-123",
           workspaceId: "worktree-a",
           targetId: "project-123--worktree-a",
           imageId: "dev",
+          mcpServerId: "dev",
           imageName: "MyProject-dev",
           port: 7123,
         },
         toolName: "pharo_eval",
         argumentsValue: {
+          imageId: "tool-owned-image",
           code: "1 + 1",
         },
       },
@@ -805,6 +1009,7 @@ describe("PlexusGateway", () => {
           workspaceId: "worktree-a",
           targetId: "project-123--worktree-a",
           imageId: "baseline",
+          mcpServerId: "baseline",
           imageName: "MyProject-baseline",
           port: 7124,
         },
@@ -835,20 +1040,20 @@ describe("PlexusGateway", () => {
       }),
     ).resolves.toMatchObject({
       ok: false,
-      error: "imageId is required",
+      error: "mcpServerId is required",
     });
     await expect(
       gateway.callPharoTool("pharo_eval", {
-        imageId: "missing",
+        mcpServerId: "missing",
         code: "1 + 1",
       }),
     ).resolves.toMatchObject({
       ok: false,
-      error: "No route is registered for image missing in project project-123",
+      error: "No route is registered for MCP server missing in project project-123",
     });
     await expect(
       gateway.callPharoTool("pharo_eval", {
-        imageId: "baseline",
+        mcpServerId: "baseline",
         code: "1 + 1",
       }),
     ).resolves.toMatchObject({
@@ -869,6 +1074,7 @@ describe("PlexusGateway", () => {
           id: "dev",
           imageName: "MyProject-worktree-a-dev",
           assignedPort: 7123,
+          mcpServers: mcpServers("dev", 7123),
           pid: 1234,
           status: "running",
         },
@@ -883,6 +1089,7 @@ describe("PlexusGateway", () => {
           id: "review",
           imageName: "MyProject-worktree-b-review",
           assignedPort: 7125,
+          mcpServers: mcpServers("review", 7125),
           pid: 5678,
           status: "running",
         },
@@ -902,13 +1109,13 @@ describe("PlexusGateway", () => {
 
     await expect(
       gateway.callPharoTool("pharo_eval", {
-        imageId: "review",
+          mcpServerId: "review",
         code: "1 + 1",
       }),
     ).resolves.toMatchObject({
       ok: false,
       error:
-        "Image review is registered outside workspace worktree-a; requested target project-123--worktree-a, found target project-123--worktree-b",
+        "MCP server review is registered outside workspace worktree-a; requested target project-123--worktree-a, found target project-123--worktree-b",
     });
     expect(imageRouter.calls).toEqual([]);
   });
@@ -926,6 +1133,7 @@ describe("PlexusGateway", () => {
           id: "dev",
           imageName: "MyProject-dev",
           assignedPort: 7123,
+          mcpServers: mcpServers("dev", 7123),
           pid: 1234,
           status: "running",
           pharoMcpContract: {
@@ -938,6 +1146,7 @@ describe("PlexusGateway", () => {
           id: "baseline",
           imageName: "MyProject-baseline",
           assignedPort: 7124,
+          mcpServers: mcpServers("baseline", 7124),
           pid: 5678,
           status: "running",
           pharoMcpContract: {
@@ -990,7 +1199,7 @@ describe("PlexusGateway", () => {
 
     await expect(
       gateway.callPharoTool("pharo_eval", {
-        imageId: "baseline",
+        mcpServerId: "baseline",
         code: "1 + 1",
       }),
     ).resolves.toMatchObject({
@@ -1002,7 +1211,7 @@ describe("PlexusGateway", () => {
     expect(
       data(
         await gateway.callPharoTool("pharo_eval", {
-          imageId: "dev",
+          mcpServerId: "dev",
           code: "1 + 1",
         }),
       ),
@@ -1056,6 +1265,7 @@ describe("PlexusGateway", () => {
           id: "dev",
           imageName: "MyProject-dev",
           assignedPort: 7123,
+          mcpServers: mcpServers("dev", 7123),
           pid: 1234,
           status: "running",
         },
@@ -1063,6 +1273,7 @@ describe("PlexusGateway", () => {
           id: "baseline",
           imageName: "MyProject-baseline",
           assignedPort: 7124,
+          mcpServers: mcpServers("baseline", 7124),
           pid: 5678,
           status: "running",
         },
@@ -1162,7 +1373,7 @@ describe("PlexusGateway", () => {
     ]);
     await expect(
       gateway.callPharoTool("edit-repository", {
-        imageId: "dev",
+        mcpServerId: "dev",
         operation: "create",
       }),
     ).resolves.toMatchObject({
@@ -1173,7 +1384,7 @@ describe("PlexusGateway", () => {
     });
     await expect(
       gateway.callPharoTool("edit-repository", {
-        imageId: "baseline",
+        mcpServerId: "baseline",
         operation: "fetch",
       }),
     ).resolves.toMatchObject({
@@ -1194,7 +1405,7 @@ describe("PlexusGateway", () => {
     ]);
   });
 
-  it("can select the active Pharo tool schema source by image", async () => {
+  it("can select the active Pharo tool schema source by MCP server", async () => {
     const imageRouter = new FakeToolListImageRouter({
       dev: [repositoryOperationTool(["create"])],
       baseline: [repositoryOperationTool(["create", "fetch"])],
@@ -1214,6 +1425,7 @@ describe("PlexusGateway", () => {
           id: "dev",
           imageName: "MyProject-dev",
           assignedPort: 7123,
+          mcpServers: mcpServers("dev", 7123),
           pid: 1234,
           status: "running",
         },
@@ -1221,6 +1433,7 @@ describe("PlexusGateway", () => {
           id: "baseline",
           imageName: "MyProject-baseline",
           assignedPort: 7124,
+          mcpServers: mcpServers("baseline", 7124),
           pid: 5678,
           status: "running",
         },
@@ -1234,7 +1447,7 @@ describe("PlexusGateway", () => {
         projectId: "project-123",
         workspaceId: "worktree-a",
         refreshTools: true,
-        toolSchemaImageId: "baseline",
+        toolSchemaMcpServerId: "baseline",
       }),
     );
     expect(status).toMatchObject({
@@ -1246,7 +1459,7 @@ describe("PlexusGateway", () => {
         },
         sources: [
           {
-            imageId: "dev",
+          imageId: "dev",
             compatibility: "incompatible",
           },
           {
@@ -1271,7 +1484,7 @@ describe("PlexusGateway", () => {
     ]);
     await expect(
       gateway.callPharoTool("edit-repository", {
-        imageId: "baseline",
+        mcpServerId: "baseline",
         operation: "fetch",
       }),
     ).resolves.toMatchObject({
@@ -1282,7 +1495,7 @@ describe("PlexusGateway", () => {
     });
     await expect(
       gateway.callPharoTool("edit-repository", {
-        imageId: "dev",
+        mcpServerId: "dev",
         operation: "create",
       }),
     ).resolves.toMatchObject({
@@ -1346,7 +1559,7 @@ describe("PlexusGateway", () => {
     expect(imageRouter.listCalls).toHaveLength(1);
   });
 
-  it("rejects missing Pharo tool schema source image selection", async () => {
+  it("rejects missing Pharo tool schema source selection", async () => {
     const imageRouter = new FakeToolListImageRouter({
       dev: [repositoryOperationTool(["create"])],
     });
@@ -1365,6 +1578,7 @@ describe("PlexusGateway", () => {
           id: "dev",
           imageName: "MyProject-dev",
           assignedPort: 7123,
+          mcpServers: mcpServers("dev", 7123),
           pid: 1234,
           status: "running",
         },
@@ -1376,11 +1590,11 @@ describe("PlexusGateway", () => {
         projectId: "project-123",
         workspaceId: "worktree-a",
         refreshTools: true,
-        toolSchemaImageId: "missing",
+        toolSchemaMcpServerId: "missing",
       }),
     ).resolves.toMatchObject({
       ok: false,
-      error: "No routable image missing provided an available Pharo MCP schema",
+      error: "No routable MCP server missing provided an available Pharo MCP schema",
     });
   });
 
@@ -1401,6 +1615,7 @@ describe("PlexusGateway", () => {
         {
           id: "legacy",
           imageName: "MyProject-legacy",
+          mcpServers: mcpServers("legacy", 7123),
           pid: 1234,
           status: "running",
           pharoMcpContract: {
@@ -1429,11 +1644,11 @@ describe("PlexusGateway", () => {
         },
       }),
     ]);
-    expect(status.images[0]).not.toHaveProperty("port");
+    expect(status.images[0]).toHaveProperty("endpoint");
 
     await expect(
       gateway.callPharoTool("pharo_eval", {
-        imageId: "legacy",
+        mcpServerId: "legacy",
         code: "1 + 1",
       }),
     ).resolves.toMatchObject({
@@ -1452,7 +1667,7 @@ describe("PlexusGateway", () => {
       await gateway.handleTool("plexus_route_to_image", {
         projectId: "project-123",
         workspaceId: "worktree-a",
-        imageId: "baseline",
+        mcpServerId: "baseline",
         toolName: "pharo_eval",
       }),
     ).toMatchObject({
@@ -1482,7 +1697,7 @@ describe("PlexusGateway", () => {
     await expect(
       gateway.handleTool("plexus_route_to_image", {
         targetId: "project-123--worktree-a",
-        imageId: "dev",
+        mcpServerId: "dev",
         toolName: "pharo_eval",
       }),
     ).resolves.toMatchObject({
@@ -1527,6 +1742,7 @@ describe("PlexusGateway", () => {
           id: "dev",
           imageName: "MyProject-worktree-a-dev",
           assignedPort: 7123,
+          mcpServers: mcpServers("dev", 7123),
           pid: 1234,
           status: "running",
         },
@@ -1541,6 +1757,7 @@ describe("PlexusGateway", () => {
           id: "dev",
           imageName: "MyProject-worktree-b-dev",
           assignedPort: 7125,
+          mcpServers: mcpServers("dev", 7125),
           pid: 5678,
           status: "running",
         },
@@ -1574,7 +1791,7 @@ describe("PlexusGateway", () => {
     await expect(
       gateway.handleTool("plexus_route_to_image", {
         projectId: "project-123",
-        imageId: "dev",
+        mcpServerId: "dev",
         toolName: "pharo_eval",
       }),
     ).resolves.toMatchObject({
@@ -1585,7 +1802,7 @@ describe("PlexusGateway", () => {
     const routeResult = await gateway.handleTool("plexus_route_to_image", {
       projectId: "project-123",
       workspaceId: "worktree-b",
-      imageId: "dev",
+      mcpServerId: "dev",
       toolName: "pharo_eval",
     });
     expect(routeResult).toMatchObject({

@@ -58,7 +58,7 @@ function defaultRuntimePolicy() {
         start: 8_133,
         end: 8_199,
       },
-      agentMcpPath: "/mcp",
+      mcpPath: "/mcp",
       routeControlMcpPath: "/control-mcp",
     },
     imagePorts: {
@@ -91,24 +91,6 @@ describe("project config", () => {
   it("parses the prototype project config shape with runtime defaults", () => {
     expect(parseProjectConfig(validProjectConfig())).toEqual({
       ...validProjectConfig(),
-      runtime: defaultRuntimePolicy(),
-    });
-  });
-
-  it("keeps legacy kanban project identity readable as compatibility input", () => {
-    const legacyConfig = {
-      ...validProjectConfig(),
-      id: undefined,
-      kanban: {
-        provider: "vibe-kanban",
-        projectId: "legacy-project",
-      },
-    };
-
-    expect(parseProjectConfig(legacyConfig)).toEqual({
-      ...validProjectConfig(),
-      id: "legacy-project",
-      kanban: legacyConfig.kanban,
       runtime: defaultRuntimePolicy(),
     });
   });
@@ -273,7 +255,7 @@ describe("project config", () => {
       },
       gateway: {
         mode: "shared",
-        agentMcpUrl: "http://gateway.local:8133/mcp",
+        mcpUrl: "http://gateway.local:8133/mcp",
         routeControlMcpUrl: "http://gateway.local:8133/control-mcp",
       },
       imagePorts: {
@@ -474,7 +456,7 @@ describe("project config", () => {
         mode: "project-local",
         host: "0.0.0.0",
         port: 8_144,
-        agentMcpPath: "/agent-mcp",
+        mcpPath: "/agent-mcp",
         routeControlMcpPath: "/route-control",
       },
     };
@@ -483,7 +465,7 @@ describe("project config", () => {
       mode: "project-local",
       host: "0.0.0.0",
       port: 8_144,
-      agentMcpPath: "/agent-mcp",
+      mcpPath: "/agent-mcp",
       routeControlMcpPath: "/route-control",
     });
   });
@@ -504,7 +486,7 @@ describe("project config", () => {
     } catch (error) {
       expect((error as ProjectConfigError).issues).toEqual(
         expect.arrayContaining([
-          "runtime.gateway.agentMcpUrl must be a valid URL",
+          "runtime.gateway.mcpUrl must be a valid URL",
           "runtime.gateway.routeControlMcpUrl must be a valid URL",
         ]),
       );
@@ -1161,9 +1143,6 @@ describe("project config", () => {
       parseProjectConfig({
         name: "",
         id: "",
-        kanban: {
-          provider: "other",
-        },
         images: [
           {
             id: "dev",
@@ -1200,9 +1179,6 @@ describe("project config", () => {
       parseProjectConfig({
         name: "",
         id: "",
-        kanban: {
-          provider: "other",
-        },
         images: [
           {
             id: "dev",
@@ -1239,8 +1215,6 @@ describe("project config", () => {
         expect.arrayContaining([
           "config.id must be a non-empty string",
           "config.name must be a non-empty string",
-          "kanban.provider must be \"vibe-kanban\"",
-          "kanban.projectId must be a non-empty string",
           "images[0].mcp.port must be an integer between 1 and 65535",
           "images[0].mcp.loadScript must be a non-empty string",
           "images[0].git.transport must be one of ssh, https, http",

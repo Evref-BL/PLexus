@@ -3,11 +3,6 @@ import { joinPathLike } from "../support/pathStyle.js";
 
 export const plexusProjectConfigFileName = "plexus.project.json";
 
-export interface ProjectKanbanConfig {
-  provider: "vibe-kanban";
-  projectId: string;
-}
-
 export interface ProjectImageMcpConfig {
   port?: number;
   loadScript: string;
@@ -174,13 +169,13 @@ export interface ProjectLocalGatewayPolicy {
   host: string;
   port?: number;
   portRange?: ProjectRuntimePortRange;
-  agentMcpPath: string;
+  mcpPath: string;
   routeControlMcpPath: string;
 }
 
 export interface ProjectSharedGatewayPolicy {
   mode: "shared";
-  agentMcpUrl: string;
+  mcpUrl: string;
   routeControlMcpUrl: string;
 }
 
@@ -275,7 +270,6 @@ export interface ProjectWorkspaceImagePolicy {
 export interface ProjectConfig {
   id: string;
   name: string;
-  kanban?: ProjectKanbanConfig;
   home?: ProjectHomeConfig;
   runtime?: ProjectRuntimePolicy;
   preparedImages?: ProjectPreparedImageConfig[];
@@ -311,7 +305,7 @@ export function defaultProjectRuntimePolicy(): ProjectRuntimePolicy {
         start: 8_133,
         end: 8_199,
       },
-      agentMcpPath: "/mcp",
+      mcpPath: "/mcp",
       routeControlMcpPath: "/control-mcp",
     },
     imagePorts: {
@@ -732,30 +726,6 @@ function parsePositiveIntegerArray(
   return [...new Set(value)];
 }
 
-function parseKanban(
-  value: unknown,
-  issues: string[],
-): ProjectKanbanConfig | undefined {
-  if (value === undefined) {
-    return undefined;
-  }
-
-  if (!isObject(value)) {
-    issues.push("kanban must be an object");
-    return undefined;
-  }
-
-  const provider = value.provider;
-  if (provider !== "vibe-kanban") {
-    issues.push("kanban.provider must be \"vibe-kanban\"");
-  }
-
-  return {
-    provider: "vibe-kanban",
-    projectId: stringField(value, "projectId", issues, "kanban"),
-  };
-}
-
 function parseHomeImageCache(
   value: unknown,
   issues: string[],
@@ -844,15 +814,10 @@ function parseHome(value: unknown, issues: string[]): ProjectHomeConfig | undefi
 
 function parseProjectIdentity(
   value: Record<string, unknown>,
-  legacyKanban: ProjectKanbanConfig | undefined,
   issues: string[],
 ): string {
   if (typeof value.id === "string" && value.id.trim().length > 0) {
     return value.id;
-  }
-
-  if (value.id === undefined && legacyKanban?.projectId) {
-    return legacyKanban.projectId;
   }
 
   issues.push("config.id must be a non-empty string");
@@ -1508,12 +1473,12 @@ function parseProjectLocalGateway(
       defaultGateway.host,
     ),
     ...portPolicy,
-    agentMcpPath: pathFieldWithDefault(
+    mcpPath: pathFieldWithDefault(
       value,
-      "agentMcpPath",
+      "mcpPath",
       issues,
       "runtime.gateway",
-      defaultGateway.agentMcpPath,
+      defaultGateway.mcpPath,
     ),
     routeControlMcpPath: pathFieldWithDefault(
       value,
@@ -1531,7 +1496,7 @@ function parseSharedGateway(
 ): ProjectSharedGatewayPolicy {
   return {
     mode: "shared",
-    agentMcpUrl: urlField(value, "agentMcpUrl", issues, "runtime.gateway"),
+    mcpUrl: urlField(value, "mcpUrl", issues, "runtime.gateway"),
     routeControlMcpUrl: urlField(
       value,
       "routeControlMcpUrl",
@@ -2174,13 +2139,11 @@ export function parseProjectConfig(value: unknown): ProjectConfig {
     ]);
   }
 
-  const legacyKanban = parseKanban(value.kanban, issues);
   const home = parseHome(value.home, issues);
   const preparedImages = parsePreparedImages(value.preparedImages, issues);
   const config: ProjectConfig = {
-    id: parseProjectIdentity(value, legacyKanban, issues),
+    id: parseProjectIdentity(value, issues),
     name: stringField(value, "name", issues, "config"),
-    ...(legacyKanban ? { kanban: legacyKanban } : {}),
     ...(home ? { home } : {}),
     runtime: parseRuntimePolicy(value.runtime, issues),
     ...(preparedImages ? { preparedImages } : {}),

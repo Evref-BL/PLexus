@@ -24,7 +24,7 @@ import {
   resolvePharoLauncherMcpRepoDirOption,
   smokeProjectConfig,
   usesDefaultSmokeLoadScript,
-} from "../../scripts/live-smoke-runner-policy.mjs";
+} from "../../scripts/live-smoke-policy.mjs";
 
 const repoRoot = path.resolve("C:/work/PLexus");
 

@@ -279,7 +279,7 @@ describe("image rescue", () => {
       route: {
         serverName: "pharo_gateway",
         targetKey: "targetId",
-        imageArgument: "imageId",
+        imageArgument: "mcpServerId",
         imageId: "dev-replacement",
       },
       creationTool: {
@@ -343,7 +343,7 @@ describe("image rescue", () => {
         route: {
           serverName: "pharo_gateway",
           targetKey: "targetId",
-          imageArgument: "imageId",
+          imageArgument: "mcpServerId",
           imageId: "dev-rescue",
         },
       },

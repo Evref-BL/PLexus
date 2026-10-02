@@ -147,16 +147,15 @@ describe("StreamableHttpImageMcpToolRouter", () => {
     });
     servers.push(httpServer);
 
-    const router = new StreamableHttpImageMcpToolRouter({
-      host: "127.0.0.1",
-    });
+    const router = new StreamableHttpImageMcpToolRouter();
     const route = {
       projectId: "project-123",
       workspaceId: "worktree-a",
       targetId: "project-123--worktree-a",
       imageId: "dev",
+      mcpServerId: "dev",
       imageName: "MyProject-dev",
-      port,
+      endpoint: { transport: "http", host: "127.0.0.1", port, path: "/" },
     };
 
     await expect(router.listTools(route)).resolves.toMatchObject([
@@ -252,16 +251,15 @@ describe("StreamableHttpImageMcpToolRouter", () => {
     });
     servers.push(httpServer);
 
-    const router = new StreamableHttpImageMcpToolRouter({
-      host: "127.0.0.1",
-    });
+    const router = new StreamableHttpImageMcpToolRouter();
     const route = {
       projectId: "project-123",
       workspaceId: "worktree-a",
       targetId: "project-123--worktree-a",
       imageId: "dev",
+      mcpServerId: "dev",
       imageName: "MyProject-dev",
-      port,
+      endpoint: { transport: "http", host: "127.0.0.1", port, path: "/" },
     };
 
     await expect(router.listTools(route)).resolves.toMatchObject([
@@ -339,9 +337,7 @@ describe("StreamableHttpImageMcpToolRouter", () => {
     });
     servers.push(httpServer);
 
-    const router = new StreamableHttpImageMcpToolRouter({
-      host: "127.0.0.1",
-    });
+    const router = new StreamableHttpImageMcpToolRouter();
 
     await expect(
       router.callTool(
@@ -350,8 +346,9 @@ describe("StreamableHttpImageMcpToolRouter", () => {
           workspaceId: "worktree-a",
           targetId: "project-123--worktree-a",
           imageId: "dev",
+          mcpServerId: "dev",
           imageName: "MyProject-dev",
-          port,
+          endpoint: { transport: "http", host: "127.0.0.1", port, path: "/" },
         },
         "pharo_eval",
         {
@@ -431,10 +428,7 @@ describe("StreamableHttpImageMcpToolRouter", () => {
     });
     servers.push(httpServer);
 
-    const router = new StreamableHttpImageMcpToolRouter({
-      host: "127.0.0.1",
-      path: "/",
-    });
+    const router = new StreamableHttpImageMcpToolRouter();
 
     await expect(
       router.callTool(
@@ -443,8 +437,9 @@ describe("StreamableHttpImageMcpToolRouter", () => {
           workspaceId: "worktree-a",
           targetId: "project-123--worktree-a",
           imageId: "dev",
+          mcpServerId: "dev",
           imageName: "MyProject-dev",
-          mcpEndpoint: {
+          endpoint: {
             transport: "http",
             host: "127.0.0.1",
             port,
@@ -487,9 +482,7 @@ describe("StreamableHttpImageMcpToolRouter", () => {
     });
     servers.push(httpServer);
 
-    const router = new StreamableHttpImageMcpToolRouter({
-      host: "127.0.0.1",
-    });
+    const router = new StreamableHttpImageMcpToolRouter();
 
     await expect(
       router.callTool(
@@ -498,8 +491,9 @@ describe("StreamableHttpImageMcpToolRouter", () => {
           workspaceId: "worktree-a",
           targetId: "project-123--worktree-a",
           imageId: "dev",
+          mcpServerId: "dev",
           imageName: "MyProject-dev",
-          port,
+          endpoint: { transport: "http", host: "127.0.0.1", port, path: "/" },
         },
         "missing",
         {},

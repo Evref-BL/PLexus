@@ -252,20 +252,17 @@ function isObject(value: unknown): value is Record<string, unknown> {
 function imageMcpEndpointForImage(
   image: ProjectImageState,
 ): ProjectImageMcpEndpoint | undefined {
-  if (image.mcpEndpoint) {
-    return image.mcpEndpoint;
-  }
-
-  if (image.assignedPort !== undefined) {
-    return {
-      transport: "http",
-      host: "127.0.0.1",
-      port: image.assignedPort,
-      path: "/",
-    };
-  }
-
-  return undefined;
+  return (
+    image.mcpServers?.find((server) => server.id === image.id)?.endpoint ??
+    (image.assignedPort === undefined
+      ? undefined
+      : {
+          transport: "http",
+          host: "127.0.0.1",
+          port: image.assignedPort,
+          path: "/",
+        })
+  );
 }
 
 function hostForUrl(host: string): string {
@@ -1632,7 +1629,7 @@ async function releaseOptionalPharoMcpRoute(options: {
   }
 
   delete options.imageState.assignedPort;
-  delete options.imageState.mcpEndpoint;
+  delete options.imageState.mcpServers;
 }
 
 function applyScopedImageSelection(
@@ -1816,7 +1813,7 @@ async function setupProjectImageForOpen(
     stateRoot: context.resolvedStateRoot,
   });
   removeImageMcpEndpointHandoff(endpointHandoffPath);
-  delete imageState.mcpEndpoint;
+  delete imageState.mcpServers;
 
   const startupScript = writeProjectImageStartupScript({
     projectRoot: context.projectRoot,
@@ -1931,7 +1928,9 @@ async function handleEndpointReadiness(options: {
   imageState: ProjectImageState;
   endpoint: ProjectImageMcpEndpoint;
 }): Promise<void> {
-  options.imageState.mcpEndpoint = options.endpoint;
+  options.imageState.mcpServers = [
+    { id: options.imageState.id, endpoint: options.endpoint },
+  ];
   if (
     options.context.claimsRoot &&
     options.imageState.assignedPort !== undefined

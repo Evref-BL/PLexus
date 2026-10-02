@@ -35,17 +35,19 @@ function sourceFiles(directory: string): string[] {
 }
 
 describe("gateway package boundary", () => {
-  it("does not import or depend on PLexus core", () => {
+  it("does not import or depend on the PLexus CLI", () => {
     const packageJson = readPackageJson();
     const dependencies = {
       ...packageJson.dependencies,
       ...packageJson.devDependencies,
     };
 
-    expect(dependencies).not.toHaveProperty("@evref-bl/plexus-core");
+    expect(dependencies).not.toHaveProperty("@evref-bl/plexus");
 
     for (const filePath of sourceFiles(path.join(packageRoot, "src"))) {
-      expect(fs.readFileSync(filePath, "utf8")).not.toContain("@evref-bl/plexus-core");
+      expect(fs.readFileSync(filePath, "utf8")).not.toMatch(
+        /from\s+["']@evref-bl\/plexus["']/,
+      );
     }
   });
 

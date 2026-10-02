@@ -21,9 +21,9 @@ export interface ImageMcpRoute {
   workspaceId: string;
   targetId: string;
   imageId: string;
+  mcpServerId: string;
   imageName: string;
-  port?: number;
-  mcpEndpoint?: ImageMcpEndpoint;
+  endpoint: ImageMcpEndpoint;
 }
 
 export type ImageMcpLifecycleStatus =
@@ -62,8 +62,6 @@ export interface ImageMcpToolRouter {
 }
 
 export interface StreamableHttpImageMcpToolRouterOptions {
-  host?: string;
-  path?: string;
   timeoutMs?: number;
 }
 
@@ -73,8 +71,6 @@ interface JsonRpcHttpResponse {
 }
 
 export class StreamableHttpImageMcpToolRouter implements ImageMcpToolRouter {
-  private readonly host: string;
-  private readonly path: string;
   private readonly timeoutMs: number;
   private readonly connectionInfoByEndpoint = new Map<
     string,
@@ -82,8 +78,6 @@ export class StreamableHttpImageMcpToolRouter implements ImageMcpToolRouter {
   >();
 
   constructor(options: StreamableHttpImageMcpToolRouterOptions = {}) {
-    this.host = options.host ?? "127.0.0.1";
-    this.path = options.path ?? "/";
     this.timeoutMs = options.timeoutMs ?? 60_000;
   }
 
@@ -149,22 +143,7 @@ export class StreamableHttpImageMcpToolRouter implements ImageMcpToolRouter {
   }
 
   private endpointForRoute(route: ImageMcpRoute): ImageMcpEndpoint {
-    if (route.mcpEndpoint) {
-      return route.mcpEndpoint;
-    }
-
-    if (route.port === undefined) {
-      throw new Error(
-        `Image route ${route.imageId} has no registered MCP endpoint`,
-      );
-    }
-
-    return {
-      transport: "http",
-      host: this.host,
-      port: route.port,
-      path: this.path,
-    };
+    return route.endpoint;
   }
 
   private endpointKey(endpoint: ImageMcpEndpoint): string {

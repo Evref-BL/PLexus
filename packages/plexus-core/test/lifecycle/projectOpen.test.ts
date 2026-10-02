@@ -1259,7 +1259,7 @@ describe("project open", () => {
             "imageId=dev",
             "source=metacello",
             `loadScript=${path.join(projectRoot, "pharo", "load-mcp.st")}`,
-            "repository=github://Evref-BL/MCP:main/src",
+            "repository=github://Evref-BL/MCP:v1.2.3/src",
             "baseline=MCP",
             `message=${statusMessage}`,
             "",
@@ -1309,7 +1309,7 @@ describe("project open", () => {
     expect(failedState?.images[0].pharoMcpLoad).toMatchObject({
       state: "failed",
       source: "metacello",
-      repository: "github://Evref-BL/MCP:main/src",
+      repository: "github://Evref-BL/MCP:v1.2.3/src",
       baseline: "MCP",
       error: statusMessage,
     });
@@ -1351,7 +1351,7 @@ describe("project open", () => {
             "status=failed",
             "imageId=dev",
             "source=metacello",
-            "repository=github://Evref-BL/MCP:main/src",
+            "repository=github://Evref-BL/MCP:v1.2.3/src",
             "baseline=MCP",
             `message=${statusMessage}`,
             "",
@@ -1388,7 +1388,7 @@ describe("project open", () => {
       },
     });
     expect(result.state.images[0]).not.toHaveProperty("assignedPort");
-    expect(result.state.images[0]).not.toHaveProperty("mcpEndpoint");
+    expect(result.state.images[0]).not.toHaveProperty("mcpServers");
   });
 
   it("does not persist inferred repository metadata for script-provided Pharo MCP loads", async () => {
@@ -1415,7 +1415,7 @@ describe("project open", () => {
             "source=loadScript",
             `loadScript=${loadScriptPath}`,
             "loadPolicy=always",
-            "configuredRepositoryHint=github://Evref-BL/MCP:main/src",
+            "configuredRepositoryHint=github://Evref-BL/MCP:v1.2.3/src",
             "baseline=MCP",
             "",
           ].join("\n"),
@@ -1443,7 +1443,7 @@ describe("project open", () => {
       source: "loadScript",
       loadScript: loadScriptPath,
       loadPolicy: "always",
-      configuredRepositoryHint: "github://Evref-BL/MCP:main/src",
+      configuredRepositoryHint: "github://Evref-BL/MCP:v1.2.3/src",
       baseline: "MCP",
     });
     expect(pharoMcpLoad).not.toHaveProperty("repository");
@@ -1544,12 +1544,17 @@ describe("project open", () => {
     expect(result.state.images[0]).toEqual({
       id: "dev",
       imageName: "MyProject-dev",
-      mcpEndpoint: {
-        transport: "http",
-        host: "127.0.0.1",
-        port: 7432,
-        path: "/mcp",
-      },
+      mcpServers: [
+        {
+          id: "dev",
+          endpoint: {
+            transport: "http",
+            host: "127.0.0.1",
+            port: 7432,
+            path: "/mcp",
+          },
+        },
+      ],
       pid: 1234,
       status: "running",
     });
@@ -1602,7 +1607,7 @@ describe("project open", () => {
       pid: 1234,
       status: "running",
     });
-    expect(result.state.images[0]).not.toHaveProperty("mcpEndpoint");
+    expect(result.state.images[0]).not.toHaveProperty("mcpServers");
   });
 
   it("fails when endpoint handoff content is invalid", async () => {
@@ -1747,7 +1752,7 @@ describe("project open", () => {
       healthClient,
       homeImageCacheApproval: {
         approved: true,
-        runnerId: "isolated-runner-1",
+        approvalId: "isolated-approval-1",
       },
       now: fixedNow,
       sleep: async () => {},
@@ -2001,7 +2006,7 @@ describe("project open", () => {
     ]);
   });
 
-  it("blocks prepared image cache copies without approved runner input", async () => {
+  it("blocks prepared image cache copies without explicit approval", async () => {
     const projectRoot = makeTempDir("plexus-project-");
     const stateRoot = makeTempDir("plexus-state-");
     writeProjectConfig(projectRoot, {
@@ -2053,7 +2058,7 @@ describe("project open", () => {
     expect(pharoLauncherMcpClient.calls).toEqual([]);
   });
 
-  it("copies prepared cache images before launching when runner approval is explicit", async () => {
+  it("copies prepared cache images before launching when approval is explicit", async () => {
     const projectRoot = makeTempDir("plexus-project-");
     const stateRoot = makeTempDir("plexus-state-");
     writeProjectConfig(projectRoot, {
@@ -2103,7 +2108,7 @@ describe("project open", () => {
       healthClient,
       preparedImageCacheApproval: {
         approved: true,
-        runnerId: "isolated-runner-1",
+        approvalId: "isolated-approval-1",
       },
       now: fixedNow,
       sleep: async () => {},
@@ -2296,7 +2301,7 @@ describe("project open", () => {
       status: "running",
     });
     expect(result.state.images[0]).not.toHaveProperty("assignedPort");
-    expect(result.state.images[0]).not.toHaveProperty("mcpEndpoint");
+    expect(result.state.images[0]).not.toHaveProperty("mcpServers");
   });
 
   it("does not claim host-local image MCP ports for known unsupported Pharo versions", async () => {

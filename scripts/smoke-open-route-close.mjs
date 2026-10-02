@@ -33,7 +33,7 @@ import {
   resolvePharoLauncherMcpRepoDirOption,
   smokeProjectConfig,
   usesDefaultSmokeLoadScript,
-} from "./live-smoke-runner-policy.mjs";
+} from "./live-smoke-policy.mjs";
 
 const scriptPath = fileURLToPath(import.meta.url);
 const repoRoot = path.dirname(path.dirname(scriptPath));
