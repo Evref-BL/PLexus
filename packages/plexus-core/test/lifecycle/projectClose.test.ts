@@ -312,12 +312,17 @@ describe("project close", () => {
         {
           id: "dev",
           imageName: "MyProject-dev",
-          mcpEndpoint: {
-            transport: "http",
-            host: "127.0.0.1",
-            port: 7432,
-            path: "/",
-          },
+          mcpServers: [
+            {
+              id: "dev",
+              endpoint: {
+                transport: "http",
+                host: "127.0.0.1",
+                port: 7432,
+                path: "/",
+              },
+            },
+          ],
           pid: 1234,
           status: "running",
         },

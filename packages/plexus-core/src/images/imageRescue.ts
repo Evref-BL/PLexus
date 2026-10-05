@@ -1026,7 +1026,7 @@ function targetRoute(targetImageId: string): ProjectImageCreationRouteState {
   return {
     serverName: "pharo_gateway",
     targetKey: "targetId",
-    imageArgument: "imageId",
+    imageArgument: "mcpServerId",
     imageId: targetImageId,
   };
 }

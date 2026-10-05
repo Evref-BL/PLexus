@@ -46,7 +46,7 @@ export interface WritePreparedImageCacheScriptOptions {
 
 export interface PreparedImageCacheMutationApproval {
   approved: true;
-  runnerId: string;
+  approvalId: string;
 }
 
 export interface PreparedImageLiveOperation {
@@ -374,7 +374,7 @@ export function buildPreparedImageCachePlan(options: {
       argumentsValue: createArguments,
       requiresApproval: true,
       reason:
-        "Creating a prepared image cache mutates PharoLauncher state and must run inside an approved runner.",
+        "Creating a prepared image cache mutates PharoLauncher state and requires explicit approval.",
     },
     ...(runtimeCopy ? { runtimeCopy } : {}),
   };
@@ -384,9 +384,9 @@ function requireMutationApproval(
   approval: PreparedImageCacheMutationApproval | undefined,
   operation: string,
 ): void {
-  if (!approval?.approved || approval.runnerId.length === 0) {
+  if (!approval?.approved || approval.approvalId.length === 0) {
     throw new PreparedImageCacheError(
-      `${operation} requires an approved prepared-image runner`,
+      `${operation} requires approved prepared-image mutation`,
     );
   }
 }

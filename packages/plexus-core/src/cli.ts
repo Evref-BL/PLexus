@@ -24,7 +24,6 @@ function usage(): string {
     "Environment:",
     "  PLEXUS_STATE_ROOT       Optional runtime state root.",
     "  PLEXUS_WORKSPACE_ID     Optional runtime workspace id.",
-    "  VIBE_KANBAN_WORKSPACE_ID Optional runtime workspace id.",
     "  PLEXUS_TARGET_ID        Optional runtime target id.",
     "  PLEXUS_IMAGE_LEASE_OWNER_ID Optional scoped image lease owner id.",
     "  PLEXUS_IMAGE_LEASE_OWNER_KIND Optional lease owner kind.",
@@ -367,8 +366,7 @@ async function main(argv: string[]): Promise<number> {
   const parsed = parseCommand(argv);
   const workspaceId =
     parsed.workspaceId ??
-    process.env.PLEXUS_WORKSPACE_ID ??
-    process.env.VIBE_KANBAN_WORKSPACE_ID;
+    process.env.PLEXUS_WORKSPACE_ID;
   const stateRoot = parsed.stateRoot ?? process.env.PLEXUS_STATE_ROOT;
 
   if (parsed.scope === "mcp" && parsed.command === "pharo-launcher") {

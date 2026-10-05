@@ -108,7 +108,7 @@ function writeProjectConfig(
             mode: "project-local",
             host: "127.0.0.1",
             port: 8133,
-            agentMcpPath: "/mcp",
+            mcpPath: "/mcp",
             routeControlMcpPath: "/control-mcp",
           },
           imagePorts: {
@@ -195,7 +195,7 @@ function ownedCreationState() {
     route: {
       serverName: "pharo_gateway" as const,
       targetKey: "targetId" as const,
-      imageArgument: "imageId" as const,
+      imageArgument: "mcpServerId" as const,
       imageId: "dev",
     },
   };
@@ -270,12 +270,17 @@ function writeRuntimeState(input: {
         assignedPort: 7200,
         pid: input.devStatus === "stopped" ? undefined : 1234,
         status: input.devStatus ?? "running",
-        mcpEndpoint: {
-          transport: "http",
-          host: "127.0.0.1",
-          port: 7200,
-          path: "/",
-        },
+        mcpServers: [
+          {
+            id: "dev",
+            endpoint: {
+              transport: "http",
+              host: "127.0.0.1",
+              port: 7200,
+              path: "/",
+            },
+          },
+        ],
         creation: ownedCreationState(),
         repositoryWorkspace: repositoryWorkspace(input.repositoryPath),
       },

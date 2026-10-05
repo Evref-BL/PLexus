@@ -35,7 +35,7 @@ export const projectScriptsDirectoryName = "scripts";
 export const defaultPharoMcpMetacelloRepository = {
   githubUser: "Evref-BL",
   project: "MCP",
-  commitish: "main",
+  commitish: "v1.2.3",
   path: "src",
   baseline: "MCP",
 } as const;

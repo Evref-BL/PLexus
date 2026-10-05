@@ -19,4 +19,3 @@ export * from "./workspace/projectState.js";
 export * from "./workspace/scopedProjectContext.js";
 export * from "./launcher/scopedPharoLauncherServer.js";
 export * from "./config/target.js";
-export * from "./workspace/workspaceMcpConfig.js";

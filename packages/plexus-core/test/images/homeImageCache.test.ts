@@ -396,7 +396,7 @@ describe("home image cache", () => {
       tryAcquireHomeImageCacheLock({
         lockPath: initial.lockPath,
         key: initial.key,
-        owner: "runner-1",
+        owner: "approval-1",
         now: () => new Date("2026-05-19T10:00:00.000Z"),
       }),
     ).toMatchObject({ acquired: true });
@@ -711,7 +711,7 @@ describe("home image cache", () => {
       tryAcquireHomeImageCacheLock({
         lockPath: enabled.lockPath,
         key: enabled.key,
-        owner: "runner-1",
+        owner: "approval-1",
       }),
     ).toMatchObject({ acquired: true });
 
@@ -750,7 +750,7 @@ describe("home image cache", () => {
       homeDirectory,
       approval: {
         approved: true,
-        runnerId: "runner-1",
+        approvalId: "approval-1",
       },
       now: () => new Date("2026-05-19T10:00:00.000Z"),
     });
@@ -815,7 +815,7 @@ describe("home image cache", () => {
         homeDirectory,
         approval: {
           approved: true,
-          runnerId: "runner-1",
+          approvalId: "approval-1",
         },
       }),
     ).rejects.toThrow("Home image cache local-only preparation is missing required local inputs");
@@ -865,7 +865,7 @@ describe("home image cache", () => {
       },
       approval: {
         approved: true,
-        runnerId: "runner-1",
+        approvalId: "approval-1",
       },
       now: () => new Date("2026-05-19T10:00:00.000Z"),
     });
@@ -905,7 +905,7 @@ describe("home image cache", () => {
               "cacheKey=abc123",
               "source=metacello",
               "loadScript=/repo/pharo/load-mcp.st",
-              "repository=github://Evref-BL/MCP:main/src",
+              "repository=github://Evref-BL/MCP:v1.2.3/src",
               "baseline=MCP",
               `message=${statusMessage}`,
               "",
@@ -933,7 +933,7 @@ describe("home image cache", () => {
         homeDirectory,
         approval: {
           approved: true,
-          runnerId: "runner-1",
+          approvalId: "approval-1",
         },
         now: () => new Date("2026-05-19T10:00:00.000Z"),
       }),
@@ -1003,7 +1003,7 @@ describe("home image cache", () => {
       homeDirectory,
       approval: {
         approved: true,
-        runnerId: "runner-1",
+        approvalId: "approval-1",
       },
     });
 

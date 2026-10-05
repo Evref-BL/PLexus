@@ -72,7 +72,7 @@ export const gatewayTools = [
       ...routeReferenceProperties,
       refreshHealth: { type: "boolean" },
       refreshTools: { type: "boolean" },
-      toolSchemaImageId: optionalStringSchema,
+      toolSchemaMcpServerId: optionalStringSchema,
     }),
   },
   {
@@ -86,18 +86,18 @@ export const gatewayTools = [
 export const rawRoutingTool = {
   name: "plexus_route_to_image",
   description:
-    "Route a Pharo MCP tool call to the MCP server running inside a selected image.",
+    "Route a Pharo MCP tool call to a selected MCP server endpoint.",
   inputSchema: objectSchema(
     {
       ...routeReferenceProperties,
-      imageId: stringSchema,
+      mcpServerId: stringSchema,
       toolName: stringSchema,
       arguments: {
         type: "object",
         additionalProperties: true,
       },
     },
-    ["imageId", "toolName"],
+    ["mcpServerId", "toolName"],
   ),
 } as const;
 
@@ -113,15 +113,15 @@ export interface GatewayEnvironmentOptions {
   exposeRawRoutingTool: boolean;
   pharoTools: Tool[];
   pharoScope: GatewayRouteReferenceInput;
-  pharoToolSchemaImageId?: string;
+  pharoToolSchemaMcpServerId?: string;
 }
 
-function agentGatewaySurface(surface: GatewaySurface): boolean {
+function gatewaySurface(surface: GatewaySurface): boolean {
   return surface === "gateway";
 }
 
 function pharoToolsVisible(surface: GatewaySurface): boolean {
-  return agentGatewaySurface(surface);
+  return gatewaySurface(surface);
 }
 
 function routeControlToolsVisible(surface: GatewaySurface): boolean {
@@ -191,7 +191,7 @@ function parseGatewaySurface(value: string | undefined): GatewaySurface {
 
   throw new Error(
     `Unsupported PLexus gateway surface: ${value}. ` +
-      "Use PLEXUS_GATEWAY_SURFACE=gateway for agent-facing /mcp or " +
+      "Use PLEXUS_GATEWAY_SURFACE=gateway for /mcp or " +
       "PLEXUS_GATEWAY_SURFACE=route-control for trusted route-control tooling.",
   );
 }
@@ -340,7 +340,7 @@ export function createGatewayServerWithOptions(
       );
     }
 
-    if (agentGatewaySurface(surface)) {
+    if (gatewaySurface(surface)) {
       return jsonResult(
         {
           ok: false,
@@ -394,11 +394,11 @@ export function parseGatewayEnvironmentOptions(
     ) as Tool[],
     pharoScope: {
       projectId: env.PLEXUS_PROJECT_ID,
-      workspaceId: env.PLEXUS_WORKSPACE_ID ?? env.VIBE_KANBAN_WORKSPACE_ID,
+      workspaceId: env.PLEXUS_WORKSPACE_ID,
       targetId: env.PLEXUS_TARGET_ID,
     },
-    pharoToolSchemaImageId: optionalStringEnv(
-      env.PLEXUS_PHARO_TOOL_SCHEMA_IMAGE_ID,
+    pharoToolSchemaMcpServerId: optionalStringEnv(
+      env.PLEXUS_PHARO_TOOL_SCHEMA_MCP_SERVER_ID,
     ),
   };
 }
@@ -411,7 +411,7 @@ export function createGatewayFromEnvironment(
     gateway: new PlexusGateway({
       pharoTools: options.pharoTools,
       pharoScope: options.pharoScope,
-      pharoToolSchemaImageId: options.pharoToolSchemaImageId,
+      pharoToolSchemaMcpServerId: options.pharoToolSchemaMcpServerId,
     }),
     serverOptions: {
       surface: options.surface,
@@ -504,9 +504,9 @@ export async function startGatewayHttpServer(
       }
     : createGatewayFromEnvironment();
   const configuredSurface = environment.serverOptions.surface ?? "gateway";
-  const agentServerOptions: GatewayServerOptions = {
+  const gatewayServerOptions: GatewayServerOptions = {
     ...environment.serverOptions,
-    surface: agentGatewaySurface(configuredSurface)
+    surface: gatewaySurface(configuredSurface)
       ? configuredSurface
       : "gateway",
   };
@@ -566,7 +566,7 @@ export async function startGatewayHttpServer(
       }
 
       if (url.pathname === mcpPath) {
-        await handleMcpRequest(request, response, agentServerOptions);
+        await handleMcpRequest(request, response, gatewayServerOptions);
         return;
       }
 
@@ -665,7 +665,7 @@ export function parseGatewayServerCliOptions(
     transport: "stdio",
     host: env.PLEXUS_HOST ?? "127.0.0.1",
     portValue: env.PLEXUS_MCP_PORT ?? env.PORT ?? "7331",
-    mcpPath: env.PLEXUS_GATEWAY_AGENT_MCP_PATH ?? "/mcp",
+    mcpPath: env.PLEXUS_GATEWAY_MCP_PATH ?? "/mcp",
     routeControlMcpPath:
       env.PLEXUS_GATEWAY_CONTROL_MCP_PATH ?? "/control-mcp",
   };

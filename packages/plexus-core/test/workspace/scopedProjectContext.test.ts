@@ -116,7 +116,7 @@ describe("scoped project context", () => {
           policy: "pharo-gateway-target-route",
           serverName: "pharo_gateway",
           targetKey: "targetId",
-          imageArgument: "imageId",
+          imageArgument: "mcpServerId",
         },
         cleanup: {
           policy: "workspace_cleanup_only",
@@ -246,7 +246,7 @@ describe("scoped project context", () => {
       delete: {
         allowed: false,
         reason:
-          "Deletion is reserved for PLexus workspace cleanup policy, not the agent launcher surface",
+          "Deletion is reserved for PLexus workspace cleanup policy, not the scoped launcher surface",
       },
     });
     expect(context.images[1].affordances.start).toEqual({
@@ -411,17 +411,17 @@ describe("scoped project context", () => {
 
     expect(context.images[0].route).toEqual({
       serverName: "pharo_gateway",
-      requiredArgument: "imageId",
-      imageId: "dev",
+      requiredArgument: "mcpServerId",
+      mcpServerId: "dev",
       routeReference: {
         projectId: "project-123",
         workspaceId: "task-123",
         targetId: "target-123",
       },
-      imageIdSource:
-        "Read images[].imageId from this scoped context",
+      mcpServerIdSource:
+        "Read a server id from images[].mcpServers[] in this scoped context",
       recordHint:
-        "Store the selected imageId with the scoped project/workspace/target before calling pharo_gateway tools",
+        "Store the selected mcpServerId with the scoped project/workspace/target before calling pharo_gateway tools",
     });
   });
 

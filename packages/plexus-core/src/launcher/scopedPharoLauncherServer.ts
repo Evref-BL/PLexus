@@ -63,6 +63,7 @@ import {
   type ProjectImageLeaseOwnerKind,
   type ProjectImageLeaseState,
   type ProjectImageCreationState,
+  type ProjectImageMcpEndpoint,
   type ProjectImageState,
   type ProjectState,
 } from "../workspace/projectState.js";
@@ -168,8 +169,8 @@ type ScopedImageRouteStatusCode =
 
 interface ScopedImageRouteStatus {
   serverName: "pharo_gateway";
-  requiredArgument: "imageId";
-  imageId: string;
+  requiredArgument: "mcpServerId";
+  mcpServerId: string;
   status: ScopedImageRouteStatusCode;
   routable: boolean;
   endpointRecorded: boolean;
@@ -203,7 +204,7 @@ interface ResetImageOptions {
 interface DisplayModeRestartSnapshot {
   attempted: boolean;
   status: "saved";
-  endpoint?: ProjectImageState["mcpEndpoint"];
+  endpoint?: ProjectImageMcpEndpoint;
 }
 
 interface LauncherCommandResult<T = unknown> {
@@ -344,10 +345,6 @@ function requireConfirm(input: Record<string, unknown>): void {
 const leaseOwnerKinds = new Set<ProjectImageLeaseOwnerKind>([
   "target",
   "workspace",
-  "thread",
-  "session",
-  "workItem",
-  "agent",
   "human",
   "unknown",
 ]);
@@ -360,17 +357,16 @@ function nonEmptyEnv(value: string | undefined): string | undefined {
 function leaseOwnerKindFromText(
   value: string | undefined,
 ): ProjectImageLeaseOwnerKind | undefined {
-  const normalized = value === "work-item" ? "workItem" : value;
-  if (!normalized) {
+  if (!value) {
     return undefined;
   }
-  if (!leaseOwnerKinds.has(normalized as ProjectImageLeaseOwnerKind)) {
+  if (!leaseOwnerKinds.has(value as ProjectImageLeaseOwnerKind)) {
     throw new ScopedPharoLauncherError(
       `PLEXUS_IMAGE_LEASE_OWNER_KIND must be one of ${[...leaseOwnerKinds].join(", ")}`,
     );
   }
 
-  return normalized as ProjectImageLeaseOwnerKind;
+  return value as ProjectImageLeaseOwnerKind;
 }
 
 function leaseTtlMsFromText(value: string | undefined): number | undefined {
@@ -473,7 +469,7 @@ function scopedMutationApproval(
   approval: HomeImageCacheMutationApproval | undefined,
   operation: string,
 ): HomeImageCacheMutationApproval {
-  return approval ?? { approved: true, runnerId: operation };
+  return approval ?? { approved: true, approvalId: operation };
 }
 
 function resolveScope(options: ScopedPharoLauncherOptions): ResolvedScope {
@@ -700,7 +696,7 @@ function imageCreationState(
     route: {
       serverName: "pharo_gateway",
       targetKey: "targetId",
-      imageArgument: "imageId",
+      imageArgument: "mcpServerId",
       imageId: imageConfig.id,
     },
   };
@@ -752,24 +748,12 @@ function assertWorkspaceImagePolicyAllowsCreate(
 
 function imageMcpSnapshotEndpoint(
   imageState: ProjectImageState,
-): ProjectImageState["mcpEndpoint"] | undefined {
-  if (imageState.mcpEndpoint) {
-    return imageState.mcpEndpoint;
-  }
-
-  if (imageState.assignedPort !== undefined) {
-    return {
-      transport: "http",
-      host: "127.0.0.1",
-      port: imageState.assignedPort,
-      path: "/",
-    };
-  }
-
-  return undefined;
+): ProjectImageMcpEndpoint | undefined {
+  return imageState.mcpServers?.find((server) => server.id === imageState.id)
+    ?.endpoint;
 }
 
-function endpointUrl(endpoint: NonNullable<ProjectImageState["mcpEndpoint"]>): string {
+function endpointUrl(endpoint: ProjectImageMcpEndpoint): string {
   const host =
     endpoint.host.includes(":") && !endpoint.host.startsWith("[")
       ? `[${endpoint.host}]`
@@ -896,7 +880,7 @@ function routeStatus(
   imageState: ProjectImageState | undefined,
 ): ScopedImageRouteStatus {
   const endpointRecorded = Boolean(
-    imageState?.mcpEndpoint || imageState?.assignedPort !== undefined,
+    imageState?.mcpServers?.length,
   );
   const contractStatus = imageState?.pharoMcpContract?.status;
   let status: ScopedImageRouteStatusCode;
@@ -913,8 +897,8 @@ function routeStatus(
 
   return {
     serverName: "pharo_gateway",
-    requiredArgument: "imageId",
-    imageId: image.imageId,
+    requiredArgument: "mcpServerId",
+    mcpServerId: image.imageId,
     status,
     routable: status === "routable",
     endpointRecorded,

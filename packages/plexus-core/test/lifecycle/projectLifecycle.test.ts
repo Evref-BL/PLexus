@@ -54,6 +54,17 @@ const runningState: ProjectState = {
       id: "dev",
       imageName: "MyProject-dev",
       assignedPort: 7123,
+      mcpServers: [
+        {
+          id: "dev",
+          endpoint: {
+            transport: "http",
+            host: "127.0.0.1",
+            port: 7123,
+            path: "/",
+          },
+        },
+      ],
       pid: 1234,
       status: "running",
     },
@@ -587,7 +598,7 @@ describe("project lifecycle tools", () => {
           route: {
             serverName: "pharo_gateway",
             targetKey: "targetId",
-            imageArgument: "imageId",
+            imageArgument: "mcpServerId",
             imageId: image.id,
           },
         },
@@ -690,7 +701,7 @@ describe("project lifecycle tools", () => {
             },
             routes: {
               serverName: "pharo_gateway",
-              imageArgument: "imageId",
+              imageArgument: "mcpServerId",
             },
             cleanup: {
               policy: "workspace_cleanup_only",
@@ -702,8 +713,8 @@ describe("project lifecycle tools", () => {
               status: "running",
               route: {
                 serverName: "pharo_gateway",
-                requiredArgument: "imageId",
-                imageId: "dev",
+                requiredArgument: "mcpServerId",
+                mcpServerId: "dev",
               },
             },
           ],
@@ -1249,7 +1260,7 @@ describe("project lifecycle tools", () => {
             ),
             source: "loadScript",
             loadScript: loadScriptPath,
-            configuredRepositoryHint: "github://Evref-BL/MCP:main/src",
+            configuredRepositoryHint: "github://Evref-BL/MCP:v1.2.3/src",
             baseline: "MCP",
           },
         },
@@ -1271,7 +1282,7 @@ describe("project lifecycle tools", () => {
       state: "loaded",
       source: "loadScript",
       loadScript: loadScriptPath,
-      configuredRepositoryHint: "github://Evref-BL/MCP:main/src",
+      configuredRepositoryHint: "github://Evref-BL/MCP:v1.2.3/src",
       baseline: "MCP",
     });
     expect(pharoMcpLoad).not.toHaveProperty("repository");
@@ -1774,13 +1785,12 @@ describe("project lifecycle tools", () => {
         },
           diagnostics: {
           toolRuntime: {
-            packageName: "@evref-bl/plexus-core",
+            packageName: "@evref-bl/plexus",
             packageVersion: expect.any(String),
             modulePath: expect.any(String),
             entrypointPath: expect.any(String),
             projectConfigSchema: {
               identityField: "id",
-              legacyIdentityField: "kanban.projectId",
             },
           },
           imageMcpPorts: [
@@ -1811,7 +1821,7 @@ describe("project lifecycle tools", () => {
         {
           id: "dev",
           imageName: "MyProject-dev",
-          mcpEndpoint: endpoint,
+          mcpServers: [{ id: "dev", endpoint }],
           pid: 1234,
           status: "running",
         },
@@ -1840,7 +1850,7 @@ describe("project lifecycle tools", () => {
                 {
                   id: "dev",
                   imageName: "MyProject-dev",
-                  mcpEndpoint: endpoint,
+                  endpoint,
                   status: "running",
                   routable: {
                     ok: true,
@@ -1869,7 +1879,7 @@ describe("project lifecycle tools", () => {
           imageMcpPorts: [
             {
               imageId: "dev",
-              mcpEndpoint: endpoint,
+              mcpServers: [{ id: "dev", endpoint }],
               routingMode: "endpoint",
               status: "running",
             },
@@ -1879,7 +1889,7 @@ describe("project lifecycle tools", () => {
             routableImages: [
               {
                 imageId: "dev",
-                mcpEndpoint: endpoint,
+                endpoint,
                 routingMode: "endpoint",
                 status: "running",
               },
@@ -1940,7 +1950,7 @@ describe("project lifecycle tools", () => {
             start: 8133,
             end: 8133,
           },
-          agentMcpPath: "/mcp",
+          mcpPath: "/mcp",
           routeControlMcpPath: "/control-mcp",
         },
       },
@@ -2019,12 +2029,6 @@ describe("project lifecycle tools", () => {
             routableImages: [],
             error: expect.stringContaining("gateway state is dead"),
           },
-          agentAccess: {
-            expectedSurface: "pharo_gateway",
-            gatewayRouted: false,
-            portsHiddenFromAgents: true,
-            reason: expect.stringContaining("Reopen the project"),
-          },
         },
       },
     });
@@ -2058,7 +2062,7 @@ describe("project lifecycle tools", () => {
           mode: "project-local",
           host: "127.0.0.1",
           port: 8133,
-          agentMcpPath: "/mcp",
+          mcpPath: "/mcp",
           routeControlMcpPath: "/control-mcp",
         },
       },
@@ -2159,7 +2163,7 @@ describe("project lifecycle tools", () => {
           mode: "project-local",
           host: "127.0.0.1",
           port: 8133,
-          agentMcpPath: "/mcp",
+          mcpPath: "/mcp",
           routeControlMcpPath: "/control-mcp",
         },
       },
@@ -2216,10 +2220,6 @@ describe("project lifecycle tools", () => {
           routeTable: {
             status: "gateway-dead",
             targetId: "project-123--worktree-a",
-          },
-          agentAccess: {
-            expectedSurface: "pharo_gateway",
-            gatewayRouted: false,
           },
         },
       },
@@ -2334,13 +2334,12 @@ describe("project lifecycle tools", () => {
       error: "Invalid Plexus project config",
       diagnostics: {
         toolRuntime: {
-          packageName: "@evref-bl/plexus-core",
+          packageName: "@evref-bl/plexus",
           packageVersion: expect.any(String),
           modulePath: expect.any(String),
           entrypointPath: expect.any(String),
           projectConfigSchema: {
             identityField: "id",
-            legacyIdentityField: "kanban.projectId",
           },
         },
         projectConfig: {
@@ -2459,7 +2458,7 @@ describe("project lifecycle tools", () => {
           mode: "project-local",
           host: "127.0.0.1",
           port: 8137,
-          agentMcpPath: "/mcp",
+          mcpPath: "/mcp",
           routeControlMcpPath: "/control-mcp",
         },
       },
@@ -2683,7 +2682,7 @@ describe("project lifecycle tools", () => {
           mode: "project-local",
           host: "127.0.0.1",
           port: 8133,
-          agentMcpPath: "/mcp",
+          mcpPath: "/mcp",
           routeControlMcpPath: "/control-mcp",
         },
       },
@@ -2774,11 +2773,6 @@ describe("project lifecycle tools", () => {
               "pharo-launcher-mcp",
               "project-123",
             ),
-          },
-          agentAccess: {
-            expectedSurface: "pharo_gateway",
-            gatewayRouted: true,
-            portsHiddenFromAgents: true,
           },
           imagePortCoordination: {
             mode: "project-state",
@@ -3227,7 +3221,7 @@ describe("project lifecycle tools", () => {
           mode: "project-local",
           host: "127.0.0.1",
           port: 8133,
-          agentMcpPath: "/mcp",
+          mcpPath: "/mcp",
           routeControlMcpPath: "/control-mcp",
         },
         imagePorts: {
@@ -3328,7 +3322,7 @@ describe("project lifecycle tools", () => {
           mode: "project-local",
           host: "127.0.0.1",
           port: 8133,
-          agentMcpPath: "/mcp",
+          mcpPath: "/mcp",
           routeControlMcpPath: "/control-mcp",
         },
         imagePorts: {
@@ -3593,7 +3587,7 @@ describe("project lifecycle tools", () => {
           mode: "project-local",
           host: "127.0.0.1",
           port: 8134,
-          agentMcpPath: "/gateway-mcp",
+          mcpPath: "/gateway-mcp",
           routeControlMcpPath: "/gateway-control",
         },
       },
@@ -3703,7 +3697,7 @@ describe("project lifecycle tools", () => {
           mode: "project-local",
           host: "127.0.0.1",
           port: 8136,
-          agentMcpPath: "/mcp",
+          mcpPath: "/mcp",
           routeControlMcpPath: "/control-mcp",
         },
       },
@@ -3766,7 +3760,7 @@ describe("project lifecycle tools", () => {
       runtime: {
         gateway: {
           mode: "shared",
-          agentMcpUrl: "http://shared.gateway:8133/mcp",
+          mcpUrl: "http://shared.gateway:8133/mcp",
           routeControlMcpUrl: "http://shared.gateway:8133/control-mcp",
         },
       },
@@ -3816,7 +3810,7 @@ describe("project lifecycle tools", () => {
           mode: "project-local",
           host: "127.0.0.1",
           port: 8135,
-          agentMcpPath: "/mcp",
+          mcpPath: "/mcp",
           routeControlMcpPath: "/control-mcp",
         },
       },
@@ -3859,7 +3853,7 @@ describe("project lifecycle tools", () => {
           mode: "project-local",
           host: "127.0.0.1",
           port: 8136,
-          agentMcpPath: "/mcp",
+          mcpPath: "/mcp",
           routeControlMcpPath: "/control-mcp",
         },
       },

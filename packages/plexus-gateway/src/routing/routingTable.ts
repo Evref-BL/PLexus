@@ -20,6 +20,11 @@ export interface GatewayImageMcpEndpoint {
   path: string;
 }
 
+export interface GatewayProjectImageMcpServer {
+  id: string;
+  endpoint: GatewayImageMcpEndpoint;
+}
+
 export interface GatewayRemoteGatewayUpstream {
   remoteNodeId: string;
   endpoint: GatewayImageMcpEndpoint;
@@ -69,7 +74,7 @@ export interface GatewayProjectImageState {
   id: string;
   imageName: string;
   assignedPort?: number;
-  mcpEndpoint?: GatewayImageMcpEndpoint;
+  mcpServers?: GatewayProjectImageMcpServer[];
   pid?: number;
   status: GatewayProjectImageStatus;
   creation?: GatewayProjectImageCreationState;
@@ -103,22 +108,23 @@ export interface GatewayImageRoutability {
 
 export interface GatewayImageRouteMetadata {
   serverName: "pharo_gateway";
-  requiredArgument: "imageId";
-  imageId: string;
+  requiredArgument: "mcpServerId";
+  mcpServerId: string;
   routeReference: {
     projectId: string;
     workspaceId: string;
     targetId: string;
   };
-  imageIdSource: string;
+  mcpServerIdSource: string;
   recordHint: string;
 }
 
 export interface GatewayImageRoute {
   id: string;
+  mcpServerId: string;
   imageName: string;
   port?: number;
-  mcpEndpoint?: GatewayImageMcpEndpoint;
+  endpoint: GatewayImageMcpEndpoint;
   pid?: number;
   status: GatewayProjectImageStatus;
   health: GatewayImageHealth;
@@ -231,9 +237,9 @@ function imageRoutability(
   projectContract: GatewayPharoMcpContractReference | undefined,
   image: Pick<
     GatewayProjectImageState,
-    "id" | "status" | "mcpEndpoint" | "assignedPort" | "pharoMcpContract"
+    "id" | "status" | "pharoMcpContract"
   > & {
-    port?: number;
+    endpoint?: GatewayImageMcpEndpoint;
     health?: GatewayImageHealth;
     remoteGateway?: GatewayRemoteGatewayUpstream;
   },
@@ -247,9 +253,7 @@ function imageRoutability(
   }
 
   if (
-    !image.mcpEndpoint &&
-    image.assignedPort === undefined &&
-    image.port === undefined &&
+    !image.endpoint &&
     image.remoteGateway === undefined
   ) {
     return {
@@ -282,29 +286,28 @@ function imageRoutability(
   );
 }
 
-function imageRoutePort(
+function imageMcpServers(
   image: GatewayProjectImageState,
-): number | undefined {
-  return image.mcpEndpoint?.port ?? image.assignedPort;
+): GatewayProjectImageMcpServer[] {
+  return image.mcpServers ?? [];
 }
 
 function imageRouteMetadata(
   state: GatewayProjectState,
-  imageId: string,
+  mcpServerId: string,
 ): GatewayImageRouteMetadata {
   return {
     serverName: "pharo_gateway",
-    requiredArgument: "imageId",
-    imageId,
+    requiredArgument: "mcpServerId",
+    mcpServerId,
     routeReference: {
       projectId: state.projectId,
       workspaceId: state.workspaceId,
       targetId: state.targetId,
     },
-    imageIdSource:
-      "Read images[].imageId from PLexus scoped context, pharo-launcher image list, or gateway status",
+    mcpServerIdSource: "Read images[].mcpServers[].id from gateway status",
     recordHint:
-      "Record the selected imageId with the scoped project/workspace/target before calling pharo_gateway tools",
+      "Record the selected mcpServerId with the scoped project/workspace/target before calling pharo_gateway tools",
   };
 }
 
@@ -316,9 +319,21 @@ export class PlexusRoutingTable {
     statePath: string,
     state: GatewayProjectState,
   ): GatewayProjectRoute {
+    const mcpServerIds = new Set<string>();
+    for (const image of state.images) {
+      for (const server of imageMcpServers(image)) {
+        if (mcpServerIds.has(server.id)) {
+          throw new Error(
+            `MCP server id ${server.id} is duplicated in target ${state.targetId}`,
+          );
+        }
+        mcpServerIds.add(server.id);
+      }
+    }
+
     const existing = this.targets.get(state.targetId);
     const existingHealth = new Map(
-      existing?.images.map((image) => [image.id, image.health]) ?? [],
+      existing?.images.map((image) => [image.mcpServerId, image.health]) ?? [],
     );
     const route: GatewayProjectRoute = {
       projectId: state.projectId,
@@ -331,30 +346,34 @@ export class PlexusRoutingTable {
         ? { pharoMcpContract: state.pharoMcpContract }
         : {}),
       updatedAt: state.updatedAt,
-      images: state.images.map((image) => {
-        const port = imageRoutePort(image);
-        const health = existingHealth.get(image.id) ?? "unknown";
-        return {
-          id: image.id,
-          imageName: image.imageName,
-          ...(port !== undefined ? { port } : {}),
-          ...(image.mcpEndpoint ? { mcpEndpoint: image.mcpEndpoint } : {}),
-          ...(image.pid ? { pid: image.pid } : {}),
-          status: image.status,
-          health,
-          routable: imageRoutability(state.pharoMcpContract, {
-            ...image,
+      images: state.images.flatMap((image) =>
+        imageMcpServers(image).map((server) => {
+          const port = server.endpoint.port;
+          const health = existingHealth.get(server.id) ?? "unknown";
+          return {
+            id: image.id,
+            mcpServerId: server.id,
+            imageName: image.imageName,
+            ...(port !== undefined ? { port } : {}),
+            endpoint: server.endpoint,
+            ...(image.pid ? { pid: image.pid } : {}),
+            status: image.status,
             health,
-            remoteGateway: state.remoteGateway,
-          }),
-          routeMetadata: imageRouteMetadata(state, image.id),
-          ...(image.creation ? { creation: image.creation } : {}),
-          ...(image.pharoMcpContract
-            ? { pharoMcpContract: image.pharoMcpContract }
-            : {}),
-          updatedAt: state.updatedAt,
-        };
-      }),
+            routable: imageRoutability(state.pharoMcpContract, {
+              ...image,
+              endpoint: server.endpoint,
+              health,
+              remoteGateway: state.remoteGateway,
+            }),
+            routeMetadata: imageRouteMetadata(state, server.id),
+            ...(image.creation ? { creation: image.creation } : {}),
+            ...(image.pharoMcpContract
+              ? { pharoMcpContract: image.pharoMcpContract }
+              : {}),
+            updatedAt: state.updatedAt,
+          };
+        }),
+      ),
       ...(state.remoteGateway ? { remoteGateway: state.remoteGateway } : {}),
     };
 
@@ -417,25 +436,27 @@ export class PlexusRoutingTable {
     return [...this.targets.values()];
   }
 
-  findImageOutsideTarget(
+  findMcpServerOutsideTarget(
     projectId: string,
     targetId: string,
-    imageId: string,
+    mcpServerId: string,
   ): GatewayProjectRoute | undefined {
     return this.listProjectTargets(projectId).find(
       (route) =>
         route.targetId !== targetId &&
-        route.images.some((image) => image.id === imageId),
+        route.images.some((image) => image.mcpServerId === mcpServerId),
     );
   }
 
   updateImageHealth(
     targetId: string,
-    imageId: string,
+    mcpServerId: string,
     health: GatewayImageHealth,
   ): void {
     const project = this.targets.get(targetId);
-    const image = project?.images.find((candidate) => candidate.id === imageId);
+    const image = project?.images.find(
+      (candidate) => candidate.mcpServerId === mcpServerId,
+    );
     if (image) {
       image.health = health;
       image.routable = imageRoutability(project?.pharoMcpContract, image);

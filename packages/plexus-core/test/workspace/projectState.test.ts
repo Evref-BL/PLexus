@@ -55,7 +55,7 @@ function defaultRuntimePolicy(): ProjectRuntimePolicy {
         start: 8_133,
         end: 8_199,
       },
-      agentMcpPath: "/mcp",
+      mcpPath: "/mcp",
       routeControlMcpPath: "/control-mcp",
     },
     imagePorts: {
@@ -746,8 +746,8 @@ describe("project state", () => {
               assignedPort: 7123,
               status: "running",
               lease: {
-                ownerId: "thread-a",
-                ownerKind: "thread",
+                ownerId: "workspace-a",
+                ownerKind: "workspace",
                 mode: "mutable",
                 purpose: "Work on issue 24",
                 createdAt: "2026-04-25T09:00:00.000Z",
@@ -758,8 +758,8 @@ describe("project state", () => {
         },
       }).images[0].lease,
     ).toEqual({
-      ownerId: "thread-a",
-      ownerKind: "thread",
+      ownerId: "workspace-a",
+      ownerKind: "workspace",
       mode: "mutable",
       purpose: "Work on issue 24",
       createdAt: "2026-04-25T09:00:00.000Z",

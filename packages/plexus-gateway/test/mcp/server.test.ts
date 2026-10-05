@@ -210,6 +210,17 @@ const runningState = {
       id: "dev",
       imageName: "Project123-dev",
       assignedPort: 7123,
+      mcpServers: [
+        {
+          id: "dev",
+          endpoint: {
+            transport: "http",
+            host: "127.0.0.1",
+            port: 7123,
+            path: "/",
+          },
+        },
+      ],
       status: "running",
     },
   ],
@@ -231,7 +242,7 @@ describe("gateway server", () => {
     ]);
   });
 
-  it("uses the gateway surface as the agent-facing Pharo proxy", async () => {
+  it("uses the gateway surface as the gateway Pharo proxy", async () => {
     const server = createGatewayServerWithOptions(
       new PlexusGateway({
         pharoTools: [
@@ -272,7 +283,7 @@ describe("gateway server", () => {
           {
             name: "pharo_eval",
             inputSchema: {
-              required: ["imageId", "code"],
+              required: ["mcpServerId", "code"],
             },
           },
         ],
@@ -290,7 +301,7 @@ describe("gateway server", () => {
     }
   });
 
-  it("refreshes agent-facing Pharo tool schemas from registered image routes", async () => {
+  it("refreshes gateway Pharo tool schemas from registered image routes", async () => {
     const imageRouter = new MutableToolListImageRouter([
       repositoryOperationTool(["create"]),
     ]);
@@ -337,7 +348,7 @@ describe("gateway server", () => {
                   enum: ["create"],
                 }),
               }),
-              required: ["imageId", "operation"],
+              required: ["mcpServerId", "operation"],
             }),
           }),
         ],
@@ -355,7 +366,7 @@ describe("gateway server", () => {
                   enum: ["create", "fetch"],
                 }),
               }),
-              required: ["imageId", "operation"],
+              required: ["mcpServerId", "operation"],
             }),
           }),
         ],
@@ -416,6 +427,17 @@ describe("gateway server", () => {
               id: "baseline",
               imageName: "Project123-baseline",
               assignedPort: 7124,
+              mcpServers: [
+                {
+                  id: "baseline",
+                  endpoint: {
+                    transport: "http",
+                    host: "127.0.0.1",
+                    port: 7124,
+                    path: "/",
+                  },
+                },
+              ],
               status: "running",
             },
           ],
@@ -436,7 +458,7 @@ describe("gateway server", () => {
                   enum: ["create"],
                 }),
               }),
-              required: ["imageId", "operation"],
+              required: ["mcpServerId", "operation"],
             }),
           }),
         ],
@@ -461,7 +483,7 @@ describe("gateway server", () => {
       pharoScope: {
         targetId: runningState.targetId,
       },
-      pharoToolSchemaImageId: "baseline",
+      pharoToolSchemaMcpServerId: "baseline",
     });
     const server = createGatewayServerWithOptions(gateway, {
       surface: "gateway",
@@ -490,6 +512,17 @@ describe("gateway server", () => {
               id: "baseline",
               imageName: "Project123-baseline",
               assignedPort: 7124,
+              mcpServers: [
+                {
+                  id: "baseline",
+                  endpoint: {
+                    transport: "http",
+                    host: "127.0.0.1",
+                    port: 7124,
+                    path: "/",
+                  },
+                },
+              ],
               status: "running",
             },
           ],
@@ -510,7 +543,7 @@ describe("gateway server", () => {
                   enum: ["create", "fetch"],
                 }),
               }),
-              required: ["imageId", "operation"],
+              required: ["mcpServerId", "operation"],
             }),
           }),
         ],
@@ -521,7 +554,7 @@ describe("gateway server", () => {
     }
   });
 
-  it("defaults direct server creation to the agent-facing gateway surface", async () => {
+  it("defaults direct server creation to the gateway surface", async () => {
     const server = createGatewayServerWithOptions(
       new PlexusGateway({
         pharoTools: [
@@ -590,7 +623,7 @@ describe("gateway server", () => {
         client.callTool({
           name: "plexus_route_to_image",
           arguments: {
-            imageId: "dev",
+            mcpServerId: "dev",
             toolName: "pharo_eval",
           },
         }),
@@ -637,7 +670,7 @@ describe("gateway server", () => {
         client.callTool({
           name: "plexus_route_to_image",
           arguments: {
-            imageId: "dev",
+            mcpServerId: "dev",
             toolName: "pharo_eval",
           },
         }),
@@ -678,7 +711,7 @@ describe("gateway server", () => {
           "--host",
           "0.0.0.0",
           "--mcp-path",
-          "/agent-mcp",
+          "/mcp-alt",
           "--control-mcp-path",
           "/private-mcp",
         ],
@@ -690,7 +723,7 @@ describe("gateway server", () => {
       transport: "http",
       host: "0.0.0.0",
       port: 8123,
-      mcpPath: "/agent-mcp",
+      mcpPath: "/mcp-alt",
       routeControlMcpPath: "/private-mcp",
     });
   });
@@ -716,13 +749,13 @@ describe("gateway server", () => {
         PLEXUS_WORKSPACE_ID: "task-123",
         PLEXUS_TARGET_ID: "project-123--task-123",
         PLEXUS_PHARO_TOOLS_JSON: JSON.stringify(pharoTools),
-        PLEXUS_PHARO_TOOL_SCHEMA_IMAGE_ID: "baseline",
+        PLEXUS_PHARO_TOOL_SCHEMA_MCP_SERVER_ID: "baseline",
       }),
     ).toEqual({
       surface: "gateway",
       exposeRawRoutingTool: false,
       pharoTools,
-      pharoToolSchemaImageId: "baseline",
+      pharoToolSchemaMcpServerId: "baseline",
       pharoScope: {
         projectId: "project-123",
         workspaceId: "task-123",
@@ -731,7 +764,7 @@ describe("gateway server", () => {
     });
   });
 
-  it("defaults environment-created servers to the agent-facing gateway surface", () => {
+  it("defaults environment-created servers to the gateway surface", () => {
     expect(parseGatewayEnvironmentOptions({})).toMatchObject({
       surface: "gateway",
       exposeRawRoutingTool: false,
@@ -749,7 +782,7 @@ describe("gateway server", () => {
     }
   });
 
-  it("creates an agent-facing Pharo proxy gateway from environment", () => {
+  it("creates an gateway Pharo proxy gateway from environment", () => {
     const { gateway, serverOptions } = createGatewayFromEnvironment({
       PLEXUS_GATEWAY_SURFACE: "gateway",
       PLEXUS_PROJECT_ID: "project-123",
@@ -776,7 +809,7 @@ describe("gateway server", () => {
       {
         name: "pharo_eval",
         inputSchema: {
-          required: ["imageId", "code"],
+          required: ["mcpServerId", "code"],
         },
       },
     ]);
@@ -801,7 +834,7 @@ describe("gateway server", () => {
     });
   });
 
-  it("keeps the default HTTP /mcp path agent-facing", async () => {
+  it("keeps the default HTTP /mcp path gateway", async () => {
     const port = await freePort();
     const server = await startGatewayHttpServer({
       host: "127.0.0.1",

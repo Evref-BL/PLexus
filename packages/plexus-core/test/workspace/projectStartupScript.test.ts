@@ -97,7 +97,7 @@ describe("project startup scripts", () => {
       "'C:/dev/code/git/my-project/pharo/load-mcp.st' asFileReference",
     );
     expect(source).toContain("githubUser: 'Evref-BL' project: 'MCP'");
-    expect(source).toContain("commitish: 'main' path: 'src'");
+    expect(source).toContain("commitish: 'v1.2.3' path: 'src'");
     expect(source).toContain("baseline: 'MCP'");
     expect(source).not.toContain("PLexusGitTransport");
     expect(source).not.toContain("IceCredentialsProvider");

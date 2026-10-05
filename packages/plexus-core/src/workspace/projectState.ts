@@ -48,6 +48,11 @@ export interface ProjectImageMcpEndpoint {
   path: string;
 }
 
+export interface ProjectImageMcpServer {
+  id: string;
+  endpoint: ProjectImageMcpEndpoint;
+}
+
 export interface ProjectImageTemplateCreationSourceState {
   kind: "template";
   profileId?: string;
@@ -61,7 +66,7 @@ export type ProjectImageCreationSourceState =
 export interface ProjectImageCreationRouteState {
   serverName: "pharo_gateway";
   targetKey: "targetId";
-  imageArgument: "imageId";
+  imageArgument: "mcpServerId";
   imageId: string;
 }
 
@@ -129,10 +134,6 @@ export type ProjectImageRepositoryWorkspaceCleanupDecision =
 export type ProjectImageLeaseOwnerKind =
   | "target"
   | "workspace"
-  | "thread"
-  | "session"
-  | "workItem"
-  | "agent"
   | "human"
   | "unknown";
 export type ProjectImageLeaseMode = "mutable" | "read-only";
@@ -233,7 +234,7 @@ export interface ProjectImageState {
   imageName: string;
   displayMode?: ProjectImageDisplayMode;
   assignedPort?: number;
-  mcpEndpoint?: ProjectImageMcpEndpoint;
+  mcpServers?: ProjectImageMcpServer[];
   pid?: number;
   status: ProjectImageStatus;
   creation?: ProjectImageCreationState;

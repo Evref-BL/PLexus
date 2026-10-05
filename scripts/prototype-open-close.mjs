@@ -7,7 +7,7 @@ import {
   createStdioPharoLauncherMcpClient,
   loadProjectState,
   openProject,
-} from "@evref-bl/plexus-core";
+} from "../packages/plexus-core/dist/index.js";
 
 function parseArgs(argv) {
   const options = {
@@ -83,8 +83,7 @@ function parseArgs(argv) {
     path.join(os.tmpdir(), "plexus-prototype-open-close-state");
   options.workspaceId ??=
     process.env.PLEXUS_TEST_WORKSPACE_ID ??
-    process.env.PLEXUS_WORKSPACE_ID ??
-    process.env.VIBE_KANBAN_WORKSPACE_ID;
+    process.env.PLEXUS_WORKSPACE_ID;
   options.targetId ??=
     process.env.PLEXUS_TEST_TARGET_ID ?? process.env.PLEXUS_TARGET_ID;
   options.loadScript ??=
@@ -139,11 +138,8 @@ function writePrototypeProjectConfig(options) {
     ...(options.port ? { port: options.port } : {}),
   };
   const config = {
+    id: options.projectId,
     name: "plexus-prototype-open-close",
-    kanban: {
-      provider: "vibe-kanban",
-      projectId: options.projectId,
-    },
     images: [
       {
         id: options.imageId,

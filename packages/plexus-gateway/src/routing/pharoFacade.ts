@@ -1,9 +1,9 @@
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 
-const imageIdSchema = {
+const mcpServerIdSchema = {
   type: "string",
   minLength: 1,
-  description: "PLexus workspace-scoped image handle to route this Pharo tool call to.",
+  description: "PLexus MCP server handle to route this Pharo tool call to.",
 } as const;
 
 function isObject(value: unknown): value is Record<string, unknown> {
@@ -37,7 +37,7 @@ function unique(values: string[]): string[] {
 export function buildPharoFacadeTool(tool: Tool): Tool {
   const inputSchema = schemaObject(tool.inputSchema);
   const properties = schemaProperties(inputSchema.properties);
-  const required = unique(["imageId", ...schemaRequired(inputSchema.required)]);
+  const required = unique(["mcpServerId", ...schemaRequired(inputSchema.required)]);
 
   return {
     ...tool,
@@ -46,7 +46,7 @@ export function buildPharoFacadeTool(tool: Tool): Tool {
       type: "object",
       properties: {
         ...properties,
-        imageId: imageIdSchema,
+        mcpServerId: mcpServerIdSchema,
       },
       required,
     },
@@ -58,7 +58,7 @@ export function buildPharoFacadeTools(tools: readonly Tool[]): Tool[] {
 }
 
 export interface PharoFacadeArguments {
-  imageId: string;
+  mcpServerId: string;
   argumentsValue: Record<string, unknown>;
 }
 
@@ -74,14 +74,14 @@ export function parsePharoFacadeArguments(input: unknown): PharoFacadeArguments 
     throw new PharoFacadeInputError("Pharo facade input must be an object");
   }
 
-  const imageId = input.imageId;
-  if (typeof imageId !== "string" || imageId.length === 0) {
-    throw new PharoFacadeInputError("imageId is required");
+  const mcpServerId = input.mcpServerId;
+  if (typeof mcpServerId !== "string" || mcpServerId.length === 0) {
+    throw new PharoFacadeInputError("mcpServerId is required");
   }
 
-  const { imageId: _imageId, ...argumentsValue } = input;
+  const { mcpServerId: _mcpServerId, ...argumentsValue } = input;
   return {
-    imageId,
+    mcpServerId,
     argumentsValue,
   };
 }

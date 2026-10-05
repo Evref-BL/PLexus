@@ -121,8 +121,8 @@ function imageLease(
   overrides: Partial<ProjectImageLeaseState> = {},
 ): ProjectImageLeaseState {
   return {
-    ownerId: "thread-a",
-    ownerKind: "thread",
+    ownerId: "workspace-a",
+    ownerKind: "workspace",
     mode: "mutable",
     purpose: "Investigate issue 24",
     createdAt: "2026-05-18T09:00:00.000Z",
@@ -165,21 +165,21 @@ describe("scoped pharo launcher facade", () => {
   it("reads image lease ownership from scoped launcher environment", () => {
     expect(
       scopedImageLeaseOptionsFromEnvironment({
-        PLEXUS_IMAGE_LEASE_OWNER_ID: "thread-456",
-        PLEXUS_IMAGE_LEASE_OWNER_KIND: "work-item",
+        PLEXUS_IMAGE_LEASE_OWNER_ID: "workspace-456",
+        PLEXUS_IMAGE_LEASE_OWNER_KIND: "workspace",
         PLEXUS_IMAGE_LEASE_PURPOSE: "Work on issue 24",
         PLEXUS_IMAGE_LEASE_REPOSITORY_PATH: "/worktrees/project-a",
-        PLEXUS_IMAGE_LEASE_BRANCH: "codex/project-a-24",
+        PLEXUS_IMAGE_LEASE_BRANCH: "feature/project-a-24",
         PLEXUS_IMAGE_LEASE_TTL_MS: "3600000",
         PLEXUS_IMAGE_LEASE_CLEANUP_COMMAND:
           "plexus project close /worktrees/project-a",
       }),
     ).toEqual({
-      ownerId: "thread-456",
-      ownerKind: "workItem",
+      ownerId: "workspace-456",
+      ownerKind: "workspace",
       purpose: "Work on issue 24",
       repositoryPath: "/worktrees/project-a",
-      branch: "codex/project-a-24",
+      branch: "feature/project-a-24",
       ttlMs: 3_600_000,
       cleanupCommand: "plexus project close /worktrees/project-a",
     });
@@ -234,7 +234,7 @@ describe("scoped pharo launcher facade", () => {
           ...runningState().images[0],
           lease: imageLease({
             repositoryPath: "/worktrees/project-a",
-            branch: "codex/project-a-24",
+            branch: "feature/project-a-24",
             cleanupCommand: "plexus project close /worktrees/project-a",
           }),
         },
@@ -250,12 +250,12 @@ describe("scoped pharo launcher facade", () => {
     expect(result.images[0]).toMatchObject({
       imageId: "dev",
       lease: {
-        ownerId: "thread-a",
-        ownerKind: "thread",
+        ownerId: "workspace-a",
+        ownerKind: "workspace",
         mode: "mutable",
         purpose: "Investigate issue 24",
         repositoryPath: "/worktrees/project-a",
-        branch: "codex/project-a-24",
+        branch: "feature/project-a-24",
         cleanupCommand: "plexus project close /worktrees/project-a",
       },
     });
@@ -437,7 +437,7 @@ describe("scoped pharo launcher facade", () => {
           route: {
             serverName: "pharo_gateway",
             targetKey: "targetId",
-            imageArgument: "imageId",
+            imageArgument: "mcpServerId",
             imageId: "dev",
           },
         },
@@ -945,8 +945,8 @@ describe("scoped pharo launcher facade", () => {
         stateRoot,
         workspaceId: "worktree-a",
         imageLease: {
-          ownerId: "thread-b",
-          ownerKind: "thread",
+          ownerId: "workspace-b",
+          ownerKind: "workspace",
           purpose: "Work on a different issue",
         },
         now: () => new Date("2026-05-18T12:00:00.000Z"),
@@ -964,7 +964,7 @@ describe("scoped pharo launcher facade", () => {
         },
       }).stopImage("dev"),
     ).rejects.toThrow(
-      "Image dev is leased to thread thread-a for Investigate issue 24 until 2026-05-18T13:00:00.000Z",
+      "Image dev is leased to workspace workspace-a for Investigate issue 24 until 2026-05-18T13:00:00.000Z",
     );
     expect(stops).toEqual([]);
   });
@@ -990,8 +990,8 @@ describe("scoped pharo launcher facade", () => {
       stateRoot,
       workspaceId: "worktree-a",
       imageLease: {
-        ownerId: "thread-b",
-        ownerKind: "thread",
+        ownerId: "workspace-b",
+        ownerKind: "workspace",
         purpose: "Continue issue 24",
       },
       now: () => new Date("2026-05-18T12:00:00.000Z"),
@@ -1026,8 +1026,8 @@ describe("scoped pharo launcher facade", () => {
       fs.readFileSync(statePath(projectRoot, stateRoot), "utf8"),
     ) as ProjectState;
     expect(savedState.images[0].lease).toEqual({
-      ownerId: "thread-b",
-      ownerKind: "thread",
+      ownerId: "workspace-b",
+      ownerKind: "workspace",
       mode: "mutable",
       purpose: "Continue issue 24",
       createdAt: "2026-05-18T12:00:00.000Z",
@@ -1138,12 +1138,17 @@ describe("scoped pharo launcher facade", () => {
           images: [
             {
               ...devImageState,
-              mcpEndpoint: {
-                transport: "http" as const,
-                host: "127.0.0.1",
-                port: 7123,
-                path: "/mcp",
-              },
+              mcpServers: [
+                {
+                  id: "dev",
+                  endpoint: {
+                    transport: "http" as const,
+                    host: "127.0.0.1",
+                    port: 7123,
+                    path: "/mcp",
+                  },
+                },
+              ],
               pharoMcpContract: {
                 status: "matching" as const,
                 expectedId: "project-contract",
@@ -1222,8 +1227,8 @@ describe("scoped pharo launcher facade", () => {
         },
         route: {
           serverName: "pharo_gateway",
-          requiredArgument: "imageId",
-          imageId: "dev",
+          requiredArgument: "mcpServerId",
+          mcpServerId: "dev",
           status: "routable",
           routable: true,
           endpointRecorded: true,
@@ -1322,12 +1327,17 @@ describe("scoped pharo launcher facade", () => {
         {
           id: "dev",
           imageName: "MyProject-worktree-a-dev",
-          mcpEndpoint: {
-            transport: "http",
-            host: "127.0.0.1",
-            port: 7432,
-            path: "/mcp",
-          },
+          mcpServers: [
+            {
+              id: "dev",
+              endpoint: {
+                transport: "http",
+                host: "127.0.0.1",
+                port: 7432,
+                path: "/mcp",
+              },
+            },
+          ],
           pid: 1234,
           status: "running",
           displayMode: "headless",

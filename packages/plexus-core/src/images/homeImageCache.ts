@@ -227,7 +227,7 @@ export interface HomeImageCacheLiveOperation {
 
 export interface HomeImageCacheMutationApproval {
   approved: true;
-  runnerId: string;
+  approvalId: string;
 }
 
 export interface HomeImageCachePlan {
@@ -1332,9 +1332,9 @@ function requireMutationApproval(
   approval: HomeImageCacheMutationApproval | undefined,
   operation: string,
 ): HomeImageCacheMutationApproval {
-  if (!approval?.approved || approval.runnerId.length === 0) {
+  if (!approval?.approved || approval.approvalId.length === 0) {
     throw new HomeImageCacheError(
-      `${operation} requires an approved home image cache runner`,
+      `${operation} requires approved home image cache mutation`,
     );
   }
 
@@ -1433,7 +1433,7 @@ async function prepareHomeImageCacheEntry(options: {
   const lock = tryAcquireHomeImageCacheLock({
     lockPath: options.plan.lockPath,
     key: options.plan.key,
-    owner: options.approval.runnerId,
+    owner: options.approval.approvalId,
     now: options.now,
   });
   if (!lock.acquired) {

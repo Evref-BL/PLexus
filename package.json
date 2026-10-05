@@ -2,7 +2,7 @@
   "name": "plexus",
   "version": "0.1.0",
   "private": true,
-  "description": "Agentic orchestration tools for Pharo projects using Git worktrees, pharo-launcher-mcp, and image-scoped Pharo workers.",
+  "description": "Pharo image lifecycle management and MCP server forwarding.",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
@@ -22,7 +22,7 @@
   },
   "scripts": {
     "check": "npm run typecheck && npm run build && npm test",
-    "build": "npm run build -w @evref-bl/plexus-core && npm run build -w @evref-bl/plexus-gateway",
+    "build": "npm run build -w @evref-bl/plexus && npm run build -w @evref-bl/plexus-gateway",
     "test": "npm run test --workspaces && npm run test:smoke-policy",
     "coverage": "npm run coverage --workspaces",
     "coverage:all": "npm run coverage",

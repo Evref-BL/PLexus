@@ -122,7 +122,7 @@ function clearImageEndpointRuntimeState(options: {
       imageId: options.imageState.id,
     }),
   );
-  delete options.imageState.mcpEndpoint;
+  delete options.imageState.mcpServers;
 }
 
 function repositoryWorkspaceCleanupFailure(
