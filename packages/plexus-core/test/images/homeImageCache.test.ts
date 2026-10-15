@@ -905,7 +905,7 @@ describe("home image cache", () => {
               "cacheKey=abc123",
               "source=metacello",
               "loadScript=/repo/pharo/load-mcp.st",
-              "repository=github://Evref-BL/MCP:v1.2.3/src",
+              "repository=github://Evref-BL/MCP:v1.3.0/src",
               "baseline=MCP",
               `message=${statusMessage}`,
               "",

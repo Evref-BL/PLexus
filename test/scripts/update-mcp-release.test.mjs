@@ -25,10 +25,10 @@ function fixture() {
   }, null, 2)}\n`);
   fs.writeFileSync(
     path.join(root, "packages/plexus-core/src/workspace/projectStartupScript.ts"),
-    'commitish: "v1.2.3"\n',
+    'commitish: "v1.3.0"\n',
   );
-  fs.writeFileSync(path.join(root, "README.md"), "MCP v1.2.3\n");
-  fs.writeFileSync(path.join(root, "test/expected.txt"), "v1.2.3\n");
+  fs.writeFileSync(path.join(root, "README.md"), "MCP v1.3.0\n");
+  fs.writeFileSync(path.join(root, "test/expected.txt"), "v1.3.0\n");
   return root;
 }
 
@@ -37,7 +37,7 @@ test("updates the pinned MCP release and bumps PLexus patch version", () => {
   try {
     assert.deepEqual(updateMcpRelease(root, "v1.3.0"), {
       changed: true,
-      previous: "v1.2.3",
+      previous: "v1.3.0",
       tag: "v1.3.0",
       version: "0.1.1",
     });
@@ -51,9 +51,9 @@ test("updates the pinned MCP release and bumps PLexus patch version", () => {
 test("does nothing when the latest MCP release is already pinned", () => {
   const root = fixture();
   try {
-    assert.deepEqual(updateMcpRelease(root, "v1.2.3"), {
+    assert.deepEqual(updateMcpRelease(root, "v1.3.0"), {
       changed: false,
-      current: "v1.2.3",
+      current: "v1.3.0",
     });
   } finally {
     fs.rmSync(root, { recursive: true, force: true });

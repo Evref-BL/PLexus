@@ -1259,7 +1259,7 @@ describe("project open", () => {
             "imageId=dev",
             "source=metacello",
             `loadScript=${path.join(projectRoot, "pharo", "load-mcp.st")}`,
-            "repository=github://Evref-BL/MCP:v1.2.3/src",
+            "repository=github://Evref-BL/MCP:v1.3.0/src",
             "baseline=MCP",
             `message=${statusMessage}`,
             "",
@@ -1309,7 +1309,7 @@ describe("project open", () => {
     expect(failedState?.images[0].pharoMcpLoad).toMatchObject({
       state: "failed",
       source: "metacello",
-      repository: "github://Evref-BL/MCP:v1.2.3/src",
+      repository: "github://Evref-BL/MCP:v1.3.0/src",
       baseline: "MCP",
       error: statusMessage,
     });
@@ -1351,7 +1351,7 @@ describe("project open", () => {
             "status=failed",
             "imageId=dev",
             "source=metacello",
-            "repository=github://Evref-BL/MCP:v1.2.3/src",
+            "repository=github://Evref-BL/MCP:v1.3.0/src",
             "baseline=MCP",
             `message=${statusMessage}`,
             "",
@@ -1415,7 +1415,7 @@ describe("project open", () => {
             "source=loadScript",
             `loadScript=${loadScriptPath}`,
             "loadPolicy=always",
-            "configuredRepositoryHint=github://Evref-BL/MCP:v1.2.3/src",
+            "configuredRepositoryHint=github://Evref-BL/MCP:v1.3.0/src",
             "baseline=MCP",
             "",
           ].join("\n"),
@@ -1443,7 +1443,7 @@ describe("project open", () => {
       source: "loadScript",
       loadScript: loadScriptPath,
       loadPolicy: "always",
-      configuredRepositoryHint: "github://Evref-BL/MCP:v1.2.3/src",
+      configuredRepositoryHint: "github://Evref-BL/MCP:v1.3.0/src",
       baseline: "MCP",
     });
     expect(pharoMcpLoad).not.toHaveProperty("repository");

@@ -1260,7 +1260,7 @@ describe("project lifecycle tools", () => {
             ),
             source: "loadScript",
             loadScript: loadScriptPath,
-            configuredRepositoryHint: "github://Evref-BL/MCP:v1.2.3/src",
+            configuredRepositoryHint: "github://Evref-BL/MCP:v1.3.0/src",
             baseline: "MCP",
           },
         },
@@ -1282,7 +1282,7 @@ describe("project lifecycle tools", () => {
       state: "loaded",
       source: "loadScript",
       loadScript: loadScriptPath,
-      configuredRepositoryHint: "github://Evref-BL/MCP:v1.2.3/src",
+      configuredRepositoryHint: "github://Evref-BL/MCP:v1.3.0/src",
       baseline: "MCP",
     });
     expect(pharoMcpLoad).not.toHaveProperty("repository");

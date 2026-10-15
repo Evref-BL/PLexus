@@ -61,7 +61,7 @@ Create `plexus.project.json` at the project root:
 }
 ```
 
-PLexus defaults to MCP-Pharo `v1.2.3` when it needs to load the standard Pharo
+PLexus defaults to MCP-Pharo `v1.3.0` when it needs to load the standard Pharo
 MCP server.
 
 For a project-local gateway, configure paths under `runtime.gateway` with
