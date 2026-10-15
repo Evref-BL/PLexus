@@ -106,6 +106,7 @@ export type GatewaySurface = "route-control" | "gateway";
 export interface GatewayServerOptions {
   surface?: GatewaySurface;
   exposeRawRoutingTool?: boolean;
+  fixedMcpServerId?: string;
 }
 
 export interface GatewayEnvironmentOptions {
@@ -143,6 +144,7 @@ async function visibleTools(
   gateway: PlexusGateway,
   surface: GatewaySurface,
   exposeRawRoutingTool: boolean,
+  fixedMcpServerId: string | undefined,
 ): Promise<Tool[]> {
   const pharoTools = pharoToolsVisible(surface)
     ? await gateway.refreshPharoTools()
@@ -155,8 +157,32 @@ async function visibleTools(
     ...(!routeControlToolsVisible(surface) && exposeRawRoutingTool
       ? visibleRawRoutingTools(exposeRawRoutingTool)
       : []),
-    ...pharoTools,
+    ...pharoTools.map((tool) =>
+      fixedMcpServerId ? withoutMcpServerId(tool) : tool,
+    ),
   ];
+}
+
+function withoutMcpServerId(tool: Tool): Tool {
+  const inputSchema = tool.inputSchema as Record<string, unknown>;
+  const properties: Record<string, object> =
+    inputSchema.properties && typeof inputSchema.properties === "object"
+      ? { ...(inputSchema.properties as Record<string, object>) }
+      : {};
+  delete properties.mcpServerId;
+  const required = Array.isArray(inputSchema.required)
+    ? inputSchema.required.filter((value) => value !== "mcpServerId")
+    : [];
+
+  return {
+    ...tool,
+    inputSchema: {
+      ...inputSchema,
+      type: "object",
+      properties,
+      required,
+    },
+  };
 }
 
 function parseBooleanEnv(value: string | undefined, name: string): boolean {
@@ -279,6 +305,7 @@ export function createGatewayServerWithOptions(
 ): Server {
   const surface = options.surface ?? "gateway";
   const exposeRawRoutingTool = options.exposeRawRoutingTool ?? false;
+  const fixedMcpServerId = options.fixedMcpServerId;
   const server = new Server(
     {
       name: "plexus-gateway",
@@ -292,16 +319,25 @@ export function createGatewayServerWithOptions(
   );
 
   server.setRequestHandler(ListToolsRequestSchema, async () => ({
-    tools: await visibleTools(gateway, surface, exposeRawRoutingTool),
+    tools: await visibleTools(
+      gateway,
+      surface,
+      exposeRawRoutingTool,
+      fixedMcpServerId,
+    ),
   }));
 
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const detail = toolResultDetailFromArguments(request.params.arguments);
 
     if (gateway.isPharoTool(request.params.name) && pharoToolsVisible(surface)) {
+      const argumentsValue = request.params.arguments ?? {};
+      const { mcpServerId: _mcpServerId, ...toolArguments } = argumentsValue;
       const result = await gateway.callPharoTool(
         request.params.name,
-        request.params.arguments ?? {},
+        fixedMcpServerId
+          ? { ...toolArguments, mcpServerId: fixedMcpServerId }
+          : argumentsValue,
       );
 
       if (!result.ok) {

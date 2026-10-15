@@ -301,6 +301,62 @@ describe("gateway server", () => {
     }
   });
 
+  it("can bind a gateway surface to one MCP server without exposing its route key", async () => {
+    const gateway = new PlexusGateway({
+      imageRouter: new MutableToolListImageRouter([
+        {
+          name: "pharo_eval",
+          inputSchema: {
+            type: "object",
+            properties: { code: { type: "string" } },
+            required: ["code"],
+          },
+        },
+      ]),
+      pharoScope: { targetId: runningState.targetId },
+    });
+    await gateway.registerProjectRoute({
+      projectRoot: "C:/dev/code/project-123",
+      statePath: "state.json",
+      state: runningState,
+    });
+    const server = createGatewayServerWithOptions(gateway, {
+      fixedMcpServerId: "dev",
+    });
+    const client = new Client(
+      { name: "plexus-gateway-test", version: "0.0.0" },
+      { capabilities: {} },
+    );
+    const [clientTransport, serverTransport] =
+      InMemoryTransport.createLinkedPair();
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+
+    try {
+      const tools = await client.listTools();
+      expect(tools.tools).toEqual([
+        expect.objectContaining({
+          name: "pharo_eval",
+          inputSchema: expect.objectContaining({
+            properties: { code: { type: "string" } },
+            required: ["code"],
+          }),
+        }),
+      ]);
+      await expect(
+        client.callTool({
+          name: "pharo_eval",
+          arguments: { code: "42", mcpServerId: "ignored" },
+        }),
+      ).resolves.toMatchObject({
+        content: [{ type: "text", text: "routed output" }],
+      });
+    } finally {
+      await client.close();
+      await server.close();
+    }
+  });
+
   it("refreshes gateway Pharo tool schemas from registered image routes", async () => {
     const imageRouter = new MutableToolListImageRouter([
       repositoryOperationTool(["create"]),
