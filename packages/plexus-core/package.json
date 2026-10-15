@@ -10,9 +10,15 @@
     "directory": "packages/plexus-core"
   },
   "type": "module",
+  "main": "./dist/index.js",
   "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
     "./package.json": "./package.json"
   },
+  "types": "./dist/index.d.ts",
   "bin": {
     "plexus": "dist/cli.js"
   },
