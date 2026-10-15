@@ -25,6 +25,7 @@ import {
 import type { PharoLauncherMcpToolClient } from "../../src/launcher/pharoLauncherMcpClient.js";
 import { parseProjectConfig, type ProjectConfig } from "../../src/config/projectConfig.js";
 import type { ProjectImageState } from "../../src/workspace/projectState.js";
+import { defaultPharoMcpMetacelloRepositoryLocation } from "../../src/workspace/projectStartupScript.js";
 
 const tempDirs: string[] = [];
 
@@ -905,7 +906,7 @@ describe("home image cache", () => {
               "cacheKey=abc123",
               "source=metacello",
               "loadScript=/repo/pharo/load-mcp.st",
-              "repository=github://Evref-BL/MCP:v1.2.3/src",
+              `repository=${defaultPharoMcpMetacelloRepositoryLocation}`,
               "baseline=MCP",
               `message=${statusMessage}`,
               "",

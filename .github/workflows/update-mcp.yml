@@ -28,7 +28,17 @@ jobs:
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
 
       - name: Update the pin and package version
-        run: node scripts/update-mcp-release.mjs "${{ steps.release.outputs.tag }}"
+        env:
+          MCP_TAG: ${{ steps.release.outputs.tag }}
+        run: |
+          pin_file="packages/plexus-core/src/workspace/projectStartupScript.ts"
+          current_tag="$(sed -nE 's/.*commitish: "(v[0-9]+\.[0-9]+\.[0-9]+)".*/\1/p' "$pin_file")"
+          test -n "$current_tag"
+          if [[ "$current_tag" == "$MCP_TAG" ]]; then
+            exit 0
+          fi
+          sed -i -E "s/(commitish: \")v[0-9]+\.[0-9]+\.[0-9]+/\1${MCP_TAG}/" "$pin_file"
+          npm version patch --workspaces --include-workspace-root --no-git-tag-version
 
       - name: Create or update proposal
         uses: peter-evans/create-pull-request@v7

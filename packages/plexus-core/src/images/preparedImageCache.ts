@@ -14,6 +14,7 @@ import {
 } from "../workspace/projectState.js";
 import {
   defaultPharoMcpMetacelloRepository,
+  pharoMcpMetacelloRepositoryLocation,
   type PharoMcpMetacelloRepository,
 } from "../workspace/projectStartupScript.js";
 import {
@@ -221,7 +222,7 @@ export function generatePreparedImageCacheScript(
     options.projectRoot,
     options.preparedImage,
   );
-  const repositoryLabel = `github://${repository.githubUser}/${repository.project}:${repository.commitish}/${repository.path}`;
+  const repositoryLabel = pharoMcpMetacelloRepositoryLocation(repository);
   const loadBlock = options.loadStatusPath
     ? `loadStatusFile := ${smalltalkPath(options.loadStatusPath)} asFileReference.
 loadStatusFile exists ifTrue: [ loadStatusFile delete ].

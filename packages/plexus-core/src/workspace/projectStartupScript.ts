@@ -48,6 +48,15 @@ export interface PharoMcpMetacelloRepository {
   baseline: string;
 }
 
+export function pharoMcpMetacelloRepositoryLocation(
+  repository: PharoMcpMetacelloRepository,
+): string {
+  return `github://${repository.githubUser}/${repository.project}:${repository.commitish}/${repository.path}`;
+}
+
+export const defaultPharoMcpMetacelloRepositoryLocation =
+  pharoMcpMetacelloRepositoryLocation(defaultPharoMcpMetacelloRepository);
+
 export interface ProjectScriptsDirectoryPathOptions
   extends ProjectStatePathOptions {}
 
@@ -628,7 +637,7 @@ function generatePharoMcpLoadScript(options: {
   failureBehavior?: "throw" | "record";
   loadPolicy?: "ifMissing" | "always" | "never";
 }): string {
-  const repositoryLabel = `github://${options.repository.githubUser}/${options.repository.project}:${options.repository.commitish}/${options.repository.path}`;
+  const repositoryLabel = pharoMcpMetacelloRepositoryLocation(options.repository);
   const shouldThrowOnFailure = options.failureBehavior !== "record";
   const failureHandler = shouldThrowOnFailure
     ? `    error pass`
