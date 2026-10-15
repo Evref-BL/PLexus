@@ -34,6 +34,7 @@ import {
   saveProjectState,
   type ProjectState,
 } from "../../src/workspace/projectState.js";
+import { defaultPharoMcpMetacelloRepositoryLocation } from "../../src/workspace/projectStartupScript.js";
 
 const tempDirs: string[] = [];
 const gitEnv = {
@@ -1260,7 +1261,7 @@ describe("project lifecycle tools", () => {
             ),
             source: "loadScript",
             loadScript: loadScriptPath,
-            configuredRepositoryHint: "github://Evref-BL/MCP:v1.2.3/src",
+            configuredRepositoryHint: defaultPharoMcpMetacelloRepositoryLocation,
             baseline: "MCP",
           },
         },
@@ -1282,7 +1283,7 @@ describe("project lifecycle tools", () => {
       state: "loaded",
       source: "loadScript",
       loadScript: loadScriptPath,
-      configuredRepositoryHint: "github://Evref-BL/MCP:v1.2.3/src",
+      configuredRepositoryHint: defaultPharoMcpMetacelloRepositoryLocation,
       baseline: "MCP",
     });
     expect(pharoMcpLoad).not.toHaveProperty("repository");

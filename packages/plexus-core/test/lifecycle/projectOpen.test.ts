@@ -25,6 +25,7 @@ import {
   saveProjectState,
   type ProjectState,
 } from "../../src/workspace/projectState.js";
+import { defaultPharoMcpMetacelloRepositoryLocation } from "../../src/workspace/projectStartupScript.js";
 
 const tempDirs: string[] = [];
 const fixedNow = () => new Date("2026-04-25T10:00:00.000Z");
@@ -1259,7 +1260,7 @@ describe("project open", () => {
             "imageId=dev",
             "source=metacello",
             `loadScript=${path.join(projectRoot, "pharo", "load-mcp.st")}`,
-            "repository=github://Evref-BL/MCP:v1.2.3/src",
+            `repository=${defaultPharoMcpMetacelloRepositoryLocation}`,
             "baseline=MCP",
             `message=${statusMessage}`,
             "",
@@ -1309,7 +1310,7 @@ describe("project open", () => {
     expect(failedState?.images[0].pharoMcpLoad).toMatchObject({
       state: "failed",
       source: "metacello",
-      repository: "github://Evref-BL/MCP:v1.2.3/src",
+      repository: defaultPharoMcpMetacelloRepositoryLocation,
       baseline: "MCP",
       error: statusMessage,
     });
@@ -1351,7 +1352,7 @@ describe("project open", () => {
             "status=failed",
             "imageId=dev",
             "source=metacello",
-            "repository=github://Evref-BL/MCP:v1.2.3/src",
+            `repository=${defaultPharoMcpMetacelloRepositoryLocation}`,
             "baseline=MCP",
             `message=${statusMessage}`,
             "",
@@ -1415,7 +1416,7 @@ describe("project open", () => {
             "source=loadScript",
             `loadScript=${loadScriptPath}`,
             "loadPolicy=always",
-            "configuredRepositoryHint=github://Evref-BL/MCP:v1.2.3/src",
+            `configuredRepositoryHint=${defaultPharoMcpMetacelloRepositoryLocation}`,
             "baseline=MCP",
             "",
           ].join("\n"),
@@ -1443,7 +1444,7 @@ describe("project open", () => {
       source: "loadScript",
       loadScript: loadScriptPath,
       loadPolicy: "always",
-      configuredRepositoryHint: "github://Evref-BL/MCP:v1.2.3/src",
+      configuredRepositoryHint: defaultPharoMcpMetacelloRepositoryLocation,
       baseline: "MCP",
     });
     expect(pharoMcpLoad).not.toHaveProperty("repository");
