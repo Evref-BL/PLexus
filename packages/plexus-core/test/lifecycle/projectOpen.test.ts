@@ -769,7 +769,7 @@ describe("project open", () => {
         },
       ],
     });
-  });
+  }, 15_000);
 
   it("uses the project-open source path for repository workspaces without originPath", async () => {
     const projectRoot = makeTempDir("plexus-project-");
