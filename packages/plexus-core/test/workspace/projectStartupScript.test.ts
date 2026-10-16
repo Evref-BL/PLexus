@@ -6,6 +6,7 @@ import type { ProjectConfig } from "../../src/config/projectConfig.js";
 import type { ProjectImageState } from "../../src/workspace/projectState.js";
 import {
   defaultPharoMcpMetacelloRepository,
+  defaultPharoMcpVersion,
   generateImageStartupScript,
   imageDependencyRepositoryDetachStatusPath,
   imagePharoMcpLoadStatusPath,
@@ -41,6 +42,12 @@ const imageState: ProjectImageState = {
 };
 
 describe("project startup scripts", () => {
+  it("derives the default MCP tag from the published version", () => {
+    expect(defaultPharoMcpMetacelloRepository.commitish).toBe(
+      `v${defaultPharoMcpVersion}`,
+    );
+  });
+
   it("resolves startup script paths under runtime state", () => {
     const projectRoot = path.join("C:", "dev", "code", "git", "my-project");
 

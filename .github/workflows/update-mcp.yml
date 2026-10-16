@@ -32,12 +32,13 @@ jobs:
           MCP_TAG: ${{ steps.release.outputs.tag }}
         run: |
           pin_file="packages/plexus-core/src/workspace/projectStartupScript.ts"
-          current_tag="$(sed -nE 's/.*commitish: "(v[0-9]+\.[0-9]+\.[0-9]+)".*/\1/p' "$pin_file")"
-          test -n "$current_tag"
-          if [[ "$current_tag" == "$MCP_TAG" ]]; then
+          current_version="$(sed -nE 's/export const defaultPharoMcpVersion = "([0-9]+\.[0-9]+\.[0-9]+)";/\1/p' "$pin_file")"
+          test -n "$current_version"
+          mcp_version="${MCP_TAG#v}"
+          if [[ "$current_version" == "$mcp_version" ]]; then
             exit 0
           fi
-          sed -i -E "s/(commitish: \")v[0-9]+\.[0-9]+\.[0-9]+/\1${MCP_TAG}/" "$pin_file"
+          sed -i -E "s/(defaultPharoMcpVersion = \")[0-9]+\.[0-9]+\.[0-9]+/\1${mcp_version}/" "$pin_file"
           npm version patch --workspaces --include-workspace-root --no-git-tag-version
 
       - name: Create or update proposal
