@@ -76,6 +76,19 @@ jobs:
           npm publish --workspace @evref-bl/plexus --access public
           npm publish --workspace @evref-bl/plexus-gateway --access public
 
+      - name: Wait for published packages
+        run: |
+          version="$(node -p "require('./packages/plexus-core/package.json').version")"
+          for _ in {1..60}; do
+            if [ "$(npm view "@evref-bl/plexus@${version}" version 2>/dev/null)" = "$version" ] && \
+              [ "$(npm view "@evref-bl/plexus-gateway@${version}" version 2>/dev/null)" = "$version" ]; then
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "Published PLexus packages did not become available from npm." >&2
+          exit 1
+
       - uses: actions/create-github-app-token@v2
         id: app-token
         with:
