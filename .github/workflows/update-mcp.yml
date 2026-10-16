@@ -1,54 +1,83 @@
-name: Propose MCP update
+name: Apply MCP release
 
 on:
-  schedule:
-    - cron: "0 6 * * 1"
-      timezone: "Europe/Paris"
+  repository_dispatch:
+    types: [component-release]
   workflow_dispatch:
+    inputs:
+      mcp_version:
+        description: Published MCP version to apply.
+        required: true
+        type: string
 
 permissions:
-  contents: write
-  pull-requests: write
+  contents: read
 
 jobs:
-  propose:
+  update:
+    if: github.event_name == 'workflow_dispatch' || github.event.client_payload.component == 'mcp'
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
+      - uses: actions/create-github-app-token@v2
+        id: app-token
+        with:
+          app-id: ${{ secrets.DEVNEXUS_AUTOMATION_APP_ID }}
+          private-key: ${{ secrets.DEVNEXUS_AUTOMATION_PRIVATE_KEY }}
+          owner: Evref-BL
+          repositories: PLexus
+
       - uses: actions/checkout@v6
         with:
-          fetch-depth: 0
+          token: ${{ steps.app-token.outputs.token }}
 
-      - name: Find the latest MCP release
+      - name: Verify the published MCP release
         id: release
         env:
-          GH_TOKEN: ${{ github.token }}
+          EVENT_VERSION: ${{ github.event.client_payload.version }}
+          INPUT_VERSION: ${{ inputs.mcp_version }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
-          tag="$(gh api repos/Evref-BL/MCP/releases/latest --jq .tag_name)"
-          [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
-          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          version="${EVENT_VERSION:-$INPUT_VERSION}"
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          test "$(gh api "repos/Evref-BL/MCP/releases/tags/v${version}" --jq .tag_name)" = "v${version}"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
 
-      - name: Update the pin and package version
+      - name: Prepare the update
+        id: update
         env:
-          MCP_TAG: ${{ steps.release.outputs.tag }}
+          MCP_VERSION: ${{ steps.release.outputs.version }}
         run: |
           pin_file="packages/plexus-core/src/workspace/projectStartupScript.ts"
           current_version="$(sed -nE 's/export const defaultPharoMcpVersion = "([0-9]+\.[0-9]+\.[0-9]+)";/\1/p' "$pin_file")"
           test -n "$current_version"
-          mcp_version="${MCP_TAG#v}"
-          if [[ "$current_version" == "$mcp_version" ]]; then
+          if [[ "$current_version" == "$MCP_VERSION" ]]; then
             exit 0
           fi
-          sed -i -E "s/(defaultPharoMcpVersion = \")[0-9]+\.[0-9]+\.[0-9]+/\1${mcp_version}/" "$pin_file"
+          sed -i -E "s/(defaultPharoMcpVersion = \")[0-9]+\.[0-9]+\.[0-9]+/\1${MCP_VERSION}/" "$pin_file"
           npm version patch --workspaces --include-workspace-root --no-git-tag-version
+          npm ci
+          npm run check
+          echo "needed=true" >> "$GITHUB_OUTPUT"
 
-      - name: Create or update proposal
+      - name: Create update pull request
+        id: proposal
+        if: steps.update.outputs.needed == 'true'
         uses: peter-evans/create-pull-request@v7
         with:
-          branch: "automation/update-mcp-${{ steps.release.outputs.tag }}"
+          token: ${{ steps.app-token.outputs.token }}
+          branch: automation/update-mcp-v${{ steps.release.outputs.version }}
           delete-branch: true
-          commit-message: "chore: update MCP to ${{ steps.release.outputs.tag }}"
-          title: "chore: update MCP to ${{ steps.release.outputs.tag }}"
+          commit-message: "chore: update MCP to v${{ steps.release.outputs.version }}"
+          title: "chore: update MCP to v${{ steps.release.outputs.version }}"
           body: |
-            Automated proposal from PLexus's Monday release check.
+            Automated update for the published immutable MCP release.
 
-            This updates the immutable MCP release tag and bumps the PLexus patch version.
+      - name: Merge after CI
+        if: steps.proposal.outputs.pull-request-number != ''
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          PR_NUMBER: ${{ steps.proposal.outputs.pull-request-number }}
+        run: |
+          gh pr checks "$PR_NUMBER" --watch --interval 10
+          gh pr merge "$PR_NUMBER" --squash --delete-branch

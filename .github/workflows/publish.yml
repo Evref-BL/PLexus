@@ -75,3 +75,22 @@ jobs:
         run: |
           npm publish --workspace @evref-bl/plexus --access public
           npm publish --workspace @evref-bl/plexus-gateway --access public
+
+      - uses: actions/create-github-app-token@v2
+        id: app-token
+        with:
+          app-id: ${{ secrets.DEVNEXUS_AUTOMATION_APP_ID }}
+          private-key: ${{ secrets.DEVNEXUS_AUTOMATION_PRIVATE_KEY }}
+          owner: Evref-BL
+          repositories: pharo-agent-plugin
+
+      - name: Notify released consumers
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          plexus_version="$(node -p "require('./packages/plexus-core/package.json').version")"
+          mcp_version="$(sed -nE 's/export const defaultPharoMcpVersion = "([0-9]+\.[0-9]+\.[0-9]+)";/\1/p' packages/plexus-core/src/workspace/projectStartupScript.ts)"
+          [[ "$mcp_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          jq -nc --arg plexus_version "$plexus_version" --arg mcp_version "$mcp_version" \
+            '{event_type: "component-release", client_payload: {component: "plexus", version: $plexus_version, mcp_version: $mcp_version}}' |
+            gh api --method POST repos/Evref-BL/pharo-agent-plugin/dispatches --input -
