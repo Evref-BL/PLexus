@@ -79,5 +79,13 @@ jobs:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           PR_NUMBER: ${{ steps.proposal.outputs.pull-request-number }}
         run: |
-          gh pr checks "$PR_NUMBER" --watch --interval 10
-          gh pr merge "$PR_NUMBER" --squash --delete-branch
+          for _ in {1..60}; do
+            if gh pr checks "$PR_NUMBER" --json name --jq 'length' 2>/dev/null | grep -qx '[1-9][0-9]*'; then
+              gh pr checks "$PR_NUMBER" --watch --interval 10
+              gh pr merge "$PR_NUMBER" --squash --delete-branch
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "No CI checks were reported for PR #$PR_NUMBER."
+          exit 1
