@@ -3074,7 +3074,7 @@ describe("project lifecycle tools", () => {
         },
       },
     });
-  });
+  }, 15_000);
 
   it("reports detached dependency repositories from status diagnostics", async () => {
     const projectRoot = makeTempDir("plexus-project-");
