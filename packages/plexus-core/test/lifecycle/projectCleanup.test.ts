@@ -98,7 +98,7 @@ function writeProjectConfig(
   imageClaimsRoot: string,
 ): void {
   fs.writeFileSync(
-    path.join(projectRoot, "plexus.project.json"),
+    path.join(projectRoot, "plexus.json"),
     JSON.stringify(
       {
         id: "project-123",

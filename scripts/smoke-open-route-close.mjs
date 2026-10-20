@@ -662,7 +662,7 @@ function writeSmokeProjectConfig(options) {
   const config = smokeProjectConfig(options);
 
   fs.writeFileSync(
-    path.join(projectRoot, "plexus.project.json"),
+    path.join(projectRoot, "plexus.json"),
     `${JSON.stringify(config, null, 2)}\n`,
     "utf8",
   );
@@ -2130,8 +2130,8 @@ async function main() {
     projectPaths = writeSmokeProjectConfig(options);
     snapshotFileArtifact(
       options,
-      path.join(projectPaths.projectRoot, "plexus.project.json"),
-      "plexus.project.json",
+      path.join(projectPaths.projectRoot, "plexus.json"),
+      "plexus.json",
     );
     snapshotJsonArtifact(options, "project-paths.json", projectPaths);
     textResult("projectRoot", projectPaths.projectRoot);

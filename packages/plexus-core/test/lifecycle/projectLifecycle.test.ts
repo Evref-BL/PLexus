@@ -279,7 +279,7 @@ function writeProjectConfig(
 ): void {
   const runtime = runtimeWithProjectStateImagePorts(overrides.runtime);
   fs.writeFileSync(
-    path.join(projectRoot, "plexus.project.json"),
+    path.join(projectRoot, "plexus.json"),
     JSON.stringify(
       {
         id: "project-123",
@@ -2310,7 +2310,7 @@ describe("project lifecycle tools", () => {
   it("includes config schema and runtime identity diagnostics on config failures", async () => {
     const projectRoot = makeTempDir("plexus-project-");
     fs.writeFileSync(
-      path.join(projectRoot, "plexus.project.json"),
+      path.join(projectRoot, "plexus.json"),
       JSON.stringify(
         {
           name: "my-project",
@@ -3397,7 +3397,7 @@ describe("project lifecycle tools", () => {
     const lifecycle = new PlexusProjectLifecycle();
 
     const result = await lifecycle.handleTool("plexus_project_status", {
-      projectPath: path.join(projectRoot, "plexus.project.json"),
+      projectPath: path.join(projectRoot, "plexus.json"),
     });
 
     expect(result).toMatchObject({

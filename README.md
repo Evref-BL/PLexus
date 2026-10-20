@@ -18,7 +18,7 @@ and forwards requests by `mcpServerId`.
 
 ## Concepts
 
-- A **project** is a directory with `plexus.project.json`.
+- A **project** is a directory with `plexus.json`.
 - A **workspace** is an isolated runtime instance of that project.
 - An **imageId** identifies an image managed by PLexus.
 - An **mcpServerId** identifies one forwarded MCP server. An image can register
@@ -40,7 +40,7 @@ npm run build
 
 ## Project configuration
 
-Create `plexus.project.json` at the project root:
+Create `plexus.json` at the project root:
 
 ```json
 {
@@ -85,7 +85,7 @@ plexus mcp pharo-launcher --project-path <project-root> --workspace-id <workspac
 
 The scoped `pharo-launcher` surface acts only on images this project declares.
 It also answers two read-only discovery questions, so a client can learn which
-templates a project may declare before writing `plexus.project.json`:
+templates a project may declare before writing `plexus.json`:
 
 - `pharo_launcher_template_list` — templates available to this project scope,
   optionally filtered by `templateCategory`.

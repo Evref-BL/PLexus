@@ -151,7 +151,7 @@ function writePrototypeProjectConfig(options) {
   };
 
   fs.writeFileSync(
-    path.join(projectRoot, "plexus.project.json"),
+    path.join(projectRoot, "plexus.json"),
     `${JSON.stringify(config, null, 2)}\n`,
     "utf8",
   );

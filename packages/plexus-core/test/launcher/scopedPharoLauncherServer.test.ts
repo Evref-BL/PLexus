@@ -66,7 +66,7 @@ function writeProjectConfig(
   overrides: Record<string, unknown> = {},
 ): void {
   fs.writeFileSync(
-    path.join(projectRoot, "plexus.project.json"),
+    path.join(projectRoot, "plexus.json"),
     JSON.stringify(projectConfig(overrides), null, 2),
     "utf8",
   );
