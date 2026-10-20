@@ -319,12 +319,7 @@ describe("home image cache", () => {
         }
       ).stateRoot,
     ).toBe(
-      path.join(
-        stateRoot,
-        "profiles",
-        "pharo-launcher-mcp",
-        "project-123",
-      ),
+      path.join(resolvePlexusHomePath(), "profiles", "pharo-launcher-mcp"),
     );
   });
 
