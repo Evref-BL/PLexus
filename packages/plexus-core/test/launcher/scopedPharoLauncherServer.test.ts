@@ -270,6 +270,8 @@ describe("scoped pharo launcher facade", () => {
     expect(scopedPharoLauncherTools.map((tool) => tool.name)).toEqual([
       "pharo_launcher_image_list",
       "pharo_launcher_image_info",
+      "pharo_launcher_template_list",
+      "pharo_launcher_template_category_list",
       "pharo_launcher_image_create",
       "pharo_launcher_image_start",
       "pharo_launcher_image_open_interactive",
@@ -333,6 +335,81 @@ describe("scoped pharo launcher facade", () => {
         additionalProperties: false,
       },
     });
+  });
+
+  it("lists the templates available to the project scope", async () => {
+    const projectRoot = makeTempDir("plexus-project-");
+    const stateRoot = makeTempDir("plexus-state-");
+    const calls: Array<{ name: string; argumentsValue: Record<string, unknown> }> =
+      [];
+    const client: PharoLauncherMcpToolClient = {
+      async callTool(name, argumentsValue) {
+        calls.push({ name, argumentsValue: argumentsValue ?? {} });
+        return name === "pharo_launcher_template_list"
+          ? { ok: true, data: [{ name: "Pharo 13.0 - 64bit", category: "Official" }] }
+          : { ok: true };
+      },
+    };
+    writeProjectConfig(projectRoot);
+
+    const result = await new ScopedPharoLauncher({
+      projectRoot,
+      stateRoot,
+      workspaceId: "worktree-a",
+      pharoLauncherMcpClient: client,
+    }).listTemplates("Official");
+
+    expect(result.templates).toEqual([
+      { name: "Pharo 13.0 - 64bit", category: "Official" },
+    ]);
+    expect(result.scope).toMatchObject({ workspaceId: "worktree-a" });
+    expect(
+      calls.find((call) => call.name === "pharo_launcher_template_list"),
+    ).toEqual({
+      name: "pharo_launcher_template_list",
+      argumentsValue: { templateCategory: "Official" },
+    });
+  });
+
+  it("lists template categories without a category filter", async () => {
+    const projectRoot = makeTempDir("plexus-project-");
+    const stateRoot = makeTempDir("plexus-state-");
+    const { client, calls } = fakeLauncherClient();
+    writeProjectConfig(projectRoot);
+
+    await new ScopedPharoLauncher({
+      projectRoot,
+      stateRoot,
+      workspaceId: "worktree-a",
+      pharoLauncherMcpClient: client,
+    }).listTemplateCategories();
+
+    expect(
+      calls.find((call) => call.name === "pharo_launcher_template_category_list"),
+    ).toEqual({
+      name: "pharo_launcher_template_category_list",
+      argumentsValue: {},
+    });
+  });
+
+  it("reports a failed template listing as a scoped launcher error", async () => {
+    const projectRoot = makeTempDir("plexus-project-");
+    const stateRoot = makeTempDir("plexus-state-");
+    const client: PharoLauncherMcpToolClient = {
+      async callTool(name) {
+        return name === "pharo_launcher_template_list" ? { ok: false } : { ok: true };
+      },
+    };
+    writeProjectConfig(projectRoot);
+
+    await expect(
+      new ScopedPharoLauncher({
+        projectRoot,
+        stateRoot,
+        workspaceId: "worktree-a",
+        pharoLauncherMcpClient: client,
+      }).listTemplates(),
+    ).rejects.toThrow(/pharo_launcher_template_list returned ok: false/);
   });
 
   it("creates only declared images from an approved project template policy", async () => {

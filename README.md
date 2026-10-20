@@ -83,6 +83,17 @@ plexus mcp project
 plexus mcp pharo-launcher --project-path <project-root> --workspace-id <workspace-id> --state-root <state-root>
 ```
 
+The scoped `pharo-launcher` surface acts only on images this project declares.
+It also answers two read-only discovery questions, so a client can learn which
+templates a project may declare before writing `plexus.project.json`:
+
+- `pharo_launcher_template_list` — templates available to this project scope,
+  optionally filtered by `templateCategory`.
+- `pharo_launcher_template_category_list` — the template categories.
+
+Both prepare the scoped template catalogue the same way `pharo_launcher_image_create`
+does, and neither reads or changes image state.
+
 ## Gateway forwarding
 
 Start the gateway with:
