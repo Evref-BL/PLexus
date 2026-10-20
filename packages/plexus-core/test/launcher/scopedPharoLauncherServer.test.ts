@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   PharoLauncherMcpToolError,
   type PharoLauncherMcpToolClient,
@@ -19,6 +19,7 @@ import {
   type ProjectImageLeaseState,
   type ProjectState,
 } from "../../src/workspace/projectState.js";
+import { resolvePlexusHomePath } from "../../src/config/plexusHome.js";
 import {
   ScopedPharoLauncher,
   createScopedPharoLauncherServer,
@@ -159,6 +160,29 @@ afterEach(() => {
   for (const tempDir of tempDirs.splice(0)) {
     fs.rmSync(tempDir, { recursive: true, force: true });
   }
+});
+
+
+// The launcher profile is shared below the PLexus home, so isolate it per test.
+function temporaryPlexusHome(): string {
+  const plexusHome = makeTempDir("plexus-home-");
+  const previous = process.env.PLEXUS_HOME;
+  process.env.PLEXUS_HOME = plexusHome;
+  restorePlexusHome = () => {
+    if (previous === undefined) {
+      delete process.env.PLEXUS_HOME;
+    } else {
+      process.env.PLEXUS_HOME = previous;
+    }
+  };
+  return plexusHome;
+}
+
+let restorePlexusHome: (() => void) | undefined;
+
+afterEach(() => {
+  restorePlexusHome?.();
+  restorePlexusHome = undefined;
 });
 
 describe("scoped pharo launcher facade", () => {
@@ -470,10 +494,7 @@ describe("scoped pharo launcher facade", () => {
           }),
           destinationProfile: expect.objectContaining({
             stateRoot: path.join(
-              stateRoot,
-              "profiles",
-              "pharo-launcher-mcp",
-              "project-123",
+              path.join(homePath, "profiles", "pharo-launcher-mcp"),
             ),
           }),
           sourceImageName: expect.stringMatching(/^PlexusHomeCache-/),
@@ -632,6 +653,7 @@ describe("scoped pharo launcher facade", () => {
   });
 
   it("bootstraps and refreshes a scoped template catalogue before direct create", async () => {
+    const plexusHome = temporaryPlexusHome();
     const projectRoot = makeTempDir("plexus-project-");
     const stateRoot = makeTempDir("plexus-state-");
     const { client, calls } = fakeLauncherClient();
@@ -668,10 +690,7 @@ describe("scoped pharo launcher facade", () => {
     expect(
       fs.readFileSync(
         path.join(
-          stateRoot,
-          "profiles",
-          "pharo-launcher-mcp",
-          "project-123",
+          path.join(plexusHome, "profiles", "pharo-launcher-mcp"),
           "templates",
           "sources.list",
         ),
@@ -696,6 +715,7 @@ describe("scoped pharo launcher facade", () => {
   });
 
   it("seeds a scoped template catalogue from an explicit local path offline", async () => {
+    const plexusHome = temporaryPlexusHome();
     const projectRoot = makeTempDir("plexus-project-");
     const stateRoot = makeTempDir("plexus-state-");
     const templateSource = makeTempDir("plexus-template-catalog-");
@@ -735,10 +755,7 @@ describe("scoped pharo launcher facade", () => {
     expect(
       fs.existsSync(
         path.join(
-          stateRoot,
-          "profiles",
-          "pharo-launcher-mcp",
-          "project-123",
+          path.join(plexusHome, "profiles", "pharo-launcher-mcp"),
           "templates",
           "pharo-13.ston",
         ),
@@ -750,6 +767,7 @@ describe("scoped pharo launcher facade", () => {
   });
 
   it("fails direct create clearly when local-only policy has no template catalogue", async () => {
+    const plexusHome = temporaryPlexusHome();
     const projectRoot = makeTempDir("plexus-project-");
     const stateRoot = makeTempDir("plexus-state-");
     const { client, calls } = fakeLauncherClient();

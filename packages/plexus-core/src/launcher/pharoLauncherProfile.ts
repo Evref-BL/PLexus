@@ -4,6 +4,7 @@ import {
   type ProjectConfig,
 } from "../config/projectConfig.js";
 import { joinPathLike, resolvePathLike } from "../support/pathStyle.js";
+import { resolvePlexusHomePath } from "../config/plexusHome.js";
 import {
   defaultPlexusStateRoot,
   sanitizeRuntimeId,
@@ -76,15 +77,14 @@ function resolvedPlexusStateRoot(
 }
 
 function defaultProfileRoot(
-  projectRoot: string,
   config: ProjectConfig,
-  stateRoot: string | undefined,
+  env: NodeJS.ProcessEnv | undefined,
 ): string {
+  // Shared across projects: the launcher image, VMs and templates are large and identical.
   return joinPathLike(
-    resolvedPlexusStateRoot(projectRoot, config, stateRoot),
+    resolvePlexusHomePath({ config, env }),
     "profiles",
     "pharo-launcher-mcp",
-    sanitizeRuntimeId(projectConfigId(config)),
   );
 }
 
@@ -95,11 +95,7 @@ function projectOwnedPaths(
   const policy = runtime.launcherProfile;
   const stateRoot = policy.root
     ? resolvePathLike(policy.root)
-    : defaultProfileRoot(
-        options.projectRoot,
-        options.config,
-        options.stateRoot,
-      );
+    : defaultProfileRoot(options.config, options.env);
 
   return {
     profileName: policy.name ?? profileName(options.config),

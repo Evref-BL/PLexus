@@ -21,23 +21,19 @@ function rootPath(...segments: string[]): string {
 }
 
 describe("pharo-launcher-mcp profile derivation", () => {
-  it("derives the default project-owned launcher profile from project scope", () => {
+  it("shares one launcher profile below the PLexus home across projects", () => {
     const projectRoot = rootPath("tmp", "my-project");
-    const stateRoot = rootPath("tmp", "plexus-state");
+    const plexusHome = rootPath("tmp", "plexus-home");
     const env = pharoLauncherMcpProfileEnvironment({
       projectRoot,
       config: projectConfig(),
       workspaceId: "worktree-a",
       targetId: "project-123--worktree-a",
-      stateRoot,
+      stateRoot: rootPath("tmp", "plexus-state"),
+      env: { PLEXUS_HOME: plexusHome },
     });
 
-    const profileRoot = path.join(
-      stateRoot,
-      "profiles",
-      "pharo-launcher-mcp",
-      "project-123",
-    );
+    const profileRoot = path.join(plexusHome, "profiles", "pharo-launcher-mcp");
     expect(env).toEqual({
       PHARO_LAUNCHER_MCP_PROFILE: "plexus-project-123",
       PHARO_LAUNCHER_MCP_STATE_ROOT: profileRoot,

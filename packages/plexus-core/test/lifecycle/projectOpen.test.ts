@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   PharoLauncherMcpToolError,
   type PharoLauncherMcpToolClient,
@@ -351,6 +351,14 @@ afterEach(() => {
   }
 });
 
+
+let restorePlexusHome: (() => void) | undefined;
+
+afterEach(() => {
+  restorePlexusHome?.();
+  restorePlexusHome = undefined;
+});
+
 describe("project open", () => {
   it("launches active images, polls process and health, and persists runtime state", async () => {
     const projectRoot = makeTempDir("plexus-project-");
@@ -566,14 +574,21 @@ describe("project open", () => {
   });
 
   it("materializes image-local repository workspaces before startup launch", async () => {
+    const plexusHome = makeTempDir("plexus-home-");
+    const previousPlexusHome = process.env.PLEXUS_HOME;
+    process.env.PLEXUS_HOME = plexusHome;
+    restorePlexusHome = () => {
+      if (previousPlexusHome === undefined) {
+        delete process.env.PLEXUS_HOME;
+      } else {
+        process.env.PLEXUS_HOME = previousPlexusHome;
+      }
+    };
     const projectRoot = makeTempDir("plexus-project-");
     const stateRoot = makeTempDir("plexus-state-");
     const sourceRoot = makeTempDir("plexus-source-");
     const imagesDir = path.join(
-      stateRoot,
-      "profiles",
-      "pharo-launcher-mcp",
-      "project-123",
+      path.join(plexusHome, "profiles", "pharo-launcher-mcp"),
       "images",
     );
     const sourceCommit = initRepository(sourceRoot, [
@@ -1817,12 +1832,7 @@ describe("project open", () => {
             ),
           }),
           destinationProfile: expect.objectContaining({
-            stateRoot: path.join(
-              stateRoot,
-              "profiles",
-              "pharo-launcher-mcp",
-              "project-123",
-            ),
+            stateRoot: path.join(homePath, "profiles", "pharo-launcher-mcp"),
           }),
           sourceImageName: expect.stringMatching(/^PlexusHomeCache-/),
           destinationImageName: "MyProject-worktree-a-dev",

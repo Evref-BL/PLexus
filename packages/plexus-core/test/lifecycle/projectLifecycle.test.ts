@@ -3,7 +3,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { resolvePlexusHomePath } from "../../src/config/plexusHome.js";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   createProjectLifecycleFromEnvironment,
   HttpGatewayRouteRegistry,
@@ -465,6 +466,7 @@ afterEach(() => {
   }
   vi.unstubAllGlobals();
 });
+
 
 describe("project lifecycle tools", () => {
   it("opens a project through core and registers the gateway route", async () => {
@@ -2769,10 +2771,9 @@ describe("project lifecycle tools", () => {
             profileScope: "project",
             profileName: "plexus-project-123",
             stateRoot: path.join(
-              stateRoot,
+              resolvePlexusHomePath(),
               "profiles",
               "pharo-launcher-mcp",
-              "project-123",
             ),
           },
           imagePortCoordination: {
