@@ -95,7 +95,7 @@ describe("project config", () => {
     });
   });
 
-  it("loads plexus.project.json from the project root", () => {
+  it("loads plexus.json from the project root", () => {
     const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), "plexus-project-"));
     tempDirs.push(projectRoot);
     fs.writeFileSync(
@@ -105,7 +105,7 @@ describe("project config", () => {
     );
 
     expect(projectConfigPath(projectRoot)).toBe(
-      path.join(projectRoot, "plexus.project.json"),
+      path.join(projectRoot, "plexus.json"),
     );
     expect(loadProjectConfig(projectRoot)).toEqual({
       ...validProjectConfig(),

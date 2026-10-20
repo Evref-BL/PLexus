@@ -79,7 +79,7 @@ function projectStateRuntime() {
 
 function writeProjectConfig(projectRoot: string): void {
   fs.writeFileSync(
-    path.join(projectRoot, "plexus.project.json"),
+    path.join(projectRoot, "plexus.json"),
     JSON.stringify(
       {
         id: "project-123",
@@ -115,7 +115,7 @@ function writeProjectConfig(projectRoot: string): void {
 
 function writeHostLocalProjectConfig(projectRoot: string, claimsRoot: string): void {
   fs.writeFileSync(
-    path.join(projectRoot, "plexus.project.json"),
+    path.join(projectRoot, "plexus.json"),
     JSON.stringify(
       {
         id: "project-123",
@@ -769,7 +769,7 @@ describe("project close", () => {
     }
 
     expect(thrown).toBeInstanceOf(ProjectCloseError);
-    expect(fs.existsSync(path.join(projectRoot, "plexus.project.json"))).toBe(
+    expect(fs.existsSync(path.join(projectRoot, "plexus.json"))).toBe(
       true,
     );
     expect(thrown?.result.repositoryWorkspaceCleanups).toEqual([

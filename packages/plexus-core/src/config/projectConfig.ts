@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import { joinPathLike } from "../support/pathStyle.js";
 
-export const plexusProjectConfigFileName = "plexus.project.json";
+export const plexusProjectConfigFileName = "plexus.json";
 
 export interface ProjectImageMcpConfig {
   port?: number;

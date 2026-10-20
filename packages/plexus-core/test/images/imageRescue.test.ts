@@ -140,7 +140,7 @@ function makeTempDir(prefix: string): string {
 
 function writeProjectConfig(projectRoot: string): void {
   fs.writeFileSync(
-    path.join(projectRoot, "plexus.project.json"),
+    path.join(projectRoot, "plexus.json"),
     JSON.stringify(
       {
         id: "project-123",
