@@ -1223,6 +1223,118 @@ export class ScopedPharoLauncher {
     };
   }
 
+  private async withLauncherClient<T>(
+    scope: ResolvedScope,
+    projectConfig: ProjectConfig,
+    action: (client: PharoLauncherMcpToolClient) => Promise<T>,
+  ): Promise<T> {
+    const client =
+      this.options.pharoLauncherMcpClient ??
+      (await createStdioPharoLauncherMcpClient(undefined, {
+        profileEnvironment: pharoLauncherMcpProfileEnvironment({
+          projectRoot: scope.projectRoot,
+          config: projectConfig,
+          workspaceId: scope.workspaceId,
+          targetId: scope.targetId,
+          stateRoot: scope.stateRoot,
+        }),
+      }));
+    const ownsClient = !this.options.pharoLauncherMcpClient;
+
+    try {
+      return await action(client);
+    } finally {
+      if (ownsClient) {
+        await client.close?.();
+      }
+    }
+  }
+
+  async listTemplates(templateCategory?: string): Promise<{
+    scope: WorkspaceScopeSummary;
+    launcherProfile: LauncherProfileSummary;
+    templates: unknown;
+  }> {
+    const scope = resolveScope(this.options);
+    const projectConfig = loadProjectConfig(scope.projectRoot);
+    const templates = await this.withLauncherClient(
+      scope,
+      projectConfig,
+      async (client) => {
+        await ensureScopedTemplateCatalogReady({
+          client,
+          scope,
+          projectConfig,
+          fetch: this.options.fetch,
+        });
+        const result = await client.callTool<LauncherCommandResult>(
+          "pharo_launcher_template_list",
+          templateCategory ? { templateCategory } : {},
+        );
+        assertLauncherOk(result, "pharo_launcher_template_list");
+        return result?.data ?? result;
+      },
+    );
+
+    return {
+      ...this.templateScopeSummary(scope, projectConfig),
+      templates,
+    };
+  }
+
+  async listTemplateCategories(): Promise<{
+    scope: WorkspaceScopeSummary;
+    launcherProfile: LauncherProfileSummary;
+    templateCategories: unknown;
+  }> {
+    const scope = resolveScope(this.options);
+    const projectConfig = loadProjectConfig(scope.projectRoot);
+    const templateCategories = await this.withLauncherClient(
+      scope,
+      projectConfig,
+      async (client) => {
+        await ensureScopedTemplateCatalogReady({
+          client,
+          scope,
+          projectConfig,
+          fetch: this.options.fetch,
+        });
+        const result = await client.callTool<LauncherCommandResult>(
+          "pharo_launcher_template_category_list",
+          {},
+        );
+        assertLauncherOk(result, "pharo_launcher_template_category_list");
+        return result?.data ?? result;
+      },
+    );
+
+    return {
+      ...this.templateScopeSummary(scope, projectConfig),
+      templateCategories,
+    };
+  }
+
+  private templateScopeSummary(
+    scope: ResolvedScope,
+    projectConfig: ProjectConfig,
+  ): {
+    scope: WorkspaceScopeSummary;
+    launcherProfile: LauncherProfileSummary;
+  } {
+    return {
+      scope: scopeSummary(scope),
+      launcherProfile: launcherProfileSummary(
+        describePharoLauncherMcpProfile({
+          projectRoot: scope.projectRoot,
+          config: projectConfig,
+          workspaceId: scope.workspaceId,
+          targetId: scope.targetId,
+          stateRoot: scope.stateRoot,
+        }),
+      ),
+    };
+  }
+
   async createImage(
     imageId: string,
     profileId?: string,
@@ -1659,6 +1771,21 @@ export const scopedPharoLauncherTools = [
     inputSchema: objectSchema({ imageId: stringSchema, detail: toolResultDetailSchema }, ["imageId"]),
   },
   {
+    name: "pharo_launcher_template_list",
+    description:
+      "List the Pharo Launcher image templates available to the current PLexus project scope.",
+    inputSchema: objectSchema({
+      templateCategory: stringSchema,
+      detail: toolResultDetailSchema,
+    }),
+  },
+  {
+    name: "pharo_launcher_template_category_list",
+    description:
+      "List the Pharo Launcher template categories available to the current PLexus project scope.",
+    inputSchema: objectSchema({ detail: toolResultDetailSchema }),
+  },
+  {
     name: "pharo_launcher_image_create",
     description:
       "Create a declared workspace-scoped image from an approved PLexus project create policy.",
@@ -1763,6 +1890,16 @@ export function createScopedPharoLauncherServer(
             false,
             detail,
           );
+
+        case "pharo_launcher_template_list":
+          return textResult(
+            await facade.listTemplates(optionalString(input, "templateCategory")),
+            false,
+            detail,
+          );
+
+        case "pharo_launcher_template_category_list":
+          return textResult(await facade.listTemplateCategories(), false, detail);
 
         case "pharo_launcher_image_create":
           return textResult(
