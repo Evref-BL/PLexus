@@ -530,15 +530,15 @@ describe("project startup scripts", () => {
       ),
     });
 
-    expect(source).toContain("mcp bindToLoopback.");
     expect(source).toContain("mcp port: 0.");
-    expect(source).toContain("endpoint := mcp endpoint.");
+    expect(source).toContain("endpointPort := mcp port.");
     expect(source).toContain("endpointFile writeStreamDo:");
-    expect(source).toContain("nextPutAll: 'transport='");
-    expect(source).toContain("nextPutAll: 'host='");
+    expect(source).toContain("nextPutAll: 'transport=http'");
+    expect(source).toContain("nextPutAll: 'host=127.0.0.1'");
     expect(source).toContain("nextPutAll: 'port='");
-    expect(source).toContain("nextPutAll: 'path='");
-    expect(source).toContain("mcp port: 7123.");
+    expect(source).toContain("nextPutAll: 'path=/'");
+    expect(source).not.toContain("respondsTo:");
+    expect(source).not.toContain("mcp port: 7123.");
   });
 
   it("generates a Pharo project load from an image-local repository workspace", () => {
@@ -612,7 +612,7 @@ describe("project startup scripts", () => {
     );
   });
 
-  it("can require endpoint handoff without a fixed fallback port", () => {
+  it("hands off the auto-bound endpoint when no port is assigned", () => {
     const source = generateImageStartupScript({
       projectRoot: path.join("C:", "dev", "code", "git", "my-project"),
       imageConfig: {
@@ -642,9 +642,10 @@ describe("project startup scripts", () => {
       ),
     });
 
-    expect(source).toContain("mcp bindToLoopback.");
+    expect(source).toContain("mcp port: 0.");
+    expect(source).toContain("endpointPort := mcp port.");
     expect(source).toContain(
-      "MCP endpoint handoff is required, but this image-side MCP does not support bindToLoopback/endpoint.",
+      "MCP did not report a bound port after starting on port 0.",
     );
   });
 

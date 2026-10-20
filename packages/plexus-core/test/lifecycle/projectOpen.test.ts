@@ -1532,7 +1532,7 @@ describe("project open", () => {
     );
 
     expect(result.ok).toBe(true);
-    expect(fs.readFileSync(scriptPath, "utf8")).toContain("mcp bindToLoopback.");
+    expect(fs.readFileSync(scriptPath, "utf8")).toContain("mcp port: 0.");
     expect(healthClient.endpoints).toEqual([
       {
         transport: "http",
