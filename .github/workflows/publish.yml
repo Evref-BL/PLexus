@@ -79,14 +79,21 @@ jobs:
       - name: Wait for published packages
         run: |
           version="$(node -p "require('./packages/plexus-core/package.json').version")"
+          destination="$(mktemp -d)"
+          trap 'rm -rf "$destination"' EXIT
+          # Fetch the tarballs, not just the metadata: consumers install from
+          # those, and they appear later than the version npm view reports.
           for _ in {1..60}; do
-            if [ "$(npm view "@evref-bl/plexus@${version}" version 2>/dev/null)" = "$version" ] && \
-              [ "$(npm view "@evref-bl/plexus-gateway@${version}" version 2>/dev/null)" = "$version" ]; then
+            if npm pack \
+              "@evref-bl/plexus@${version}" \
+              "@evref-bl/plexus-gateway@${version}" \
+              --pack-destination "$destination" \
+              --prefer-online >/dev/null 2>&1; then
               exit 0
             fi
             sleep 5
           done
-          echo "Published PLexus packages did not become available from npm." >&2
+          echo "Published PLexus tarballs did not become installable from npm." >&2
           exit 1
 
       - uses: actions/create-github-app-token@v2
