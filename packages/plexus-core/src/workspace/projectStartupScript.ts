@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import {
   projectConfigId,
@@ -987,11 +988,44 @@ export function writeImageStartupScript(
   };
 }
 
+export function fetchDependencyRepositoryRelease(options: {
+  cachePath: string;
+  repository: PharoMcpMetacelloRepository;
+}): boolean {
+  // The shared clone is reused as it was cloned, so a release published later
+  // is missing from it. Fetch here rather than in the image: the clone may
+  // have an ssh remote, and only the host has the credentials for it.
+  const clone = resolvePathLike(
+    joinPathLike(
+      options.cachePath,
+      options.repository.githubUser,
+      options.repository.project,
+    ),
+  );
+  if (!fs.existsSync(clone)) {
+    return false;
+  }
+
+  const git = (...args: string[]): boolean =>
+    spawnSync("git", ["-C", clone, ...args], { stdio: "ignore" }).status === 0;
+  if (git("rev-parse", "--verify", `refs/tags/${options.repository.commitish}`)) {
+    return false;
+  }
+
+  return git("fetch", "--tags", "--quiet", "origin");
+}
+
 export function writeProjectImageStartupScript(
   options: WriteProjectImageStartupScriptOptions,
 ): WrittenImageStartupScript {
   const imageConfig = findProjectImageConfig(options.config, options.imageId);
   const plexusHomePath = resolvePlexusHomePath({ config: options.config });
+  const repository = options.repository ?? defaultPharoMcpMetacelloRepository;
+
+  fetchDependencyRepositoryRelease({
+    cachePath: homeDependencyRepositoryCachePath(plexusHomePath),
+    repository,
+  });
 
   return writeImageStartupScript({
     projectRoot: options.projectRoot,
@@ -1012,6 +1046,6 @@ export function writeProjectImageStartupScript(
       homeDependencyRepositoryCachePath(plexusHomePath),
     dependencyRepositoryNetworkPolicy:
       homeDependencyRepositoryNetworkPolicy(options.config),
-    repository: options.repository,
+    repository,
   });
 }
