@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -7,6 +8,7 @@ import type { ProjectImageState } from "../../src/workspace/projectState.js";
 import {
   defaultPharoMcpMetacelloRepository,
   defaultPharoMcpVersion,
+  fetchDependencyRepositoryRelease,
   generateImageStartupScript,
   imageDependencyRepositoryDetachStatusPath,
   imagePharoMcpLoadStatusPath,
@@ -541,26 +543,47 @@ describe("project startup scripts", () => {
     expect(source).not.toContain("mcp port: 7123.");
   });
 
-  it("refreshes a stale shared clone before loading the pinned MCP release", () => {
-    const projectRoot = path.join("C:", "dev", "code", "git", "my-project");
-    const source = generateImageStartupScript({
-      projectRoot,
-      imageConfig: config.images[0],
-      imageState: {
-        id: "dev",
-        imageName: "MyProject-dev",
-        assignedPort: 7123,
-        status: "starting",
-      },
-    });
+  it("fetches a shared clone that does not know the pinned release", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "plexus-clone-"));
+    const origin = path.join(root, "origin");
+    const cache = path.join(root, "cache");
+    const clone = path.join(cache, "Evref-BL", "MCP");
+    const git = (cwd: string, ...args: string[]) =>
+      execFileSync("git", ["-C", cwd, ...args], { stdio: "ignore" });
 
-    // A clone made before this release would otherwise fail with "revspec not found".
-    expect(source).toContain(`detect: [ :each | each name = 'MCP' ]`);
-    expect(source).toContain("ifFound: [ :cachedRepository |");
-    expect(source).toContain(
-      `(cachedRepository tags anySatisfy: [ :tag | tag name = 'v${defaultPharoMcpVersion}' ])`,
-    );
-    expect(source).toContain("cachedRepository fetch");
+    fs.mkdirSync(origin, { recursive: true });
+    git(origin, "init", "--quiet", "--initial-branch=main");
+    git(origin, "config", "user.email", "test@example.com");
+    git(origin, "config", "user.name", "test");
+    fs.writeFileSync(path.join(origin, "README.md"), "x\n");
+    git(origin, "add", ".");
+    git(origin, "commit", "--quiet", "-m", "first");
+    git(origin, "tag", "v1.0.0");
+
+    fs.mkdirSync(path.dirname(clone), { recursive: true });
+    execFileSync("git", ["clone", "--quiet", origin, clone], { stdio: "ignore" });
+    // The release is published after the clone, exactly as it happens in practice.
+    git(origin, "tag", "v2.0.0");
+
+    const repository = { ...defaultPharoMcpMetacelloRepository, project: "MCP" };
+    expect(
+      fetchDependencyRepositoryRelease({
+        cachePath: cache,
+        repository: { ...repository, commitish: "v1.0.0" },
+      }),
+    ).toBe(false);
+    expect(
+      fetchDependencyRepositoryRelease({
+        cachePath: cache,
+        repository: { ...repository, commitish: "v2.0.0" },
+      }),
+    ).toBe(true);
+    expect(
+      fetchDependencyRepositoryRelease({
+        cachePath: path.join(root, "absent"),
+        repository: { ...repository, commitish: "v2.0.0" },
+      }),
+    ).toBe(false);
   });
 
   it("generates a Pharo project load from an image-local repository workspace", () => {
