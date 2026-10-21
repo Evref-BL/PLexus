@@ -1,6 +1,6 @@
 {
   "name": "@evref-bl/plexus-gateway",
-  "version": "0.4.6",
+  "version": "0.4.7",
   "private": false,
   "description": "PLexus image-scoped Pharo MCP gateway.",
   "license": "Apache-2.0",
