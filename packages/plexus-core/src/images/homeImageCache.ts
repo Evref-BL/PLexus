@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
+import { prepareScopedTemplateCatalog } from "./scopedTemplateCatalog.js";
 import {
   defaultPharoMcpMetacelloRepository,
   pharoMcpMetacelloRepositoryLocation,
@@ -302,6 +303,7 @@ export interface MaterializeProjectImageFromHomeCacheOptions {
   now?: () => Date;
   templateMetadata?: HomeImageCacheTemplateMetadata;
   localInputs?: HomeImageCacheLocalInputs;
+  fetch?: typeof fetch;
 }
 
 export interface HomeImageCacheMaterializationResult {
@@ -1425,6 +1427,7 @@ async function prepareHomeImageCacheEntry(options: {
   plan: HomeImageCachePlan;
   homeClient: PharoLauncherMcpToolClient;
   approval: HomeImageCacheMutationApproval;
+  fetch?: typeof fetch;
   now?: () => Date;
 }): Promise<HomeImageCacheLiveOperation[]> {
   if (!options.plan.createCacheImage) {
@@ -1459,6 +1462,14 @@ async function prepareHomeImageCacheEntry(options: {
     }
 
     if (options.plan.refreshTemplateCatalog) {
+      // The cache keeps a launcher profile of its own, and its sources list is
+      // seeded once. Refresh that list before the launcher reads it, or a seed
+      // from an earlier Pharo cycle keeps naming templates that no longer exist.
+      await prepareScopedTemplateCatalog({
+        destinationDirectory: options.plan.homeProfile.templateSourcesDir,
+        networkPolicy: options.plan.networkPolicy,
+        fetch: options.fetch,
+      });
       await callLauncherOperation(options.homeClient, options.plan.refreshTemplateCatalog);
       operations.push(options.plan.refreshTemplateCatalog);
     }
@@ -1534,6 +1545,7 @@ function materializationNeedsHomeClient(plan: HomeImageCachePlan): boolean {
 async function runHomeCacheMaterializationOperations(options: {
   plan: HomeImageCachePlan;
   approval: HomeImageCacheMutationApproval;
+  fetch?: typeof fetch;
   now?: () => Date;
   runtimeClient: PharoLauncherMcpToolClient;
   homeClient: PharoLauncherMcpToolClient | undefined;
@@ -1551,6 +1563,7 @@ async function runHomeCacheMaterializationOperations(options: {
         plan: options.plan,
         homeClient: options.homeClient,
         approval: options.approval,
+        fetch: options.fetch,
         now: options.now,
       })),
     );
@@ -1609,6 +1622,7 @@ export async function materializeProjectImageFromHomeCache(
       ...(await runHomeCacheMaterializationOperations({
         plan,
         approval,
+        fetch: options.fetch,
         now: options.now,
         runtimeClient: options.runtimeClient,
         homeClient,
