@@ -55,7 +55,8 @@ export function removeImageMcpEndpointHandoff(filePath: string): void {
 
 function parseProperties(source: string): Record<string, string> {
   const parsed: Record<string, string> = {};
-  for (const rawLine of source.split(/\r?\n/)) {
+  // Image-side writers use Pharo's cr, so a bare CR separates the lines.
+  for (const rawLine of source.split(/\r\n|\n|\r/)) {
     const line = rawLine.trim();
     if (!line || line.startsWith("#")) {
       continue;
