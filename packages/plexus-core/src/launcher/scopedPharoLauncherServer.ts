@@ -69,7 +69,10 @@ import {
 } from "../workspace/projectState.js";
 import { projectScriptsDirectoryPath } from "../workspace/projectStartupScript.js";
 import { dirnamePathLike, joinPathLike } from "../support/pathStyle.js";
-import { prepareScopedTemplateCatalog } from "../images/scopedTemplateCatalog.js";
+import {
+  prepareScopedTemplateCatalog,
+  templateCategoryNames,
+} from "../images/scopedTemplateCatalog.js";
 
 const stringSchema = { type: "string", minLength: 1 } as const;
 const displayModeSchema = {
@@ -1024,30 +1027,6 @@ async function listTemplatesInCategory(
   return Array.isArray(data) ? data : [];
 }
 
-async function listTemplateCategoryNames(
-  client: PharoLauncherMcpToolClient,
-): Promise<string[]> {
-  const result = await client.callTool<LauncherCommandResult>(
-    "pharo_launcher_template_category_list",
-    {},
-  );
-  assertLauncherOk(result, "pharo_launcher_template_category_list");
-  const data = result?.data ?? result;
-  if (!Array.isArray(data)) {
-    return [];
-  }
-
-  return data
-    .map((entry) =>
-      typeof entry === "string"
-        ? entry
-        : isObject(entry) && typeof entry.name === "string"
-          ? entry.name
-          : undefined,
-    )
-    .filter((name): name is string => Boolean(name));
-}
-
 export class ScopedPharoLauncher {
   constructor(private readonly options: ScopedPharoLauncherOptions) {}
 
@@ -1311,10 +1290,28 @@ export class ScopedPharoLauncher {
         // Without a category the launcher answers from its default group only,
         // so a caller naming a template from any other group is told it does
         // not exist. Walk the categories and say which one each came from.
-        const categories = await listTemplateCategoryNames(client);
+        const categories = templateCategoryNames(
+          describePharoLauncherMcpProfile({
+            projectRoot: scope.projectRoot,
+            config: projectConfig,
+            workspaceId: scope.workspaceId,
+            targetId: scope.targetId,
+            stateRoot: scope.stateRoot,
+          }).templateSourcesDir,
+        );
+        if (categories.length === 0) {
+          return await listTemplatesInCategory(client);
+        }
+
         const listed: unknown[] = [];
         for (const category of categories) {
-          const templates = await listTemplatesInCategory(client, category);
+          let templates: unknown[];
+          try {
+            templates = await listTemplatesInCategory(client, category);
+          } catch {
+            // A group the sources list names but this launcher cannot open.
+            continue;
+          }
           for (const template of templates) {
             listed.push(
               isObject(template) ? { ...template, templateCategory: category } : template,

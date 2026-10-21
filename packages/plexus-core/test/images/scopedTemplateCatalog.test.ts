@@ -4,7 +4,10 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { prepareScopedTemplateCatalog } from "../../src/images/scopedTemplateCatalog.js";
+import {
+  prepareScopedTemplateCatalog,
+  templateCategoryNames,
+} from "../../src/images/scopedTemplateCatalog.js";
 
 const tempDirs: string[] = [];
 
@@ -103,5 +106,53 @@ describe("scoped template catalogue bootstrap", () => {
 
     expect(result).toMatchObject({ ok: true, action: "already-present" });
     expect(fs.readFileSync(path.join(destination, "sources.list"), "utf8")).toBe(seeded);
+  });
+});
+
+describe("template categories", () => {
+  const sources = `OrderedCollection [
+	PhLTemplateSource {
+		#type : #Cache,
+		#name : 'Templates'
+	},
+	PhLTemplateSource {
+		#type : #URLGroup,
+		#name : 'Pharo Mooc',
+		#templates : [
+			PhLTemplateSource {
+				#type : #URL,
+				#name : 'Pharo Mooc',
+				#url : 'https://mooc.pharo.org/image/PharoWeb.zip'
+			}
+		]
+	},
+	PhLTemplateSource {
+		#type : #URLGroup,
+		#name : 'Official distributions',
+		#templates : [
+			PhLTemplateSource {
+				#type : #URL,
+				#name : 'Pharo 13.0 - 64bit (stable)',
+				#url : 'https://files.pharo.org/image/130/latest-64.zip'
+			}
+		]
+	}
+]
+`;
+
+  it("names the groups of the sources list, not the templates inside them", () => {
+    const directory = makeTempDir("plexus-categories-");
+    fs.writeFileSync(path.join(directory, "sources.list"), sources, "utf8");
+
+    expect(templateCategoryNames(directory)).toEqual([
+      "Templates",
+      "Pharo Mooc",
+      "Official distributions",
+    ]);
+  });
+
+  it("has no categories without a sources list", () => {
+    expect(templateCategoryNames(makeTempDir("plexus-empty-"))).toEqual([]);
+    expect(templateCategoryNames(undefined)).toEqual([]);
   });
 });
