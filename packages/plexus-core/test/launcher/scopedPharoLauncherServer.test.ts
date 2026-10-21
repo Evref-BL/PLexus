@@ -431,11 +431,21 @@ describe("scoped pharo launcher facade", () => {
     const projectRoot = makeTempDir("plexus-project-");
     const stateRoot = makeTempDir("plexus-state-");
     const asked: string[] = [];
+    const sourcesList = `OrderedCollection [
+	PhLTemplateSource {
+		#type : #URLGroup,
+		#name : 'Official distributions',
+		#templates : [ ]
+	},
+	PhLTemplateSource {
+		#type : #URLGroup,
+		#name : 'Deprecated distributions',
+		#templates : [ ]
+	}
+]
+`;
     const client: PharoLauncherMcpToolClient = {
       async callTool(name, argumentsValue) {
-        if (name === "pharo_launcher_template_category_list") {
-          return { ok: true, data: ["Official distributions", "Deprecated distributions"] };
-        }
         if (name === "pharo_launcher_template_list") {
           const category = String((argumentsValue ?? {}).templateCategory);
           asked.push(category);
@@ -456,10 +466,7 @@ describe("scoped pharo launcher facade", () => {
       projectRoot,
       stateRoot,
       workspaceId: "worktree-a",
-      fetch: (async () =>
-        new Response("https://files.example.test/pharo/pharo-13.ston\n", {
-          status: 200,
-        })) as typeof fetch,
+      fetch: (async () => new Response(sourcesList, { status: 200 })) as typeof fetch,
       pharoLauncherMcpClient: client,
     }).listTemplates();
 

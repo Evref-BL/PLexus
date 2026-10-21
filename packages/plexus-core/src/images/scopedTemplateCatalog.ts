@@ -14,6 +14,38 @@ const defaultTemplateSourcesUrl =
   "https://files.pharo.org/pharo-launcher/sources.list";
 const templateSourcesFileName = "sources.list";
 
+// A group in the sources list is one template category. The launcher's own
+// category listing walks the whole tree and returns template names and URLs
+// alongside the group names, so it cannot be used to enumerate categories.
+const templateGroupNamePattern =
+  /#type\s*:\s*#(?:URLGroup|Cache)\s*,\s*#name\s*:\s*'((?:[^']|'')*)'/g;
+
+export function templateCategoryNames(
+  destinationDirectory: string | undefined,
+): string[] {
+  if (!destinationDirectory) {
+    return [];
+  }
+
+  let sources: string;
+  try {
+    sources = fs.readFileSync(
+      path.join(destinationDirectory, templateSourcesFileName),
+      "utf8",
+    );
+  } catch {
+    return [];
+  }
+
+  return [
+    ...new Set(
+      [...sources.matchAll(templateGroupNamePattern)].map((match) =>
+        match[1].replaceAll("''", "'"),
+      ),
+    ),
+  ];
+}
+
 interface TemplateCatalogCandidate {
   kind: "explicit-path" | "active-profile" | "user-profile" | "installation";
   path: string;
