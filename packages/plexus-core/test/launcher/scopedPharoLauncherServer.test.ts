@@ -362,6 +362,7 @@ describe("scoped pharo launcher facade", () => {
   });
 
   it("lists the templates available to the project scope", async () => {
+    const plexusHome = temporaryPlexusHome();
     const projectRoot = makeTempDir("plexus-project-");
     const stateRoot = makeTempDir("plexus-state-");
     const calls: Array<{ name: string; argumentsValue: Record<string, unknown> }> =
@@ -380,6 +381,10 @@ describe("scoped pharo launcher facade", () => {
       projectRoot,
       stateRoot,
       workspaceId: "worktree-a",
+      fetch: (async () =>
+        new Response("https://files.example.test/pharo/pharo-13.ston\n", {
+          status: 200,
+        })) as typeof fetch,
       pharoLauncherMcpClient: client,
     }).listTemplates("Official");
 
@@ -396,6 +401,7 @@ describe("scoped pharo launcher facade", () => {
   });
 
   it("lists template categories without a category filter", async () => {
+    const plexusHome = temporaryPlexusHome();
     const projectRoot = makeTempDir("plexus-project-");
     const stateRoot = makeTempDir("plexus-state-");
     const { client, calls } = fakeLauncherClient();
@@ -405,6 +411,10 @@ describe("scoped pharo launcher facade", () => {
       projectRoot,
       stateRoot,
       workspaceId: "worktree-a",
+      fetch: (async () =>
+        new Response("https://files.example.test/pharo/pharo-13.ston\n", {
+          status: 200,
+        })) as typeof fetch,
       pharoLauncherMcpClient: client,
     }).listTemplateCategories();
 
@@ -417,6 +427,7 @@ describe("scoped pharo launcher facade", () => {
   });
 
   it("reports a failed template listing as a scoped launcher error", async () => {
+    const plexusHome = temporaryPlexusHome();
     const projectRoot = makeTempDir("plexus-project-");
     const stateRoot = makeTempDir("plexus-state-");
     const client: PharoLauncherMcpToolClient = {
@@ -431,7 +442,11 @@ describe("scoped pharo launcher facade", () => {
         projectRoot,
         stateRoot,
         workspaceId: "worktree-a",
-        pharoLauncherMcpClient: client,
+        fetch: (async () =>
+        new Response("https://files.example.test/pharo/pharo-13.ston\n", {
+          status: 200,
+        })) as typeof fetch,
+      pharoLauncherMcpClient: client,
       }).listTemplates(),
     ).rejects.toThrow(/pharo_launcher_template_list returned ok: false/);
   });

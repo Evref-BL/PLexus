@@ -320,6 +320,34 @@ function failure(options: {
   };
 }
 
+async function refreshTemplateSources(options: {
+  destinationDirectory: string;
+  url: string;
+  fetch?: typeof fetch;
+}): Promise<boolean> {
+  const destination = path.join(
+    options.destinationDirectory,
+    templateSourcesFileName,
+  );
+  if (!nonEmptyFile(destination)) {
+    return false;
+  }
+
+  const before = fs.readFileSync(destination, "utf8");
+  try {
+    await downloadServerSources({
+      url: options.url,
+      destinationDirectory: options.destinationDirectory,
+      fetch: options.fetch,
+    });
+  } catch {
+    // Keep the list we have; the launcher still refreshes from it.
+    return false;
+  }
+
+  return fs.readFileSync(destination, "utf8") !== before;
+}
+
 export async function prepareScopedTemplateCatalog(
   options: PrepareScopedTemplateCatalogOptions,
 ): Promise<ScopedTemplateCatalogBootstrapResult> {
@@ -360,6 +388,15 @@ export async function prepareScopedTemplateCatalog(
       });
     }
 
+    // Seeded once and then kept, a sources list from an earlier Pharo cycle
+    // goes on naming templates that no longer exist. Refresh it from the same
+    // upstream list Pharo Launcher uses, so a managed profile stays current
+    // whether or not Pharo Launcher is installed.
+    await refreshTemplateSources({
+      destinationDirectory,
+      url: options.policy?.serverSourcesUrl ?? defaultTemplateSourcesUrl,
+      fetch: options.fetch,
+    });
     return {
       ok: true,
       action: "already-present",

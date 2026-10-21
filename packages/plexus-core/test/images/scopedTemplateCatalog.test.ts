@@ -57,4 +57,51 @@ describe("scoped template catalogue bootstrap", () => {
     });
     expect(fs.existsSync(path.join(destination, "pharo-13.ston"))).toBe(true);
   });
+  it("refreshes a sources list seeded in an earlier Pharo cycle from upstream", async () => {
+    const destination = path.join(makeTempDir("plexus-profile-"), "templates");
+    fs.mkdirSync(destination, { recursive: true });
+    // Seeded a cycle ago: Pharo 14 was the development version back then.
+    fs.writeFileSync(
+      path.join(destination, "sources.list"),
+      "name: 'Pharo 14.0 - 64bit (development version, latest)'",
+      "utf8",
+    );
+    const current = "name: 'Pharo 14.0 - 64bit (next stable)'";
+    const fetched: string[] = [];
+
+    const result = await prepareScopedTemplateCatalog({
+      destinationDirectory: destination,
+      networkPolicy: "online",
+      env: { HOME: makeTempDir("plexus-home-") },
+      platform: "darwin",
+      fetch: (async (input) => {
+        fetched.push(String(input));
+        return new Response(current, { status: 200 });
+      }) as typeof fetch,
+    });
+
+    expect(result).toMatchObject({ ok: true, action: "already-present" });
+    expect(fetched).toEqual(["https://files.pharo.org/pharo-launcher/sources.list"]);
+    expect(fs.readFileSync(path.join(destination, "sources.list"), "utf8")).toBe(current);
+  });
+
+  it("keeps the seeded sources list when upstream cannot be reached", async () => {
+    const destination = path.join(makeTempDir("plexus-profile-"), "templates");
+    fs.mkdirSync(destination, { recursive: true });
+    const seeded = "name: 'Pharo 13.0 - 64bit (stable)'";
+    fs.writeFileSync(path.join(destination, "sources.list"), seeded, "utf8");
+
+    const result = await prepareScopedTemplateCatalog({
+      destinationDirectory: destination,
+      networkPolicy: "online",
+      env: { HOME: makeTempDir("plexus-home-") },
+      platform: "darwin",
+      fetch: (async () => {
+        throw new Error("offline");
+      }) as typeof fetch,
+    });
+
+    expect(result).toMatchObject({ ok: true, action: "already-present" });
+    expect(fs.readFileSync(path.join(destination, "sources.list"), "utf8")).toBe(seeded);
+  });
 });
