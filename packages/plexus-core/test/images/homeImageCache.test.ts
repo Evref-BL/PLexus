@@ -260,6 +260,57 @@ describe("home image cache", () => {
     });
   });
 
+  it("has nothing to discard when the launcher holds no cache base", () => {
+    const plan = buildHomeImageCachePlan({
+      projectRoot: makeTempDir("plexus-project-"),
+      stateRoot: makeTempDir("plexus-state-"),
+      config: config(),
+      imageConfig: config().images[0]!,
+      imageState,
+      workspaceId: "worktree-a",
+      targetId: "project-123--worktree-a",
+      homeDirectory: makeTempDir("plexus-user-home-"),
+      now: () => new Date("2026-05-19T10:00:00.000Z"),
+    });
+
+    expect(plan.discardCacheImage).toBeUndefined();
+  });
+
+  it("discards a cache base a failed attempt left registered with the launcher", () => {
+    const homeDirectory = makeTempDir("plexus-user-home-");
+    const planOptions = {
+      projectRoot: makeTempDir("plexus-project-"),
+      stateRoot: makeTempDir("plexus-state-"),
+      config: config(),
+      imageConfig: config().images[0]!,
+      imageState,
+      workspaceId: "worktree-a",
+      targetId: "project-123--worktree-a",
+      homeDirectory,
+      now: () => new Date("2026-05-19T10:00:00.000Z"),
+    };
+    const first = buildHomeImageCachePlan(planOptions);
+    fs.mkdirSync(path.join(first.homeProfile.imagesDir, first.cacheImageName), {
+      recursive: true,
+    });
+
+    const plan = buildHomeImageCachePlan(planOptions);
+
+    expect(plan.discardCacheImage).toMatchObject({
+      toolName: "pharo_launcher_image_delete",
+      argumentsValue: {
+        imageName: plan.cacheImageName,
+        force: true,
+        confirm: true,
+      },
+      requiresApproval: true,
+    });
+    expect(plan.createCacheImage).toMatchObject({
+      toolName: "pharo_launcher_image_create",
+      argumentsValue: { newImageName: plan.cacheImageName },
+    });
+  });
+
   it("plans a cache miss with create, headless prepare, and cross-profile runtime copy operations", () => {
     const projectRoot = makeTempDir("plexus-project-");
     const stateRoot = makeTempDir("plexus-state-");
