@@ -1011,6 +1011,43 @@ function stateWithCreatedImage(
   return state;
 }
 
+async function listTemplatesInCategory(
+  client: PharoLauncherMcpToolClient,
+  templateCategory?: string,
+): Promise<unknown[]> {
+  const result = await client.callTool<LauncherCommandResult>(
+    "pharo_launcher_template_list",
+    templateCategory ? { templateCategory } : {},
+  );
+  assertLauncherOk(result, "pharo_launcher_template_list");
+  const data = result?.data ?? result;
+  return Array.isArray(data) ? data : [];
+}
+
+async function listTemplateCategoryNames(
+  client: PharoLauncherMcpToolClient,
+): Promise<string[]> {
+  const result = await client.callTool<LauncherCommandResult>(
+    "pharo_launcher_template_category_list",
+    {},
+  );
+  assertLauncherOk(result, "pharo_launcher_template_category_list");
+  const data = result?.data ?? result;
+  if (!Array.isArray(data)) {
+    return [];
+  }
+
+  return data
+    .map((entry) =>
+      typeof entry === "string"
+        ? entry
+        : isObject(entry) && typeof entry.name === "string"
+          ? entry.name
+          : undefined,
+    )
+    .filter((name): name is string => Boolean(name));
+}
+
 export class ScopedPharoLauncher {
   constructor(private readonly options: ScopedPharoLauncherOptions) {}
 
@@ -1267,12 +1304,24 @@ export class ScopedPharoLauncher {
           projectConfig,
           fetch: this.options.fetch,
         });
-        const result = await client.callTool<LauncherCommandResult>(
-          "pharo_launcher_template_list",
-          templateCategory ? { templateCategory } : {},
-        );
-        assertLauncherOk(result, "pharo_launcher_template_list");
-        return result?.data ?? result;
+        if (templateCategory) {
+          return await listTemplatesInCategory(client, templateCategory);
+        }
+
+        // Without a category the launcher answers from its default group only,
+        // so a caller naming a template from any other group is told it does
+        // not exist. Walk the categories and say which one each came from.
+        const categories = await listTemplateCategoryNames(client);
+        const listed: unknown[] = [];
+        for (const category of categories) {
+          const templates = await listTemplatesInCategory(client, category);
+          for (const template of templates) {
+            listed.push(
+              isObject(template) ? { ...template, templateCategory: category } : template,
+            );
+          }
+        }
+        return listed;
       },
     );
 

@@ -426,12 +426,62 @@ describe("scoped pharo launcher facade", () => {
     });
   });
 
+  it("walks every category so a template outside the default group is found", async () => {
+    const plexusHome = temporaryPlexusHome();
+    const projectRoot = makeTempDir("plexus-project-");
+    const stateRoot = makeTempDir("plexus-state-");
+    const asked: string[] = [];
+    const client: PharoLauncherMcpToolClient = {
+      async callTool(name, argumentsValue) {
+        if (name === "pharo_launcher_template_category_list") {
+          return { ok: true, data: ["Official distributions", "Deprecated distributions"] };
+        }
+        if (name === "pharo_launcher_template_list") {
+          const category = String((argumentsValue ?? {}).templateCategory);
+          asked.push(category);
+          return {
+            ok: true,
+            data:
+              category === "Deprecated distributions"
+                ? [{ name: "Pharo 12.0 - 64bit" }]
+                : [{ name: "Pharo 14.0 - 64bit (next stable)" }],
+          };
+        }
+        return { ok: true };
+      },
+    };
+    writeProjectConfig(projectRoot);
+
+    const result = await new ScopedPharoLauncher({
+      projectRoot,
+      stateRoot,
+      workspaceId: "worktree-a",
+      fetch: (async () =>
+        new Response("https://files.example.test/pharo/pharo-13.ston\n", {
+          status: 200,
+        })) as typeof fetch,
+      pharoLauncherMcpClient: client,
+    }).listTemplates();
+
+    expect(asked).toEqual(["Official distributions", "Deprecated distributions"]);
+    expect(result.templates).toEqual([
+      {
+        name: "Pharo 14.0 - 64bit (next stable)",
+        templateCategory: "Official distributions",
+      },
+      { name: "Pharo 12.0 - 64bit", templateCategory: "Deprecated distributions" },
+    ]);
+  });
+
   it("reports a failed template listing as a scoped launcher error", async () => {
     const plexusHome = temporaryPlexusHome();
     const projectRoot = makeTempDir("plexus-project-");
     const stateRoot = makeTempDir("plexus-state-");
     const client: PharoLauncherMcpToolClient = {
       async callTool(name) {
+        if (name === "pharo_launcher_template_category_list") {
+          return { ok: true, data: ["Official distributions"] };
+        }
         return name === "pharo_launcher_template_list" ? { ok: false } : { ok: true };
       },
     };
