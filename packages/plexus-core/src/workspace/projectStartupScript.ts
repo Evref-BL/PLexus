@@ -346,6 +346,20 @@ function findProjectImageConfig(
   return imageConfig;
 }
 
+function fetchRepositoryBeforeLoad(
+  repository: PharoMcpMetacelloRepository,
+  indent: string,
+): string {
+  return [
+    `${indent}"A shared Iceberg clone is never refetched, so a tag released after it was cloned cannot resolve."`,
+    `${indent}IceRepository registry`,
+    `${indent}  detect: [ :each | each name = ${smalltalkString(repository.project)} ]`,
+    `${indent}  ifFound: [ :cachedRepository |`,
+    `${indent}    (cachedRepository tags anySatisfy: [ :tag | tag name = ${smalltalkString(repository.commitish)} ])`,
+    `${indent}      ifFalse: [ [ cachedRepository fetch ] on: Error do: [ :error | "the load below reports the real failure" ] ] ].`,
+  ].join("\n");
+}
+
 function generateEndpointHandoffStartupScript(options: {
   endpointHandoffPath: string;
 }): string {
@@ -644,6 +658,7 @@ pharoMcpLoadPolicy := ${smalltalkString(loadPolicy)}.
   loadScript exists
     ifTrue: [ loadScript fileIn ]
     ifFalse: [
+${fetchRepositoryBeforeLoad(options.repository, "      ")}
       Metacello new
         githubUser: ${smalltalkString(options.repository.githubUser)} project: ${smalltalkString(options.repository.project)} commitish: ${smalltalkString(options.repository.commitish)} path: ${smalltalkString(options.repository.path)};
         baseline: ${smalltalkString(options.repository.baseline)};
@@ -685,6 +700,7 @@ ${loadScript}
           loadScript fileIn ]
         ifFalse: [
           pharoMcpLoadSource := 'metacello'.
+${fetchRepositoryBeforeLoad(options.repository, "          ")}
           Metacello new
             githubUser: ${smalltalkString(options.repository.githubUser)} project: ${smalltalkString(options.repository.project)} commitish: ${smalltalkString(options.repository.commitish)} path: ${smalltalkString(options.repository.path)};
             baseline: ${smalltalkString(options.repository.baseline)};

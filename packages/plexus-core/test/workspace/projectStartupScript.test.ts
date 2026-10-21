@@ -541,6 +541,28 @@ describe("project startup scripts", () => {
     expect(source).not.toContain("mcp port: 7123.");
   });
 
+  it("refreshes a stale shared clone before loading the pinned MCP release", () => {
+    const projectRoot = path.join("C:", "dev", "code", "git", "my-project");
+    const source = generateImageStartupScript({
+      projectRoot,
+      imageConfig: config.images[0],
+      imageState: {
+        id: "dev",
+        imageName: "MyProject-dev",
+        assignedPort: 7123,
+        status: "starting",
+      },
+    });
+
+    // A clone made before this release would otherwise fail with "revspec not found".
+    expect(source).toContain(`detect: [ :each | each name = 'MCP' ]`);
+    expect(source).toContain("ifFound: [ :cachedRepository |");
+    expect(source).toContain(
+      `(cachedRepository tags anySatisfy: [ :tag | tag name = 'v${defaultPharoMcpVersion}' ])`,
+    );
+    expect(source).toContain("cachedRepository fetch");
+  });
+
   it("generates a Pharo project load from an image-local repository workspace", () => {
     const projectRoot = path.join("C:", "dev", "code", "git", "my-project");
     const loadStatusPath = path.join(
