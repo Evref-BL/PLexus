@@ -253,6 +253,7 @@ export interface HomeImageCachePlan {
   keyMaterial: HomeImageCacheKeyMaterial;
   expectedManifest: HomeImageCacheManifest;
   refreshTemplateCatalog?: HomeImageCacheLiveOperation;
+  discardCacheImage?: HomeImageCacheLiveOperation;
   createCacheImage?: HomeImageCacheLiveOperation;
   prepareCacheImage?: HomeImageCacheLiveOperation;
   runtimeCopy?: HomeImageCacheLiveOperation;
@@ -1025,6 +1026,7 @@ Smalltalk snapshot: true andQuit: true.
 type HomeImageCachePlanOperationFields = Pick<
   HomeImageCachePlan,
   | "refreshTemplateCatalog"
+  | "discardCacheImage"
   | "createCacheImage"
   | "prepareCacheImage"
   | "runtimeCopy"
@@ -1113,6 +1115,26 @@ function buildHomeImageCachePlanOperations(options: {
             "A fresh PLexus home image cache profile must have a launcher template catalog before creating a cache base.",
         }
       : undefined;
+  // An attempt that failed after the launcher registered the cache base leaves
+  // the name taken: the manifest says the entry is unusable, yet every rebuild
+  // asks for the same name and the launcher refuses it. Drop the leftover base
+  // first so a failed entry can be built again.
+  const discardCacheImage =
+    options.canPrepareCacheEntry &&
+    fs.existsSync(joinPathLike(options.homeProfile.imagesDir, options.cacheImageName))
+      ? {
+          toolName: "pharo_launcher_image_delete",
+          profileEnvironment: profileEnvironmentFromPaths(options.homeProfile),
+          argumentsValue: {
+            imageName: options.cacheImageName,
+            force: true,
+            confirm: true,
+          },
+          requiresApproval: true as const,
+          reason:
+            "A home image cache base left by a failed attempt must be removed before it is built again.",
+        }
+      : undefined;
   const createCacheImage = options.canPrepareCacheEntry
     ? {
         toolName: "pharo_launcher_image_create",
@@ -1169,6 +1191,7 @@ function buildHomeImageCachePlanOperations(options: {
 
   return {
     ...(refreshTemplateCatalog ? { refreshTemplateCatalog } : {}),
+    ...(discardCacheImage ? { discardCacheImage } : {}),
     ...(createCacheImage ? { createCacheImage } : {}),
     ...(prepareCacheImage ? { prepareCacheImage } : {}),
     ...(runtimeCopy ? { runtimeCopy } : {}),
@@ -1472,6 +1495,18 @@ async function prepareHomeImageCacheEntry(options: {
       });
       await callLauncherOperation(options.homeClient, options.plan.refreshTemplateCatalog);
       operations.push(options.plan.refreshTemplateCatalog);
+    }
+
+    if (options.plan.discardCacheImage) {
+      await callLauncherOperation(options.homeClient, options.plan.discardCacheImage);
+      operations.push(options.plan.discardCacheImage);
+      // The launcher only drops the image files it knows about. Whatever else
+      // the template installed beside them stays, and the next create fails
+      // copying onto it, so take the cache base directory with it.
+      fs.rmSync(
+        joinPathLike(options.plan.homeProfile.imagesDir, options.plan.cacheImageName),
+        { recursive: true, force: true },
+      );
     }
 
     await callLauncherOperation(options.homeClient, options.plan.createCacheImage);
