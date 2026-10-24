@@ -233,7 +233,7 @@ describe("home image cache", () => {
           runtime: {
             pharoMcp: {
               metadataKey: "io.github.evref-bl/pharo",
-              supportedMajorVersions: [12, 13, 14],
+              supportedMajorVersions: [12, 13, 14, 15],
             },
           },
         }),

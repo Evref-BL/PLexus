@@ -1621,7 +1621,7 @@ describe("PlexusGateway", () => {
           pharoMcpContract: {
             status: "unsupported",
             actualMajorVersion: 11,
-            supportedMajorVersions: [12, 13, 14],
+            supportedMajorVersions: [12, 13, 14, 15],
             reason: "Pharo 11 is outside the supported Pharo MCP range.",
           },
         },

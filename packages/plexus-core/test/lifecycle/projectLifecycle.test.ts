@@ -344,7 +344,7 @@ function writeHomeImageCacheManifest(homePath: string, key: string): string {
           support: {
             status: "supported",
             actualMajorVersion: 13,
-            supportedMajorVersions: [12, 13, 14],
+            supportedMajorVersions: [12, 13, 14, 15],
             metadataKey: "io.github.evref-bl/pharo",
             reason: "Pharo 13 is supported for Pharo MCP preparation.",
           },
