@@ -76,7 +76,7 @@ function defaultRuntimePolicy() {
     },
     pharoMcp: {
       metadataKey: "io.github.evref-bl/pharo",
-      supportedMajorVersions: [12, 13, 14],
+      supportedMajorVersions: [12, 13, 14, 15],
     },
   };
 }
@@ -276,7 +276,7 @@ describe("project config", () => {
       },
       pharoMcp: {
         metadataKey: "io.github.evref-bl/pharo",
-        supportedMajorVersions: [12, 13, 14],
+        supportedMajorVersions: [12, 13, 14, 15],
       },
     };
 

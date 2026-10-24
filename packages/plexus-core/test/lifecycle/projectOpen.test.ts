@@ -2245,7 +2245,7 @@ describe("project open", () => {
       pharoMcpContract: {
         status: "unsupported",
         actualMajorVersion: 11,
-        supportedMajorVersions: [12, 13, 14],
+        supportedMajorVersions: [12, 13, 14, 15],
       },
     });
     expect(result.state.images[0]).not.toHaveProperty("assignedPort");

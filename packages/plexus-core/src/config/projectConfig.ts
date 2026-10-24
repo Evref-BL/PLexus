@@ -202,7 +202,7 @@ export interface ProjectImagePortPolicy {
 }
 
 export const defaultPharoMcpMetadataKey = "io.github.evref-bl/pharo";
-export const defaultPharoMcpSupportedMajorVersions = [12, 13, 14] as const;
+export const defaultPharoMcpSupportedMajorVersions = [12, 13, 14, 15] as const;
 
 export interface ProjectPharoMcpPolicy {
   metadataKey: string;

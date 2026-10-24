@@ -73,7 +73,7 @@ function defaultRuntimePolicy(): ProjectRuntimePolicy {
     },
     pharoMcp: {
       metadataKey: "io.github.evref-bl/pharo",
-      supportedMajorVersions: [12, 13, 14],
+      supportedMajorVersions: [12, 13, 14, 15],
     },
   };
 }
@@ -311,7 +311,7 @@ describe("project state", () => {
         pharoMcpContract: expect.objectContaining({
           status: "unsupported",
           actualMajorVersion: 11,
-          supportedMajorVersions: [12, 13, 14],
+          supportedMajorVersions: [12, 13, 14, 15],
         }),
       }),
       expect.objectContaining({
@@ -321,7 +321,7 @@ describe("project state", () => {
         pharoMcpContract: expect.objectContaining({
           status: "matching",
           actualMajorVersion: 13,
-          supportedMajorVersions: [12, 13, 14],
+          supportedMajorVersions: [12, 13, 14, 15],
         }),
       }),
     ]);
