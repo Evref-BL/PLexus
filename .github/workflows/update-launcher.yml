@@ -1,0 +1,99 @@
+name: Apply pharo-launcher-mcp release
+
+on:
+  repository_dispatch:
+    types: [component-release]
+  workflow_dispatch:
+    inputs:
+      launcher_version:
+        description: Published pharo-launcher-mcp version to apply.
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  update:
+    if: github.event_name == 'workflow_dispatch' || github.event.client_payload.component == 'pharo-launcher-mcp'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/create-github-app-token@v2
+        id: app-token
+        with:
+          app-id: ${{ secrets.DEVNEXUS_AUTOMATION_APP_ID }}
+          private-key: ${{ secrets.DEVNEXUS_AUTOMATION_PRIVATE_KEY }}
+          owner: Evref-BL
+          repositories: PLexus
+
+      - uses: actions/checkout@v6
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22.12.0
+          package-manager-cache: false
+
+      - name: Verify the published release
+        id: release
+        env:
+          EVENT_VERSION: ${{ github.event.client_payload.version }}
+          INPUT_VERSION: ${{ inputs.launcher_version }}
+        run: |
+          version="${EVENT_VERSION:-$INPUT_VERSION}"
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          test "$(npm view "@evref-bl/pharo-launcher-mcp@${version}" version)" = "$version"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Prepare the update
+        id: update
+        env:
+          LAUNCHER_VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          pin_file="packages/plexus-core/package.json"
+          current_version="$(node -p "require('./${pin_file}').dependencies['@evref-bl/pharo-launcher-mcp']")"
+          test -n "$current_version"
+          if [[ "$current_version" == "$LAUNCHER_VERSION" ]]; then
+            exit 0
+          fi
+          # Exact, never a range: nothing in the stack publishes a lockfile, so
+          # a range is resolved fresh on every user's machine.
+          npm pkg set "dependencies.@evref-bl/pharo-launcher-mcp=${LAUNCHER_VERSION}" \
+            --workspace @evref-bl/plexus
+          npm install
+          npm run check
+          echo "needed=true" >> "$GITHUB_OUTPUT"
+
+      - name: Create update pull request
+        id: proposal
+        if: steps.update.outputs.needed == 'true'
+        uses: peter-evans/create-pull-request@v7
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+          branch: automation/update-launcher-v${{ steps.release.outputs.version }}
+          delete-branch: true
+          commit-message: "chore: update pharo-launcher-mcp to v${{ steps.release.outputs.version }}"
+          title: "chore: update pharo-launcher-mcp to v${{ steps.release.outputs.version }}"
+          body: |
+            Automated update for the published pharo-launcher-mcp release.
+
+            This only moves the pin. Releasing it is a separate version bump.
+
+      - name: Merge after CI
+        if: steps.proposal.outputs.pull-request-number != ''
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          PR_NUMBER: ${{ steps.proposal.outputs.pull-request-number }}
+        run: |
+          for _ in {1..60}; do
+            if gh pr checks "$PR_NUMBER" --json name --jq 'length' 2>/dev/null | grep -qx '[1-9][0-9]*'; then
+              gh pr checks "$PR_NUMBER" --watch --interval 10
+              gh pr merge "$PR_NUMBER" --squash --delete-branch
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "No CI checks were reported for PR #$PR_NUMBER."
+          exit 1
