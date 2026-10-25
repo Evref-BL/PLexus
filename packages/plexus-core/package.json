@@ -1,6 +1,6 @@
 {
   "name": "@evref-bl/plexus",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "private": false,
   "description": "PLexus CLI for project-scoped Pharo runtime orchestration.",
   "license": "Apache-2.0",
