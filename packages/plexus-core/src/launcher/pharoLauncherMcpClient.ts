@@ -50,7 +50,51 @@ export function pharoLauncherMcpChildEnvironment(
   return env;
 }
 
-function parseToolTextResult(toolName: string, result: unknown): unknown {
+const launcherFailureDetailLength = 500;
+
+function failureDetailField(payload: unknown, key: string): string | undefined {
+  if (!payload || typeof payload !== "object") {
+    return undefined;
+  }
+
+  const value = (payload as Record<string, unknown>)[key];
+  if (typeof value !== "string") {
+    return undefined;
+  }
+
+  const detail = value.trim();
+  if (!detail) {
+    return undefined;
+  }
+
+  return detail.length > launcherFailureDetailLength
+    ? `${detail.slice(0, launcherFailureDetailLength)}…`
+    : detail;
+}
+
+// The launcher says what went wrong and what to do about it. A message naming
+// only the tool throws that away, and the caller above us has nothing left to
+// report. Carry the explanation, trimmed: a diagnostic built from launcher
+// output can run to pages.
+export function launcherToolFailureMessage(
+  toolName: string,
+  payload: unknown,
+): string {
+  const detail =
+    failureDetailField(payload, "message") ??
+    [
+      failureDetailField(payload, "diagnostic"),
+      failureDetailField(payload, "action"),
+    ]
+      .filter(Boolean)
+      .join(" ");
+
+  return detail
+    ? `pharo-launcher-mcp tool failed: ${toolName}: ${detail}`
+    : `pharo-launcher-mcp tool failed: ${toolName}`;
+}
+
+export function parseToolTextResult(toolName: string, result: unknown): unknown {
   if (!result || typeof result !== "object") {
     return result;
   }
@@ -61,7 +105,7 @@ function parseToolTextResult(toolName: string, result: unknown): unknown {
   if (!Array.isArray(content)) {
     if (isError) {
       throw new PharoLauncherMcpToolError(
-        `pharo-launcher-mcp tool failed: ${toolName}`,
+        launcherToolFailureMessage(toolName, result),
         toolName,
         result,
       );
@@ -82,7 +126,7 @@ function parseToolTextResult(toolName: string, result: unknown): unknown {
 
   if (isError) {
     throw new PharoLauncherMcpToolError(
-      `pharo-launcher-mcp tool failed: ${toolName}`,
+      launcherToolFailureMessage(toolName, parsed),
       toolName,
       parsed,
     );
