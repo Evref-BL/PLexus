@@ -20,6 +20,7 @@ import {
   type ProjectState,
 } from "../../src/workspace/projectState.js";
 import { resolvePlexusHomePath } from "../../src/config/plexusHome.js";
+import { describePharoLauncherMcpProfile } from "../../src/launcher/pharoLauncherProfile.js";
 import {
   ScopedPharoLauncher,
   createScopedPharoLauncherServer,
@@ -80,6 +81,22 @@ function statePath(projectRoot: string, stateRoot: string): string {
     workspaceId: "worktree-a",
     stateRoot,
   });
+}
+
+function launcherImageDirectory(
+  projectRoot: string,
+  stateRoot: string,
+  imageName: string,
+): string {
+  return path.join(
+    describePharoLauncherMcpProfile({
+      projectRoot,
+      config: projectConfig(),
+      workspaceId: "worktree-a",
+      stateRoot,
+    }).imagesDir,
+    imageName,
+  );
 }
 
 function runningState(): ProjectState {
@@ -1202,9 +1219,69 @@ describe("scoped pharo launcher facade", () => {
     });
   });
 
-  it("resets disposable images through scoped close, delete, create, and reopen policy", async () => {
+  it("resets a record whose launcher image was never created", async () => {
+    temporaryPlexusHome();
     const projectRoot = makeTempDir("plexus-project-");
     const stateRoot = makeTempDir("plexus-state-");
+    writeProjectConfig(projectRoot, {
+      home: { imageCache: { enabled: false, networkPolicy: "online" } },
+      runtime: { launcherProfile: { templateCatalog: { source: "none" } } },
+    });
+    const { client, calls } = fakeLauncherClient();
+    const failedState: ProjectState = {
+      ...runningState(),
+      runtimeStatus: "idle",
+      images: [
+        {
+          id: "dev",
+          imageName: "MyProject-worktree-a-dev",
+          assignedPort: 7123,
+          status: "failed",
+        },
+      ],
+    };
+    saveProjectState(statePath(projectRoot, stateRoot), failedState);
+
+    const result = await new ScopedPharoLauncher({
+      projectRoot,
+      stateRoot,
+      workspaceId: "worktree-a",
+      pharoLauncherMcpClient: client,
+      now: () => new Date("2026-05-18T12:00:00.000Z"),
+      projectClose: async () => {
+        saveProjectState(statePath(projectRoot, stateRoot), failedState);
+        return {
+          ok: true,
+          projectRoot,
+          statePath: statePath(projectRoot, stateRoot),
+          state: failedState,
+          stoppedImages: failedState.images,
+          repositoryWorkspaceCleanups: [],
+          failures: [],
+        };
+      },
+    }).resetImage("dev", { start: false });
+
+    expect(calls.map((call) => call.name)).toEqual([
+      "pharo_launcher_image_create",
+    ]);
+    expect(result.reset).toMatchObject({
+      imageId: "dev",
+      deleted: false,
+      created: true,
+      started: false,
+    });
+    expect(result.image.status).toBe("stopped");
+  });
+
+  it("resets disposable images through scoped close, delete, create, and reopen policy", async () => {
+    temporaryPlexusHome();
+    const projectRoot = makeTempDir("plexus-project-");
+    const stateRoot = makeTempDir("plexus-state-");
+    fs.mkdirSync(
+      launcherImageDirectory(projectRoot, stateRoot, "MyProject-worktree-a-dev"),
+      { recursive: true },
+    );
     const { client, calls } = fakeLauncherClient();
     const starts: unknown[] = [];
     const stops: unknown[] = [];

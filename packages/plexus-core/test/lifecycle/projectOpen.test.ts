@@ -25,6 +25,7 @@ import {
   saveProjectState,
   type ProjectState,
 } from "../../src/workspace/projectState.js";
+import { ScopedPharoLauncher } from "../../src/launcher/scopedPharoLauncherServer.js";
 import { defaultPharoMcpMetacelloRepositoryLocation } from "../../src/workspace/projectStartupScript.js";
 
 const tempDirs: string[] = [];
@@ -2002,18 +2003,88 @@ describe("project open", () => {
     expect(fs.existsSync(baselineScriptPath)).toBe(true);
     expect(result.state.images).toEqual([
       {
-        id: "dev",
-        imageName: "MyProject-dev",
-        assignedPort: 7100,
-        status: "stopped",
-      },
-      {
         id: "baseline",
         imageName: "MyProject-baseline",
         assignedPort: 7101,
         pid: 5678,
         status: "running",
       },
+    ]);
+  });
+
+  it("leaves an image it did not open out of the state until something creates it", async () => {
+    const projectRoot = makeTempDir("plexus-project-");
+    const stateRoot = makeTempDir("plexus-state-");
+    writeProjectConfig(projectRoot, {
+      images: [
+        {
+          id: "dev",
+          imageName: "MyProject-dev",
+          active: true,
+          mcp: { loadScript: "pharo/load-mcp.st" },
+        },
+        {
+          id: "baseline",
+          imageName: "MyProject-baseline",
+          active: true,
+          mcp: { loadScript: "pharo/load-mcp.st" },
+        },
+      ],
+    });
+
+    await openProject({
+      projectRoot,
+      stateRoot,
+      workspaceId: "worktree-a",
+      imageIds: ["baseline"],
+      pharoLauncherMcpClient: new FakePharoLauncherMcpClient([
+        {
+          pid: 5678,
+          imageName: "MyProject-baseline",
+          commandLine: "PharoConsole.exe MyProject-baseline.image",
+        },
+      ]),
+      healthClient: new FakeHealthClient(true),
+      now: fixedNow,
+      sleep: async () => {},
+      poll: { intervalMs: 0 },
+    });
+
+    const launcher = new ScopedPharoLauncher({
+      projectRoot,
+      stateRoot,
+      workspaceId: "worktree-a",
+    });
+    const summaries = launcher.listImages().images;
+
+    expect(summaries.map((image) => [image.imageId, image.status])).toEqual([
+      ["dev", "declared"],
+      ["baseline", "running"],
+    ]);
+
+    await openProject({
+      projectRoot,
+      stateRoot,
+      workspaceId: "worktree-a",
+      imageIds: ["dev"],
+      pharoLauncherMcpClient: new FakePharoLauncherMcpClient([
+        {
+          pid: 1234,
+          imageName: "MyProject-dev",
+          commandLine: "PharoConsole.exe MyProject-dev.image",
+        },
+      ]),
+      healthClient: new FakeHealthClient(true),
+      now: fixedNow,
+      sleep: async () => {},
+      poll: { intervalMs: 0 },
+    });
+
+    expect(
+      launcher.listImages().images.map((image) => [image.imageId, image.status]),
+    ).toEqual([
+      ["dev", "running"],
+      ["baseline", "running"],
     ]);
   });
 

@@ -1642,18 +1642,26 @@ function applyScopedImageSelection(
   }
 
   const selectedIds = new Set(imageIds);
-  for (const image of state.images) {
-    if (!selectedIds.has(image.id)) {
-      const previousImage = previousState?.images.find(
-        (candidate) => candidate.id === image.id,
-      );
-      if (previousImage) {
-        Object.assign(image, previousImage);
-      } else {
-        image.status = "stopped";
-      }
+  state.images = state.images.filter((image) => {
+    if (selectedIds.has(image.id)) {
+      return true;
     }
-  }
+
+    const previousImage = previousState?.images.find(
+      (candidate) => candidate.id === image.id,
+    );
+    // An image this open did not touch and nothing has created yet has no
+    // runtime at all. Recording it as `stopped` would claim it exists, which
+    // is how a created image that is not running reads, and would leave it
+    // with no way back: creation refuses an id that already holds runtime
+    // state, and nothing can start an image whose files were never made.
+    if (!previousImage) {
+      return false;
+    }
+
+    Object.assign(image, previousImage);
+    return true;
+  });
 }
 
 function previousImageState(

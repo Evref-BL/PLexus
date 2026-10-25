@@ -965,6 +965,24 @@ function resetSummary(
   };
 }
 
+function launcherHoldsImage(
+  scope: ResolvedScope,
+  projectConfig: ProjectConfig,
+  imageName: string,
+): boolean {
+  const { imagesDir } = describePharoLauncherMcpProfile({
+    projectRoot: scope.projectRoot,
+    config: projectConfig,
+    workspaceId: scope.workspaceId,
+    targetId: scope.targetId,
+    stateRoot: scope.stateRoot,
+  });
+
+  // An external profile keeps its own paths, so we cannot look. Answer the way
+  // we always behaved there and let the launcher say whether the image is there.
+  return imagesDir === undefined || fs.existsSync(joinPathLike(imagesDir, imageName));
+}
+
 function stateWithCreatedImage(
   projectConfig: ProjectConfig,
   scope: ResolvedScope,
@@ -1685,6 +1703,37 @@ export class ScopedPharoLauncher {
     }
   }
 
+  private async deleteLauncherImage(
+    scope: ResolvedScope,
+    projectConfig: ProjectConfig,
+    imageName: string,
+  ): Promise<void> {
+    const client =
+      this.options.pharoLauncherMcpClient ??
+      (await createStdioPharoLauncherMcpClient(undefined, {
+        profileEnvironment: pharoLauncherMcpProfileEnvironment({
+          projectRoot: scope.projectRoot,
+          config: projectConfig,
+          workspaceId: scope.workspaceId,
+          targetId: scope.targetId,
+          stateRoot: scope.stateRoot,
+        }),
+      }));
+    const ownsClient = !this.options.pharoLauncherMcpClient;
+
+    try {
+      const deleteResult = await client.callTool<LauncherCommandResult>(
+        "pharo_launcher_image_delete",
+        { imageName, force: true, confirm: true },
+      );
+      assertLauncherOk(deleteResult, "pharo_launcher_image_delete");
+    } finally {
+      if (ownsClient) {
+        await client.close?.();
+      }
+    }
+  }
+
   async resetImage(
     imageId: string,
     options: ResetImageOptions = {},
@@ -1739,34 +1788,17 @@ export class ScopedPharoLauncher {
 
     let deleted = false;
     if (previousImage) {
-      const client =
-        this.options.pharoLauncherMcpClient ??
-        (await createStdioPharoLauncherMcpClient(undefined, {
-          profileEnvironment: pharoLauncherMcpProfileEnvironment({
-            projectRoot: scope.projectRoot,
-            config: projectConfig,
-            workspaceId: scope.workspaceId,
-            targetId: scope.targetId,
-            stateRoot: scope.stateRoot,
-          }),
-        }));
-      const ownsClient = !this.options.pharoLauncherMcpClient;
-
-      try {
-        const deleteResult = await client.callTool<LauncherCommandResult>(
-          "pharo_launcher_image_delete",
-          {
-            imageName: previousImage.imageName,
-            force: true,
-            confirm: true,
-          },
+      // A record can outlive the image it names: an open that failed before
+      // the launcher made the files leaves one behind. Deleting what is not
+      // there fails, and a reset that cannot run is the only way out of that
+      // record, so delete only what the profile actually holds.
+      if (launcherHoldsImage(scope, projectConfig, previousImage.imageName)) {
+        await this.deleteLauncherImage(
+          scope,
+          projectConfig,
+          previousImage.imageName,
         );
-        assertLauncherOk(deleteResult, "pharo_launcher_image_delete");
         deleted = true;
-      } finally {
-        if (ownsClient) {
-          await client.close?.();
-        }
       }
 
       const currentState = loadProjectState(statePath);
