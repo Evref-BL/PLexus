@@ -17,6 +17,18 @@ import {
   type PharoMcpHealthClient,
 } from "../mcp/pharoMcpHealth.js";
 import {
+  applyChangeHistoryEntries,
+  changeHistorySelectionArguments,
+  highestChangeHistoryEntryIndex,
+  listChangeHistoryFiles,
+  listRegisteredRepositories,
+  repositoryArguments,
+  repositoryRegistrationToolName,
+  runImageTool,
+  type ImageMcpClient,
+  type RegisteredRepository,
+} from "../mcp/imageOperations.js";
+import {
   defaultWorkspaceId,
   loadProjectState,
   projectStatePathForConfig,
@@ -59,7 +71,7 @@ export interface ImageRescueEntrySelection {
 
 export interface ImageRescueRepositoryAction {
   label?: string;
-  toolName?: "load_repository" | "edit_repository";
+  toolName?: string;
   arguments: Record<string, unknown>;
 }
 
@@ -98,13 +110,7 @@ export interface ImageRescueOptions {
   sleep?: (durationMs: number) => Promise<void>;
 }
 
-export interface ImageRescueMcpClient {
-  callTool(
-    image: ProjectImageState,
-    toolName: string,
-    argumentsValue: Record<string, unknown>,
-  ): Promise<unknown>;
-}
+export type ImageRescueMcpClient = ImageMcpClient;
 
 export interface LauncherPathStatus {
   path: string;
@@ -140,7 +146,7 @@ export interface ResolvedImagePaths {
 export interface ImageRescueRepositorySnapshot {
   capturedAt: string;
   status: "captured" | "unavailable";
-  repositories: Record<string, unknown>[];
+  repositories: RegisteredRepository[];
   error?: string;
 }
 
@@ -248,40 +254,6 @@ function assertLauncherOk(result: unknown, toolName: string): void {
   if (isObject(result) && result.ok === false) {
     throw new Error(`${toolName} returned ok: false`);
   }
-}
-
-function parseToolContent(value: unknown): unknown {
-  if (!isObject(value)) {
-    return value;
-  }
-
-  const content = value.content;
-  if (!Array.isArray(content)) {
-    return value;
-  }
-
-  const textContent = content.find(
-    (item): item is { type: "text"; text: string } =>
-      isObject(item) && item.type === "text" && typeof item.text === "string",
-  );
-  if (!textContent) {
-    return value;
-  }
-
-  try {
-    return JSON.parse(textContent.text);
-  } catch {
-    return textContent.text;
-  }
-}
-
-function resultData(value: unknown): unknown {
-  const parsed = parseToolContent(value);
-  if (isObject(parsed) && "data" in parsed) {
-    return parsed.data;
-  }
-
-  return parsed;
 }
 
 function nowStamp(now: () => Date): string {
@@ -541,10 +513,7 @@ async function snapshotRepositories(
   }
 
   try {
-    const result = await imageMcpClient.callTool(image, "find_repositories", {
-      limit: 1000,
-    });
-    const repositories = extractObjects(resultData(result));
+    const repositories = await listRegisteredRepositories(imageMcpClient, image);
 
     return {
       capturedAt,
@@ -559,23 +528,6 @@ async function snapshotRepositories(
       error: errorMessage(error),
     };
   }
-}
-
-function extractObjects(value: unknown): Record<string, unknown>[] {
-  if (Array.isArray(value)) {
-    return value.filter(isObject);
-  }
-
-  if (isObject(value)) {
-    for (const key of ["repositories", "items", "entries", "data"]) {
-      const nested = value[key];
-      if (Array.isArray(nested)) {
-        return nested.filter(isObject);
-      }
-    }
-  }
-
-  return [];
 }
 
 function listOmbuFiles(directoryPath: string | undefined): ImageRescueHistoryFile[] {
@@ -598,33 +550,6 @@ function listOmbuFiles(directoryPath: string | undefined): ImageRescueHistoryFil
     .sort((a, b) => (b.mtimeMs ?? 0) - (a.mtimeMs ?? 0));
 }
 
-function selectionArguments(
-  selection: ImageRescueEntrySelection | undefined,
-): Record<string, unknown> {
-  if (!selection) {
-    return {};
-  }
-
-  return {
-    ...(selection.indexes ? { indexes: selection.indexes } : {}),
-    ...(selection.entryReferences
-      ? { entryReferences: selection.entryReferences }
-      : {}),
-    ...(selection.startIndex !== undefined ? { startIndex: selection.startIndex } : {}),
-    ...(selection.endIndex !== undefined ? { endIndex: selection.endIndex } : {}),
-    ...(selection.latestCount !== undefined ? { latestCount: selection.latestCount } : {}),
-  };
-}
-
-function extractIndexesFromEntries(value: unknown): number[] {
-  const entries = extractObjects(value);
-  const indexes = entries
-    .map((entry) => entry.index)
-    .filter((index): index is number => Number.isInteger(index));
-
-  return indexes;
-}
-
 function excludedIndexes(exclude: ImageRescueEntrySelection | undefined): Set<number> {
   if (exclude?.latestCount !== undefined) {
     throw new ImageRescueError(
@@ -637,39 +562,6 @@ function excludedIndexes(exclude: ImageRescueEntrySelection | undefined): Set<nu
   if (exclude?.startIndex !== undefined && exclude.endIndex !== undefined) {
     for (let index = exclude.startIndex; index <= exclude.endIndex; index += 1) {
       indexes.add(index);
-    }
-  }
-
-  return indexes;
-}
-
-function selectedIndexes(
-  selection: ImageRescueEntrySelection | undefined,
-  availableIndexes: number[],
-): Set<number> {
-  if (!selection) {
-    return new Set(availableIndexes);
-  }
-
-  if (selection.entryReferences && selection.entryReferences.length > 0) {
-    throw new ImageRescueError(
-      "selection.entryReferences cannot be combined with exclude yet; use indexes or ranges",
-    );
-  }
-  if (selection.latestCount !== undefined) {
-    throw new ImageRescueError(
-      "selection.latestCount cannot be combined with exclude yet; use indexes or ranges",
-    );
-  }
-
-  const indexes = new Set(selection.indexes ?? availableIndexes);
-  if (selection.startIndex !== undefined || selection.endIndex !== undefined) {
-    const startIndex = selection.startIndex ?? Math.min(...availableIndexes);
-    const endIndex = selection.endIndex ?? Math.max(...availableIndexes);
-    for (const index of [...indexes]) {
-      if (index < startIndex || index > endIndex) {
-        indexes.delete(index);
-      }
     }
   }
 
@@ -694,48 +586,67 @@ async function resolveSelectionWithExclusions(
     );
   }
 
-  const listResult = await imageMcpClient.callTool(targetImage, "manage-change-history", {
-    operation: "listEntries",
-    historyFilePath,
-    codeChangesOnly,
-  });
-  const availableIndexes = extractIndexesFromEntries(resultData(listResult));
-  if (availableIndexes.length === 0) {
-    throw new ImageRescueError(
-      "Could not read entry indexes while applying exclusions",
-    );
-  }
-
-  const includeIndexes = selectedIndexes(selection, availableIndexes);
   const excludes = excludedIndexes(exclude);
+  const selected = await selectedRange(
+    imageMcpClient,
+    targetImage,
+    historyFilePath,
+    selection,
+    codeChangesOnly,
+  );
 
   return {
-    indexes: [...includeIndexes].filter((index) => !excludes.has(index)),
+    indexes: selected.filter((index) => !excludes.has(index)),
   };
 }
 
-function repositoryName(repository: Record<string, unknown>): string | undefined {
-  const value = repository.name ?? repository.repositoryName;
-  return typeof value === "string" && value.length > 0 ? value : undefined;
-}
+// Every index the selection covers. One that names them outright is answered
+// here; one that reaches to the end of the file needs the image to say where
+// that is, because an exclusion can only be subtracted from a known range.
+async function selectedRange(
+  imageMcpClient: ImageRescueMcpClient,
+  targetImage: ProjectImageState,
+  historyFilePath: string,
+  selection: ImageRescueEntrySelection | undefined,
+  codeChangesOnly: boolean,
+): Promise<number[]> {
+  if (selection?.entryReferences && selection.entryReferences.length > 0) {
+    throw new ImageRescueError(
+      "selection.entryReferences cannot be combined with exclude yet; use indexes or ranges",
+    );
+  }
+  if (selection?.latestCount !== undefined) {
+    throw new ImageRescueError(
+      "selection.latestCount cannot be combined with exclude yet; use indexes or ranges",
+    );
+  }
 
-function repositoryLocation(repository: Record<string, unknown>): string | undefined {
-  const value = repository.location ?? repository.directory;
-  return typeof value === "string" && value.length > 0 ? value : undefined;
-}
+  if (selection?.indexes && selection.indexes.length > 0) {
+    const startIndex = selection.startIndex ?? Number.NEGATIVE_INFINITY;
+    const endIndex = selection.endIndex ?? Number.POSITIVE_INFINITY;
+    return [...new Set(selection.indexes)]
+      .filter((index) => index >= startIndex && index <= endIndex)
+      .sort((left, right) => left - right);
+  }
 
-function repositorySubdirectory(
-  repository: Record<string, unknown>,
-): string | undefined {
-  const value = repository.subdirectory;
-  return typeof value === "string" && value.length > 0 ? value : undefined;
-}
+  const startIndex = selection?.startIndex ?? 1;
+  const endIndex =
+    selection?.endIndex ??
+    (await highestChangeHistoryEntryIndex(imageMcpClient, targetImage, {
+      historyFilePath,
+      codeChangesOnly,
+    }));
+  if (endIndex === undefined) {
+    throw new ImageRescueError(
+      "Could not read how far the entries reach while applying exclusions",
+    );
+  }
 
-function repositoryPackageNames(repository: Record<string, unknown>): string[] | undefined {
-  const value = repository.packageNames ?? repository.packages;
-  return Array.isArray(value)
-    ? value.filter((item): item is string => typeof item === "string")
-    : undefined;
+  const range: number[] = [];
+  for (let index = startIndex; index <= endIndex; index += 1) {
+    range.push(index);
+  }
+  return range;
 }
 
 function defaultRepositoryActions(
@@ -745,31 +656,24 @@ function defaultRepositoryActions(
     return [];
   }
 
-  return snapshot.repositories.flatMap((repository) => {
-    const name = repositoryName(repository);
-    const location = repositoryLocation(repository);
-    if (!name || !location) {
-      return [];
-    }
-
-    return [
-      {
-        label: `Register repository ${name}`,
-        toolName: "edit_repository" as const,
-        arguments: {
-          operation: "create",
-          name,
-          location,
-          ...(repositorySubdirectory(repository)
-            ? { subdirectory: repositorySubdirectory(repository) }
-            : {}),
-          ...(repositoryPackageNames(repository)
-            ? { packageNames: repositoryPackageNames(repository) }
-            : {}),
-        },
-      },
-    ];
-  });
+  // The image lists how many packages a repository manages, not which, so a
+  // rescued registration carries the checkout and nothing more. Opening the
+  // project puts the workspace's own package membership back. One whose
+  // checkout is gone has nothing to register.
+  return snapshot.repositories.flatMap((repository) =>
+    repository.location
+      ? [
+          {
+            label: `Register repository ${repository.name}`,
+            toolName: repositoryRegistrationToolName,
+            arguments: repositoryArguments({
+              ...repository,
+              location: repository.location,
+            }),
+          },
+        ]
+      : [],
+  );
 }
 
 async function runRepositoryActions(
@@ -781,7 +685,7 @@ async function runRepositoryActions(
   const results: ImageRescueRepositoryResult[] = [];
 
   for (const action of actions) {
-    const toolName = action.toolName ?? "load_repository";
+    const toolName = action.toolName ?? repositoryRegistrationToolName;
     const label = action.label ?? toolName;
 
     if (!confirm) {
@@ -806,7 +710,8 @@ async function runRepositoryActions(
     }
 
     try {
-      const result = await imageMcpClient.callTool(
+      const result = await runImageTool(
+        imageMcpClient,
         targetImage,
         toolName,
         action.arguments,
@@ -816,7 +721,7 @@ async function runRepositoryActions(
         toolName,
         arguments: action.arguments,
         status: "applied",
-        result: resultData(result),
+        result,
       });
     } catch (error) {
       results.push({
@@ -864,24 +769,21 @@ function assertPathInsideDirectory(
   }
 }
 
+// The image no longer counts the entries in a history file, so what it adds to
+// the files PLexus already found on disk is which one is the session in
+// progress.
 async function listHistoryFilesThroughImage(
   imageMcpClient: ImageRescueMcpClient | undefined,
   image: ProjectImageState | undefined,
   directoryPath: string | undefined,
-  includeEntryCounts: boolean,
 ): Promise<unknown | undefined> {
   if (!imageMcpClient || !image || image.status !== "running" || !directoryPath) {
     return undefined;
   }
 
-  const result = await imageMcpClient.callTool(image, "manage-change-history", {
-    operation: "listFiles",
-    directoryPath,
-    includeEntryCounts,
-  });
-
-  return resultData(result);
+  return listChangeHistoryFiles(imageMcpClient, image, { directoryPath });
 }
+
 
 async function applyHistoryEntries(
   imageMcpClient: ImageRescueMcpClient | undefined,
@@ -896,6 +798,12 @@ async function applyHistoryEntries(
     return undefined;
   }
 
+  if (selection?.entryReferences && selection.entryReferences.length > 0) {
+    throw new ImageRescueError(
+      "selection.entryReferences is not supported: the image names entries by index, range or latest count",
+    );
+  }
+
   let resolvedSelection = selection;
   if (imageMcpClient && targetImage) {
     resolvedSelection = await resolveSelectionWithExclusions(
@@ -907,13 +815,11 @@ async function applyHistoryEntries(
       codeChangesOnly,
     );
   }
-
   const argumentsValue = {
-    operation: "applyEntries",
     historyFilePath,
     codeChangesOnly,
     confirm,
-    ...selectionArguments(resolvedSelection),
+    ...changeHistorySelectionArguments(resolvedSelection),
   };
 
   if (!confirm) {
@@ -929,16 +835,17 @@ async function applyHistoryEntries(
   }
 
   try {
-    const result = await imageMcpClient.callTool(
-      targetImage,
-      "manage-change-history",
-      argumentsValue,
-    );
+    const result = await applyChangeHistoryEntries(imageMcpClient, targetImage, {
+      historyFilePath,
+      selection: resolvedSelection,
+      codeChangesOnly,
+      confirm,
+    });
     return {
       historyFilePath,
       arguments: argumentsValue,
       status: "applied",
-      result: resultData(result),
+      result,
     };
   } catch (error) {
     return {
@@ -1271,7 +1178,6 @@ async function collectImageRescueHistoryListing(
       options.imageMcpClient,
       historyReader,
       source.historyDirectoryPath,
-      options.includeEntryCounts,
     );
   } catch (error) {
     warnings.push(

@@ -13,6 +13,7 @@ import {
   type ImageRescueRepositoryAction,
   type ImageRescueResult,
 } from "../images/imageRescue.js";
+import { repositoryActionToolNames } from "../mcp/imageOperations.js";
 import {
   loadProjectConfig,
   plexusProjectConfigFileName,
@@ -816,11 +817,12 @@ function optionalRepositoryActions(
     const toolName = item.toolName;
     if (
       toolName !== undefined &&
-      toolName !== "load_repository" &&
-      toolName !== "edit_repository"
+      !repositoryActionToolNames.includes(
+        toolName as (typeof repositoryActionToolNames)[number],
+      )
     ) {
       throw new ProjectLifecycleInputError(
-        `${key}[${index}].toolName must be load_repository or edit_repository`,
+        `${key}[${index}].toolName must be one of ${repositoryActionToolNames.join(", ")}`,
       );
     }
 

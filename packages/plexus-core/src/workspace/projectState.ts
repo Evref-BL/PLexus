@@ -277,7 +277,11 @@ export interface ProjectImageState {
     repositories?: {
       capturedAt: string;
       status: "captured" | "unavailable";
-      repositories: Record<string, unknown>[];
+      repositories: {
+        name: string;
+        location?: string;
+        subdirectory?: string;
+      }[];
       error?: string;
     };
   };
