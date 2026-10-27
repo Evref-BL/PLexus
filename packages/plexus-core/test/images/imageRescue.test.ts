@@ -84,12 +84,16 @@ class FakeLauncherClient implements PharoLauncherMcpToolClient {
   }
 }
 
+// Answers the way an image's MCP server does: one record per line in prose,
+// pages that run out, and no structured content.
 class FakeImageMcpClient implements ImageRescueMcpClient {
   readonly calls: Array<{
     imageId: string;
     toolName: string;
     argumentsValue: Record<string, unknown>;
   }> = [];
+
+  constructor(private readonly entryCount = 3) {}
 
   async callTool(
     image: ProjectImageState,
@@ -98,32 +102,49 @@ class FakeImageMcpClient implements ImageRescueMcpClient {
   ): Promise<unknown> {
     this.calls.push({ imageId: image.id, toolName, argumentsValue });
 
-    if (toolName === "manage-change-history") {
-      if (argumentsValue.operation === "listEntries") {
-        return {
-          content: [
-            {
-              type: "text",
-              text: JSON.stringify({
-                entries: [{ index: 1 }, { index: 2 }, { index: 3 }],
-              }),
-            },
-          ],
-        };
-      }
-
-      return {
-        content: [
-          {
-            type: "text",
-            text: JSON.stringify({ applied: true }),
-          },
-        ],
-      };
+    if (toolName !== "tool_call") {
+      throw new Error(`Unexpected image MCP tool: ${toolName}`);
     }
 
-    throw new Error(`Unexpected image MCP tool: ${toolName}`);
+    const targetToolName = argumentsValue.name;
+    const targetArguments = (argumentsValue.arguments ?? {}) as Record<string, unknown>;
+
+    if (targetToolName === "history_entry_list") {
+      const offset = Number(targetArguments.offset ?? 0);
+      const indexes = targetArguments.newestFirst
+        ? [this.entryCount]
+        : Array.from({ length: Math.max(this.entryCount - offset, 0) }, (_, at) => offset + at + 1);
+      return textResult(
+        [
+          `Listed ${indexes.length} change history entries.`,
+          "entries:",
+          ...indexes.map((index) => `  eventClass=EpMethodModification index=${index}`),
+        ].join("\n"),
+      );
+    }
+
+    if (targetToolName === "history_entry_apply") {
+      return textResult("Applied change history entries.");
+    }
+
+    if (targetToolName === "repository_search") {
+      return textResult("Showing 0 of 0 repositories [scope=image].\nrepositories:");
+    }
+
+    if (targetToolName === "history_file_list") {
+      return textResult("Listed 0 change history files.\nfiles:");
+    }
+
+    if (targetToolName === "repository_attach") {
+      return textResult(`Attached repository ${String(targetArguments.name)}.`);
+    }
+
+    throw new Error(`Unexpected image MCP tool: ${String(targetToolName)}`);
   }
+}
+
+function textResult(text: string): unknown {
+  return { content: [{ type: "text", text }] };
 }
 
 class FakeHealthClient implements PharoMcpHealthClient {
@@ -440,14 +461,13 @@ describe("image rescue", () => {
     expect(result.changeResult).toMatchObject({
       status: "applied",
       arguments: {
-        operation: "applyEntries",
         indexes: [1, 3],
         confirm: true,
       },
     });
-    expect(imageMcpClient.calls.map((call) => call.argumentsValue.operation)).toEqual([
-      "listEntries",
-      "applyEntries",
+    expect(imageMcpClient.calls.map((call) => call.argumentsValue.name)).toEqual([
+      "history_entry_list",
+      "history_entry_apply",
     ]);
   });
 });
