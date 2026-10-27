@@ -704,51 +704,33 @@ function toolErrorMessage(result: unknown, toolName: string): string {
   return `${toolName} returned an error result`;
 }
 
-function assertToolResultOk(result: unknown, toolName: string): void {
+function toolResultIsError(result: unknown): boolean {
   const structuredContent = toolStructuredContent(result);
-  if (
-    structuredContent?.status !== "error" &&
-    (!isObject(result) || result.isError !== true)
-  ) {
+  return (
+    structuredContent?.status === "error" ||
+    (isObject(result) && result.isError === true)
+  );
+}
+
+function assertToolResultOk(result: unknown, toolName: string): void {
+  if (!toolResultIsError(result)) {
     return;
   }
 
   throw new Error(toolErrorMessage(result, toolName));
 }
 
-function toolResultData(result: unknown): Record<string, unknown> {
-  const structuredContent = toolStructuredContent(result);
-  if (isObject(structuredContent?.data)) {
-    return structuredContent.data;
-  }
-
-  if (isObject(result) && isObject(result.data)) {
-    return result.data;
-  }
-
-  return {};
-}
-
-function repositoryEntriesFromToolResult(result: unknown): Record<string, unknown>[] {
-  const repositories = toolResultData(result).repositories;
-  return Array.isArray(repositories)
-    ? repositories.filter((entry): entry is Record<string, unknown> => isObject(entry))
-    : [];
-}
-
-async function callImageMcpToolForOpen(options: {
+async function callDiscoverableImageMcpTool(options: {
   imageMcpClient: ProjectOpenImageMcpClient;
   imageState: ProjectImageState;
   toolName: string;
   argumentsValue: Record<string, unknown>;
 }): Promise<unknown> {
-  const result = await options.imageMcpClient.callTool(
-    options.imageState,
-    options.toolName,
-    options.argumentsValue,
-  );
-  assertToolResultOk(result, options.toolName);
-  return result;
+  // tool_call names the tool it forwards to under `name`.
+  return options.imageMcpClient.callTool(options.imageState, "tool_call", {
+    name: options.toolName,
+    arguments: options.argumentsValue,
+  });
 }
 
 async function callDiscoverableImageMcpToolForOpen(options: {
@@ -757,31 +739,31 @@ async function callDiscoverableImageMcpToolForOpen(options: {
   toolName: string;
   argumentsValue: Record<string, unknown>;
 }): Promise<unknown> {
-  return callImageMcpToolForOpen({
+  const result = await callDiscoverableImageMcpTool(options);
+  assertToolResultOk(result, options.toolName);
+  return result;
+}
+
+// Whether the image already registered this checkout under this name. The image
+// answers questions about its repositories in prose, so asking it to assert the
+// registration is how a program reads that answer: an error result means the
+// assertion does not hold, which is the answer and not a failed call.
+async function repositoryIsRegistered(options: {
+  imageMcpClient: ProjectOpenImageMcpClient;
+  imageState: ProjectImageState;
+  repositoryName: string;
+  location: string;
+}): Promise<boolean> {
+  const result = await callDiscoverableImageMcpTool({
     imageMcpClient: options.imageMcpClient,
     imageState: options.imageState,
-    toolName: "tool_call",
+    toolName: "repository_identity_verify",
     argumentsValue: {
-      toolName: options.toolName,
-      arguments: options.argumentsValue,
+      name: options.repositoryName,
+      location: options.location,
     },
   });
-}
-
-function repositoryEntryName(
-  entry: Record<string, unknown> | undefined,
-  fallback: string,
-): string {
-  return typeof entry?.name === "string" && entry.name.length > 0
-    ? entry.name
-    : fallback;
-}
-
-function matchingRepositoryEntry(
-  entries: Record<string, unknown>[],
-  repositoryPath: string,
-): Record<string, unknown> | undefined {
-  return entries.find((entry) => entry.location === repositoryPath) ?? entries[0];
+  return !toolResultIsError(result);
 }
 
 async function ensureRepositoryWorkspaceRegistered(options: {
@@ -821,68 +803,45 @@ async function ensureRepositoryWorkspaceRegistered(options: {
   delete workspace.registeredRepositoryName;
   delete workspace.registeredPackageNames;
 
-  const packageNames = inferTonelPackageNames(
+  const packages = inferTonelPackageNames(
     repositoryWorkspaceSourcePath(workspace),
   );
   const repositoryPath = workspace.path;
-  const repositoryId = workspace.repository.id;
+  const repositoryName = workspace.repository.id;
 
   try {
-    const findResult = await callDiscoverableImageMcpToolForOpen({
+    const registered = await repositoryIsRegistered({
       imageMcpClient: options.imageMcpClient,
       imageState: options.imageState,
-      toolName: "repository_search",
-      argumentsValue: {
-        directoryPaths: [repositoryPath],
-        limit: 1000,
-      },
+      repositoryName,
+      location: repositoryPath,
     });
-    const existingRepository = matchingRepositoryEntry(
-      repositoryEntriesFromToolResult(findResult),
-      repositoryPath,
-    );
-    const repositoryName = repositoryEntryName(existingRepository, repositoryId);
     const repositoryArguments = {
+      name: repositoryName,
       location: repositoryPath,
       subdirectory: workspace.sourceDirectory,
-      packageNames,
+      packages,
     };
-
-    if (existingRepository) {
-      await callDiscoverableImageMcpToolForOpen({
-        imageMcpClient: options.imageMcpClient,
-        imageState: options.imageState,
-        toolName: "repository_update",
-        argumentsValue: {
-          repositoryName,
-          ...repositoryArguments,
-        },
-      });
-    } else {
-      await callDiscoverableImageMcpToolForOpen({
-        imageMcpClient: options.imageMcpClient,
-        imageState: options.imageState,
-        toolName: "repository_attach",
-        argumentsValue: {
-          name: repositoryName,
-          ...repositoryArguments,
-        },
-      });
-    }
 
     await callDiscoverableImageMcpToolForOpen({
       imageMcpClient: options.imageMcpClient,
       imageState: options.imageState,
+      toolName: registered ? "repository_update" : "repository_attach",
+      argumentsValue: repositoryArguments,
+    });
+
+    // The image now manages exactly what was just asked of it, so the same
+    // arguments read as a post-condition: anything it refused shows up here.
+    await callDiscoverableImageMcpToolForOpen({
+      imageMcpClient: options.imageMcpClient,
+      imageState: options.imageState,
       toolName: "repository_identity_verify",
-      argumentsValue: {
-        repositoryName,
-        ...repositoryArguments,
-      },
+      argumentsValue: repositoryArguments,
     });
 
     workspace.registrationState = "registered";
     workspace.registeredRepositoryName = repositoryName;
-    workspace.registeredPackageNames = packageNames;
+    workspace.registeredPackageNames = packages;
   } catch (error) {
     const message = errorMessage(error);
     workspace.registrationState = "failed";

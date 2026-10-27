@@ -173,14 +173,19 @@ class FakeHealthClient implements PharoMcpHealthClient {
 
 type FakeImageMcpFailure = Error | { result: unknown };
 
+// Answers the way an image's MCP server does: prose content, failures flagged
+// with isError, and no structured content, which it only returns when asked to.
 class FakeImageMcpClient {
   readonly calls: ToolCall[] = [];
+  private readonly registeredRepositoryNames: Set<string>;
 
   constructor(
-    private readonly repositories: Record<string, unknown>[] = [],
+    registeredRepositoryNames: string[] = [],
     private readonly failure?: FakeImageMcpFailure,
     private readonly failureTool?: string,
-  ) {}
+  ) {
+    this.registeredRepositoryNames = new Set(registeredRepositoryNames);
+  }
 
   async callTool(
     _image: { id: string },
@@ -189,9 +194,7 @@ class FakeImageMcpClient {
   ): Promise<unknown> {
     this.calls.push({ name, argumentsValue });
     const targetToolName =
-      typeof argumentsValue.toolName === "string"
-        ? argumentsValue.toolName
-        : undefined;
+      typeof argumentsValue.name === "string" ? argumentsValue.name : undefined;
     if (
       this.failure &&
       (!this.failureTool ||
@@ -204,24 +207,40 @@ class FakeImageMcpClient {
       return this.failure.result;
     }
 
-    if (name === "tool_call" && targetToolName === "repository_search") {
-      return {
-        structuredContent: {
-          status: "ok",
-          data: {
-            repositories: this.repositories,
-          },
-        },
-      };
+    const targetArguments =
+      typeof argumentsValue.arguments === "object" &&
+      argumentsValue.arguments !== null
+        ? (argumentsValue.arguments as Record<string, unknown>)
+        : {};
+    const repositoryName =
+      typeof targetArguments.name === "string" ? targetArguments.name : "";
+
+    if (
+      targetToolName === "repository_attach" ||
+      targetToolName === "repository_update"
+    ) {
+      this.registeredRepositoryNames.add(repositoryName);
+      return textResult(`Attached repository ${repositoryName}.`);
     }
 
-    return {
-      structuredContent: {
-        status: "ok",
-        data: {},
-      },
-    };
+    if (
+      targetToolName === "repository_identity_verify" &&
+      !this.registeredRepositoryNames.has(repositoryName)
+    ) {
+      return textResult(
+        "No registered Iceberg repository matches the requested repository reference.",
+        true,
+      );
+    }
+
+    return textResult("ok");
   }
+}
+
+function textResult(text: string, isError = false): unknown {
+  return isError
+    ? { isError: true, content: [{ type: "text", text }] }
+    : { content: [{ type: "text", text }] };
 }
 
 function makeTempDir(prefix: string): string {
@@ -709,34 +728,34 @@ describe("project open", () => {
       {
         name: "tool_call",
         argumentsValue: {
-          toolName: "repository_search",
+          name: "repository_identity_verify",
           arguments: {
-            directoryPaths: [repositoryPath],
-            limit: 1000,
+            name: "my-project",
+            location: repositoryPath,
           },
         },
       },
       {
         name: "tool_call",
         argumentsValue: {
-          toolName: "repository_attach",
+          name: "repository_attach",
           arguments: {
             name: "my-project",
             location: repositoryPath,
             subdirectory: "src",
-            packageNames: ["MyProject-Core", "MyProject-Tests"],
+            packages: ["MyProject-Core", "MyProject-Tests"],
           },
         },
       },
       {
         name: "tool_call",
         argumentsValue: {
-          toolName: "repository_identity_verify",
+          name: "repository_identity_verify",
           arguments: {
-            repositoryName: "my-project",
+            name: "my-project",
             location: repositoryPath,
             subdirectory: "src",
-            packageNames: ["MyProject-Core", "MyProject-Tests"],
+            packages: ["MyProject-Core", "MyProject-Tests"],
           },
         },
       },
@@ -898,9 +917,9 @@ describe("project open", () => {
     expect(imageMcpClient.calls[0]).toMatchObject({
       name: "tool_call",
       argumentsValue: {
-        toolName: "repository_search",
+        name: "repository_identity_verify",
         arguments: {
-          directoryPaths: [repositoryPath],
+          location: repositoryPath,
         },
       },
     });
@@ -972,12 +991,7 @@ describe("project open", () => {
       "iceberg",
       "my-project",
     );
-    const imageMcpClient = new FakeImageMcpClient([
-      {
-        name: "Existing Repository",
-        location: repositoryPath,
-      },
-    ]);
+    const imageMcpClient = new FakeImageMcpClient(["my-project"]);
 
     const result = await openProject({
       projectRoot,
@@ -1001,30 +1015,30 @@ describe("project open", () => {
     expect(imageMcpClient.calls[1]).toMatchObject({
       name: "tool_call",
       argumentsValue: {
-        toolName: "repository_update",
+        name: "repository_update",
         arguments: {
-          repositoryName: "Existing Repository",
+          name: "my-project",
           location: repositoryPath,
           subdirectory: "src",
-          packageNames: ["MyProject-Core"],
+          packages: ["MyProject-Core"],
         },
       },
     });
     expect(imageMcpClient.calls[2]).toMatchObject({
       name: "tool_call",
       argumentsValue: {
-        toolName: "repository_identity_verify",
+        name: "repository_identity_verify",
         arguments: {
-          repositoryName: "Existing Repository",
+          name: "my-project",
           location: repositoryPath,
           subdirectory: "src",
-          packageNames: ["MyProject-Core"],
+          packages: ["MyProject-Core"],
         },
       },
     });
     expect(result.state.images[0].repositoryWorkspace).toMatchObject({
       registrationState: "registered",
-      registeredRepositoryName: "Existing Repository",
+      registeredRepositoryName: "my-project",
     });
   });
 
