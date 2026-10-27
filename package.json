@@ -1,6 +1,6 @@
 {
   "name": "plexus",
-  "version": "0.5.7",
+  "version": "0.6.0",
   "private": true,
   "description": "Pharo image lifecycle management and MCP server forwarding.",
   "license": "Apache-2.0",
