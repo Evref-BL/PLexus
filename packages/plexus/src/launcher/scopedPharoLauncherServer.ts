@@ -5,6 +5,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
+  type CallToolResult,
 } from "@modelcontextprotocol/sdk/types.js";
 import {
   loadProjectConfig,
@@ -1905,12 +1906,26 @@ export function createScopedPharoLauncherServer(
     tools: [...scopedPharoLauncherTools],
   }));
 
-  server.setRequestHandler(CallToolRequestSchema, async (request) => {
-    const input = request.params.arguments ?? {};
+  server.setRequestHandler(CallToolRequestSchema, async (request) =>
+    callScopedPharoLauncherTool(facade, request.params.name, request.params.arguments),
+  );
+
+  return server;
+}
+
+/** Shared so the composed `plexus mcp` server dispatches identically. */
+export async function callScopedPharoLauncherTool(
+  facade: ScopedPharoLauncher,
+  name: string,
+  argumentsValue: Record<string, unknown> | undefined,
+): Promise<CallToolResult> {
+  {
+    const input = argumentsValue ?? {};
     const detail = toolResultDetailFromArguments(input);
+    const request = { params: { name } };
 
     try {
-      switch (request.params.name) {
+      switch (name) {
         case "pharo_launcher_image_list":
           return textResult(await facade.listImages(), false, detail);
 
@@ -2000,9 +2015,7 @@ export function createScopedPharoLauncherServer(
     } catch (error) {
       return textResult(scopedErrorPayload(error), true, detail);
     }
-  });
-
-  return server;
+  }
 }
 
 export async function startScopedPharoLauncherServer(

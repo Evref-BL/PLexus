@@ -2,6 +2,7 @@
 import { ProjectCloseError } from "./lifecycle/projectClose.js";
 import { PlexusProjectLifecycle } from "./lifecycle/projectLifecycle.js";
 import { ProjectOpenError } from "./lifecycle/projectOpen.js";
+import { startPlexusAgentServer } from "./mcp/agentServer.js";
 import {
   ScopedPharoLauncher,
   scopedImageLeaseOptionsFromEnvironment,
@@ -78,6 +79,7 @@ function usage(): string {
     "  plexus project cleanup <path> [--workspace-id <id>] [--state-root <path>] [--confirm] [--delete-state] [--keep-launcher-images]",
     "  plexus project status <path> [--workspace-id <id>] [--state-root <path>]",
     "  plexus image list|create|start|stop <imageId> [--project-path <path>] [--workspace-id <id>] [--state-root <path>] [--display-mode <headless|interactive>]",
+    "  plexus mcp   (agent front door: images and the running image's Pharo tools, over stdio)",
     "  plexus mcp project [serve|http|--http] [--host <host>] [--port <port>] [--mcp-path <path>]",
     "  plexus mcp pharo-launcher [--project-path <path>] [--workspace-id <id>] [--state-root <path>]",
     "",
@@ -365,6 +367,22 @@ function handleProjectLifecycleError(error: unknown): number {
 async function main(argv: string[]): Promise<number> {
   if (argv.includes("--help") || argv.includes("-h")) {
     console.log(usage());
+    return 0;
+  }
+
+  // `plexus mcp` with no sub-noun is the agent front door: one stdio server,
+  // started and owned by the agent host, project taken from the cwd.
+  if (argv[0] === "mcp" && argv[1] === undefined) {
+    await startPlexusAgentServer({
+      projectRoot: process.env.PLEXUS_PROJECT_ROOT ?? process.cwd(),
+      ...(process.env.PLEXUS_WORKSPACE_ID === undefined
+        ? {}
+        : { workspaceId: process.env.PLEXUS_WORKSPACE_ID }),
+      ...(process.env.PLEXUS_STATE_ROOT === undefined
+        ? {}
+        : { stateRoot: process.env.PLEXUS_STATE_ROOT }),
+      imageLease: scopedImageLeaseOptionsFromEnvironment(process.env),
+    });
     return 0;
   }
 
