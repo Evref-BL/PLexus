@@ -3,9 +3,10 @@
 PLexus manages Pharo image lifecycle and forwards MCP calls to MCP servers
 running in those images.
 
-It keeps image state, port assignments, and gateway routes outside the images,
-so an image can be started, stopped, replaced, or recovered independently of
-its MCP server.
+It keeps image state and gateway routes outside the images, so an image can be
+started, stopped, replaced, or recovered independently of its MCP server. An
+image binds its own MCP port and hands the endpoint back to PLexus, so no port
+is reserved before the image is running.
 
 ## Packages
 
@@ -19,7 +20,8 @@ and forwards requests by `mcpServerId`.
 ## Concepts
 
 - A **project** is a directory with `plexus.json`.
-- A **workspace** is an isolated runtime instance of that project.
+- A **workspace** is an isolated runtime instance of that project, usually the
+  folder the caller runs in. A project and a workspace together name one route.
 - An **imageId** identifies an image managed by PLexus.
 - An **mcpServerId** identifies one forwarded MCP server. An image can register
   more than one server, including servers on different ports.
@@ -112,6 +114,6 @@ Its HTTP mode has two MCP paths backed by one route table:
 image: `dev-code` and `dev-tools` can both belong to image `dev` while using
 different ports.
 
-Image MCP ports and routes are lifecycle diagnostics. Route registration belongs
-to PLexus and gateway control; normal forwarding clients only call the `/mcp`
+Image MCP routes are lifecycle diagnostics. Route registration belongs to
+PLexus and gateway control; normal forwarding clients only call the `/mcp`
 surface.

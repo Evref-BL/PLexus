@@ -13,6 +13,7 @@ import {
   type ProjectImageState,
   type ProjectState,
 } from "../../src/workspace/projectState.js";
+import { writeImageEndpointHandoffForScript } from "../support/imageEndpointHandoff.js";
 
 const tempDirs: string[] = [];
 
@@ -64,6 +65,7 @@ class FakeLauncherClient implements PharoLauncherMcpToolClient {
     }
 
     if (name === "pharo_launcher_image_launch") {
+      writeImageEndpointHandoffForScript(argumentsValue.script);
       return { ok: true } as T;
     }
 
@@ -201,7 +203,6 @@ function writeState(stateRoot: string, images: ProjectImageState[]): ProjectStat
     projectId: "project-123",
     projectName: "my-project",
     workspaceId: "worktree-a",
-    targetId: "project-123--worktree-a",
     updatedAt: "2026-05-11T10:00:00.000Z",
     images,
   };
@@ -234,7 +235,6 @@ describe("image rescue", () => {
       {
         id: "dev",
         imageName: "MyProject-dev",
-        assignedPort: 7123,
         status: "stopped",
       },
     ]);
@@ -272,7 +272,6 @@ describe("image rescue", () => {
       {
         id: "dev",
         imageName: "MyProject-dev",
-        assignedPort: 7123,
         status: "failed",
       },
     ]);
@@ -286,7 +285,6 @@ describe("image rescue", () => {
       sourceImageId: "dev",
       targetImageId: "dev-replacement",
       targetImageName: "MyProject-dev-replacement",
-      targetMcpPort: 7124,
       pharoLauncherMcpClient: launcher,
       now: () => new Date("2026-05-11T10:00:00.000Z"),
     });
@@ -294,12 +292,11 @@ describe("image rescue", () => {
     expect(result.targetPlan).toMatchObject({
       targetImageId: "dev-replacement",
       targetImageName: "MyProject-dev-replacement",
-      targetMcpPort: 7124,
       templateName: "Pharo 13.0 - 64bit",
       cleanupPolicy: "workspace_cleanup_only",
       route: {
         serverName: "pharo_gateway",
-        targetKey: "targetId",
+        targetKey: "workspaceId",
         imageArgument: "mcpServerId",
         imageId: "dev-replacement",
       },
@@ -326,7 +323,6 @@ describe("image rescue", () => {
       {
         id: "dev",
         imageName: "MyProject-dev",
-        assignedPort: 7123,
         status: "stopped",
       },
     ]);
@@ -351,7 +347,6 @@ describe("image rescue", () => {
     expect(result.targetImage).toMatchObject({
       id: "dev-rescue",
       imageName: "MyProject-dev-rescue",
-      assignedPort: 7100,
       pid: 4321,
       status: "running",
       creation: {
@@ -363,7 +358,7 @@ describe("image rescue", () => {
         cleanupPolicy: "workspace_cleanup_only",
         route: {
           serverName: "pharo_gateway",
-          targetKey: "targetId",
+          targetKey: "workspaceId",
           imageArgument: "mcpServerId",
           imageId: "dev-rescue",
         },
@@ -391,13 +386,11 @@ describe("image rescue", () => {
       {
         id: "dev",
         imageName: "MyProject-dev",
-        assignedPort: 7123,
         status: "failed",
       },
       {
         id: "dev-rescue",
         imageName: "MyProject-dev-rescue",
-        assignedPort: 7100,
         status: "running",
       },
     ]);
@@ -428,13 +421,11 @@ describe("image rescue", () => {
       {
         id: "dev",
         imageName: "MyProject-dev",
-        assignedPort: 7123,
         status: "stopped",
       },
       {
         id: "dev-rescue",
         imageName: "MyProject-dev-rescue",
-        assignedPort: 7100,
         status: "running",
       },
     ]);

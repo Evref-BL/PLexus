@@ -3,7 +3,6 @@
   "createSourceFromTemplate": true,
   "sourceTemplateName": "Pharo 13.0 - 64bit (stable)",
   "requiredWorkspacePrefix": "smoke-e2e",
-  "requiredTargetPrefix": "smoke-open-route-close--smoke-e2e",
   "projectId": "smoke-open-route-close",
   "timeoutBudget": {
     "setupMs": 120000,

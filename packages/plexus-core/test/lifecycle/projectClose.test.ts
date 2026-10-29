@@ -4,12 +4,10 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type { PharoLauncherMcpToolClient } from "../../src/launcher/pharoLauncherMcpClient.js";
-import { claimPort, inspectPortClaim } from "../../src/ports/portClaims.js";
 import { closeProject, ProjectCloseError } from "../../src/lifecycle/projectClose.js";
 import {
   loadProjectState,
   saveProjectState,
-  type ProjectImageRepositoryWorkspaceState,
   type ProjectState,
 } from "../../src/workspace/projectState.js";
 
@@ -113,44 +111,6 @@ function writeProjectConfig(projectRoot: string): void {
   );
 }
 
-function writeHostLocalProjectConfig(projectRoot: string, claimsRoot: string): void {
-  fs.writeFileSync(
-    path.join(projectRoot, "plexus.json"),
-    JSON.stringify(
-      {
-        id: "project-123",
-        name: "my-project",
-        runtime: {
-          imagePorts: {
-            allocation: "configured-or-dynamic",
-            range: {
-              start: 7200,
-              end: 7209,
-            },
-            coordination: {
-              mode: "host-local",
-              root: claimsRoot,
-            },
-          },
-        },
-        images: [
-          {
-            id: "dev",
-            imageName: "MyProject-dev",
-            active: true,
-            mcp: {
-              port: 7200,
-              loadScript: "pharo/load-mcp.st",
-            },
-          },
-        ],
-      },
-      null,
-      2,
-    ),
-    "utf8",
-  );
-}
 
 function statePath(stateRoot: string): string {
   return path.join(
@@ -184,35 +144,9 @@ function writeFile(filePath: string, contents: string): void {
   fs.writeFileSync(filePath, contents, "utf8");
 }
 
-function initRepository(repositoryPath: string): string {
-  fs.mkdirSync(repositoryPath, { recursive: true });
-  git(repositoryPath, ["init", "--initial-branch=main"]);
-  writeFile(path.join(repositoryPath, "src", "BaselineOfMyProject.class.st"), "baseline");
-  git(repositoryPath, ["add", "."]);
-  git(repositoryPath, ["commit", "-m", "Initial"]);
-  return git(repositoryPath, ["rev-parse", "HEAD"]);
-}
 
-function repositoryWorkspace(
-  repositoryPath: string,
-  overrides: Partial<ProjectImageRepositoryWorkspaceState> = {},
-): ProjectImageRepositoryWorkspaceState {
-  return {
-    repository: {
-      id: "my-project",
-      originPath: repositoryPath,
-    },
-    path: repositoryPath,
-    materializationStrategy: "copy",
-    sourceDirectory: "src",
-    baseline: "MyProject",
-    materializationState: "ready",
-    diagnostics: [],
-    dirtyState: "unknown",
-    loadState: "not-loaded",
-    ...overrides,
-  };
-}
+
+
 
 afterEach(() => {
   for (const tempDir of tempDirs.splice(0)) {
@@ -229,20 +163,17 @@ describe("project close", () => {
       projectId: "project-123",
       projectName: "my-project",
       workspaceId: "worktree-a",
-      targetId: "project-123--worktree-a",
       updatedAt: "2026-04-25T10:00:00.000Z",
       images: [
         {
           id: "dev",
           imageName: "MyProject-dev",
-          assignedPort: 7123,
           pid: 1234,
           status: "running",
         },
         {
           id: "baseline",
           imageName: "MyProject-baseline",
-          assignedPort: 7124,
           status: "stopped",
         },
       ],
@@ -271,13 +202,11 @@ describe("project close", () => {
       {
         id: "dev",
         imageName: "MyProject-dev",
-        assignedPort: 7123,
         status: "stopped",
       },
       {
         id: "baseline",
         imageName: "MyProject-baseline",
-        assignedPort: 7124,
         status: "stopped",
       },
     ]);
@@ -306,7 +235,6 @@ describe("project close", () => {
       projectId: "project-123",
       projectName: "my-project",
       workspaceId: "worktree-a",
-      targetId: "project-123--worktree-a",
       updatedAt: "2026-04-25T10:00:00.000Z",
       images: [
         {
@@ -356,20 +284,17 @@ describe("project close", () => {
       projectId: "project-123",
       projectName: "my-project",
       workspaceId: "worktree-a",
-      targetId: "project-123--worktree-a",
       updatedAt: "2026-04-25T10:00:00.000Z",
       images: [
         {
           id: "dev",
           imageName: "MyProject-dev",
-          assignedPort: 7123,
           pid: 1234,
           status: "running",
         },
         {
           id: "baseline",
           imageName: "MyProject-baseline",
-          assignedPort: 7124,
           pid: 5678,
           status: "running",
         },
@@ -391,7 +316,6 @@ describe("project close", () => {
       {
         id: "baseline",
         imageName: "MyProject-baseline",
-        assignedPort: 7124,
         status: "stopped",
       },
     ]);
@@ -408,379 +332,23 @@ describe("project close", () => {
       {
         id: "dev",
         imageName: "MyProject-dev",
-        assignedPort: 7123,
         pid: 1234,
         status: "running",
       },
       {
         id: "baseline",
         imageName: "MyProject-baseline",
-        assignedPort: 7124,
         status: "stopped",
       },
     ]);
   });
 
-  it("releases host-local image port claims after stopping owned images", async () => {
-    const projectRoot = makeTempDir("plexus-project-");
-    const stateRoot = makeTempDir("plexus-state-");
-    const claimsRoot = makeTempDir("plexus-port-claims-");
-    writeHostLocalProjectConfig(projectRoot, claimsRoot);
-    writeRuntimeState(stateRoot, {
-      projectId: "project-123",
-      projectName: "my-project",
-      workspaceId: "worktree-a",
-      targetId: "project-123--worktree-a",
-      updatedAt: "2026-04-25T10:00:00.000Z",
-      images: [
-        {
-          id: "dev",
-          imageName: "MyProject-dev",
-          assignedPort: 7200,
-          pid: 1234,
-          status: "running",
-        },
-      ],
-    });
-    await claimPort({
-      claimsRoot,
-      projectId: "project-123",
-      projectName: "my-project",
-      workspaceId: "worktree-a",
-      targetId: "project-123--worktree-a",
-      purpose: "image-mcp",
-      imageId: "dev",
-      requestedPort: 7200,
-      now: fixedNow,
-    });
 
-    const result = await closeProject({
-      projectRoot,
-      stateRoot,
-      workspaceId: "worktree-a",
-      pharoLauncherMcpClient: new FakePharoLauncherMcpClient(),
-      now: fixedNow,
-    });
 
-    expect(result.ok).toBe(true);
-    await expect(inspectPortClaim({ claimsRoot, port: 7200 })).resolves.toEqual({
-      status: "available",
-      port: 7200,
-    });
-  });
 
-  it("preserves repository workspaces by default and records live cleanup evidence", async () => {
-    const projectRoot = makeTempDir("plexus-project-");
-    const stateRoot = makeTempDir("plexus-state-");
-    const repositoryPath = path.join(makeTempDir("plexus-repo-"), "my-project");
-    const commit = initRepository(repositoryPath);
-    writeProjectConfig(projectRoot);
-    writeRuntimeState(stateRoot, {
-      projectId: "project-123",
-      projectName: "my-project",
-      workspaceId: "worktree-a",
-      targetId: "project-123--worktree-a",
-      updatedAt: "2026-04-25T10:00:00.000Z",
-      images: [
-        {
-          id: "dev",
-          imageName: "MyProject-dev",
-          status: "stopped",
-          repositoryWorkspace: repositoryWorkspace(repositoryPath),
-        },
-      ],
-    });
 
-    const result = await closeProject({
-      projectRoot,
-      stateRoot,
-      workspaceId: "worktree-a",
-      pharoLauncherMcpClient: new FakePharoLauncherMcpClient(),
-      now: fixedNow,
-      env: gitEnv,
-    });
 
-    expect(result.ok).toBe(true);
-    expect(fs.existsSync(repositoryPath)).toBe(true);
-    expect(result.repositoryWorkspaceCleanups).toEqual([
-      expect.objectContaining({
-        policy: "preserve",
-        decision: "preserved",
-        imageId: "dev",
-        repositoryId: "my-project",
-        path: repositoryPath,
-        branch: "main",
-        currentCommit: commit,
-        dirtyState: "clean",
-      }),
-    ]);
-    expect(
-      loadProjectState(result.statePath)?.images[0].repositoryWorkspace
-        ?.cleanupState,
-    ).toMatchObject({
-      policy: "preserve",
-      decision: "preserved",
-      path: repositoryPath,
-      currentCommit: commit,
-      dirtyState: "clean",
-    });
-  });
 
-  it("deletes clean disposable repository workspaces only when explicitly requested", async () => {
-    const projectRoot = makeTempDir("plexus-project-");
-    const stateRoot = makeTempDir("plexus-state-");
-    const repositoryPath = path.join(makeTempDir("plexus-repo-"), "my-project");
-    initRepository(repositoryPath);
-    writeProjectConfig(projectRoot);
-    writeRuntimeState(stateRoot, {
-      projectId: "project-123",
-      projectName: "my-project",
-      workspaceId: "worktree-a",
-      targetId: "project-123--worktree-a",
-      updatedAt: "2026-04-25T10:00:00.000Z",
-      images: [
-        {
-          id: "dev",
-          imageName: "MyProject-dev",
-          status: "stopped",
-          repositoryWorkspace: repositoryWorkspace(repositoryPath),
-        },
-      ],
-    });
-
-    const result = await closeProject({
-      projectRoot,
-      stateRoot,
-      workspaceId: "worktree-a",
-      repositoryWorkspaceCleanupPolicy: "delete-disposable",
-      pharoLauncherMcpClient: new FakePharoLauncherMcpClient(),
-      now: fixedNow,
-      env: gitEnv,
-    });
-
-    expect(result.ok).toBe(true);
-    expect(fs.existsSync(repositoryPath)).toBe(false);
-    expect(result.repositoryWorkspaceCleanups).toEqual([
-      expect.objectContaining({
-        policy: "delete-disposable",
-        decision: "deleted",
-        dirtyState: "clean",
-        path: repositoryPath,
-      }),
-    ]);
-  });
-
-  it("deletes multiple clean disposable repository workspaces", async () => {
-    const projectRoot = makeTempDir("plexus-project-");
-    const stateRoot = makeTempDir("plexus-state-");
-    const firstRepositoryPath = path.join(makeTempDir("plexus-repo-"), "my-project");
-    const secondRepositoryPath = path.join(makeTempDir("plexus-repo-"), "dependency");
-    initRepository(firstRepositoryPath);
-    initRepository(secondRepositoryPath);
-    writeProjectConfig(projectRoot);
-    writeRuntimeState(stateRoot, {
-      projectId: "project-123",
-      projectName: "my-project",
-      workspaceId: "worktree-a",
-      targetId: "project-123--worktree-a",
-      updatedAt: "2026-04-25T10:00:00.000Z",
-      images: [
-        {
-          id: "dev",
-          imageName: "MyProject-dev",
-          status: "stopped",
-          repositoryWorkspaces: [
-            repositoryWorkspace(firstRepositoryPath),
-            repositoryWorkspace(secondRepositoryPath, {
-              repository: {
-                id: "dependency",
-                originPath: secondRepositoryPath,
-              },
-              baseline: "Dependency",
-            }),
-          ],
-        },
-      ],
-    });
-
-    const result = await closeProject({
-      projectRoot,
-      stateRoot,
-      workspaceId: "worktree-a",
-      repositoryWorkspaceCleanupPolicy: "delete-disposable",
-      pharoLauncherMcpClient: new FakePharoLauncherMcpClient(),
-      now: fixedNow,
-      env: gitEnv,
-    });
-
-    expect(result.ok).toBe(true);
-    expect(fs.existsSync(firstRepositoryPath)).toBe(false);
-    expect(fs.existsSync(secondRepositoryPath)).toBe(false);
-    expect(result.repositoryWorkspaceCleanups).toEqual([
-      expect.objectContaining({
-        repositoryId: "my-project",
-        decision: "deleted",
-        path: firstRepositoryPath,
-      }),
-      expect.objectContaining({
-        repositoryId: "dependency",
-        decision: "deleted",
-        path: secondRepositoryPath,
-      }),
-    ]);
-  });
-
-  it("refuses destructive cleanup of dirty repository workspaces", async () => {
-    const projectRoot = makeTempDir("plexus-project-");
-    const stateRoot = makeTempDir("plexus-state-");
-    const repositoryPath = path.join(makeTempDir("plexus-repo-"), "my-project");
-    initRepository(repositoryPath);
-    writeFile(path.join(repositoryPath, "src", "Dirty.class.st"), "dirty");
-    writeProjectConfig(projectRoot);
-    writeRuntimeState(stateRoot, {
-      projectId: "project-123",
-      projectName: "my-project",
-      workspaceId: "worktree-a",
-      targetId: "project-123--worktree-a",
-      updatedAt: "2026-04-25T10:00:00.000Z",
-      images: [
-        {
-          id: "dev",
-          imageName: "MyProject-dev",
-          status: "stopped",
-          repositoryWorkspace: repositoryWorkspace(repositoryPath),
-        },
-      ],
-    });
-
-    let thrown: ProjectCloseError | undefined;
-    try {
-      await closeProject({
-        projectRoot,
-        stateRoot,
-        workspaceId: "worktree-a",
-        repositoryWorkspaceCleanupPolicy: "delete-disposable",
-        pharoLauncherMcpClient: new FakePharoLauncherMcpClient(),
-        now: fixedNow,
-        env: gitEnv,
-      });
-    } catch (error) {
-      thrown = error as ProjectCloseError;
-    }
-
-    expect(thrown).toBeInstanceOf(ProjectCloseError);
-    expect(fs.existsSync(repositoryPath)).toBe(true);
-    expect(thrown?.result.repositoryWorkspaceCleanups).toEqual([
-      expect.objectContaining({
-        policy: "delete-disposable",
-        decision: "refused",
-        dirtyState: "dirty",
-        path: repositoryPath,
-      }),
-    ]);
-  });
-
-  it("archives repository workspaces with an explicit archive policy", async () => {
-    const projectRoot = makeTempDir("plexus-project-");
-    const stateRoot = makeTempDir("plexus-state-");
-    const archiveRoot = makeTempDir("plexus-archive-");
-    const repositoryPath = path.join(makeTempDir("plexus-repo-"), "my-project");
-    initRepository(repositoryPath);
-    writeFile(path.join(repositoryPath, "src", "Dirty.class.st"), "dirty");
-    writeProjectConfig(projectRoot);
-    writeRuntimeState(stateRoot, {
-      projectId: "project-123",
-      projectName: "my-project",
-      workspaceId: "worktree-a",
-      targetId: "project-123--worktree-a",
-      updatedAt: "2026-04-25T10:00:00.000Z",
-      images: [
-        {
-          id: "dev",
-          imageName: "MyProject-dev",
-          status: "stopped",
-          repositoryWorkspace: repositoryWorkspace(repositoryPath),
-        },
-      ],
-    });
-
-    const result = await closeProject({
-      projectRoot,
-      stateRoot,
-      workspaceId: "worktree-a",
-      repositoryWorkspaceCleanupPolicy: "archive",
-      repositoryWorkspaceArchiveRoot: archiveRoot,
-      pharoLauncherMcpClient: new FakePharoLauncherMcpClient(),
-      now: fixedNow,
-      env: gitEnv,
-    });
-    const archivePath = result.repositoryWorkspaceCleanups[0]?.archivePath;
-
-    expect(result.ok).toBe(true);
-    expect(fs.existsSync(repositoryPath)).toBe(false);
-    expect(archivePath).toBeDefined();
-    expect(fs.existsSync(path.join(archivePath!, "src", "Dirty.class.st"))).toBe(
-      true,
-    );
-    expect(result.repositoryWorkspaceCleanups).toEqual([
-      expect.objectContaining({
-        policy: "archive",
-        decision: "archived",
-        dirtyState: "dirty",
-        path: repositoryPath,
-        archivePath,
-      }),
-    ]);
-  });
-
-  it("reports failed repository cleanup diagnostics without deleting boundary paths", async () => {
-    const projectRoot = makeTempDir("plexus-project-");
-    const stateRoot = makeTempDir("plexus-state-");
-    writeProjectConfig(projectRoot);
-    writeRuntimeState(stateRoot, {
-      projectId: "project-123",
-      projectName: "my-project",
-      workspaceId: "worktree-a",
-      targetId: "project-123--worktree-a",
-      updatedAt: "2026-04-25T10:00:00.000Z",
-      images: [
-        {
-          id: "dev",
-          imageName: "MyProject-dev",
-          status: "stopped",
-          repositoryWorkspace: repositoryWorkspace(projectRoot),
-        },
-      ],
-    });
-
-    let thrown: ProjectCloseError | undefined;
-    try {
-      await closeProject({
-        projectRoot,
-        stateRoot,
-        workspaceId: "worktree-a",
-        repositoryWorkspaceCleanupPolicy: "delete-disposable",
-        pharoLauncherMcpClient: new FakePharoLauncherMcpClient(),
-        now: fixedNow,
-        env: gitEnv,
-      });
-    } catch (error) {
-      thrown = error as ProjectCloseError;
-    }
-
-    expect(thrown).toBeInstanceOf(ProjectCloseError);
-    expect(fs.existsSync(path.join(projectRoot, "plexus.json"))).toBe(
-      true,
-    );
-    expect(thrown?.result.repositoryWorkspaceCleanups).toEqual([
-      expect.objectContaining({
-        policy: "delete-disposable",
-        decision: "failed",
-        path: projectRoot,
-        message: expect.stringContaining("image or project boundary path"),
-      }),
-    ]);
-  });
 
   it("does nothing when runtime state does not exist", async () => {
     const projectRoot = makeTempDir("plexus-project-");
@@ -811,13 +379,11 @@ describe("project close", () => {
       projectId: "project-123",
       projectName: "my-project",
       workspaceId: "worktree-a",
-      targetId: "project-123--worktree-a",
       updatedAt: "2026-04-25T10:00:00.000Z",
       images: [
         {
           id: "dev",
           imageName: "MyProject-dev",
-          assignedPort: 7123,
           pid: 1234,
           status: "running",
         },
@@ -838,7 +404,6 @@ describe("project close", () => {
       {
         id: "dev",
         imageName: "MyProject-dev",
-        assignedPort: 7123,
         pid: 1234,
         status: "running",
       },

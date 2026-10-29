@@ -20,10 +20,8 @@ import {
   isAbsolutePathLike,
   joinPathLike,
   resolvePathLike,
-  sanitizePathSegment,
 } from "../support/pathStyle.js";
 import {
-  projectImageRepositoryWorkspaces,
   projectStateDirectoryPath,
   projectStateRootForConfig,
   type ProjectImageState,
@@ -73,10 +71,8 @@ export interface GenerateImageStartupScriptOptions {
   sourcePath?: string;
   imageConfig: ProjectImageConfig;
   imageState: ProjectImageState;
-  endpointHandoffPath?: string;
+  endpointHandoffPath: string;
   pharoMcpLoadStatusPath?: string;
-  repositoryWorkspaceLoadStatusPath?: string;
-  repositoryWorkspaceLoadStatusPaths?: Record<string, string>;
   dependencyRepositoryDetachStatusPath?: string;
   dependencyRepositoryCachePath?: string;
   dependencyRepositoryNetworkPolicy?: ProjectHomeDependencyRepositoryNetworkPolicy;
@@ -105,8 +101,6 @@ export interface WrittenImageStartupScript {
   filePath: string;
   source: string;
   pharoMcpLoadStatusPath?: string;
-  repositoryWorkspaceLoadStatusPath?: string;
-  repositoryWorkspaceLoadStatusPaths?: Record<string, string>;
   dependencyRepositoryDetachStatusPath?: string;
 }
 
@@ -143,28 +137,6 @@ export function imageStartupScriptPath(
     projectScriptsDirectoryPath(options),
     imageStartupScriptFileName(options.imageId),
   );
-}
-
-export function imageRepositoryWorkspaceLoadStatusPath(
-  options: ProjectImageStartupScriptPathOptions & { repositoryId?: string },
-): string {
-  const imageScriptName = imageStartupScriptFileName(options.imageId)
-    .replace(/^start-/, "")
-    .replace(/\.st$/, ".properties");
-  const repositorySuffix = options.repositoryId
-    ? `-${statusPathSegment(options.repositoryId)}`
-    : "";
-  return joinPathLike(
-    projectScriptsDirectoryPath(options),
-    `repository-workspace-load-${imageScriptName.replace(
-      /\.properties$/,
-      `${repositorySuffix}.properties`,
-    )}`,
-  );
-}
-
-function statusPathSegment(value: string): string {
-  return sanitizePathSegment(value, "repo");
 }
 
 export function imagePharoMcpLoadStatusPath(
@@ -363,18 +335,19 @@ function fetchRepositoryBeforeLoad(
 
 function generateEndpointHandoffStartupScript(options: {
   endpointHandoffPath: string;
+  requestedPort: number | undefined;
 }): string {
   return [
-    `"Start the MCP server on an OS-assigned loopback port and hand its endpoint to PLexus."`,
+    `"Start the MCP server and hand the port it bound to PLexus. Port 0 asks the OS for a free one."`,
     `mcp := (Smalltalk globals at: #MCP) new.`,
     `endpointFile := ${smalltalkPath(options.endpointHandoffPath)} asFileReference.`,
     `endpointFile exists ifTrue: [ endpointFile delete ].`,
     ``,
-    `mcp port: 0.`,
+    `mcp port: ${options.requestedPort ?? 0}.`,
     `mcp start.`,
     `endpointPort := mcp port.`,
     `(endpointPort isInteger and: [ endpointPort > 0 ]) ifFalse: [`,
-    `  Error signal: 'MCP did not report a bound port after starting on port 0.' ].`,
+    `  Error signal: 'MCP did not report a bound port after starting.' ].`,
     `endpointFile parent ensureCreateDirectory.`,
     `endpointFile writeStreamDo: [ :stream |`,
     `  stream nextPutAll: 'transport=http'; cr.`,
@@ -382,97 +355,6 @@ function generateEndpointHandoffStartupScript(options: {
     `  stream nextPutAll: 'port='; nextPutAll: endpointPort asString; cr.`,
     `  stream nextPutAll: 'path=/'; cr ].`,
   ].join("\n");
-}
-
-function generateRepositoryWorkspaceLoadScript(options: {
-  imageState: ProjectImageState;
-  loadStatusPath?: string;
-  loadStatusPaths?: Record<string, string>;
-}): string {
-  const workspaces = projectImageRepositoryWorkspaces(options.imageState);
-  if (workspaces.length === 0) {
-    return "";
-  }
-
-  return workspaces
-    .map((workspace) => {
-      const loadStatusPath =
-        options.loadStatusPaths?.[workspace.repository.id] ??
-        (workspaces.length === 1 ? options.loadStatusPath : undefined);
-      if (!loadStatusPath) {
-        return "";
-      }
-
-  const sourcePath = joinPathLike(workspace.path, workspace.sourceDirectory);
-  const loadCommand = workspace.loadGroup
-    ? `        load: (Array with: ${smalltalkString(workspace.loadGroup)})`
-    : `        load`;
-  const currentCommitLine = workspace.currentCommit
-    ? [
-        `      stream`,
-        `        nextPutAll: 'currentCommit=';`,
-        `        nextPutAll: ${smalltalkString(workspace.currentCommit)};`,
-        `        cr.`,
-      ].join("\n")
-    : "";
-
-  return `
-"Load the configured Pharo project from the image-local repository workspace."
-repositoryLoadStatusFile := ${smalltalkPath(loadStatusPath)} asFileReference.
-repositorySourcePath := ${smalltalkPath(sourcePath)}.
-repositoryLoadStatusFile exists ifTrue: [ repositoryLoadStatusFile delete ].
-repositoryLoadStatusWriter := [ :status :message |
-  repositoryLoadStatusFile parent ensureCreateDirectory.
-  repositoryLoadStatusFile writeStreamDo: [ :stream |
-    stream
-      nextPutAll: 'status=';
-      nextPutAll: status;
-      cr.
-    stream
-      nextPutAll: 'repositoryId=';
-      nextPutAll: ${smalltalkString(workspace.repository.id)};
-      cr.
-    stream
-      nextPutAll: 'sourcePath=';
-      nextPutAll: repositorySourcePath;
-      cr.
-    stream
-      nextPutAll: 'sourceDirectory=';
-      nextPutAll: ${smalltalkString(workspace.sourceDirectory)};
-      cr.
-    stream
-      nextPutAll: 'baseline=';
-      nextPutAll: ${smalltalkString(workspace.baseline)};
-      cr.
-${workspace.loadGroup
-    ? `    stream
-      nextPutAll: 'loadGroup=';
-      nextPutAll: ${smalltalkString(workspace.loadGroup)};
-      cr.
-`
-    : ""}${currentCommitLine ? `${currentCommitLine}\n` : ""}    message ifNotNil: [
-      stream
-        nextPutAll: 'message=';
-        nextPutAll: message asString;
-        cr ] ] ].
-[
-  repositorySourceDirectory := repositorySourcePath asFileReference.
-  repositorySourceDirectory exists
-    ifFalse: [ Error signal: 'Configured Pharo project source directory does not exist: ', repositorySourcePath ].
-  Metacello new
-    repository: 'tonel://', repositorySourceDirectory fullName;
-    baseline: ${smalltalkString(workspace.baseline)};
-    onConflictUseIncoming;
-    onUpgrade: [ :ex :loaded :incoming | ex useIncoming ];
-${loadCommand}.
-  repositoryLoadStatusWriter value: 'loaded' value: nil
-] on: Error do: [ :error |
-  repositoryLoadStatusWriter value: 'failed' value: error description.
-  error pass ].
-`;
-    })
-    .filter((script) => script.length > 0)
-    .join("\n");
 }
 
 function generateDependencyRepositoryCacheSetupScript(options: {
@@ -511,19 +393,10 @@ Smalltalk globals
 function generateDependencyRepositoryDetachScript(options: {
   cachePath?: string;
   statusPath?: string;
-  editableRepositoryPaths?: string[];
 }): string {
   if (!options.cachePath || !options.statusPath) {
     return "";
   }
-
-  const editableRepositoryPaths = options.editableRepositoryPaths ?? [];
-  const editablePathsLiteral =
-    editableRepositoryPaths.length === 0
-      ? "#()"
-      : `{ ${editableRepositoryPaths
-          .map((repositoryPath) => smalltalkPath(repositoryPath))
-          .join(". ")} }`;
 
   return `
 "Detach shared dependency repositories that PLexus loaded from the home cache."
@@ -531,7 +404,7 @@ plexusDependencyRepositoryDetachStatusFile := ${smalltalkPath(options.statusPath
 plexusDependencyRepositoryDetachStatusFile exists
   ifTrue: [ plexusDependencyRepositoryDetachStatusFile delete ].
 plexusDependencyRepositoryCachePath := ${smalltalkPath(options.cachePath)}.
-plexusEditableRepositoryPaths := ${editablePathsLiteral}.
+plexusEditableRepositoryPaths := #().
 plexusNormalizePath := [ :path |
   | normalized |
   normalized := path ifNil: [ '' ] ifNotNil: [
@@ -771,18 +644,10 @@ export function generateImageStartupScript(
       cachePath: options.dependencyRepositoryCachePath,
       networkPolicy: options.dependencyRepositoryNetworkPolicy,
     });
-  const repositoryWorkspaceLoadScript = generateRepositoryWorkspaceLoadScript({
-    imageState: options.imageState,
-    loadStatusPath: options.repositoryWorkspaceLoadStatusPath,
-    loadStatusPaths: options.repositoryWorkspaceLoadStatusPaths,
-  });
   const dependencyRepositoryDetachScript =
     generateDependencyRepositoryDetachScript({
       cachePath: options.dependencyRepositoryCachePath,
       statusPath: options.dependencyRepositoryDetachStatusPath,
-      editableRepositoryPaths: projectImageRepositoryWorkspaces(
-        options.imageState,
-      ).map((workspace) => workspace.path),
     });
 
   const startupMode = projectMcpStartupMode(options.imageConfig.mcp);
@@ -798,29 +663,15 @@ export function generateImageStartupScript(
 
     return `"Generated by PLexus. Do not edit."
 
-| plexusDependencyRepositoryCachePath plexusDependencyRepositoryNetworkPolicy plexusDependencyRepositoryDetachStatusFile plexusEditableRepositoryPaths plexusNormalizePath plexusRepositoryLocationString plexusRepositoryNameString plexusDependencyRepositoryDetachStatusWriter repositoryLoadStatusFile repositorySourcePath repositorySourceDirectory repositoryLoadStatusWriter |
+| plexusDependencyRepositoryCachePath plexusDependencyRepositoryNetworkPolicy plexusDependencyRepositoryDetachStatusFile plexusEditableRepositoryPaths plexusNormalizePath plexusRepositoryLocationString plexusRepositoryNameString plexusDependencyRepositoryDetachStatusWriter |
 
 ${dependencyRepositoryCacheSetupScript}
-${repositoryWorkspaceLoadScript}
 ${dependencyRepositoryDetachScript}
 
 ${smalltalkComment(`Pharo MCP startup is disabled: ${reason}`)}
 ${smalltalkComment("Keep the headless eval process alive for project lifecycle management only.")}
 Semaphore new wait.
 `;
-  }
-
-  const preferEndpointHandoff =
-    options.endpointHandoffPath !== undefined &&
-    options.imageConfig.mcp.port === undefined;
-
-  if (
-    options.imageState.assignedPort === undefined &&
-    !preferEndpointHandoff
-  ) {
-    throw new ProjectStartupScriptError(
-      `Project image ${options.imageState.id} requires Pharo MCP startup but has no assigned MCP port`,
-    );
   }
 
   const repository = options.repository ?? defaultPharoMcpMetacelloRepository;
@@ -843,16 +694,10 @@ Semaphore new wait.
     loadPolicy,
   });
 
-  const requiredMcpStartup = preferEndpointHandoff
-    ? generateEndpointHandoffStartupScript({
-        endpointHandoffPath: options.endpointHandoffPath!,
-      })
-    : [
-        `"Configure and start the MCP server."`,
-        `mcp := (Smalltalk globals at: #MCP) new.`,
-        `mcp port: ${options.imageState.assignedPort}.`,
-        `mcp start.`,
-      ].join("\n");
+  const requiredMcpStartup = generateEndpointHandoffStartupScript({
+    endpointHandoffPath: options.endpointHandoffPath,
+    requestedPort: options.imageConfig.mcp.port,
+  });
   const mcpStartup =
     startupMode === "optional"
       ? [
@@ -871,12 +716,11 @@ Semaphore new wait.
 
   return `"Generated by PLexus. Do not edit."
 
-| loadScript mcp endpointFile endpointPort pharoMcpLoadStatusFile pharoMcpLoadStatusWriter pharoMcpLoadSource pharoMcpLoadPolicy plexusDependencyRepositoryCachePath plexusDependencyRepositoryNetworkPolicy plexusDependencyRepositoryDetachStatusFile plexusEditableRepositoryPaths plexusNormalizePath plexusRepositoryLocationString plexusRepositoryNameString plexusDependencyRepositoryDetachStatusWriter repositoryLoadStatusFile repositorySourcePath repositorySourceDirectory repositoryLoadStatusWriter |
+| loadScript mcp endpointFile endpointPort pharoMcpLoadStatusFile pharoMcpLoadStatusWriter pharoMcpLoadSource pharoMcpLoadPolicy plexusDependencyRepositoryCachePath plexusDependencyRepositoryNetworkPolicy plexusDependencyRepositoryDetachStatusFile plexusEditableRepositoryPaths plexusNormalizePath plexusRepositoryLocationString plexusRepositoryNameString plexusDependencyRepositoryDetachStatusWriter |
 
 ${gitConfiguration}
 
 ${dependencyRepositoryCacheSetupScript}
-${repositoryWorkspaceLoadScript}
 
 ${pharoMcpLoadScript}
 
@@ -904,36 +748,6 @@ export function writeImageStartupScript(
     imageId: options.imageConfig.id,
     stateRoot: options.stateRoot,
   });
-  const repositoryWorkspaces = projectImageRepositoryWorkspaces(options.imageState);
-  const repositoryWorkspaceLoadStatusPaths =
-    repositoryWorkspaces.length > 0
-      ? Object.fromEntries(
-          repositoryWorkspaces.map((workspace) => {
-            const pathOptions = {
-              projectRoot: options.projectRoot,
-              projectId: options.projectId,
-              workspaceId: options.workspaceId,
-              imageId: options.imageConfig.id,
-              stateRoot: options.stateRoot,
-            };
-            return [
-              workspace.repository.id,
-              imageRepositoryWorkspaceLoadStatusPath(
-                repositoryWorkspaces.length === 1
-                  ? pathOptions
-                  : {
-                      ...pathOptions,
-                      repositoryId: workspace.repository.id,
-                    },
-              ),
-            ];
-          }),
-        )
-      : undefined;
-  const repositoryWorkspaceLoadStatusPath =
-    repositoryWorkspaces.length === 1
-      ? repositoryWorkspaceLoadStatusPaths?.[repositoryWorkspaces[0].repository.id]
-      : undefined;
   const pharoMcpLoadStatusPath =
     projectMcpStartupMode(options.imageConfig.mcp) === "disabled" ||
     options.imageState.pharoMcpContract?.status === "unsupported"
@@ -958,12 +772,6 @@ export function writeImageStartupScript(
   const source = generateImageStartupScript({
     ...options,
     ...(pharoMcpLoadStatusPath ? { pharoMcpLoadStatusPath } : {}),
-    ...(repositoryWorkspaceLoadStatusPath
-      ? { repositoryWorkspaceLoadStatusPath }
-      : {}),
-    ...(repositoryWorkspaceLoadStatusPaths
-      ? { repositoryWorkspaceLoadStatusPaths }
-      : {}),
     ...(dependencyRepositoryDetachStatusPath
       ? { dependencyRepositoryDetachStatusPath }
       : {}),
@@ -976,12 +784,6 @@ export function writeImageStartupScript(
     filePath,
     source,
     ...(pharoMcpLoadStatusPath ? { pharoMcpLoadStatusPath } : {}),
-    ...(repositoryWorkspaceLoadStatusPath
-      ? { repositoryWorkspaceLoadStatusPath }
-      : {}),
-    ...(repositoryWorkspaceLoadStatusPaths
-      ? { repositoryWorkspaceLoadStatusPaths }
-      : {}),
     ...(dependencyRepositoryDetachStatusPath
       ? { dependencyRepositoryDetachStatusPath }
       : {}),

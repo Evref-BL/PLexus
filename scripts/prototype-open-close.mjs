@@ -45,9 +45,6 @@ function parseArgs(argv) {
       case "--workspaceId":
         options.workspaceId = next();
         break;
-      case "--targetId":
-        options.targetId = next();
-        break;
       case "--projectId":
         options.projectId = next();
         break;
@@ -84,8 +81,6 @@ function parseArgs(argv) {
   options.workspaceId ??=
     process.env.PLEXUS_TEST_WORKSPACE_ID ??
     process.env.PLEXUS_WORKSPACE_ID;
-  options.targetId ??=
-    process.env.PLEXUS_TEST_TARGET_ID ?? process.env.PLEXUS_TARGET_ID;
   options.loadScript ??=
     process.env.PLEXUS_TEST_LOAD_SCRIPT ?? "pharo/load-mcp.st";
 
@@ -104,7 +99,6 @@ function usage() {
     "  --projectRoot <path>        Defaults to a temp prototype project",
     "  --stateRoot <path>          Defaults to a temp prototype state root",
     "  --workspaceId <id>          Isolates state under one worktree workspace",
-    "  --targetId <id>             Overrides the runtime target id",
     "  --projectId <id>            Defaults to prototype-open-close",
     "  --imageId <id>              Defaults to dev",
     "  --port <number>             Defaults to PLexus allocation",
@@ -216,7 +210,6 @@ async function main() {
     textResult("projectRoot", projectRoot);
     textResult("stateRoot", stateRoot);
     textResult("workspaceId", options.workspaceId ?? "(derived from projectRoot)");
-    textResult("targetId", options.targetId ?? "(derived from project/workspace)");
     textResult("imageName", options.imageName);
 
     if (!(await imageExists(client, options.imageName))) {
@@ -237,7 +230,6 @@ async function main() {
       projectRoot,
       stateRoot,
       workspaceId: options.workspaceId,
-      targetId: options.targetId,
       poll: {
         intervalMs: options.pollIntervalMs,
         processTimeoutMs: options.processTimeoutMs,
@@ -258,7 +250,10 @@ async function main() {
     const imageState = stateAfterOpen?.images.find(
       (image) => image.id === options.imageId,
     );
-    textResult("assigned port", imageState?.assignedPort ?? "unknown");
+    textResult(
+      "mcp endpoint port",
+      imageState?.mcpServers?.[0]?.endpoint?.port ?? "unknown",
+    );
     textResult("image status", imageState?.status ?? "unknown");
 
     const closeResult = await closeProject({

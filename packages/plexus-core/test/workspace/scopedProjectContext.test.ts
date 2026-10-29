@@ -52,13 +52,11 @@ const projectState: ProjectState = {
   projectId: "project-123",
   projectName: "my-project",
   workspaceId: "task-123",
-  targetId: "target-123",
   updatedAt: "2026-05-16T10:00:00.000Z",
   images: [
     {
       id: "dev",
       imageName: "MyProject-task-123-dev",
-      assignedPort: 7123,
       pid: 1234,
       status: "running",
       imagePath: "C:\\Users\\me\\Pharo\\images\\MyProject-task-123-dev.image",
@@ -70,19 +68,17 @@ const projectState: ProjectState = {
     {
       id: "baseline",
       imageName: "MyProject-task-123-baseline",
-      assignedPort: 7124,
       status: "stopped",
     },
   ],
 };
 
 describe("scoped project context", () => {
-  it("models project, workspace, target, and image ownership context", () => {
+  it("models project, workspace, and image ownership context", () => {
     const context = buildScopedProjectContext({
       projectRoot,
       projectConfig,
       workspaceId: "task-123",
-      targetId: "target-123",
       stateRoot,
       projectState,
     });
@@ -93,7 +89,6 @@ describe("scoped project context", () => {
         projectId: "project-123",
         projectName: "my-project",
         workspaceId: "task-123",
-        targetId: "target-123",
       },
       workspace: {
         projectRoot: path.win32.resolve(projectRoot),
@@ -113,9 +108,9 @@ describe("scoped project context", () => {
           creation: "project-policy",
         },
         routes: {
-          policy: "pharo-gateway-target-route",
+          policy: "pharo-gateway-workspace-route",
           serverName: "pharo_gateway",
-          targetKey: "targetId",
+          targetKey: "workspaceId",
           imageArgument: "mcpServerId",
         },
         cleanup: {
@@ -130,7 +125,6 @@ describe("scoped project context", () => {
           ownership: {
             projectId: "project-123",
             workspaceId: "task-123",
-            targetId: "target-123",
             owned: true,
             disposable: true,
           },
@@ -141,7 +135,6 @@ describe("scoped project context", () => {
           ownership: {
             projectId: "project-123",
             workspaceId: "task-123",
-            targetId: "target-123",
             owned: true,
             disposable: true,
           },
@@ -168,7 +161,6 @@ describe("scoped project context", () => {
       sourcePath,
       projectConfig,
       workspaceId: "task-123",
-      targetId: "target-123",
       stateRoot,
       projectState,
     });
@@ -192,7 +184,6 @@ describe("scoped project context", () => {
       projectRoot,
       projectConfig,
       workspaceId: "task-123",
-      targetId: "target-123",
       stateRoot,
       projectState,
     });
@@ -271,7 +262,6 @@ describe("scoped project context", () => {
         ],
       },
       workspaceId: "task-123",
-      targetId: "target-123",
       stateRoot,
       projectState,
     });
@@ -293,7 +283,6 @@ describe("scoped project context", () => {
       projectRoot,
       projectConfig,
       workspaceId: "task-123",
-      targetId: "target-123",
       stateRoot,
       projectState,
     });
@@ -304,7 +293,6 @@ describe("scoped project context", () => {
       projectId: "project-123",
       projectName: "my-project",
       workspaceId: "task-123",
-      targetId: "target-123",
       stateRoot: path.win32.resolve(stateRoot),
       statePath,
     });
@@ -325,7 +313,6 @@ describe("scoped project context", () => {
     expect(diagnostics.images[0]).toMatchObject({
       imageId: "dev",
       launcherImageName: "MyProject-task-123-dev",
-      assignedPort: 7123,
       pid: 1234,
     });
     expect(diagnostics.images[0].cleanup).toEqual({
@@ -343,68 +330,12 @@ describe("scoped project context", () => {
     });
   });
 
-  it("includes repository workspace preservation metadata in cleanup diagnostics", () => {
-    const diagnostics = buildScopedProjectContextDiagnostics({
-      projectRoot,
-      projectConfig,
-      workspaceId: "task-123",
-      targetId: "target-123",
-      stateRoot,
-      projectState: {
-        ...projectState,
-        images: [
-          {
-            ...projectState.images[0],
-            repositoryWorkspace: {
-              repository: {
-                id: "my-project",
-              },
-              path: "C:\\Users\\me\\Pharo\\images\\pharo-local\\iceberg\\my-project",
-              materializationStrategy: "copy",
-              sourceDirectory: "src",
-              baseline: "MyProject",
-              materializationState: "ready",
-              diagnostics: [],
-              dirtyState: "dirty",
-              loadState: "loaded",
-              cleanupState: {
-                policy: "preserve",
-                decision: "preserved",
-                imageId: "dev",
-                repositoryId: "my-project",
-                path: "C:\\Users\\me\\Pharo\\images\\pharo-local\\iceberg\\my-project",
-                dirtyState: "dirty",
-                recordedAt: "2026-05-16T11:00:00.000Z",
-              },
-            },
-          },
-        ],
-      },
-    });
-
-    expect(diagnostics.images[0].cleanup.repositoryWorkspace).toEqual({
-      path: "C:\\Users\\me\\Pharo\\images\\pharo-local\\iceberg\\my-project",
-      dirtyState: "dirty",
-      defaultPolicy: "preserve",
-      destructivePolicyRequired: true,
-      lastDecision: {
-        policy: "preserve",
-        decision: "preserved",
-        imageId: "dev",
-        repositoryId: "my-project",
-        path: "C:\\Users\\me\\Pharo\\images\\pharo-local\\iceberg\\my-project",
-        dirtyState: "dirty",
-        recordedAt: "2026-05-16T11:00:00.000Z",
-      },
-    });
-  });
 
   it("includes gateway route metadata for the imageId consumed by Pharo tools", () => {
     const context = buildScopedProjectContext({
       projectRoot,
       projectConfig,
       workspaceId: "task-123",
-      targetId: "target-123",
       stateRoot,
       projectState,
     });
@@ -416,89 +347,29 @@ describe("scoped project context", () => {
       routeReference: {
         projectId: "project-123",
         workspaceId: "task-123",
-        targetId: "target-123",
       },
       mcpServerIdSource:
         "Read a server id from images[].mcpServers[] in this scoped context",
       recordHint:
-        "Store the selected mcpServerId with the scoped project/workspace/target before calling pharo_gateway tools",
+        "Store the selected mcpServerId with the scoped project and workspace before calling pharo_gateway tools",
     });
   });
 
-  it("reports planned image-local repository workspaces before image launch", () => {
-    const context = buildScopedProjectContext({
-      projectRoot,
-      projectConfig: {
-        ...projectConfig,
-        images: [
-          {
-            ...projectConfig.images[0],
-            repositoryWorkspace: {
-              repository: {
-                id: "my-project",
-                componentId: "my-project",
-              },
-              sourceDirectory: "src",
-              baseline: "MyProject",
-              materialization: {
-                strategy: "copy",
-              },
-            },
-          },
-        ],
-      },
-      workspaceId: "task-123",
-      targetId: "target-123",
-      stateRoot,
-    });
 
-    expect(context.images[0]).toMatchObject({
-      imageId: "dev",
-      status: "declared",
-      repositoryWorkspace: {
-        repository: {
-          id: "my-project",
-          componentId: "my-project",
-        },
-        path: "image-local://dev/pharo-local/iceberg/my-project",
-        materializationStrategy: "copy",
-        sourceDirectory: "src",
-        baseline: "MyProject",
-        dirtyState: "unknown",
-        loadState: "not-loaded",
-      },
-    });
-  });
-
-  it("rejects project state from a different workspace or target", () => {
+  it("rejects project state from a different workspace", () => {
     expect(() =>
       buildScopedProjectContext({
         projectRoot,
         projectConfig,
         workspaceId: "task-123",
-        targetId: "target-123",
         stateRoot,
         projectState: {
           ...projectState,
           workspaceId: "other-worktree",
         },
       }),
-    ).toThrow(ScopedProjectContextError);
-
-    expect(() =>
-      buildScopedProjectContext({
-        projectRoot,
-        projectConfig,
-        workspaceId: "task-123",
-        targetId: "target-123",
-        stateRoot,
-        projectState: {
-          ...projectState,
-          targetId: "other-target",
-        },
-      }),
     ).toThrow(
-      "Project state targetId other-target does not match scoped target target-123",
+      "Project state workspaceId other-worktree does not match scoped workspace task-123",
     );
   });
 
@@ -508,7 +379,6 @@ describe("scoped project context", () => {
         projectRoot,
         projectConfig,
         workspaceId: "task-123",
-        targetId: "target-123",
         stateRoot,
         projectState: {
           ...projectState,
@@ -517,7 +387,6 @@ describe("scoped project context", () => {
             {
               id: "rogue",
               imageName: "Other",
-              assignedPort: 7999,
               status: "running",
             },
           ],

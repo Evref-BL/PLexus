@@ -7,7 +7,6 @@ import {
   type PharoMcpMetacelloRepository,
 } from "../workspace/projectStartupScript.js";
 import {
-  projectConfigId,
   projectMcpStartupMode,
   resolveProjectRuntimePolicy,
   type ProjectConfig,
@@ -266,7 +265,6 @@ export interface BuildHomeImageCachePlanOptions {
   imageConfig: ProjectImageConfig;
   imageState?: ProjectImageState;
   workspaceId?: string;
-  targetId?: string;
   stateRoot?: string;
   env?: NodeJS.ProcessEnv;
   homeDirectory?: string;
@@ -296,7 +294,6 @@ export interface MaterializeProjectImageFromHomeCacheOptions {
   imageConfig: ProjectImageConfig;
   imageState: ProjectImageState;
   workspaceId?: string;
-  targetId?: string;
   stateRoot?: string;
   approval?: HomeImageCacheMutationApproval;
   env?: NodeJS.ProcessEnv;
@@ -1229,9 +1226,6 @@ export function buildHomeImageCachePlan(
       projectRoot: options.projectRoot,
       config: options.config,
       workspaceId: options.workspaceId ?? "default",
-      targetId:
-        options.targetId ??
-        `${projectConfigId(options.config)}--${options.workspaceId ?? "default"}`,
       stateRoot: options.stateRoot,
     }),
   );
@@ -1625,7 +1619,6 @@ export async function materializeProjectImageFromHomeCache(
     imageConfig: options.imageConfig,
     imageState: options.imageState,
     workspaceId: options.workspaceId,
-    targetId: options.targetId,
     stateRoot: options.stateRoot,
     env: options.env,
     homeDirectory: options.homeDirectory,

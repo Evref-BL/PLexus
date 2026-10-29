@@ -54,22 +54,9 @@ function defaultRuntimePolicy() {
     gateway: {
       mode: "project-local",
       host: "127.0.0.1",
-      portRange: {
-        start: 8_133,
-        end: 8_199,
-      },
+      port: 8_133,
       mcpPath: "/mcp",
       routeControlMcpPath: "/control-mcp",
-    },
-    imagePorts: {
-      allocation: "configured-or-dynamic",
-      range: {
-        start: 7_100,
-        end: 7_199,
-      },
-      coordination: {
-        mode: "host-local",
-      },
     },
     launcherProfile: {
       mode: "project-owned",
@@ -258,17 +245,6 @@ describe("project config", () => {
         mcpUrl: "http://gateway.local:8133/mcp",
         routeControlMcpUrl: "http://gateway.local:8133/control-mcp",
       },
-      imagePorts: {
-        allocation: "configured-or-dynamic",
-        range: {
-          start: 7_200,
-          end: 7_299,
-        },
-        coordination: {
-          mode: "host-local",
-          root: "C:\\dev\\plexus-port-claims",
-        },
-      },
       launcherProfile: {
         mode: "project-owned",
         name: "my-project-isolated",
@@ -283,21 +259,6 @@ describe("project config", () => {
     expect(parseProjectConfig(config)).toEqual(config);
   });
 
-  it("keeps project-state image port coordination as an explicit opt-in", () => {
-    const config: ReturnType<typeof validProjectConfig> & { runtime?: unknown } =
-      validProjectConfig();
-    config.runtime = {
-      imagePorts: {
-        coordination: {
-          mode: "project-state",
-        },
-      },
-    };
-
-    expect(parseProjectConfig(config).runtime?.imagePorts.coordination).toEqual({
-      mode: "project-state",
-    });
-  });
 
   it("allows external launcher profile policy as an explicit opt-out", () => {
     const config: ReturnType<typeof validProjectConfig> & { runtime?: unknown } =
@@ -509,12 +470,6 @@ describe("project config", () => {
               workspaceId: "task-a",
               remoteWorkspaceId: "remote-task-a",
               remoteProjectPath: "/workspaces/project-a",
-              targets: [
-                {
-                  targetId: "task-a-dev",
-                  remoteTargetId: "remote-task-a-dev",
-                },
-              ],
             },
           ],
         },
@@ -535,12 +490,6 @@ describe("project config", () => {
             workspaceId: "task-a",
             remoteWorkspaceId: "remote-task-a",
             remoteProjectPath: "/workspaces/project-a",
-            targets: [
-              {
-                targetId: "task-a-dev",
-                remoteTargetId: "remote-task-a-dev",
-              },
-            ],
           },
         ],
       },
@@ -560,12 +509,6 @@ describe("project config", () => {
           workspaces: [
             {
               remoteWorkspaceId: "remote-task-a",
-              targets: [
-                {
-                  remoteTargetId: "remote-target-a",
-                },
-                "not-a-target",
-              ],
             },
             "not-a-workspace",
           ],
@@ -583,14 +526,6 @@ describe("project config", () => {
           workspaces: [
             {
               workspaceId: "task-b",
-              targets: [
-                {
-                  targetId: "target-b",
-                },
-                {
-                  targetId: "target-b",
-                },
-              ],
             },
           ],
         },
@@ -622,14 +557,11 @@ describe("project config", () => {
           "runtime.remoteNodes[0].projectMcpUrl must be a valid URL",
           "runtime.remoteNodes[0].gatewayMcpUrl must be a valid URL",
           "runtime.remoteNodes[0].workspaces[0].workspaceId must be a non-empty string",
-          "runtime.remoteNodes[0].workspaces[0].targets[0].targetId must be a non-empty string",
-          "runtime.remoteNodes[0].workspaces[0].targets[1] must be an object",
           "runtime.remoteNodes[0].workspaces[1] must be an object",
           "runtime.remoteNodes[1].id must differ from runtime node id: host-a",
           "runtime.remoteNodes[2].parentNodeId must not equal its own id: remote-b",
           "runtime.remoteNodes[3].parentNodeId must be omitted or match runtime node id host-a for flat-tree topology",
           "remote node ids must be unique: remote-b",
-          "runtime.remoteNodes[2].workspaces[0].targets.targetId must be unique: target-b",
           "runtime.remoteNodes[3].workspaces.workspaceId must be unique: task-b",
         ]),
       );
@@ -673,210 +605,10 @@ describe("project config", () => {
     });
   });
 
-  it("parses image-local repository workspace declarations", () => {
-    const baseConfig = validProjectConfig();
-    const config = {
-      ...baseConfig,
-      images: [
-        {
-          ...baseConfig.images[0],
-          repositoryWorkspace: {
-            repository: {
-              id: "my-project",
-              componentId: "my-project",
-              remoteUrl: "git@github.com:Example/MyProject.git",
-            },
-            sourceDirectory: "src",
-            baseline: "MyProject",
-            loadGroup: "dev",
-            pharoVersion: 13,
-            templateName: "Pharo 13.0 - 64bit",
-            branch: "task/image-workspace",
-            baseBranch: "main",
-            baseCommit: "abc123",
-            materialization: {
-              strategy: "git-worktree",
-              path: "image-local://{imageId}/pharo-local/iceberg/{repositoryId}",
-            },
-          },
-        },
-        baseConfig.images[1],
-      ],
-    };
 
-    expect(parseProjectConfig(config).images[0].repositoryWorkspace).toEqual(
-      config.images[0].repositoryWorkspace,
-    );
-  });
 
-  it("parses multiple image-local repository workspace declarations", () => {
-    const baseConfig = validProjectConfig();
-    const config = {
-      ...baseConfig,
-      images: [
-        {
-          ...baseConfig.images[0],
-          repositoryWorkspaces: [
-            {
-              repository: {
-                id: "my-project",
-                componentId: "my-project",
-              },
-              sourceDirectory: "src",
-              baseline: "MyProject",
-              materialization: {
-                strategy: "copy",
-              },
-            },
-            {
-              repository: {
-                id: "dependency",
-                remoteUrl: "git@github.com:Example/Dependency.git",
-              },
-              sourceDirectory: "repository",
-              baseline: "Dependency",
-              materialization: {
-                strategy: "clone",
-                path: "image-local://{imageId}/pharo-local/iceberg/{repositoryId}",
-              },
-            },
-          ],
-        },
-        baseConfig.images[1],
-      ],
-    };
 
-    const image = parseProjectConfig(config).images[0];
 
-    expect(image.repositoryWorkspaces).toEqual(config.images[0].repositoryWorkspaces);
-    expect(image.repositoryWorkspace).toEqual(config.images[0].repositoryWorkspaces[0]);
-  });
-
-  it("defaults image-local repository workspace materialization to copy", () => {
-    const baseConfig = validProjectConfig();
-    const config = {
-      ...baseConfig,
-      images: [
-        {
-          ...baseConfig.images[0],
-          repositoryWorkspace: {
-            repository: {
-              id: "my-project",
-              componentId: "my-project",
-            },
-            sourceDirectory: "src",
-            baseline: "MyProject",
-          },
-        },
-        baseConfig.images[1],
-      ],
-    };
-
-    expect(
-      parseProjectConfig(config).images[0].repositoryWorkspace?.materialization,
-    ).toEqual({
-      strategy: "copy",
-    });
-  });
-
-  it("rejects ambiguous or unsafe image-local repository workspace declarations", () => {
-    const baseConfig = validProjectConfig();
-    const config = {
-      ...baseConfig,
-      images: [
-        {
-          ...baseConfig.images[0],
-          repositoryWorkspace: {
-            repository: {
-              id: "",
-            },
-            sourceDirectory: "",
-            baseline: "",
-            loadGroup: "",
-            pharoVersion: 0,
-            materialization: {
-              strategy: "checkout",
-              path: "/tmp/shared-pharo-repo",
-            },
-          },
-        },
-        {
-          ...baseConfig.images[1],
-          active: true,
-          repositoryWorkspace: {
-            repository: {
-              id: "other",
-              remoteUrl: "git@github.com:Example/Other.git",
-            },
-            sourceDirectory: "src",
-            baseline: "Other",
-            materialization: {
-              strategy: "copy",
-              path: "/tmp/shared-pharo-repo",
-            },
-          },
-        },
-      ],
-    };
-
-    expect(() => parseProjectConfig(config)).toThrow(ProjectConfigError);
-
-    try {
-      parseProjectConfig(config);
-    } catch (error) {
-      expect((error as ProjectConfigError).issues).toEqual(
-        expect.arrayContaining([
-          "images[0].repositoryWorkspace.repository must set at least one of componentId, remoteUrl, or originPath",
-          "images[0].repositoryWorkspace.repository.id must be a non-empty string",
-          "images[0].repositoryWorkspace.sourceDirectory must be a non-empty string",
-          "images[0].repositoryWorkspace.baseline must be a non-empty string",
-          "images[0].repositoryWorkspace.loadGroup must be a non-empty string",
-          "images[0].repositoryWorkspace.pharoVersion must be a positive integer",
-          "images[0].repositoryWorkspace.materialization.strategy must be one of copy, git-worktree, clone",
-          "active image repository workspace paths must be unique: /tmp/shared-pharo-repo",
-        ]),
-      );
-    }
-  });
-
-  it("rejects duplicate repository workspace ids in one image", () => {
-    const baseConfig = validProjectConfig();
-    const config = {
-      ...baseConfig,
-      images: [
-        {
-          ...baseConfig.images[0],
-          repositoryWorkspaces: [
-            {
-              repository: {
-                id: "my-project",
-                componentId: "my-project",
-              },
-              sourceDirectory: "src",
-              baseline: "MyProject",
-            },
-            {
-              repository: {
-                id: "my-project",
-                remoteUrl: "git@github.com:Example/MyProject.git",
-              },
-              sourceDirectory: "repository",
-              baseline: "MyProjectDependency",
-            },
-          ],
-        },
-      ],
-    };
-
-    expect(() => parseProjectConfig(config)).toThrow(ProjectConfigError);
-    try {
-      parseProjectConfig(config);
-    } catch (error) {
-      expect((error as ProjectConfigError).issues).toContain(
-        "images[0] repository workspace ids must be unique: my-project",
-      );
-    }
-  });
 
   it("rejects invalid image create policy", () => {
     const baseConfig = validProjectConfig();

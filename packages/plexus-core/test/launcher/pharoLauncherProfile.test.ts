@@ -28,7 +28,6 @@ describe("pharo-launcher-mcp profile derivation", () => {
       projectRoot,
       config: projectConfig(),
       workspaceId: "worktree-a",
-      targetId: "project-123--worktree-a",
       stateRoot: rootPath("tmp", "plexus-state"),
       env: { PLEXUS_HOME: plexusHome },
     });
@@ -83,26 +82,21 @@ describe("pharo-launcher-mcp profile derivation", () => {
       projectRoot,
       config,
       workspaceId: "worktree-a",
-      targetId: "project-123--worktree-a",
       stateRoot,
     });
     const envB = pharoLauncherMcpProfileEnvironment({
       projectRoot,
       config,
       workspaceId: "worktree-b",
-      targetId: "project-123--worktree-b",
       stateRoot,
     });
     const stateA = createProjectState(config, {
       workspaceId: "worktree-a",
-      targetId: "project-123--worktree-a",
       updatedAt: "2026-05-18T00:00:00.000Z",
     });
     const stateB = createProjectState(config, {
       workspaceId: "worktree-b",
-      targetId: "project-123--worktree-b",
       updatedAt: "2026-05-18T00:00:00.000Z",
-      reservedPorts: stateA.images.map((image) => image.assignedPort),
     });
 
     expect(envA?.PHARO_LAUNCHER_MCP_PROFILE).toBe("plexus-project-123");
@@ -126,7 +120,6 @@ describe("pharo-launcher-mcp profile derivation", () => {
         },
       }),
       workspaceId: "worktree-a",
-      targetId: "target-a",
     });
 
     expect(diagnostic).toMatchObject({
@@ -148,7 +141,6 @@ describe("pharo-launcher-mcp profile derivation", () => {
         },
       }),
       workspaceId: "worktree-a",
-      targetId: "target-a",
       env: {
         PHARO_LAUNCHER_MCP_PROFILE: "user-profile",
         PHARO_LAUNCHER_MCP_STATE_ROOT: rootPath("user", "profile"),
@@ -177,7 +169,6 @@ describe("pharo-launcher-mcp profile derivation", () => {
         },
       }),
       workspaceId: "worktree-a",
-      targetId: "target-a",
       env: {},
     });
 

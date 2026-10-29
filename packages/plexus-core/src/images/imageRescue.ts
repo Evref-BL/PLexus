@@ -38,9 +38,13 @@ import {
   saveProjectState,
   type ProjectImageCreationRouteState,
   type ProjectImageState,
-  type ProjectPortRange,
   type ProjectState,
 } from "../workspace/projectState.js";
+import {
+  imageMcpEndpointHandoffPath,
+  readImageMcpEndpointHandoff,
+  removeImageMcpEndpointHandoff,
+} from "../gateway/projectImageMcpEndpoint.js";
 import { writeImageStartupScript } from "../workspace/projectStartupScript.js";
 import type { LauncherCommandResult, LauncherProcess } from "../lifecycle/projectOpen.js";
 
@@ -91,7 +95,6 @@ export interface ImageRescueOptions {
   targetImageName?: string;
   targetTemplateName?: string;
   targetTemplateCategory?: string;
-  targetMcpPort?: number;
   sourceHistoryDirectoryPath?: string;
   historyFilePath?: string;
   selection?: ImageRescueEntrySelection;
@@ -104,7 +107,6 @@ export interface ImageRescueOptions {
   pharoLauncherMcpClient?: PharoLauncherMcpToolClient;
   imageMcpClient?: ImageRescueMcpClient;
   healthClient?: PharoMcpHealthClient;
-  portRange?: ProjectPortRange;
   now?: () => Date;
   poll?: ImageRescuePollOptions;
   sleep?: (durationMs: number) => Promise<void>;
@@ -184,7 +186,6 @@ export interface ImageRescueChangeResult {
 export interface ImageRescueTargetPlan {
   targetImageId: string;
   targetImageName: string;
-  targetMcpPort: number;
   templateName: string;
   templateCategory?: string;
   cleanupPolicy: "workspace_cleanup_only";
@@ -318,6 +319,7 @@ async function launchImage(
   healthClient: PharoMcpHealthClient,
   imageState: ProjectImageState,
   startupScriptPath: string,
+  endpointHandoffPath: string,
   poll: Required<ImageRescuePollOptions>,
   sleep: (durationMs: number) => Promise<void>,
 ): Promise<number> {
@@ -345,24 +347,29 @@ async function launchImage(
     );
   }
 
-  if (imageState.assignedPort === undefined) {
-    throw new Error(
-      `Project image ${imageState.id} requires Pharo MCP health but has no assigned MCP port`,
-    );
-  }
-  const assignedPort = imageState.assignedPort;
-
-  const healthy = await pollUntil(
+  const endpoint = await pollUntil(
     poll.healthTimeoutMs,
     poll.intervalMs,
     sleep,
-    async () => ((await healthClient.check(assignedPort)) ? true : undefined),
+    async () => {
+      const handoff = readImageMcpEndpointHandoff(endpointHandoffPath);
+      if (handoff.status !== "valid") {
+        return undefined;
+      }
+
+      const healthy = healthClient.checkEndpoint
+        ? await healthClient.checkEndpoint(handoff.endpoint)
+        : await healthClient.check(handoff.endpoint.port);
+      return healthy ? handoff.endpoint : undefined;
+    },
   );
-  if (!healthy) {
+  if (!endpoint) {
     throw new Error(
-      `Timed out waiting for Pharo MCP health on port ${assignedPort}`,
+      `Timed out waiting for Pharo MCP to write its endpoint to ${endpointHandoffPath}`,
     );
   }
+
+  imageState.mcpServers = [{ id: imageState.id, endpoint }];
 
   return process.pid;
 }
@@ -392,32 +399,6 @@ function findImageConfig(
   return image;
 }
 
-function allocatePort(
-  state: ProjectState,
-  requestedPort: number | undefined,
-  range: ProjectPortRange,
-): number {
-  const usedPorts = new Set(
-    state.images
-      .map((image) => image.assignedPort)
-      .filter((port): port is number => port !== undefined),
-  );
-  if (requestedPort !== undefined) {
-    if (usedPorts.has(requestedPort)) {
-      throw new ImageRescueError(`Requested target MCP port is already used: ${requestedPort}`);
-    }
-
-    return requestedPort;
-  }
-
-  for (let port = range.start; port <= range.end; port += 1) {
-    if (!usedPorts.has(port)) {
-      return port;
-    }
-  }
-
-  throw new ImageRescueError(`No available port in range ${range.start}-${range.end}`);
-}
 
 function launcherImagesDirectory(configReport: LauncherConfigReport): string | undefined {
   return (
@@ -877,17 +858,12 @@ function targetConfigFromSource(
   sourceConfig: ProjectImageConfig,
   targetImageId: string,
   targetImageName: string,
-  targetPort: number,
 ): ProjectImageConfig {
   return {
     ...sourceConfig,
     id: targetImageId,
     imageName: targetImageName,
     active: true,
-    mcp: {
-      ...sourceConfig.mcp,
-      port: targetPort,
-    },
   };
 }
 
@@ -932,7 +908,7 @@ function assertWorkspaceImagePolicyAllowsTarget(
 function targetRoute(targetImageId: string): ProjectImageCreationRouteState {
   return {
     serverName: "pharo_gateway",
-    targetKey: "targetId",
+    targetKey: "workspaceId",
     imageArgument: "mcpServerId",
     imageId: targetImageId,
   };
@@ -945,24 +921,15 @@ function buildTargetPlan(input: {
   targetImageName: string;
   templateName: string;
   templateCategory?: string;
-  targetMcpPort?: number;
-  portRange?: ProjectPortRange;
 }): ImageRescueTargetPlan {
   assertWorkspaceImagePolicyAllowsTarget(
     input.config,
     input.state,
     input.targetImageId,
   );
-  const targetMcpPort = allocatePort(
-    input.state,
-    input.targetMcpPort,
-    input.portRange ?? resolveProjectRuntimePolicy(input.config).imagePorts.range,
-  );
-
   return {
     targetImageId: input.targetImageId,
     targetImageName: input.targetImageName,
-    targetMcpPort,
     templateName: input.templateName,
     ...(input.templateCategory
       ? { templateCategory: input.templateCategory }
@@ -1045,7 +1012,6 @@ async function createImageRescueContext(
         projectRoot,
         config,
         workspaceId,
-        targetId: state.targetId,
         stateRoot: resolvedStateRoot,
       }),
     }));
@@ -1151,10 +1117,8 @@ function planImageRescueTarget(
           config,
           targetImageId,
           targetImageName: plannedTargetImageName,
-          targetMcpPort: options.targetMcpPort,
           templateName: plannedTemplateName,
           templateCategory: options.targetTemplateCategory,
-          portRange: options.portRange,
         })
       : undefined;
 
@@ -1275,7 +1239,6 @@ async function prepareRescueTarget(
   const targetImage: ProjectImageState = {
     id: target.targetImageId,
     imageName: replacementPlan.targetImageName,
-    assignedPort: replacementPlan.targetMcpPort,
     status: "starting",
     creation: {
       role: "rescue",
@@ -1301,8 +1264,15 @@ async function prepareRescueTarget(
     context.sourceConfig,
     target.targetImageId,
     replacementPlan.targetImageName,
-    replacementPlan.targetMcpPort,
   );
+  const endpointHandoffPath = imageMcpEndpointHandoffPath({
+    projectRoot: context.projectRoot,
+    projectId: projectConfigId(context.config),
+    workspaceId: context.workspaceId,
+    imageId: target.targetImageId,
+    stateRoot: context.resolvedStateRoot,
+  });
+  removeImageMcpEndpointHandoff(endpointHandoffPath);
   const startupScript = writeImageStartupScript({
     projectRoot: context.projectRoot,
     projectId: projectConfigId(context.config),
@@ -1310,6 +1280,7 @@ async function prepareRescueTarget(
     stateRoot: context.resolvedStateRoot,
     imageConfig: targetConfig,
     imageState: targetImage,
+    endpointHandoffPath,
   });
   const poll = {
     ...defaultPoll,
@@ -1321,6 +1292,7 @@ async function prepareRescueTarget(
       context.options.healthClient ?? new HttpPharoMcpHealthClient(),
       targetImage,
       startupScript.filePath,
+      endpointHandoffPath,
       poll,
       context.options.sleep ?? defaultSleep,
     );

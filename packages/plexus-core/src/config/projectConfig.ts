@@ -68,37 +68,6 @@ export interface ProjectImagePreparedImageConfig {
   copyMode: ProjectImagePreparedCopyMode;
 }
 
-export type ProjectImageRepositoryWorkspaceMaterializationStrategy =
-  | "copy"
-  | "git-worktree"
-  | "clone";
-
-export interface ProjectImageRepositoryIdentityConfig {
-  id: string;
-  componentId?: string;
-  remoteUrl?: string;
-  originPath?: string;
-}
-
-export interface ProjectImageRepositoryWorkspaceMaterializationConfig {
-  strategy: ProjectImageRepositoryWorkspaceMaterializationStrategy;
-  path?: string;
-}
-
-export interface ProjectImageRepositoryWorkspaceConfig {
-  repository: ProjectImageRepositoryIdentityConfig;
-  sourceDirectory: string;
-  baseline: string;
-  loadGroup?: string;
-  pharoVersion?: number;
-  templateName?: string;
-  templateCategory?: string;
-  branch?: string;
-  baseBranch?: string;
-  baseCommit?: string;
-  materialization: ProjectImageRepositoryWorkspaceMaterializationConfig;
-}
-
 export interface ProjectImageConfig {
   id: string;
   imageName: string;
@@ -107,8 +76,6 @@ export interface ProjectImageConfig {
   mcp: ProjectImageMcpConfig;
   create?: ProjectImageCreateConfig;
   preparedImage?: ProjectImagePreparedImageConfig;
-  repositoryWorkspace?: ProjectImageRepositoryWorkspaceConfig;
-  repositoryWorkspaces?: ProjectImageRepositoryWorkspaceConfig[];
   git?: ProjectImageGitConfig;
 }
 
@@ -149,10 +116,6 @@ export interface ProjectHomeConfig {
   dependencyRepositories?: ProjectHomeDependencyRepositoriesConfig;
 }
 
-export interface ProjectRuntimePortRange {
-  start: number;
-  end: number;
-}
 
 export type ProjectRuntimeScope = "project";
 export type ProjectRuntimeStateRootMode = "project-local" | "external";
@@ -167,8 +130,7 @@ export type ProjectGatewayMode = "project-local" | "shared";
 export interface ProjectLocalGatewayPolicy {
   mode: "project-local";
   host: string;
-  port?: number;
-  portRange?: ProjectRuntimePortRange;
+  port: number;
   mcpPath: string;
   routeControlMcpPath: string;
 }
@@ -183,23 +145,6 @@ export type ProjectGatewayPolicy =
   | ProjectLocalGatewayPolicy
   | ProjectSharedGatewayPolicy;
 
-export type ProjectImagePortAllocationPolicy =
-  | "configured-or-dynamic"
-  | "dynamic-only"
-  | "configured-only";
-
-export type ProjectImagePortCoordinationMode = "project-state" | "host-local";
-
-export interface ProjectImagePortCoordinationPolicy {
-  mode: ProjectImagePortCoordinationMode;
-  root?: string;
-}
-
-export interface ProjectImagePortPolicy {
-  allocation: ProjectImagePortAllocationPolicy;
-  range: ProjectRuntimePortRange;
-  coordination: ProjectImagePortCoordinationPolicy;
-}
 
 export const defaultPharoMcpMetadataKey = "io.github.evref-bl/pharo";
 export const defaultPharoMcpSupportedMajorVersions = [12, 13, 14, 15] as const;
@@ -209,16 +154,11 @@ export interface ProjectPharoMcpPolicy {
   supportedMajorVersions: number[];
 }
 
-export interface ProjectRemoteNodeTargetMappingConfig {
-  targetId: string;
-  remoteTargetId?: string;
-}
 
 export interface ProjectRemoteNodeWorkspaceMappingConfig {
   workspaceId: string;
   remoteWorkspaceId?: string;
   remoteProjectPath?: string;
-  targets?: ProjectRemoteNodeTargetMappingConfig[];
 }
 
 export interface ProjectRemoteNodeConfig {
@@ -256,7 +196,6 @@ export interface ProjectRuntimePolicy {
   nodeId?: string;
   stateRoot: ProjectRuntimeStateRootPolicy;
   gateway: ProjectGatewayPolicy;
-  imagePorts: ProjectImagePortPolicy;
   workspaceImages?: ProjectWorkspaceImagePolicy;
   remoteNodes?: ProjectRemoteNodeConfig[];
   launcherProfile: ProjectLauncherProfilePolicy;
@@ -301,22 +240,9 @@ export function defaultProjectRuntimePolicy(): ProjectRuntimePolicy {
     gateway: {
       mode: "project-local",
       host: "127.0.0.1",
-      portRange: {
-        start: 8_133,
-        end: 8_199,
-      },
+      port: 8_133,
       mcpPath: "/mcp",
       routeControlMcpPath: "/control-mcp",
-    },
-    imagePorts: {
-      allocation: "configured-or-dynamic",
-      range: {
-        start: 7_100,
-        end: 7_199,
-      },
-      coordination: {
-        mode: "host-local",
-      },
     },
     launcherProfile: {
       mode: "project-owned",
@@ -560,24 +486,6 @@ function optionalPositiveIntegerField(
   return undefined;
 }
 
-function requiredPortField(
-  object: Record<string, unknown>,
-  key: string,
-  issues: string[],
-  pathPrefix: string,
-  fallback: number,
-): number {
-  const value = optionalPortField(object, key, issues, pathPrefix);
-  if (value !== undefined) {
-    return value;
-  }
-
-  if (object[key] === undefined) {
-    issues.push(`${pathPrefix}.${key} must be an integer between 1 and 65535`);
-  }
-
-  return fallback;
-}
 
 function optionalStringField(
   object: Record<string, unknown>,
@@ -676,33 +584,6 @@ function pathFieldWithDefault(
   return value;
 }
 
-function parseRuntimePortRange(
-  value: unknown,
-  issues: string[],
-  pathPrefix: string,
-  fallback: ProjectRuntimePortRange,
-): ProjectRuntimePortRange {
-  if (!isObject(value)) {
-    issues.push(`${pathPrefix} must be an object`);
-    return { ...fallback };
-  }
-
-  const start = requiredPortField(
-    value,
-    "start",
-    issues,
-    pathPrefix,
-    fallback.start,
-  );
-  const end = requiredPortField(value, "end", issues, pathPrefix, fallback.end);
-  if (start > end) {
-    issues.push(
-      `${pathPrefix}.start must be less than or equal to ${pathPrefix}.end`,
-    );
-  }
-
-  return { start, end };
-}
 
 function parsePositiveIntegerArray(
   value: unknown,
@@ -1101,167 +982,6 @@ function parseImagePreparedImage(
   };
 }
 
-function parseImageRepositoryIdentity(
-  value: unknown,
-  issues: string[],
-  pathPrefix: string,
-): ProjectImageRepositoryIdentityConfig {
-  if (!isObject(value)) {
-    issues.push(`${pathPrefix}.repository must be an object`);
-    return { id: "" };
-  }
-
-  const componentId = optionalStringField(
-    value,
-    "componentId",
-    issues,
-    `${pathPrefix}.repository`,
-  );
-  const remoteUrl = optionalStringField(
-    value,
-    "remoteUrl",
-    issues,
-    `${pathPrefix}.repository`,
-  );
-  const originPath = optionalStringField(
-    value,
-    "originPath",
-    issues,
-    `${pathPrefix}.repository`,
-  );
-  if (!componentId && !remoteUrl && !originPath) {
-    issues.push(
-      `${pathPrefix}.repository must set at least one of componentId, remoteUrl, or originPath`,
-    );
-  }
-
-  return {
-    id: stringField(value, "id", issues, `${pathPrefix}.repository`),
-    ...(componentId ? { componentId } : {}),
-    ...(remoteUrl ? { remoteUrl } : {}),
-    ...(originPath ? { originPath } : {}),
-  };
-}
-
-function parseImageRepositoryWorkspaceMaterialization(
-  value: unknown,
-  issues: string[],
-  pathPrefix: string,
-): ProjectImageRepositoryWorkspaceMaterializationConfig {
-  const materializationPath = `${pathPrefix}.materialization`;
-  if (value === undefined) {
-    return { strategy: "copy" };
-  }
-
-  if (!isObject(value)) {
-    issues.push(`${materializationPath} must be an object`);
-    return { strategy: "copy" };
-  }
-
-  const strategyValue = value.strategy ?? "copy";
-  const strategy =
-    strategyValue === "copy" ||
-    strategyValue === "git-worktree" ||
-    strategyValue === "clone"
-      ? strategyValue
-      : "copy";
-  if (strategy !== strategyValue) {
-    issues.push(
-      `${materializationPath}.strategy must be one of copy, git-worktree, clone`,
-    );
-  }
-
-  const path = optionalStringField(value, "path", issues, materializationPath);
-
-  return {
-    strategy,
-    ...(path ? { path } : {}),
-  };
-}
-
-function parseImageRepositoryWorkspace(
-  value: unknown,
-  issues: string[],
-  workspacePath: string,
-): ProjectImageRepositoryWorkspaceConfig | undefined {
-  if (value === undefined) {
-    return undefined;
-  }
-
-  if (!isObject(value)) {
-    issues.push(`${workspacePath} must be an object`);
-    return undefined;
-  }
-
-  const pharoVersion = optionalPositiveIntegerField(
-    value,
-    "pharoVersion",
-    issues,
-    workspacePath,
-  );
-
-  return {
-    repository: parseImageRepositoryIdentity(value.repository, issues, workspacePath),
-    sourceDirectory: stringField(value, "sourceDirectory", issues, workspacePath),
-    baseline: stringField(value, "baseline", issues, workspacePath),
-    loadGroup: optionalStringField(value, "loadGroup", issues, workspacePath),
-    ...(pharoVersion !== undefined ? { pharoVersion } : {}),
-    templateName: optionalStringField(value, "templateName", issues, workspacePath),
-    templateCategory: optionalStringField(
-      value,
-      "templateCategory",
-      issues,
-      workspacePath,
-    ),
-    branch: optionalStringField(value, "branch", issues, workspacePath),
-    baseBranch: optionalStringField(value, "baseBranch", issues, workspacePath),
-    baseCommit: optionalStringField(value, "baseCommit", issues, workspacePath),
-    materialization: parseImageRepositoryWorkspaceMaterialization(
-      value.materialization,
-      issues,
-      workspacePath,
-    ),
-  };
-}
-
-function parseImageRepositoryWorkspaces(
-  value: unknown,
-  issues: string[],
-  pathPrefix: string,
-): ProjectImageRepositoryWorkspaceConfig[] | undefined {
-  if (value === undefined) {
-    return undefined;
-  }
-
-  const workspacesPath = `${pathPrefix}.repositoryWorkspaces`;
-  if (!Array.isArray(value)) {
-    issues.push(`${workspacesPath} must be an array`);
-    return undefined;
-  }
-
-  return value.map((workspace, index) =>
-    parseImageRepositoryWorkspace(
-      workspace,
-      issues,
-      `${workspacesPath}[${index}]`,
-    ) ?? {
-      repository: { id: "" },
-      sourceDirectory: "",
-      baseline: "",
-      materialization: { strategy: "copy" },
-    },
-  );
-}
-
-export function imageRepositoryWorkspaceConfigs(
-  image: Pick<ProjectImageConfig, "repositoryWorkspace" | "repositoryWorkspaces">,
-): ProjectImageRepositoryWorkspaceConfig[] {
-  if (image.repositoryWorkspaces && image.repositoryWorkspaces.length > 0) {
-    return image.repositoryWorkspaces;
-  }
-  return image.repositoryWorkspace ? [image.repositoryWorkspace] : [];
-}
-
 function parseImages(
   value: unknown,
   issues: string[],
@@ -1283,20 +1003,6 @@ function parseImages(
       };
     }
 
-    const repositoryWorkspace = parseImageRepositoryWorkspace(
-      image.repositoryWorkspace,
-      issues,
-      `${pathPrefix}.repositoryWorkspace`,
-    );
-    const repositoryWorkspaces = parseImageRepositoryWorkspaces(
-      image.repositoryWorkspaces,
-      issues,
-      pathPrefix,
-    );
-    const effectiveRepositoryWorkspaces =
-      repositoryWorkspaces ??
-      (repositoryWorkspace ? [repositoryWorkspace] : undefined);
-
     return {
       id: stringField(image, "id", issues, pathPrefix),
       imageName: stringField(image, "imageName", issues, pathPrefix),
@@ -1314,11 +1020,6 @@ function parseImages(
         issues,
         pathPrefix,
       ),
-      repositoryWorkspace:
-        repositoryWorkspace ?? effectiveRepositoryWorkspaces?.[0],
-      ...(effectiveRepositoryWorkspaces
-        ? { repositoryWorkspaces: effectiveRepositoryWorkspaces }
-        : {}),
       git: parseImageGit(image.git, issues, pathPrefix),
     };
   });
@@ -1444,24 +1145,6 @@ function parseProjectLocalGateway(
   const defaultGateway = defaultProjectRuntimePolicy()
     .gateway as ProjectLocalGatewayPolicy;
   const port = optionalPortField(value, "port", issues, "runtime.gateway");
-  const hasPortRange = value.portRange !== undefined;
-  const parsedPortRange = hasPortRange
-    ? parseRuntimePortRange(
-        value.portRange,
-        issues,
-        "runtime.gateway.portRange",
-        defaultGateway.portRange ?? { start: 8_133, end: 8_199 },
-      )
-    : undefined;
-
-  if (port !== undefined && hasPortRange) {
-    issues.push("runtime.gateway must use either port or portRange, not both");
-  }
-
-  const portPolicy =
-    port !== undefined
-      ? { port }
-      : { portRange: parsedPortRange ?? defaultGateway.portRange };
 
   return {
     mode: "project-local",
@@ -1472,7 +1155,7 @@ function parseProjectLocalGateway(
       "runtime.gateway",
       defaultGateway.host,
     ),
-    ...portPolicy,
+    port: port ?? defaultGateway.port,
     mcpPath: pathFieldWithDefault(
       value,
       "mcpPath",
@@ -1535,42 +1218,6 @@ function parseRuntimeGateway(
   return parseProjectLocalGateway(value, issues);
 }
 
-function parseRemoteNodeTargetMappings(
-  value: unknown,
-  issues: string[],
-  pathPrefix: string,
-): ProjectRemoteNodeTargetMappingConfig[] | undefined {
-  if (value === undefined) {
-    return undefined;
-  }
-
-  if (!Array.isArray(value)) {
-    issues.push(`${pathPrefix}.targets must be an array`);
-    return undefined;
-  }
-
-  return value.map((item, index) => {
-    const itemPath = `${pathPrefix}.targets[${index}]`;
-    if (!isObject(item)) {
-      issues.push(`${itemPath} must be an object`);
-      return {
-        targetId: "",
-      };
-    }
-
-    const remoteTargetId = optionalStringField(
-      item,
-      "remoteTargetId",
-      issues,
-      itemPath,
-    );
-
-    return {
-      targetId: stringField(item, "targetId", issues, itemPath),
-      ...(remoteTargetId ? { remoteTargetId } : {}),
-    };
-  });
-}
 
 function parseRemoteNodeWorkspaceMappings(
   value: unknown,
@@ -1607,13 +1254,10 @@ function parseRemoteNodeWorkspaceMappings(
       issues,
       itemPath,
     );
-    const targets = parseRemoteNodeTargetMappings(item.targets, issues, itemPath);
-
     return {
       workspaceId: stringField(item, "workspaceId", issues, itemPath),
       ...(remoteWorkspaceId ? { remoteWorkspaceId } : {}),
       ...(remoteProjectPath ? { remoteProjectPath } : {}),
-      ...(targets ? { targets } : {}),
     };
   });
 }
@@ -1664,99 +1308,7 @@ function parseRemoteNodes(
   });
 }
 
-function parseImagePortCoordination(
-  value: unknown,
-  issues: string[],
-): ProjectImagePortCoordinationPolicy {
-  if (value === undefined) {
-    return { ...defaultProjectRuntimePolicy().imagePorts.coordination };
-  }
 
-  if (!isObject(value)) {
-    issues.push("runtime.imagePorts.coordination must be an object");
-    return { ...defaultProjectRuntimePolicy().imagePorts.coordination };
-  }
-
-  const defaultMode = defaultProjectRuntimePolicy().imagePorts.coordination.mode;
-  const modeValue = value.mode ?? defaultMode;
-  const mode =
-    modeValue === "project-state" || modeValue === "host-local"
-      ? modeValue
-      : defaultMode;
-  if (mode !== modeValue) {
-    issues.push(
-      "runtime.imagePorts.coordination.mode must be one of project-state, host-local",
-    );
-  }
-
-  const root = optionalStringField(
-    value,
-    "root",
-    issues,
-    "runtime.imagePorts.coordination",
-  );
-  if (root && mode !== "host-local") {
-    issues.push(
-      "runtime.imagePorts.coordination.root can only be used when mode is \"host-local\"",
-    );
-  }
-
-  return {
-    mode,
-    ...(root && mode === "host-local" ? { root } : {}),
-  };
-}
-
-function parseImagePortPolicy(
-  value: unknown,
-  issues: string[],
-): ProjectImagePortPolicy {
-  const defaults = defaultProjectRuntimePolicy().imagePorts;
-  if (value === undefined) {
-    return {
-      allocation: defaults.allocation,
-      range: { ...defaults.range },
-      coordination: { ...defaults.coordination },
-    };
-  }
-
-  if (!isObject(value)) {
-    issues.push("runtime.imagePorts must be an object");
-    return {
-      allocation: defaults.allocation,
-      range: { ...defaults.range },
-      coordination: { ...defaults.coordination },
-    };
-  }
-
-  const allocationValue = value.allocation ?? defaults.allocation;
-  const allocation =
-    allocationValue === "configured-or-dynamic" ||
-    allocationValue === "dynamic-only" ||
-    allocationValue === "configured-only"
-      ? allocationValue
-      : defaults.allocation;
-  if (allocation !== allocationValue) {
-    issues.push(
-      "runtime.imagePorts.allocation must be one of " +
-        "configured-or-dynamic, dynamic-only, configured-only",
-    );
-  }
-
-  return {
-    allocation,
-    range:
-      value.range === undefined
-        ? { ...defaults.range }
-        : parseRuntimePortRange(
-            value.range,
-            issues,
-            "runtime.imagePorts.range",
-            defaults.range,
-          ),
-    coordination: parseImagePortCoordination(value.coordination, issues),
-  };
-}
 
 function parseLauncherProfilePolicy(
   value: unknown,
@@ -1950,7 +1502,6 @@ function parseRuntimePolicy(
     ...(nodeId ? { nodeId } : {}),
     stateRoot: parseRuntimeStateRoot(value.stateRoot, issues),
     gateway: parseRuntimeGateway(value.gateway, issues),
-    imagePorts: parseImagePortPolicy(value.imagePorts, issues),
     ...(workspaceImages ? { workspaceImages } : {}),
     ...(remoteNodes ? { remoteNodes } : {}),
     launcherProfile: parseLauncherProfilePolicy(
@@ -2000,71 +1551,6 @@ function collectDuplicatePorts(images: ProjectImageConfig[], issues: string[]): 
   }
 }
 
-function collectDuplicateActiveRepositoryWorkspacePaths(
-  images: ProjectImageConfig[],
-  issues: string[],
-): void {
-  const seen = new Set<string>();
-  for (const image of images) {
-    if (!image.active) {
-      continue;
-    }
-
-    for (const workspace of imageRepositoryWorkspaceConfigs(image)) {
-      const path = workspace.materialization.path;
-      if (!path) {
-        continue;
-      }
-
-      if (seen.has(path)) {
-        issues.push(`active image repository workspace paths must be unique: ${path}`);
-      } else {
-        seen.add(path);
-      }
-    }
-  }
-}
-
-function collectDuplicateRepositoryWorkspaceIds(
-  images: ProjectImageConfig[],
-  issues: string[],
-): void {
-  images.forEach((image, imageIndex) => {
-    const seen = new Set<string>();
-    for (const workspace of imageRepositoryWorkspaceConfigs(image)) {
-      const repositoryId = workspace.repository.id;
-      if (seen.has(repositoryId)) {
-        issues.push(
-          `images[${imageIndex}] repository workspace ids must be unique: ${repositoryId}`,
-        );
-      } else {
-        seen.add(repositoryId);
-      }
-    }
-  });
-}
-
-function validateImagePortPolicy(config: ProjectConfig, issues: string[]): void {
-  const allocation = resolveProjectRuntimePolicy(config).imagePorts.allocation;
-  config.images.forEach((image, index) => {
-    if (projectMcpStartupMode(image.mcp) === "disabled") {
-      return;
-    }
-
-    if (allocation === "dynamic-only" && image.mcp.port !== undefined) {
-      issues.push(
-        `images[${index}].mcp.port cannot be used when ` +
-          `runtime.imagePorts.allocation is "dynamic-only"`,
-      );
-    }
-    if (allocation === "configured-only" && image.mcp.port === undefined) {
-      issues.push(
-        `images[${index}].mcp.port is required when ` +
-          `runtime.imagePorts.allocation is "configured-only"`,
-      );
-    }
-  });
-}
 
 function validatePreparedImageReferences(
   config: ProjectConfig,
@@ -2120,13 +1606,6 @@ function validateRemoteNodeConfig(config: ProjectConfig, issues: string[]): void
       issues,
     );
 
-    remoteNode.workspaces?.forEach((workspace, workspaceIndex) => {
-      collectDuplicates(
-        workspace.targets?.map((target) => target.targetId) ?? [],
-        `runtime.remoteNodes[${remoteNodeIndex}].workspaces[${workspaceIndex}].targets.targetId`,
-        issues,
-      );
-    });
   });
 }
 
@@ -2171,9 +1650,6 @@ export function parseProjectConfig(value: unknown): ProjectConfig {
     issues,
   );
   collectDuplicatePorts(config.images, issues);
-  collectDuplicateRepositoryWorkspaceIds(config.images, issues);
-  collectDuplicateActiveRepositoryWorkspacePaths(config.images, issues);
-  validateImagePortPolicy(config, issues);
   validatePreparedImageReferences(config, issues);
   validateRemoteNodeConfig(config, issues);
 

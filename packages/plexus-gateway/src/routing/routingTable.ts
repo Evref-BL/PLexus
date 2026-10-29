@@ -30,7 +30,6 @@ export interface GatewayRemoteGatewayUpstream {
   endpoint: GatewayImageMcpEndpoint;
   projectId?: string;
   workspaceId?: string;
-  targetId?: string;
 }
 
 export interface GatewayPharoMcpContractReference {
@@ -49,35 +48,14 @@ export interface GatewayProjectImagePharoMcpContractState
   reason?: string;
 }
 
-export interface GatewayProjectImageCreationSourceState {
-  kind: string;
-  profileId?: string;
-  templateName?: string;
-  templateCategory?: string;
-}
 
-export interface GatewayProjectImageCreationRouteState {
-  serverName?: string;
-  targetKey?: string;
-  imageArgument?: string;
-  imageId?: string;
-}
 
-export interface GatewayProjectImageCreationState {
-  role?: string;
-  source?: GatewayProjectImageCreationSourceState;
-  cleanupPolicy?: string;
-  route?: GatewayProjectImageCreationRouteState;
-}
 
 export interface GatewayProjectImageState {
   id: string;
   imageName: string;
-  assignedPort?: number;
   mcpServers?: GatewayProjectImageMcpServer[];
-  pid?: number;
   status: GatewayProjectImageStatus;
-  creation?: GatewayProjectImageCreationState;
   pharoMcpContract?: GatewayProjectImagePharoMcpContractState;
 }
 
@@ -85,7 +63,6 @@ export interface GatewayProjectState {
   projectId: string;
   projectName: string;
   workspaceId: string;
-  targetId: string;
   remoteGateway?: GatewayRemoteGatewayUpstream;
   pharoMcpContract?: GatewayPharoMcpContractReference;
   images: GatewayProjectImageState[];
@@ -113,7 +90,6 @@ export interface GatewayImageRouteMetadata {
   routeReference: {
     projectId: string;
     workspaceId: string;
-    targetId: string;
   };
   mcpServerIdSource: string;
   recordHint: string;
@@ -125,12 +101,10 @@ export interface GatewayImageRoute {
   imageName: string;
   port?: number;
   endpoint: GatewayImageMcpEndpoint;
-  pid?: number;
   status: GatewayProjectImageStatus;
   health: GatewayImageHealth;
   routable: GatewayImageRoutability;
   routeMetadata: GatewayImageRouteMetadata;
-  creation?: GatewayProjectImageCreationState;
   pharoMcpContract?: GatewayProjectImagePharoMcpContractState;
   updatedAt: string;
 }
@@ -139,7 +113,6 @@ export interface GatewayProjectRoute {
   projectId: string;
   projectName: string;
   workspaceId: string;
-  targetId: string;
   projectRoot: string;
   statePath: string;
   remoteGateway?: GatewayRemoteGatewayUpstream;
@@ -303,12 +276,17 @@ function imageRouteMetadata(
     routeReference: {
       projectId: state.projectId,
       workspaceId: state.workspaceId,
-      targetId: state.targetId,
     },
     mcpServerIdSource: "Read images[].mcpServers[].id from gateway status",
     recordHint:
-      "Record the selected mcpServerId with the scoped project/workspace/target before calling pharo_gateway tools",
+      "Record the selected mcpServerId with the scoped project and workspace before calling pharo_gateway tools",
   };
+}
+
+// The route key is the pair the caller gives, never a third identifier that
+// could disagree with it.
+function routeKey(projectId: string, workspaceId: string): string {
+  return `${projectId}/${workspaceId}`;
 }
 
 export class PlexusRoutingTable {
@@ -324,14 +302,16 @@ export class PlexusRoutingTable {
       for (const server of imageMcpServers(image)) {
         if (mcpServerIds.has(server.id)) {
           throw new Error(
-            `MCP server id ${server.id} is duplicated in target ${state.targetId}`,
+            `MCP server id ${server.id} is duplicated in workspace ${state.workspaceId}`,
           );
         }
         mcpServerIds.add(server.id);
       }
     }
 
-    const existing = this.targets.get(state.targetId);
+    const existing = this.targets.get(
+      routeKey(state.projectId, state.workspaceId),
+    );
     const existingHealth = new Map(
       existing?.images.map((image) => [image.mcpServerId, image.health]) ?? [],
     );
@@ -339,7 +319,6 @@ export class PlexusRoutingTable {
       projectId: state.projectId,
       projectName: state.projectName,
       workspaceId: state.workspaceId,
-      targetId: state.targetId,
       projectRoot: path.resolve(projectRoot),
       statePath,
       ...(state.pharoMcpContract
@@ -356,7 +335,6 @@ export class PlexusRoutingTable {
             imageName: image.imageName,
             ...(port !== undefined ? { port } : {}),
             endpoint: server.endpoint,
-            ...(image.pid ? { pid: image.pid } : {}),
             status: image.status,
             health,
             routable: imageRoutability(state.pharoMcpContract, {
@@ -366,7 +344,6 @@ export class PlexusRoutingTable {
               remoteGateway: state.remoteGateway,
             }),
             routeMetadata: imageRouteMetadata(state, server.id),
-            ...(image.creation ? { creation: image.creation } : {}),
             ...(image.pharoMcpContract
               ? { pharoMcpContract: image.pharoMcpContract }
               : {}),
@@ -377,20 +354,7 @@ export class PlexusRoutingTable {
       ...(state.remoteGateway ? { remoteGateway: state.remoteGateway } : {}),
     };
 
-    this.targets.set(route.targetId, route);
-    return route;
-  }
-
-  getTarget(targetId: string): GatewayProjectRoute | undefined {
-    return this.targets.get(targetId);
-  }
-
-  removeTarget(targetId: string): GatewayProjectRoute | undefined {
-    const route = this.targets.get(targetId);
-    if (route) {
-      this.targets.delete(targetId);
-    }
-
+    this.targets.set(routeKey(route.projectId, route.workspaceId), route);
     return route;
   }
 
@@ -398,8 +362,13 @@ export class PlexusRoutingTable {
     projectId: string,
     workspaceId: string,
   ): GatewayProjectRoute | undefined {
-    const route = this.getProjectWorkspace(projectId, workspaceId);
-    return route ? this.removeTarget(route.targetId) : undefined;
+    const key = routeKey(projectId, workspaceId);
+    const route = this.targets.get(key);
+    if (route) {
+      this.targets.delete(key);
+    }
+
+    return route;
   }
 
   removeRoutesWithMissingStatePaths(
@@ -409,7 +378,10 @@ export class PlexusRoutingTable {
 
     for (const route of this.listTargets()) {
       if (!statePathExists(route.statePath)) {
-        const deleted = this.removeTarget(route.targetId);
+        const deleted = this.removeProjectWorkspace(
+          route.projectId,
+          route.workspaceId,
+        );
         if (deleted) {
           removed.push(deleted);
         }
@@ -423,9 +395,7 @@ export class PlexusRoutingTable {
     projectId: string,
     workspaceId: string,
   ): GatewayProjectRoute | undefined {
-    return this.listProjectTargets(projectId).find(
-      (route) => route.workspaceId === workspaceId,
-    );
+    return this.targets.get(routeKey(projectId, workspaceId));
   }
 
   listProjectTargets(projectId: string): GatewayProjectRoute[] {
@@ -436,24 +406,25 @@ export class PlexusRoutingTable {
     return [...this.targets.values()];
   }
 
-  findMcpServerOutsideTarget(
+  findMcpServerOutsideWorkspace(
     projectId: string,
-    targetId: string,
+    workspaceId: string,
     mcpServerId: string,
   ): GatewayProjectRoute | undefined {
     return this.listProjectTargets(projectId).find(
       (route) =>
-        route.targetId !== targetId &&
+        route.workspaceId !== workspaceId &&
         route.images.some((image) => image.mcpServerId === mcpServerId),
     );
   }
 
   updateImageHealth(
-    targetId: string,
+    projectId: string,
+    workspaceId: string,
     mcpServerId: string,
     health: GatewayImageHealth,
   ): void {
-    const project = this.targets.get(targetId);
+    const project = this.targets.get(routeKey(projectId, workspaceId));
     const image = project?.images.find(
       (candidate) => candidate.mcpServerId === mcpServerId,
     );

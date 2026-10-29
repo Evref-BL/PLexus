@@ -2,10 +2,6 @@ import fs from "node:fs";
 import path from "node:path";
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import {
-  defaultImagePortClaimChecks,
-  imagePortClaimsRootForConfig,
-} from "../ports/imagePortClaims.js";
-import {
   rescueImage,
   type ImageRescueEntrySelection,
   type ImageRescueOperation,
@@ -22,11 +18,8 @@ import {
   resolveProjectRuntimePolicy,
   type ProjectConfig,
   type ProjectImageDisplayMode,
-  type ProjectImagePortAllocationPolicy,
-  type ProjectImagePortCoordinationMode,
   type ProjectRemoteNodeConfig,
   type ProjectRemoteNodeWorkspaceMappingConfig,
-  type ProjectRuntimePortRange,
   type ProjectRuntimePolicy,
 } from "../config/projectConfig.js";
 import { closeProject, type ProjectCloseResult } from "./projectClose.js";
@@ -40,15 +33,8 @@ import {
   ensureProjectGateway,
   projectGatewayStatus,
   type ProjectGatewayRuntimeOptions,
+  isPortInUse,
 } from "../gateway/projectGateway.js";
-import {
-  inspectPortClaim,
-  listPortClaims,
-  releasePortClaim,
-  type PortClaimChecks,
-  type PortClaimInspection,
-  type PortClaimRecord,
-} from "../ports/portClaims.js";
 import {
   flushHomeImageCache,
   homeImageCacheManifestPath,
@@ -73,26 +59,16 @@ import {
   type ProjectOpenResult,
 } from "./projectOpen.js";
 import {
-  inspectProjectImageRepositoryWorkspace,
-} from "../workspace/projectRepositoryWorkspace.js";
-import {
   defaultPlexusStateRoot,
-  defaultTargetId,
   defaultWorkspaceId,
   loadProjectState,
   projectStateRootForConfig,
   projectStatePathForConfig,
-  projectImageRepositoryWorkspaceStates,
-  projectImageRepositoryWorkspaces,
-  renderProjectImageName,
   runtimeStatusForImages,
   sanitizeRuntimeId,
   saveProjectState,
   type ProjectImageMcpEndpoint,
   type ProjectImageMcpServer,
-  type ProjectImageRepositoryWorkspaceCleanupPolicy,
-  type ProjectImageRepositoryWorkspaceCleanupRecord,
-  type ProjectImageRepositoryWorkspaceState,
   type ProjectImageState,
   type ProjectGatewayState,
   type ProjectState,
@@ -113,7 +89,6 @@ import {
 export interface ProjectLifecycleRouteReference {
   projectId?: string;
   workspaceId?: string;
-  targetId?: string;
 }
 
 export interface ProjectLifecycleRouteRegistration {
@@ -159,40 +134,22 @@ export interface HttpProjectLifecycleClientOptions {
 interface ProjectRemoteLifecycleMapping {
   remoteNode: ProjectRemoteNodeConfig;
   workspace?: ProjectRemoteNodeWorkspaceMappingConfig;
-  target?: NonNullable<
-    ProjectRemoteNodeWorkspaceMappingConfig["targets"]
-  >[number];
   workspaceId: string;
 }
 
-function remoteWorkspaceTargetForInput(
-  workspace: ProjectRemoteNodeWorkspaceMappingConfig,
-  targetId: string | undefined,
-) {
-  return targetId
-    ? workspace.targets?.find((candidate) => candidate.targetId === targetId)
-    : undefined;
-}
 
 function remoteLifecycleMappingForWorkspace(
   remoteNode: ProjectRemoteNodeConfig,
   workspace: ProjectRemoteNodeWorkspaceMappingConfig,
   workspaceId: string,
-  targetId: string | undefined,
 ): ProjectRemoteLifecycleMapping | undefined {
-  const target = remoteWorkspaceTargetForInput(workspace, targetId);
-  if (targetId && workspace.targets && !target) {
-    return undefined;
-  }
-
-  if (workspace.workspaceId !== workspaceId && !target) {
+  if (workspace.workspaceId !== workspaceId) {
     return undefined;
   }
 
   return {
     remoteNode,
     workspace,
-    ...(target ? { target } : {}),
     workspaceId,
   };
 }
@@ -204,7 +161,6 @@ interface ProjectHostRemoteRouteContext {
   statePath: string;
   projectId: string;
   workspaceId: string;
-  targetId: string;
 }
 
 export interface HttpGatewayRouteRegistryOptions {
@@ -241,7 +197,6 @@ export interface ProjectOpenToolInput {
   sourcePath?: string;
   stateRoot?: string;
   workspaceId?: string;
-  targetId?: string;
   displayMode?: ProjectImageDisplayMode;
 }
 
@@ -249,8 +204,6 @@ export interface ProjectCloseToolInput {
   projectPath: string;
   stateRoot?: string;
   workspaceId?: string;
-  repositoryWorkspaceCleanupPolicy?: ProjectImageRepositoryWorkspaceCleanupPolicy;
-  repositoryWorkspaceArchiveRoot?: string;
 }
 
 export interface ProjectCleanupToolInput {
@@ -260,8 +213,6 @@ export interface ProjectCleanupToolInput {
   confirm?: boolean;
   deleteStateFile?: boolean;
   deleteLauncherImages?: boolean;
-  repositoryWorkspaceCleanupPolicy?: ProjectImageRepositoryWorkspaceCleanupPolicy;
-  repositoryWorkspaceArchiveRoot?: string;
 }
 
 export interface ProjectStatusToolInput extends ProjectLifecycleRouteReference {
@@ -279,7 +230,6 @@ export interface RescueImageToolInput extends ProjectStatusToolInput {
   targetImageName?: string;
   targetTemplateName?: string;
   targetTemplateCategory?: string;
-  targetMcpPort?: number;
   sourceHistoryDirectoryPath?: string;
   historyFilePath?: string;
   selection?: ImageRescueEntrySelection;
@@ -336,7 +286,6 @@ export interface ProjectLifecycleStatus {
   statePath?: string;
   projectId?: string;
   workspaceId?: string;
-  targetId?: string;
   context?: ScopedProjectContext;
   state?: ProjectState;
   gateway?: ProjectGatewayState;
@@ -355,45 +304,12 @@ export type ProjectLifecycleRuntimeDiagnosticHealth =
   | "degraded"
   | "unknown";
 
-export interface ProjectLifecyclePortClaimDiagnostic {
-  claimsRoot: string;
-  port: number;
-  status: "claimed" | "stale" | "unreadable";
-  record?: PortClaimRecord;
-  reason?: string;
-  ownedByCurrentScope?: boolean;
-}
 
-export interface ProjectLifecyclePortClaimsDiagnostics {
-  roots: string[];
-  active: ProjectLifecyclePortClaimDiagnostic[];
-  stale: ProjectLifecyclePortClaimDiagnostic[];
-  conflicts: ProjectLifecyclePortClaimDiagnostic[];
-  otherScopes: ProjectLifecyclePortClaimDiagnostic[];
-}
 
-export type ProjectLifecycleImagePortCoordinationBasis =
-  | "host-local-claims"
-  | "project-state-scanning";
 
-export interface ProjectLifecycleImagePortCoordinationDiagnostics {
-  mode: ProjectImagePortCoordinationMode;
-  basis: ProjectLifecycleImagePortCoordinationBasis;
-  message: string;
-  claimsRoot?: string;
-  stateRoot?: string;
-}
 
-export interface ProjectLifecyclePortListenerDiagnostic {
-  port: number;
-  purpose: "gateway" | "image-mcp";
-  imageId?: string;
-  expectedOwner: string;
-  message: string;
-}
 
 export interface ProjectLifecycleRouteTableDiagnostics {
-  targetId?: string;
   status:
     | "registered"
     | "missing"
@@ -420,15 +336,6 @@ export interface ProjectLifecycleProjectDiagnostics {
   runtimeImageCount: number;
 }
 
-export interface ProjectLifecycleImagePortPolicyDiagnostics {
-  allocation: ProjectImagePortAllocationPolicy;
-  range: ProjectRuntimePortRange;
-  coordinationMode: ProjectImagePortCoordinationMode;
-  configuredRoot?: string;
-  effectiveClaimsRoot?: string;
-  projectStateRoot: string;
-  basis: "host-local-claims" | "project-state";
-}
 
 export interface ProjectLifecycleGatewayRepairAffordance {
   allowed: true;
@@ -437,7 +344,6 @@ export interface ProjectLifecycleGatewayRepairAffordance {
     projectPath: string;
     stateRoot: string;
     workspaceId: string;
-    targetId: string;
   };
   reason: string;
 }
@@ -451,7 +357,6 @@ export interface ProjectLifecycleGatewayDiagnostics {
   controlEndpoint?: string;
   host?: string;
   port?: number;
-  portRange?: ProjectGatewayState["portRange"];
   managedByProject: boolean;
   pid?: number;
   stale?: {
@@ -459,24 +364,8 @@ export interface ProjectLifecycleGatewayDiagnostics {
     controlEndpoint?: string;
     port?: number;
     pid?: number;
-    claim?: ProjectGatewayState["claim"];
   };
   repair?: ProjectLifecycleGatewayRepairAffordance;
-}
-
-export interface ProjectLifecycleRepositoryWorkspaceDiagnostic {
-  imageId: string;
-  imageName: string;
-  status: ProjectImageState["status"] | "declared";
-  workspace: ProjectImageRepositoryWorkspaceState;
-  cleanup: {
-    defaultPolicy: "preserve";
-    destructivePolicyRequired: true;
-    reviewRequired: boolean;
-    recommendedAction: "none" | "materialize" | "review" | "repair";
-    message: string;
-    lastDecision?: ProjectImageRepositoryWorkspaceCleanupRecord;
-  };
 }
 
 export interface ProjectLifecycleDependencyRepositoryDetachDiagnostic {
@@ -540,30 +429,22 @@ export interface ProjectLifecycleDiagnostics {
     statePath: string;
     projectId: string;
     workspaceId: string;
-    targetId: string;
   };
   gateway: ProjectLifecycleGatewayDiagnostics;
   runtimePolicy: ProjectRuntimePolicy;
   remoteTopology: ProjectLifecycleRemoteTopologyDiagnostics;
-  imagePortPolicy: ProjectLifecycleImagePortPolicyDiagnostics;
   launcherProfile: PharoLauncherMcpProfileDiagnostic;
-  repositoryWorkspaces: ProjectLifecycleRepositoryWorkspaceDiagnostic[];
   dependencyRepositoryDetaches: ProjectLifecycleDependencyRepositoryDetachDiagnostic[];
   imageRecovery: ProjectLifecycleImageRecoveryDiagnostic[];
-  imageMcpPorts: Array<{
+  imageMcpRoutes: Array<{
     imageId: string;
     imageName: string;
     displayMode?: ProjectImageDisplayMode;
-    port?: number;
     mcpServers?: ProjectImageMcpServer[];
     routingMode: "endpoint" | "none";
     status: ProjectImageState["status"];
     pid?: number;
   }>;
-  imagePortCoordination: ProjectLifecycleImagePortCoordinationDiagnostics;
-  portClaims: ProjectLifecyclePortClaimsDiagnostics;
-  conflictingListeners: ProjectLifecyclePortListenerDiagnostic[];
-  staleClaims: ProjectLifecyclePortClaimDiagnostic[];
   routeTable: ProjectLifecycleRouteTableDiagnostics;
 }
 
@@ -681,27 +562,6 @@ function optionalDisplayMode(
   }
 
   throw new ProjectLifecycleInputError(`${key} must be headless or interactive`);
-}
-
-function optionalRepositoryWorkspaceCleanupPolicy(
-  input: Record<string, unknown>,
-): ProjectImageRepositoryWorkspaceCleanupPolicy | undefined {
-  const value = input.repositoryWorkspaceCleanupPolicy;
-  if (value === undefined) {
-    return undefined;
-  }
-
-  if (
-    value === "preserve" ||
-    value === "archive" ||
-    value === "delete-disposable"
-  ) {
-    return value;
-  }
-
-  throw new ProjectLifecycleInputError(
-    "repositoryWorkspaceCleanupPolicy must be preserve, archive, or delete-disposable",
-  );
 }
 
 function optionalNumber(
@@ -896,10 +756,9 @@ function routeCleanupResource(state: ProjectState): ProjectCleanupResource {
   return {
     kind: "route",
     status: "planned",
-    id: state.targetId,
+    id: `${state.projectId}/${state.workspaceId}`,
     projectId: state.projectId,
     workspaceId: state.workspaceId,
-    targetId: state.targetId,
   };
 }
 
@@ -998,7 +857,6 @@ function lifecycleReferenceFromInput(
   return {
     projectId: input.projectId,
     workspaceId: input.workspaceId,
-    targetId: input.targetId,
   };
 }
 
@@ -1020,8 +878,6 @@ function lifecycleStatusFromRoute(
       typeof route.workspaceId === "string"
         ? route.workspaceId
         : state?.workspaceId,
-    targetId:
-      typeof route.targetId === "string" ? route.targetId : state?.targetId,
   };
 
   if (!includeDiagnostics) {
@@ -1043,167 +899,14 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-function mergePortClaimChecks(
-  options: ProjectGatewayRuntimeOptions,
-): PortClaimChecks {
-  const defaults = defaultImagePortClaimChecks();
-  return {
-    isProcessAlive: options.checks?.isProcessAlive ?? defaults.isProcessAlive,
-    isPortListening: options.checks?.isPortListening ?? defaults.isPortListening,
-  };
-}
 
-function currentScopeMatchesClaim(
-  claim: PortClaimRecord,
-  scope: {
-    projectId: string;
-    workspaceId: string;
-    targetId: string;
-  },
-): boolean {
-  return (
-    claim.projectId === scope.projectId &&
-    claim.workspaceId === scope.workspaceId &&
-    claim.targetId === scope.targetId
-  );
-}
 
-function portClaimDiagnostic(
-  claimsRoot: string,
-  inspection: Extract<
-    PortClaimInspection,
-    { status: "claimed" | "stale" | "unreadable" }
-  >,
-  scope: {
-    projectId: string;
-    workspaceId: string;
-    targetId: string;
-  },
-): ProjectLifecyclePortClaimDiagnostic {
-  if (inspection.status === "unreadable") {
-    return {
-      claimsRoot,
-      port: inspection.port,
-      status: "unreadable",
-      reason: inspection.reason,
-    };
-  }
 
-  return {
-    claimsRoot,
-    port: inspection.port,
-    status: inspection.status,
-    record: inspection.record,
-    ...(inspection.reason ? { reason: inspection.reason } : {}),
-    ownedByCurrentScope: currentScopeMatchesClaim(inspection.record, scope),
-  };
-}
 
-type PortClaimDiagnosticBuckets = Pick<
-  ProjectLifecyclePortClaimsDiagnostics,
-  "active" | "stale" | "conflicts" | "otherScopes"
->;
 
-function addCurrentScopePortClaimDiagnostic(
-  buckets: PortClaimDiagnosticBuckets,
-  diagnostic: ProjectLifecyclePortClaimDiagnostic,
-): void {
-  if (diagnostic.status === "stale") {
-    buckets.stale.push(diagnostic);
-    return;
-  }
 
-  buckets.active.push(diagnostic);
-}
 
-function addForeignScopePortClaimDiagnostic(
-  buckets: PortClaimDiagnosticBuckets,
-  diagnostic: ProjectLifecyclePortClaimDiagnostic,
-  currentScopePorts: Set<number>,
-): void {
-  if (!currentScopePorts.has(diagnostic.port)) {
-    buckets.otherScopes.push(diagnostic);
-    return;
-  }
 
-  if (diagnostic.status === "stale") {
-    buckets.stale.push(diagnostic);
-    return;
-  }
-
-  buckets.conflicts.push(diagnostic);
-}
-
-function addPortClaimDiagnostic(
-  buckets: PortClaimDiagnosticBuckets,
-  diagnostic: ProjectLifecyclePortClaimDiagnostic,
-  currentScopePorts: Set<number>,
-): void {
-  if (diagnostic.ownedByCurrentScope) {
-    addCurrentScopePortClaimDiagnostic(buckets, diagnostic);
-    return;
-  }
-
-  addForeignScopePortClaimDiagnostic(buckets, diagnostic, currentScopePorts);
-}
-
-async function inspectClaimRoots(
-  claimsRoots: string[],
-  checks: PortClaimChecks,
-  scope: {
-    projectId: string;
-    workspaceId: string;
-    targetId: string;
-  },
-  currentScopePorts: Set<number>,
-): Promise<ProjectLifecyclePortClaimsDiagnostics> {
-  const active: ProjectLifecyclePortClaimDiagnostic[] = [];
-  const stale: ProjectLifecyclePortClaimDiagnostic[] = [];
-  const conflicts: ProjectLifecyclePortClaimDiagnostic[] = [];
-  const otherScopes: ProjectLifecyclePortClaimDiagnostic[] = [];
-
-  for (const claimsRoot of claimsRoots) {
-    const claims = await listPortClaims({ claimsRoot });
-    for (const claim of claims) {
-      const inspection = await inspectPortClaim({
-        claimsRoot,
-        port: claim.assignedPort,
-        checks,
-      });
-      if (inspection.status === "available") {
-        continue;
-      }
-
-      const diagnostic = portClaimDiagnostic(claimsRoot, inspection, scope);
-      addPortClaimDiagnostic(
-        { active, stale, conflicts, otherScopes },
-        diagnostic,
-        currentScopePorts,
-      );
-    }
-  }
-
-  return {
-    roots: claimsRoots,
-    active,
-    stale,
-    conflicts,
-    otherScopes,
-  };
-}
-
-function configuredClaimRoots(
-  projectRoot: string,
-  config: ProjectConfig,
-  state: ProjectState | undefined,
-): string[] {
-  return [
-    imagePortClaimsRootForConfig(projectRoot, config),
-    state?.gateway?.claim?.claimsRoot,
-  ].filter((value, index, values): value is string =>
-    typeof value === "string" && values.indexOf(value) === index,
-  );
-}
 
 function projectDiagnostics(
   config: ProjectConfig,
@@ -1237,187 +940,7 @@ function remoteTopologyDiagnostics(
   };
 }
 
-function imagePortPolicyDiagnostics(
-  runtime: ProjectRuntimePolicy,
-  stateRoot: string,
-  effectiveClaimsRoot: string | undefined,
-): ProjectLifecycleImagePortPolicyDiagnostics {
-  const coordination = runtime.imagePorts.coordination;
-  return {
-    allocation: runtime.imagePorts.allocation,
-    range: runtime.imagePorts.range,
-    coordinationMode: coordination.mode,
-    ...(coordination.root ? { configuredRoot: coordination.root } : {}),
-    ...(effectiveClaimsRoot ? { effectiveClaimsRoot } : {}),
-    projectStateRoot: stateRoot,
-    basis: effectiveClaimsRoot ? "host-local-claims" : "project-state",
-  };
-}
 
-function imagePortCoordinationDiagnostics(
-  projectRoot: string,
-  stateRoot: string,
-  config: ProjectConfig,
-): ProjectLifecycleImagePortCoordinationDiagnostics {
-  const coordination = resolveProjectRuntimePolicy(config).imagePorts.coordination;
-  if (coordination.mode === "host-local") {
-    const claimsRoot = imagePortClaimsRootForConfig(projectRoot, config);
-    return {
-      mode: "host-local",
-      basis: "host-local-claims",
-      message:
-        "Image MCP ports are coordinated by host-local port claims across PLexus projects on this host.",
-      ...(claimsRoot ? { claimsRoot } : {}),
-    };
-  }
-
-  return {
-    mode: "project-state",
-    basis: "project-state-scanning",
-    stateRoot,
-    message:
-      "Image MCP ports are coordinated by scanning PLexus project state; this only protects workspaces sharing this state root.",
-  };
-}
-
-function repositoryWorkspaceCleanupDiagnostic(
-  workspace: ProjectImageRepositoryWorkspaceState,
-  inspection:
-    | ReturnType<typeof inspectProjectImageRepositoryWorkspace>
-    | undefined,
-): ProjectLifecycleRepositoryWorkspaceDiagnostic["cleanup"] {
-  const lastDecision = workspace.cleanupState;
-  if (!inspection) {
-    return {
-      defaultPolicy: "preserve",
-      destructivePolicyRequired: true,
-      reviewRequired: false,
-      recommendedAction: "materialize",
-      message:
-        "Repository workspace is planned; destructive cleanup is unavailable until it is materialized.",
-      ...(lastDecision ? { lastDecision } : {}),
-    };
-  }
-
-  if (!inspection.exists) {
-    return {
-      defaultPolicy: "preserve",
-      destructivePolicyRequired: true,
-      reviewRequired: true,
-      recommendedAction: "materialize",
-      message: "Repository workspace path is missing.",
-      ...(lastDecision ? { lastDecision } : {}),
-    };
-  }
-
-  if (!inspection.isGitRepository) {
-    return {
-      defaultPolicy: "preserve",
-      destructivePolicyRequired: true,
-      reviewRequired: true,
-      recommendedAction: "repair",
-      message: "Repository workspace path exists but is not a Git repository.",
-      ...(lastDecision ? { lastDecision } : {}),
-    };
-  }
-
-  if (inspection.dirtyState === "dirty") {
-    return {
-      defaultPolicy: "preserve",
-      destructivePolicyRequired: true,
-      reviewRequired: true,
-      recommendedAction: "review",
-      message:
-        "Repository workspace has uncommitted changes; preserve, archive, or hand off before deletion.",
-      ...(lastDecision ? { lastDecision } : {}),
-    };
-  }
-
-  return {
-    defaultPolicy: "preserve",
-    destructivePolicyRequired: true,
-    reviewRequired: false,
-    recommendedAction: "none",
-    message:
-      "Repository workspace is clean; destructive cleanup still requires an explicit policy.",
-    ...(lastDecision ? { lastDecision } : {}),
-  };
-}
-
-function liveRepositoryWorkspaceState(
-  workspace: ProjectImageRepositoryWorkspaceState,
-  inspection:
-    | ReturnType<typeof inspectProjectImageRepositoryWorkspace>
-    | undefined,
-): ProjectImageRepositoryWorkspaceState {
-  if (!inspection) {
-    return workspace;
-  }
-
-  return {
-    ...workspace,
-    path: inspection.path,
-    dirtyState: inspection.dirtyState,
-    diagnostics: [...workspace.diagnostics, ...inspection.diagnostics],
-    ...(inspection.branch ? { branch: inspection.branch } : {}),
-    ...(inspection.currentCommit
-      ? { currentCommit: inspection.currentCommit }
-      : {}),
-  };
-}
-
-function repositoryWorkspaceDiagnostics(
-  projectRoot: string,
-  config: ProjectConfig,
-  state: ProjectState | undefined,
-  scope: {
-    projectId: string;
-    workspaceId: string;
-    targetId: string;
-  },
-): ProjectLifecycleRepositoryWorkspaceDiagnostic[] {
-  return config.images
-    .flatMap((imageConfig) => {
-      const imageState = state?.images.find((image) => image.id === imageConfig.id);
-      const context = {
-        projectId: scope.projectId,
-        projectName: config.name,
-        workspaceId: scope.workspaceId,
-        targetId: scope.targetId,
-        imageId: imageConfig.id,
-      };
-      const workspaces = imageState
-        ? projectImageRepositoryWorkspaces(imageState)
-        : projectImageRepositoryWorkspaceStates(imageConfig, context);
-
-      return workspaces.map((workspace) => {
-        const inspection = imageState
-          ? inspectProjectImageRepositoryWorkspace({
-              projectRoot,
-              imageState,
-              workspace,
-            })
-          : undefined;
-        const liveWorkspace = liveRepositoryWorkspaceState(workspace, inspection);
-
-        return {
-          imageId: imageConfig.id,
-          imageName:
-            imageState?.imageName ??
-            renderProjectImageName(imageConfig.imageName, context),
-          status: imageState?.status ?? "declared",
-          workspace: liveWorkspace,
-          cleanup: repositoryWorkspaceCleanupDiagnostic(liveWorkspace, inspection),
-        };
-      });
-    })
-    .filter(
-      (
-        item,
-      ): item is ProjectLifecycleRepositoryWorkspaceDiagnostic =>
-        item !== undefined,
-    );
-}
 
 function dependencyRepositoryDetachDiagnostics(
   state: ProjectState | undefined,
@@ -1498,14 +1021,13 @@ function imageRecoveryDiagnostics(input: {
     });
 }
 
-function imageMcpPorts(
+function imageMcpRoutes(
   state: ProjectState | undefined,
-): ProjectLifecycleDiagnostics["imageMcpPorts"] {
+): ProjectLifecycleDiagnostics["imageMcpRoutes"] {
   return (state?.images ?? []).map((image) => ({
     imageId: image.id,
     imageName: image.imageName,
     ...(image.displayMode ? { displayMode: image.displayMode } : {}),
-    ...(image.assignedPort !== undefined ? { port: image.assignedPort } : {}),
     ...(image.mcpServers ? { mcpServers: image.mcpServers } : {}),
     routingMode: image.mcpServers?.length ? "endpoint" : "none",
     status: image.status,
@@ -1528,22 +1050,13 @@ function sameResolvedPath(left: string | undefined, right: string | undefined): 
 }
 
 function routeTableDiagnostics(
-  targetId: string | undefined,
   route: unknown,
   routeError: unknown,
   expectedStatePath?: string,
   gatewayReconciliation?: ProjectLifecycleGatewayReconciliation,
 ): ProjectLifecycleRouteTableDiagnostics {
-  if (!targetId) {
-    return {
-      status: "not-configured",
-      routableImages: [],
-    };
-  }
-
   if (gatewayReconciliation?.status === "dead") {
     return {
-      targetId,
       status: "gateway-dead",
       routableImages: [],
       error: gatewayReconciliation.reason,
@@ -1553,7 +1066,6 @@ function routeTableDiagnostics(
   if (routeError) {
     const message = errorMessage(routeError);
     return {
-      targetId,
       status: message.includes("No route is registered")
         ? "missing"
         : "unavailable",
@@ -1564,7 +1076,6 @@ function routeTableDiagnostics(
 
   if (!isObject(route)) {
     return {
-      targetId,
       status: "not-configured",
       routableImages: [],
     };
@@ -1609,7 +1120,6 @@ function routeTableDiagnostics(
     });
 
   return {
-    targetId,
     status: statePathMismatch ? "unavailable" : "registered",
     ...(statePath ? { statePath } : {}),
     ...(statePathMismatch && expectedStatePath ? { expectedStatePath } : {}),
@@ -1628,14 +1138,12 @@ interface ProjectLifecycleGatewayReconciliation {
   status: "dead";
   reason: string;
   staleGateway: ProjectGatewayState;
-  releasedClaim: boolean;
 }
 
 function gatewayRepairAffordance(input: {
   projectRoot: string;
   stateRoot: string;
   workspaceId: string;
-  targetId: string;
 }): ProjectLifecycleGatewayRepairAffordance {
   return {
     allowed: true,
@@ -1644,7 +1152,6 @@ function gatewayRepairAffordance(input: {
       projectPath: input.projectRoot,
       stateRoot: input.stateRoot,
       workspaceId: input.workspaceId,
-      targetId: input.targetId,
     },
     reason: "Reopen the scoped project to start a fresh project-local gateway and re-register routes.",
   };
@@ -1661,7 +1168,6 @@ function gatewayWithoutRuntimeIdentity(
   delete result.endpoint;
   delete result.controlEndpoint;
   delete result.pid;
-  delete result.claim;
   return result;
 }
 
@@ -1673,7 +1179,6 @@ function staleGatewayRuntimeIdentity(stale: ProjectGatewayState) {
       : {}),
     ...(stale.port !== undefined ? { port: stale.port } : {}),
     ...(stale.pid !== undefined ? { pid: stale.pid } : {}),
-    ...(stale.claim ? { claim: stale.claim } : {}),
   };
 }
 
@@ -1688,7 +1193,6 @@ function staleGatewayDiagnostic(
     health: "degraded",
     reason: reconciliation.reason,
     host: stale.host,
-    portRange: stale.portRange,
     managedByProject: stale.managedByProject,
     stale: staleGatewayRuntimeIdentity(stale),
     repair,
@@ -1738,104 +1242,20 @@ function gatewayDiagnostic(
     controlEndpoint: gateway.controlEndpoint,
     host: gateway.host,
     port: gateway.port,
-    portRange: gateway.portRange,
     managedByProject: gateway.managedByProject,
     pid: gateway.pid,
     ...(status === "not-started" ? { repair } : {}),
   };
 }
 
-function expectedPortClaims(
-  portClaims: ProjectLifecyclePortClaimsDiagnostics,
-): Set<number> {
-  return new Set(portClaims.active.map((claim) => claim.port));
-}
 
-function currentScopeClaimPorts(
-  config: ProjectConfig,
-  state: ProjectState | undefined,
-  gateway: ProjectGatewayState,
-): Set<number> {
-  const ports = new Set<number>();
-  if (gateway.port !== undefined) {
-    ports.add(gateway.port);
-  }
-  if (gateway.claim?.assignedPort !== undefined) {
-    ports.add(gateway.claim.assignedPort);
-  }
 
-  for (const image of state?.images ?? []) {
-    if (image.assignedPort !== undefined) {
-      ports.add(image.assignedPort);
-    }
-  }
-
-  for (const image of config.images) {
-    if (image.mcp.port !== undefined) {
-      ports.add(image.mcp.port);
-    }
-  }
-
-  return ports;
-}
-
-async function conflictingListenerDiagnostics(
-  state: ProjectState | undefined,
-  gateway: ProjectGatewayState,
-  portClaims: ProjectLifecyclePortClaimsDiagnostics,
-  checks: PortClaimChecks,
-): Promise<ProjectLifecyclePortListenerDiagnostic[]> {
-  const ownedClaimPorts = expectedPortClaims(portClaims);
-  const diagnostics: ProjectLifecyclePortListenerDiagnostic[] = [];
-
-  for (const image of state?.images ?? []) {
-    if (image.assignedPort === undefined) {
-      continue;
-    }
-
-    const listening = Boolean(await checks.isPortListening?.(image.assignedPort));
-    if (
-      listening &&
-      image.status !== "running" &&
-      !ownedClaimPorts.has(image.assignedPort)
-    ) {
-      diagnostics.push({
-        port: image.assignedPort,
-        purpose: "image-mcp",
-        imageId: image.id,
-        expectedOwner: `image ${image.id}`,
-        message:
-          `Image MCP port ${image.assignedPort} has a listener but the ` +
-          `project image ${image.id} is ${image.status} and has no active owned claim.`,
-      });
-    }
-  }
-
-  if (gateway.port !== undefined) {
-    const listening = Boolean(await checks.isPortListening?.(gateway.port));
-    if (
-      listening &&
-      gateway.managedByProject &&
-      !ownedClaimPorts.has(gateway.port)
-    ) {
-      diagnostics.push({
-        port: gateway.port,
-        purpose: "gateway",
-        expectedOwner: "project-local gateway",
-        message:
-          `Gateway port ${gateway.port} has a listener but no active owned claim.`,
-      });
-    }
-  }
-
-  return diagnostics;
-}
 
 async function reconcileDeadProjectGatewayState(input: {
   state: ProjectState | undefined;
   statePath: string;
   gateway: ProjectGatewayState;
-  checks: PortClaimChecks;
+  isPortListening: (port: number) => Promise<boolean>;
   now: () => Date;
 }): Promise<ProjectLifecycleGatewayReconciliation | undefined> {
   const stateGateway = input.state?.gateway;
@@ -1857,44 +1277,9 @@ async function reconcileDeadProjectGatewayState(input: {
     return undefined;
   }
 
-  const port = gateway.port ?? gateway.claim?.assignedPort;
-  const portListening =
-    port === undefined ? false : Boolean(await input.checks.isPortListening?.(port));
-  let claimInspection: PortClaimInspection | undefined;
-  if (gateway.claim) {
-    claimInspection = await inspectPortClaim({
-      claimsRoot: gateway.claim.claimsRoot,
-      port: gateway.claim.assignedPort,
-      checks: input.checks,
-    });
-  }
-
-  const claimShowsDeadProcess =
-    claimInspection?.status === "stale" &&
-    claimInspection.reason === "process-dead";
-  const claimMissingOrStale =
-    claimInspection?.status === "available" ||
-    claimInspection?.status === "stale";
-  const gatewayIsDead =
-    !portListening &&
-    (claimShowsDeadProcess ||
-      (gateway.pid === undefined && port !== undefined) ||
-      claimMissingOrStale);
-
-  if (!gatewayIsDead) {
+  const port = gateway.port;
+  if (port === undefined || (await input.isPortListening(port))) {
     return undefined;
-  }
-
-  let releasedClaim = false;
-  if (stateGateway?.claim) {
-    const release = await releasePortClaim({
-      claimsRoot: stateGateway.claim.claimsRoot,
-      claim: {
-        claimId: stateGateway.claim.claimId,
-        assignedPort: stateGateway.claim.assignedPort,
-      },
-    });
-    releasedClaim = release.released;
   }
 
   if (stateGateway) {
@@ -1906,17 +1291,14 @@ async function reconcileDeadProjectGatewayState(input: {
   return {
     status: "dead",
     reason:
-      "Recorded project-local gateway state is dead: the owned gateway port is not listening and its managed claim is stale or missing.",
+      "Recorded project-local gateway state is dead: nothing is listening on the gateway port.",
     staleGateway: gateway,
-    releasedClaim,
   };
 }
 
 function runtimeDiagnostics(
   state: ProjectState | undefined,
   gateway: ProjectGatewayState,
-  portClaims: ProjectLifecyclePortClaimsDiagnostics,
-  conflictingListeners: ProjectLifecyclePortListenerDiagnostic[],
   routeTable: ProjectLifecycleRouteTableDiagnostics,
   gatewayReconciliation: ProjectLifecycleGatewayReconciliation | undefined,
 ): ProjectLifecycleDiagnostics["runtime"] {
@@ -1938,9 +1320,6 @@ function runtimeDiagnostics(
   }
 
   if (
-    portClaims.stale.length > 0 ||
-    portClaims.conflicts.length > 0 ||
-    conflictingListeners.length > 0 ||
     routeTable.status === "missing" ||
     routeTable.status === "unavailable" ||
     routeTable.status === "gateway-dead" ||
@@ -1951,7 +1330,7 @@ function runtimeDiagnostics(
       status: "degraded",
       health: "degraded",
       reason:
-        "Runtime state exists, but diagnostics found stale claims, conflicts, route-table gaps, or incomplete gateway endpoints.",
+        "Runtime state exists, but diagnostics found route-table gaps or incomplete gateway endpoints.",
     };
   }
 
@@ -2290,7 +1669,7 @@ async function discoverPharoMcpToolsFromRunningImages(options: {
 function remoteLifecycleMappingForInput(
   config: ProjectConfig,
   projectRoot: string,
-  input: { workspaceId?: string; targetId?: string },
+  input: { workspaceId?: string },
 ): ProjectRemoteLifecycleMapping | undefined {
   const runtime = resolveProjectRuntimePolicy(config);
   const remoteNodes = runtime.remoteNodes ?? [];
@@ -2308,7 +1687,6 @@ function remoteLifecycleMappingForInput(
         remoteNode,
         workspace,
         workspaceId,
-        input.targetId,
       );
       if (mapping) {
         return mapping;
@@ -2322,7 +1700,6 @@ function remoteLifecycleMappingForInput(
 function remoteLifecycleArguments<T extends {
   projectPath: string;
   workspaceId?: string;
-  targetId?: string;
 }>(
   input: T,
   mapping: ProjectRemoteLifecycleMapping,
@@ -2332,15 +1709,12 @@ function remoteLifecycleArguments<T extends {
     mapping.workspace?.remoteWorkspaceId ??
     input.workspaceId ??
     mapping.workspaceId;
-  const targetId = mapping.target?.remoteTargetId ?? input.targetId;
-
   return Object.fromEntries(
     Object.entries({
       ...(input as Record<string, unknown>),
       projectPath,
       stateRoot: undefined,
       workspaceId,
-      targetId,
     }).filter(([, value]) => value !== undefined),
   );
 }
@@ -2348,14 +1722,12 @@ function remoteLifecycleArguments<T extends {
 function hostRemoteRouteContext(input: {
   projectPath: string;
   workspaceId?: string;
-  targetId?: string;
   stateRoot?: string;
 }, mapping: ProjectRemoteLifecycleMapping): ProjectHostRemoteRouteContext {
   const projectRoot = path.resolve(input.projectPath);
   const config = loadProjectConfig(projectRoot);
   const projectId = projectConfigId(config);
   const workspaceId = mapping.workspaceId;
-  const targetId = input.targetId ?? defaultTargetId(projectId, workspaceId);
   const stateRoot =
     projectStateRootForConfig(config, input.stateRoot) ??
     defaultPlexusStateRoot(projectRoot);
@@ -2373,7 +1745,6 @@ function hostRemoteRouteContext(input: {
     statePath,
     projectId,
     workspaceId,
-    targetId,
   };
 }
 
@@ -2388,7 +1759,6 @@ function hostOpenResultForRemoteOpen(
     projectId: _remoteProjectId,
     projectName: _remoteProjectName,
     workspaceId: _remoteWorkspaceId,
-    targetId: _remoteTargetId,
     sourcePath: remoteSourcePath,
     ...remoteState
   } = openResult.state;
@@ -2398,14 +1768,12 @@ function hostOpenResultForRemoteOpen(
     projectId: context.projectId,
     projectName: context.config.name,
     workspaceId: context.workspaceId,
-    targetId: context.targetId,
     ...(sourcePath ? { sourcePath } : {}),
     remoteGateway: {
       remoteNodeId: mapping.remoteNode.id,
       endpoint: remoteGatewayEndpointFromUrl(mapping.remoteNode.gatewayMcpUrl),
       projectId: openResult.state.projectId,
       workspaceId: openResult.state.workspaceId,
-      targetId: openResult.state.targetId,
     },
   };
 
@@ -2453,7 +1821,6 @@ export class PlexusProjectLifecycle {
   private remoteLifecycleMapping(input: {
     projectPath: string;
     workspaceId?: string;
-    targetId?: string;
   }): ProjectRemoteLifecycleMapping | undefined {
     const projectRoot = path.resolve(input.projectPath);
     if (path.basename(projectRoot) === plexusProjectConfigFileName) {
@@ -2519,7 +1886,6 @@ export class PlexusProjectLifecycle {
     input: {
       projectPath: string;
       workspaceId?: string;
-      targetId?: string;
       stateRoot?: string;
     },
     mapping: ProjectRemoteLifecycleMapping,
@@ -2540,7 +1906,6 @@ export class PlexusProjectLifecycle {
       {
         projectId: context.projectId,
         workspaceId: context.workspaceId,
-        ...(input.targetId ? { targetId: context.targetId } : {}),
       },
       routeRegistry,
     );
@@ -2588,7 +1953,6 @@ export class PlexusProjectLifecycle {
         sourcePath: input.sourcePath,
         stateRoot: this.effectiveStateRoot(input.stateRoot),
         workspaceId: input.workspaceId,
-        targetId: input.targetId,
         displayMode: input.displayMode,
         preparedImageCacheApproval: {
           approved: true,
@@ -2806,7 +2170,10 @@ export class PlexusProjectLifecycle {
   ): Promise<void> {
     if (closeResult.state) {
       await this.unregisterRoute(
-        { targetId: closeResult.state.targetId },
+        {
+          projectId: closeResult.state.projectId,
+          workspaceId: closeResult.state.workspaceId,
+        },
         routeRegistry,
       );
       return;
@@ -2891,15 +2258,6 @@ export class PlexusProjectLifecycle {
         projectRoot: input.projectPath,
         stateRoot: this.effectiveStateRoot(input.stateRoot),
         workspaceId: input.workspaceId,
-        ...(input.repositoryWorkspaceCleanupPolicy
-          ? {
-              repositoryWorkspaceCleanupPolicy:
-                input.repositoryWorkspaceCleanupPolicy,
-            }
-          : {}),
-        ...(input.repositoryWorkspaceArchiveRoot
-          ? { repositoryWorkspaceArchiveRoot: input.repositoryWorkspaceArchiveRoot }
-          : {}),
       });
       const projectRoot = path.resolve(input.projectPath);
       const config =
@@ -2940,7 +2298,7 @@ export class PlexusProjectLifecycle {
 
     try {
       await this.unregisterRoute(
-        { targetId: state.targetId },
+        { projectId: state.projectId, workspaceId: state.workspaceId },
         routeRegistry,
       );
       routeResource.status = "cleaned";
@@ -2958,7 +2316,7 @@ export class PlexusProjectLifecycle {
       routeResource.reason = message;
       return {
         kind: "route",
-        id: state.targetId,
+        id: `${state.projectId}/${state.workspaceId}`,
         message,
       };
     }
@@ -3015,9 +2373,6 @@ export class PlexusProjectLifecycle {
         deleteStateFile: input.deleteStateFile,
         deleteLauncherImages: input.deleteLauncherImages,
         pharoLauncherMcpClient: this.pharoLauncherMcpClient,
-        repositoryWorkspaceCleanupPolicy:
-          input.repositoryWorkspaceCleanupPolicy,
-        repositoryWorkspaceArchiveRoot: input.repositoryWorkspaceArchiveRoot,
         gateway: this.gateway,
       });
 
@@ -3160,7 +2515,6 @@ export class PlexusProjectLifecycle {
             sourcePath: optionalString(input, "sourcePath"),
             stateRoot: optionalString(input, "stateRoot"),
             workspaceId: optionalString(input, "workspaceId"),
-            targetId: optionalString(input, "targetId"),
             displayMode: optionalDisplayMode(input, "displayMode"),
           });
 
@@ -3169,12 +2523,6 @@ export class PlexusProjectLifecycle {
             projectPath: requireString(input, "projectPath"),
             stateRoot: optionalString(input, "stateRoot"),
             workspaceId: optionalString(input, "workspaceId"),
-            repositoryWorkspaceCleanupPolicy:
-              optionalRepositoryWorkspaceCleanupPolicy(input),
-            repositoryWorkspaceArchiveRoot: optionalString(
-              input,
-              "repositoryWorkspaceArchiveRoot",
-            ),
           });
 
         case "plexus_project_cleanup":
@@ -3188,12 +2536,6 @@ export class PlexusProjectLifecycle {
               input,
               "deleteLauncherImages",
             ),
-            repositoryWorkspaceCleanupPolicy:
-              optionalRepositoryWorkspaceCleanupPolicy(input),
-            repositoryWorkspaceArchiveRoot: optionalString(
-              input,
-              "repositoryWorkspaceArchiveRoot",
-            ),
           });
 
         case "plexus_project_status":
@@ -3202,7 +2544,6 @@ export class PlexusProjectLifecycle {
             sourcePath: optionalString(input, "sourcePath"),
             projectId: optionalString(input, "projectId"),
             workspaceId: optionalString(input, "workspaceId"),
-            targetId: optionalString(input, "targetId"),
             stateRoot: optionalString(input, "stateRoot"),
             refreshHealth: optionalBoolean(input, "refreshHealth"),
             includeDiagnostics: optionalBoolean(input, "includeDiagnostics"),
@@ -3226,7 +2567,6 @@ export class PlexusProjectLifecycle {
             projectPath: requireString(input, "projectPath"),
             projectId: optionalString(input, "projectId"),
             workspaceId: optionalString(input, "workspaceId"),
-            targetId: optionalString(input, "targetId"),
             stateRoot: optionalString(input, "stateRoot"),
             operation: requireRescueOperation(input),
             sourceImageId: requireString(input, "sourceImageId"),
@@ -3234,7 +2574,6 @@ export class PlexusProjectLifecycle {
             targetImageName: optionalString(input, "targetImageName"),
             targetTemplateName: optionalString(input, "targetTemplateName"),
             targetTemplateCategory: optionalString(input, "targetTemplateCategory"),
-            targetMcpPort: optionalNumber(input, "targetMcpPort"),
             sourceHistoryDirectoryPath: optionalString(
               input,
               "sourceHistoryDirectoryPath",
@@ -3293,14 +2632,15 @@ export class PlexusProjectLifecycle {
       stateRoot,
     });
     let state = loadProjectState(statePath);
-    const checks = mergePortClaimChecks(this.gateway);
     const observedGateway = projectGatewayStatus(config, state);
     const gatewayReconciliation = input.refreshHealth
       ? await reconcileDeadProjectGatewayState({
           state,
           statePath,
           gateway: observedGateway,
-          checks,
+          isPortListening:
+            this.gateway.isPortListening ??
+            ((port) => isPortInUse(observedGateway.host ?? "127.0.0.1", port)),
           now: this.gateway.now ?? (() => new Date()),
         })
       : undefined;
@@ -3323,7 +2663,8 @@ export class PlexusProjectLifecycle {
       try {
         route = await this.getRouteStatus(
           {
-            targetId: state.targetId,
+            projectId: state.projectId,
+            workspaceId: state.workspaceId,
             refreshHealth: input.refreshHealth,
           },
           routeRegistry,
@@ -3343,7 +2684,8 @@ export class PlexusProjectLifecycle {
           );
           route = await this.getRouteStatus(
             {
-              targetId: state.targetId,
+              projectId: state.projectId,
+              workspaceId: state.workspaceId,
               refreshHealth: input.refreshHealth,
             },
             routeRegistry,
@@ -3353,57 +2695,34 @@ export class PlexusProjectLifecycle {
         routeError = error;
       }
     }
-    const targetId =
-      state?.targetId ??
-      input.targetId ??
-      defaultTargetId(projectConfigId(config), workspaceId);
     const scope = {
       projectId: state?.projectId ?? projectConfigId(config),
       workspaceId: state?.workspaceId ?? workspaceId,
-      targetId,
     };
     const gatewayRepair = gatewayRepairAffordance({
       projectRoot,
       stateRoot,
       workspaceId: scope.workspaceId,
-      targetId: scope.targetId,
     });
     const context = buildScopedProjectContext({
       projectRoot,
       sourcePath,
       projectConfig: config,
       workspaceId: scope.workspaceId,
-      targetId: scope.targetId,
       stateRoot,
       projectState: state,
     });
-    const imageClaimsRoot = imagePortClaimsRootForConfig(projectRoot, config);
-    const portClaims = await inspectClaimRoots(
-      configuredClaimRoots(projectRoot, config, state),
-      checks,
-      scope,
-      currentScopeClaimPorts(config, state, gateway),
-    );
     const routeTable = routeTableDiagnostics(
-      targetId,
       route,
       routeError,
       statePath,
       gatewayReconciliation,
-    );
-    const conflictingListeners = await conflictingListenerDiagnostics(
-      state,
-      gateway,
-      portClaims,
-      checks,
     );
     const diagnostics: ProjectLifecycleDiagnostics = {
       toolRuntime: plexusRuntimeIdentity(),
       runtime: runtimeDiagnostics(
         state,
         gateway,
-        portClaims,
-        conflictingListeners,
         routeTable,
         gatewayReconciliation,
       ),
@@ -3415,30 +2734,17 @@ export class PlexusProjectLifecycle {
         statePath,
         projectId: scope.projectId,
         workspaceId: scope.workspaceId,
-        targetId: scope.targetId,
       },
       gateway: gatewayDiagnostic(gateway, gatewayReconciliation, gatewayRepair),
       runtimePolicy: runtime,
       remoteTopology: remoteTopologyDiagnostics(config, runtime),
-      imagePortPolicy: imagePortPolicyDiagnostics(
-        runtime,
-        stateRoot,
-        imageClaimsRoot,
-      ),
       launcherProfile: describePharoLauncherMcpProfile({
         projectRoot,
         config,
         workspaceId: scope.workspaceId,
-        targetId: scope.targetId,
         stateRoot,
         env: this.gateway.env,
       }),
-      repositoryWorkspaces: repositoryWorkspaceDiagnostics(
-        projectRoot,
-        config,
-        state,
-        scope,
-      ),
       dependencyRepositoryDetaches:
         dependencyRepositoryDetachDiagnostics(state),
       imageRecovery: imageRecoveryDiagnostics({
@@ -3447,22 +2753,13 @@ export class PlexusProjectLifecycle {
         workspaceId: scope.workspaceId,
         state,
       }),
-      imageMcpPorts: imageMcpPorts(state),
-      imagePortCoordination: imagePortCoordinationDiagnostics(
-        projectRoot,
-        stateRoot,
-        config,
-      ),
-      portClaims,
-      conflictingListeners,
-      staleClaims: portClaims.stale,
+      imageMcpRoutes: imageMcpRoutes(state),
       routeTable,
     };
 
     const safeStatus: ProjectLifecycleStatus = {
       projectId: scope.projectId,
       workspaceId: scope.workspaceId,
-      targetId: scope.targetId,
       context,
     };
 

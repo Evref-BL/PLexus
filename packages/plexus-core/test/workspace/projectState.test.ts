@@ -227,20 +227,17 @@ describe("project state", () => {
       projectId: "project-123",
       projectName: "my-project",
       workspaceId: "default",
-      targetId: "project-123--default",
       runtimeStatus: "starting",
       updatedAt: "2026-04-25T10:00:00.000Z",
       images: [
         {
           id: "dev",
           imageName: "MyProject-dev",
-          assignedPort: 7123,
           status: "starting",
         },
         {
           id: "baseline",
           imageName: "MyProject-baseline",
-          assignedPort: 7124,
           status: "stopped",
         },
       ],
@@ -316,7 +313,6 @@ describe("project state", () => {
       }),
       expect.objectContaining({
         id: "current",
-        assignedPort: 7124,
         pharoVersion: "13",
         pharoMcpContract: expect.objectContaining({
           status: "matching",
@@ -328,168 +324,8 @@ describe("project state", () => {
     expect(state.images[0]).not.toHaveProperty("assignedPort");
   });
 
-  it("plans image-local repository workspace state without launching images", () => {
-    const state = createProjectState(
-      {
-        ...config,
-        images: [
-          {
-            ...config.images[0],
-            imageName: "MyProject-{workspaceId}-{imageId}",
-            repositoryWorkspace: {
-              repository: {
-                id: "my-project",
-                componentId: "my-project",
-                remoteUrl: "git@github.com:Example/MyProject.git",
-              },
-              sourceDirectory: "src",
-              baseline: "MyProject",
-              loadGroup: "dev",
-              pharoVersion: 13,
-              templateName: "Pharo 13.0 - 64bit",
-              branch: "task/image-workspace",
-              baseBranch: "main",
-              baseCommit: "abc123",
-              materialization: {
-                strategy: "copy",
-              },
-            },
-          },
-        ],
-      },
-      {
-        updatedAt: "2026-04-25T10:00:00.000Z",
-        workspaceId: "task-123",
-      },
-    );
 
-    expect(state.images[0]).toMatchObject({
-      id: "dev",
-      imageName: "MyProject-task-123-dev",
-      repositoryWorkspace: {
-        repository: {
-          id: "my-project",
-          componentId: "my-project",
-          remoteUrl: "git@github.com:Example/MyProject.git",
-        },
-        path: "image-local://dev/pharo-local/iceberg/my-project",
-        materializationStrategy: "copy",
-        sourceDirectory: "src",
-        baseline: "MyProject",
-        loadGroup: "dev",
-        pharoVersion: 13,
-        templateName: "Pharo 13.0 - 64bit",
-        branch: "task/image-workspace",
-        baseBranch: "main",
-        baseCommit: "abc123",
-        dirtyState: "unknown",
-        loadState: "not-loaded",
-      },
-    });
-  });
 
-  it("plans multiple image-local repository workspace states", () => {
-    const state = createProjectState(
-      {
-        ...config,
-        images: [
-          {
-            ...config.images[0],
-            imageName: "MyProject-{workspaceId}-{imageId}",
-            repositoryWorkspaces: [
-              {
-                repository: {
-                  id: "my-project",
-                  componentId: "my-project",
-                },
-                sourceDirectory: "src",
-                baseline: "MyProject",
-                materialization: {
-                  strategy: "copy",
-                },
-              },
-              {
-                repository: {
-                  id: "dependency",
-                  remoteUrl: "git@github.com:Example/Dependency.git",
-                },
-                sourceDirectory: "repository",
-                baseline: "Dependency",
-                materialization: {
-                  strategy: "clone",
-                },
-              },
-            ],
-          },
-        ],
-      },
-      {
-        updatedAt: "2026-04-25T10:00:00.000Z",
-        workspaceId: "task-123",
-      },
-    );
-
-    expect(state.images[0].repositoryWorkspaces).toHaveLength(2);
-    expect(state.images[0].repositoryWorkspace).toBe(
-      state.images[0].repositoryWorkspaces?.[0],
-    );
-    expect(state.images[0].repositoryWorkspaces).toEqual([
-      expect.objectContaining({
-        repository: {
-          id: "my-project",
-          componentId: "my-project",
-        },
-        path: "image-local://dev/pharo-local/iceberg/my-project",
-        materializationStrategy: "copy",
-        baseline: "MyProject",
-      }),
-      expect.objectContaining({
-        repository: {
-          id: "dependency",
-          remoteUrl: "git@github.com:Example/Dependency.git",
-        },
-        path: "image-local://dev/pharo-local/iceberg/dependency",
-        materializationStrategy: "clone",
-        baseline: "Dependency",
-      }),
-    ]);
-  });
-
-  it("renders configured image-local repository workspace path templates", () => {
-    const state = createProjectState(
-      {
-        ...config,
-        images: [
-          {
-            ...config.images[0],
-            repositoryWorkspace: {
-              repository: {
-                id: "my-project",
-                originPath: "C:\\dev\\sources\\my-project",
-              },
-              sourceDirectory: "src",
-              baseline: "MyProject",
-              materialization: {
-                strategy: "git-worktree",
-                path: "C:\\dev\\plexus\\{workspaceId}\\{imageId}\\{repositoryId}",
-              },
-            },
-          },
-        ],
-      },
-      {
-        updatedAt: "2026-04-25T10:00:00.000Z",
-        workspaceId: "task-123",
-      },
-    );
-
-    expect(state.images[0].repositoryWorkspace).toMatchObject({
-      path: "C:\\dev\\plexus\\task-123\\dev\\my-project",
-      materializationStrategy: "git-worktree",
-      dirtyState: "unknown",
-      loadState: "not-loaded",
-    });
-  });
 
   it("does not let unsupported configured MCP ports reserve the dynamic range", () => {
     const state = createProjectState(
@@ -541,7 +377,6 @@ describe("project state", () => {
       }),
       expect.objectContaining({
         id: "current",
-        assignedPort: 7100,
         pharoMcpContract: expect.objectContaining({
           status: "matching",
         }),
@@ -591,7 +426,6 @@ describe("project state", () => {
     expect(state.images[0]).not.toHaveProperty("assignedPort");
     expect(state.images[1]).toMatchObject({
       id: "current",
-      assignedPort: 7100,
     });
   });
 
@@ -607,7 +441,6 @@ describe("project state", () => {
       projectId: "project-123",
       projectName: "my-project",
       workspaceId: "default",
-      targetId: "project-123--default",
       runtimeStatus: "idle",
       updatedAt: "2026-04-25T10:00:00.000Z",
       images: [],
@@ -637,54 +470,16 @@ describe("project state", () => {
       {
         id: "dev",
         imageName: "MyProject-dev",
-        assignedPort: 7123,
         status: "starting",
       },
       {
         id: "baseline",
         imageName: "MyProject-baseline",
-        assignedPort: 7100,
         status: "stopped",
       },
     ]);
   });
 
-  it("allocates missing image ports from the runtime policy range", () => {
-    const dynamicConfig: ProjectConfig = {
-      ...config,
-      runtime: {
-        ...defaultRuntimePolicy(),
-        imagePorts: {
-          ...defaultRuntimePolicy().imagePorts,
-          range: {
-            start: 7_200,
-            end: 7_201,
-          },
-        },
-      },
-      images: [
-        {
-          ...config.images[0],
-          mcp: {
-            loadScript: "pharo/load-mcp.st",
-          },
-        },
-        {
-          ...config.images[1],
-          mcp: {
-            loadScript: "pharo/load-mcp.st",
-          },
-        },
-      ],
-    };
-
-    expect(
-      createProjectState(dynamicConfig, {
-        updatedAt: "2026-04-25T10:00:00.000Z",
-        workspaceId: "worktree-a",
-      }).images.map((image) => image.assignedPort),
-    ).toEqual([7_200, 7_201]);
-  });
 
   it("reuses previous runtime allocations for unconfigured image ports", () => {
     const dynamicConfig: ProjectConfig = {
@@ -708,13 +503,11 @@ describe("project state", () => {
           projectId: "project-123",
           projectName: "my-project",
           workspaceId: "worktree-a",
-          targetId: "project-123--worktree-a",
           updatedAt: "2026-04-25T09:00:00.000Z",
           images: [
             {
               id: "baseline",
               imageName: "MyProject-baseline",
-              assignedPort: 7130,
               status: "stopped",
             },
           ],
@@ -723,7 +516,6 @@ describe("project state", () => {
     ).toEqual({
       id: "baseline",
       imageName: "MyProject-baseline",
-      assignedPort: 7130,
       status: "stopped",
     });
   });
@@ -737,13 +529,11 @@ describe("project state", () => {
           projectId: "project-123",
           projectName: "my-project",
           workspaceId: "worktree-a",
-          targetId: "project-123--worktree-a",
           updatedAt: "2026-04-25T09:00:00.000Z",
           images: [
             {
               id: "dev",
               imageName: "MyProject-dev",
-              assignedPort: 7123,
               status: "running",
               lease: {
                 ownerId: "workspace-a",
@@ -767,35 +557,6 @@ describe("project state", () => {
     });
   });
 
-  it("fails when dynamic port allocation exhausts the range", () => {
-    const dynamicConfig: ProjectConfig = {
-      ...config,
-      images: [
-        {
-          ...config.images[0],
-          mcp: {
-            loadScript: "pharo/load-mcp.st",
-          },
-        },
-        {
-          ...config.images[1],
-          mcp: {
-            loadScript: "pharo/load-mcp.st",
-          },
-        },
-      ],
-    };
-
-    expect(() =>
-      createProjectState(dynamicConfig, {
-        workspaceId: "worktree-a",
-        portRange: {
-          start: 7100,
-          end: 7100,
-        },
-      }),
-    ).toThrow(PortAllocationError);
-  });
 
   it("persists runtime state with allocated ports", () => {
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "plexus-state-"));
@@ -827,9 +588,6 @@ describe("project state", () => {
     const projectRoot = path.join("C:", "dev", "code", "git", "PLexus-task-123");
 
     expect(defaultWorkspaceId(projectRoot)).toBe("PLexus-task-123");
-    expect(defaultTargetId("project-123", "PLexus-task-123")).toBe(
-      "project-123--PLexus-task-123",
-    );
   });
 
   it("renders image names from runtime identity tokens", () => {
@@ -838,31 +596,9 @@ describe("project state", () => {
         projectId: "project-123",
         projectName: "my-project",
         workspaceId: "worktree-a",
-        targetId: "project-123--worktree-a",
         imageId: "dev",
       }),
     ).toBe("PLexus-worktree-a-dev");
   });
 
-  it("allocates around ports reserved by sibling workspaces", () => {
-    const dynamicConfig: ProjectConfig = {
-      ...config,
-      images: [
-        {
-          ...config.images[0],
-          mcp: {
-            loadScript: "pharo/load-mcp.st",
-          },
-        },
-      ],
-    };
-
-    expect(
-      createProjectState(dynamicConfig, {
-        workspaceId: "worktree-b",
-        reservedPorts: [7100],
-        updatedAt: "2026-04-25T10:00:00.000Z",
-      }).images[0].assignedPort,
-    ).toBe(7101);
-  });
 });

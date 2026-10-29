@@ -68,7 +68,6 @@ function config(overrides: Record<string, unknown> = {}): ProjectConfig {
 const imageState: ProjectImageState = {
   id: "dev",
   imageName: "MyProject-worktree-a-dev",
-  assignedPort: 7123,
   status: "starting",
 };
 
@@ -268,7 +267,6 @@ describe("home image cache", () => {
       imageConfig: config().images[0]!,
       imageState,
       workspaceId: "worktree-a",
-      targetId: "project-123--worktree-a",
       homeDirectory: makeTempDir("plexus-user-home-"),
       now: () => new Date("2026-05-19T10:00:00.000Z"),
     });
@@ -285,7 +283,6 @@ describe("home image cache", () => {
       imageConfig: config().images[0]!,
       imageState,
       workspaceId: "worktree-a",
-      targetId: "project-123--worktree-a",
       homeDirectory,
       now: () => new Date("2026-05-19T10:00:00.000Z"),
     };
@@ -322,7 +319,6 @@ describe("home image cache", () => {
       imageConfig: config().images[0]!,
       imageState,
       workspaceId: "worktree-a",
-      targetId: "project-123--worktree-a",
       homeDirectory,
       now: () => new Date("2026-05-19T10:00:00.000Z"),
     });
@@ -522,7 +518,6 @@ describe("home image cache", () => {
       imageConfig: projectConfig.images[0]!,
       imageState,
       workspaceId: "worktree-a",
-      targetId: "project-123--worktree-a",
       homeDirectory,
     });
     writeHomeImageCacheManifest({
@@ -539,7 +534,6 @@ describe("home image cache", () => {
       imageConfig: projectConfig.images[0]!,
       imageState,
       workspaceId: "worktree-a",
-      targetId: "project-123--worktree-a",
       homeDirectory,
     });
 
@@ -575,7 +569,6 @@ describe("home image cache", () => {
       imageConfig: projectConfig.images[0]!,
       imageState,
       workspaceId: "worktree-a",
-      targetId: "project-123--worktree-a",
       homeDirectory,
     });
 
@@ -637,7 +630,6 @@ describe("home image cache", () => {
         status: "starting",
       },
       workspaceId: "worktree-a",
-      targetId: "project-123--worktree-a",
       homeDirectory: makeTempDir("plexus-user-home-"),
       templateMetadata: {
         pharoVersion: "130",
@@ -691,7 +683,6 @@ describe("home image cache", () => {
       imageConfig: projectConfig.images[0]!,
       imageState,
       workspaceId: "worktree-a",
-      targetId: "project-123--worktree-a",
       homeDirectory,
       templateMetadata: {
         pharoVersion: "130",
@@ -793,7 +784,6 @@ describe("home image cache", () => {
       imageConfig: projectConfig.images[0]!,
       imageState,
       workspaceId: "worktree-a",
-      targetId: "project-123--worktree-a",
       homeDirectory,
       approval: {
         approved: true,
@@ -858,7 +848,6 @@ describe("home image cache", () => {
         imageConfig: projectConfig.images[0]!,
         imageState,
         workspaceId: "worktree-a",
-        targetId: "project-123--worktree-a",
         homeDirectory,
         approval: {
           approved: true,
@@ -896,7 +885,6 @@ describe("home image cache", () => {
       imageConfig: projectConfig.images[0]!,
       imageState,
       workspaceId: "worktree-a",
-      targetId: "project-123--worktree-a",
       homeDirectory,
       templateMetadata: {
         pharoVersion: "130",
@@ -976,7 +964,6 @@ describe("home image cache", () => {
         imageConfig: projectConfig.images[0]!,
         imageState,
         workspaceId: "worktree-a",
-        targetId: "project-123--worktree-a",
         homeDirectory,
         approval: {
           approved: true,
@@ -998,7 +985,6 @@ describe("home image cache", () => {
       imageConfig: projectConfig.images[0]!,
       imageState,
       workspaceId: "worktree-a",
-      targetId: "project-123--worktree-a",
       homeDirectory,
     });
     expect(readHomeImageCacheManifest(plan.manifestPath)).toMatchObject({
@@ -1025,7 +1011,6 @@ describe("home image cache", () => {
       imageConfig: projectConfig.images[0]!,
       imageState,
       workspaceId: "worktree-a",
-      targetId: "project-123--worktree-a",
       homeDirectory,
     });
     writeHomeImageCacheManifest({
@@ -1046,7 +1031,6 @@ describe("home image cache", () => {
       imageConfig: projectConfig.images[0]!,
       imageState,
       workspaceId: "worktree-a",
-      targetId: "project-123--worktree-a",
       homeDirectory,
       approval: {
         approved: true,

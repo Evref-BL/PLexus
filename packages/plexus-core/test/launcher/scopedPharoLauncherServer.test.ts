@@ -13,7 +13,6 @@ import type {
   ProjectLifecycleRouteRegistry,
 } from "../../src/lifecycle/projectLifecycle.js";
 import {
-  defaultTargetId,
   projectStatePathForConfig,
   saveProjectState,
   type ProjectImageLeaseState,
@@ -104,14 +103,12 @@ function runningState(): ProjectState {
     projectId: "project-123",
     projectName: "my-project",
     workspaceId: "worktree-a",
-    targetId: defaultTargetId("project-123", "worktree-a"),
     runtimeStatus: "running",
     updatedAt: "2026-05-18T10:00:00.000Z",
     images: [
       {
         id: "dev",
         imageName: "MyProject-worktree-a-dev",
-        assignedPort: 7123,
         pid: 1234,
         status: "running",
       },
@@ -128,7 +125,6 @@ function stoppedState(): ProjectState {
       {
         id: "dev",
         imageName: "MyProject-worktree-a-dev",
-        assignedPort: 7123,
         status: "stopped",
       },
     ],
@@ -243,7 +239,6 @@ describe("scoped pharo launcher facade", () => {
         projectId: "project-123",
         projectName: "my-project",
         workspaceId: "worktree-a",
-        targetId: "project-123--worktree-a",
       },
       launcherProfile: {
         ownership: "plexus-owned",
@@ -610,7 +605,6 @@ describe("scoped pharo launcher facade", () => {
       expect.objectContaining({
         id: "dev",
         imageName: "MyProject-worktree-a-dev",
-        assignedPort: 7123,
         status: "stopped",
         creation: {
           role: "development",
@@ -623,14 +617,14 @@ describe("scoped pharo launcher facade", () => {
           cleanupPolicy: "workspace_cleanup_only",
           route: {
             serverName: "pharo_gateway",
-            targetKey: "targetId",
+            targetKey: "workspaceId",
             imageArgument: "mcpServerId",
             imageId: "dev",
           },
         },
         lease: {
-          ownerId: "project-123--worktree-a",
-          ownerKind: "target",
+          ownerId: "worktree-a",
+          ownerKind: "workspace",
           mode: "mutable",
           purpose: "Scoped Pharo image lifecycle",
           createdAt: "2026-05-18T12:00:00.000Z",
@@ -723,7 +717,6 @@ describe("scoped pharo launcher facade", () => {
     saveProjectState(statePath(projectRoot, stateRoot), {
       ...runningState(),
       workspaceId: "worktree-b",
-      targetId: "project-123--worktree-b",
       runtimeStatus: "idle",
       images: [],
     });
@@ -1058,7 +1051,6 @@ describe("scoped pharo launcher facade", () => {
           statePath: statePath(projectRoot, stateRoot),
           state,
           stoppedImages: [],
-          repositoryWorkspaceCleanups: [],
           failures: [],
         };
       },
@@ -1072,7 +1064,6 @@ describe("scoped pharo launcher facade", () => {
       expect.objectContaining({
         projectRoot,
         workspaceId: "worktree-a",
-        targetId: "project-123--worktree-a",
         stateRoot,
         imageIds: ["dev"],
         displayMode: "interactive",
@@ -1091,7 +1082,6 @@ describe("scoped pharo launcher facade", () => {
         projectRoot,
         statePath: statePath(projectRoot, stateRoot),
         state: expect.objectContaining({
-          targetId: "project-123--worktree-a",
           images: [expect.objectContaining({ id: "dev", status: "running" })],
         }),
       }),
@@ -1099,7 +1089,6 @@ describe("scoped pharo launcher facade", () => {
         projectRoot,
         statePath: statePath(projectRoot, stateRoot),
         state: expect.objectContaining({
-          targetId: "project-123--worktree-a",
           images: [expect.objectContaining({ id: "dev", status: "stopped" })],
         }),
       }),
@@ -1142,7 +1131,6 @@ describe("scoped pharo launcher facade", () => {
             statePath: statePath(projectRoot, stateRoot),
             state: runningState(),
             stoppedImages: [],
-            repositoryWorkspaceCleanups: [],
             failures: [],
           };
         },
@@ -1188,7 +1176,6 @@ describe("scoped pharo launcher facade", () => {
             {
               id: "dev",
               imageName: "MyProject-worktree-a-dev",
-              assignedPort: 7123,
               status: "stopped",
             },
           ],
@@ -1200,7 +1187,6 @@ describe("scoped pharo launcher facade", () => {
           statePath: statePath(projectRoot, stateRoot),
           state,
           stoppedImages: state.images,
-          repositoryWorkspaceCleanups: [],
           failures: [],
         };
       },
@@ -1235,7 +1221,6 @@ describe("scoped pharo launcher facade", () => {
         {
           id: "dev",
           imageName: "MyProject-worktree-a-dev",
-          assignedPort: 7123,
           status: "failed",
         },
       ],
@@ -1256,7 +1241,6 @@ describe("scoped pharo launcher facade", () => {
           statePath: statePath(projectRoot, stateRoot),
           state: failedState,
           stoppedImages: failedState.images,
-          repositoryWorkspaceCleanups: [],
           failures: [],
         };
       },
@@ -1289,7 +1273,6 @@ describe("scoped pharo launcher facade", () => {
     const previewImageState = {
       id: "preview",
       imageName: "MyProject-worktree-a-preview",
-      assignedPort: 7124,
       pid: 2345,
       status: "running" as const,
       displayMode: "interactive" as const,
@@ -1361,17 +1344,6 @@ describe("scoped pharo launcher facade", () => {
           statePath: statePath(projectRoot, stateRoot),
           state,
           stoppedImages: state.images,
-          repositoryWorkspaceCleanups: [
-            {
-              policy: "delete-disposable" as const,
-              decision: "deleted" as const,
-              imageId: "dev",
-              repositoryId: "my-project",
-              path: "/private/plexus/repository-workspace",
-              dirtyState: "clean" as const,
-              recordedAt: "2026-05-18T12:00:00.000Z",
-            },
-          ],
           failures: [],
         };
       },
@@ -1420,7 +1392,6 @@ describe("scoped pharo launcher facade", () => {
         stateRoot,
         imageIds: ["dev"],
         pharoLauncherMcpClient: client,
-        repositoryWorkspaceCleanupPolicy: "delete-disposable",
       }),
     ]);
     expect(calls).toEqual([
@@ -1446,7 +1417,6 @@ describe("scoped pharo launcher facade", () => {
       expect.objectContaining({
         projectRoot,
         workspaceId: "worktree-a",
-        targetId: "project-123--worktree-a",
         stateRoot,
         imageIds: ["dev"],
         displayMode: "interactive",
@@ -1478,24 +1448,12 @@ describe("scoped pharo launcher facade", () => {
           endpointRecorded: true,
           contractStatus: "matching",
         },
-        repositoryWorkspaceCleanupPolicy: "delete-disposable",
-        repositoryWorkspaceCleanup: {
-          attempted: true,
-          decisions: [
-            {
-              repositoryId: "my-project",
-              decision: "deleted",
-              dirtyState: "clean",
-            },
-          ],
-        },
       },
     });
     const serialized = JSON.stringify(result);
     expect(serialized).not.toContain("MyProject-worktree-a-dev");
     expect(serialized).not.toContain("MyProject-worktree-a-preview");
     expect(serialized).not.toContain(stateRoot);
-    expect(serialized).not.toContain("/private/plexus/repository-workspace");
 
     const savedState = JSON.parse(
       fs.readFileSync(statePath(projectRoot, stateRoot), "utf8"),
@@ -1538,7 +1496,6 @@ describe("scoped pharo launcher facade", () => {
       expect.objectContaining({
         projectRoot,
         workspaceId: "worktree-a",
-        targetId: "project-123--worktree-a",
         stateRoot,
         imageIds: ["dev"],
         displayMode: "interactive",
@@ -1660,7 +1617,6 @@ describe("scoped pharo launcher facade", () => {
           statePath: statePath(projectRoot, stateRoot),
           state,
           stoppedImages: state.images,
-          repositoryWorkspaceCleanups: [],
           failures: [],
         };
       },

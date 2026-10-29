@@ -48,9 +48,7 @@ import {
   type PharoLauncherMcpProfileDiagnostic,
 } from "./pharoLauncherProfile.js";
 import {
-  collectReservedProjectPortOwners,
   createProjectState,
-  defaultTargetId,
   defaultWorkspaceId,
   loadProjectState,
   projectStatePathForConfig,
@@ -97,7 +95,6 @@ function objectSchema(
 export interface ScopedPharoLauncherOptions {
   projectRoot: string;
   workspaceId?: string;
-  targetId?: string;
   stateRoot?: string;
   imageLease?: ScopedImageLeaseOptions;
   pharoLauncherMcpClient?: PharoLauncherMcpToolClient;
@@ -125,7 +122,6 @@ interface ResolvedScope {
   projectId: string;
   projectName: string;
   workspaceId: string;
-  targetId: string;
   stateRoot?: string;
 }
 
@@ -133,7 +129,6 @@ interface WorkspaceScopeSummary {
   projectId: string;
   projectName: string;
   workspaceId: string;
-  targetId: string;
 }
 
 interface LauncherProfileSummary {
@@ -188,15 +183,6 @@ interface ScopedImageResetSummary {
   started: boolean;
   lifecycle: ScopedImageLifecycleStatus;
   route: ScopedImageRouteStatus;
-  repositoryWorkspaceCleanupPolicy: "delete-disposable";
-  repositoryWorkspaceCleanup: {
-    attempted: boolean;
-    decisions: Array<{
-      repositoryId: string;
-      decision: string;
-      dirtyState: string;
-    }>;
-  };
 }
 
 interface ResetImageOptions {
@@ -445,7 +431,6 @@ async function ensureScopedTemplateCatalogReady(options: {
     projectRoot: options.scope.projectRoot,
     config: options.projectConfig,
     workspaceId: options.scope.workspaceId,
-    targetId: options.scope.targetId,
     stateRoot: options.scope.stateRoot,
   });
   const bootstrap = await prepareScopedTemplateCatalog({
@@ -484,8 +469,6 @@ function resolveScope(options: ScopedPharoLauncherOptions): ResolvedScope {
     projectId: projectConfigId(projectConfig),
     projectName: projectConfig.name,
     workspaceId,
-    targetId:
-      options.targetId ?? defaultTargetId(projectConfigId(projectConfig), workspaceId),
     ...(stateRoot ? { stateRoot } : {}),
   };
 }
@@ -495,7 +478,6 @@ function scopeSummary(scope: ResolvedScope): WorkspaceScopeSummary {
     projectId: scope.projectId,
     projectName: scope.projectName,
     workspaceId: scope.workspaceId,
-    targetId: scope.targetId,
   };
 }
 
@@ -572,8 +554,8 @@ function imageLeaseForMutation(
   existingLease?: ProjectImageLeaseState,
   mode: ProjectImageLeaseMode = "mutable",
 ): ProjectImageLeaseState {
-  const ownerId = options?.ownerId ?? scope.targetId;
-  const ownerKind = options?.ownerKind ?? "target";
+  const ownerId = options?.ownerId ?? scope.workspaceId;
+  const ownerKind = options?.ownerKind ?? "workspace";
   const retainedLease =
     existingLease?.ownerId === ownerId && existingLease.ownerKind === ownerKind
       ? existingLease
@@ -672,7 +654,6 @@ function renderedImageName(
     projectId: scope.projectId,
     projectName: scope.projectName,
     workspaceId: scope.workspaceId,
-    targetId: scope.targetId,
     imageId: imageConfig.id,
   });
 }
@@ -698,7 +679,7 @@ function imageCreationState(
     cleanupPolicy: projectImageCreateCleanupPolicy(create),
     route: {
       serverName: "pharo_gateway",
-      targetKey: "targetId",
+      targetKey: "workspaceId",
       imageArgument: "mcpServerId",
       imageId: imageConfig.id,
     },
@@ -721,11 +702,6 @@ function assertPreviousStateBelongsToScope(
   if (previousState.workspaceId !== scope.workspaceId) {
     throw new ScopedPharoLauncherError(
       `State file belongs to workspace ${previousState.workspaceId}; scoped create for workspace ${scope.workspaceId} is rejected`,
-    );
-  }
-  if (previousState.targetId !== scope.targetId) {
-    throw new ScopedPharoLauncherError(
-      `State file belongs to target ${previousState.targetId}; scoped create for target ${scope.targetId} is rejected`,
     );
   }
 }
@@ -913,15 +889,6 @@ function resetCloseError(
   imageId: string,
   error: ProjectCloseError,
 ): ScopedPharoLauncherError {
-  const cleanup = error.result.repositoryWorkspaceCleanups.find(
-    (record) => record.imageId === imageId,
-  );
-  if (cleanup) {
-    return new ScopedPharoLauncherError(
-      `Image ${imageId} reset could not clean its disposable repository workspace: ${cleanup.decision} (${cleanup.dirtyState})`,
-    );
-  }
-
   const failure = error.result.failures.find(
     (record) => record.imageId === imageId,
   );
@@ -952,16 +919,6 @@ function resetSummary(
     started,
     lifecycle: lifecycleStatus(image),
     route: routeStatus(image, imageState),
-    repositoryWorkspaceCleanupPolicy: "delete-disposable",
-    repositoryWorkspaceCleanup: {
-      attempted: Boolean(closeResult),
-      decisions:
-        closeResult?.repositoryWorkspaceCleanups.map((record) => ({
-          repositoryId: record.repositoryId,
-          decision: record.decision,
-          dirtyState: record.dirtyState,
-        })) ?? [],
-    },
   };
 }
 
@@ -974,7 +931,6 @@ function launcherHoldsImage(
     projectRoot: scope.projectRoot,
     config: projectConfig,
     workspaceId: scope.workspaceId,
-    targetId: scope.targetId,
     stateRoot: scope.stateRoot,
   });
 
@@ -990,19 +946,9 @@ function stateWithCreatedImage(
   imageId: string,
   now: Date,
 ): ProjectState {
-  const runtime = resolveProjectRuntimePolicy(projectConfig);
-  const reservedPorts = collectReservedProjectPortOwners({
-    projectRoot: scope.projectRoot,
-    projectId: projectConfigId(projectConfig),
-    stateRoot: scope.stateRoot,
-    excludeWorkspaceId: scope.workspaceId,
-  }).map((owner) => owner.port);
   const state = createProjectState(projectConfig, {
     previousState,
     workspaceId: scope.workspaceId,
-    targetId: scope.targetId,
-    reservedPorts,
-    portRange: runtime.imagePorts.range,
     updatedAt: now.toISOString(),
   });
   const existingImageIds = new Set(
@@ -1221,7 +1167,6 @@ export class ScopedPharoLauncher {
       projectRoot: scope.projectRoot,
       config: projectConfig,
       workspaceId: scope.workspaceId,
-      targetId: scope.targetId,
       stateRoot: scope.stateRoot,
     });
 
@@ -1269,7 +1214,6 @@ export class ScopedPharoLauncher {
           projectRoot: scope.projectRoot,
           config: projectConfig,
           workspaceId: scope.workspaceId,
-          targetId: scope.targetId,
           stateRoot: scope.stateRoot,
         }),
       }));
@@ -1313,7 +1257,6 @@ export class ScopedPharoLauncher {
             projectRoot: scope.projectRoot,
             config: projectConfig,
             workspaceId: scope.workspaceId,
-            targetId: scope.targetId,
             stateRoot: scope.stateRoot,
           }).templateSourcesDir,
         );
@@ -1392,7 +1335,6 @@ export class ScopedPharoLauncher {
           projectRoot: scope.projectRoot,
           config: projectConfig,
           workspaceId: scope.workspaceId,
-          targetId: scope.targetId,
           stateRoot: scope.stateRoot,
         }),
       ),
@@ -1453,7 +1395,6 @@ export class ScopedPharoLauncher {
           projectRoot: scope.projectRoot,
           config: projectConfig,
           workspaceId: scope.workspaceId,
-          targetId: scope.targetId,
           stateRoot: scope.stateRoot,
         }),
       }));
@@ -1469,7 +1410,6 @@ export class ScopedPharoLauncher {
         imageConfig,
         imageState,
         workspaceId: scope.workspaceId,
-        targetId: scope.targetId,
         stateRoot: scope.stateRoot,
         approval: scopedMutationApproval(
           this.options.homeImageCacheApproval,
@@ -1538,7 +1478,6 @@ export class ScopedPharoLauncher {
     const openResult = await (this.options.projectOpen ?? openProject)({
       projectRoot: scope.projectRoot,
       workspaceId: scope.workspaceId,
-      targetId: scope.targetId,
       stateRoot: scope.stateRoot,
       imageIds: [imageId],
       ...(displayMode ? { displayMode } : {}),
@@ -1715,7 +1654,6 @@ export class ScopedPharoLauncher {
           projectRoot: scope.projectRoot,
           config: projectConfig,
           workspaceId: scope.workspaceId,
-          targetId: scope.targetId,
           stateRoot: scope.stateRoot,
         }),
       }));
@@ -1776,7 +1714,6 @@ export class ScopedPharoLauncher {
           stateRoot: scope.stateRoot,
           imageIds: [imageId],
           pharoLauncherMcpClient: this.options.pharoLauncherMcpClient,
-          repositoryWorkspaceCleanupPolicy: "delete-disposable",
         });
       } catch (error) {
         if (error instanceof ProjectCloseError) {

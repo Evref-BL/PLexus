@@ -1,10 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
 import {
-  defaultImagePortClaimChecks,
-  imagePortClaimsRootForConfig,
-} from "../ports/imagePortClaims.js";
-import {
   createStdioPharoLauncherMcpClient,
   type PharoLauncherMcpToolClient,
 } from "../launcher/pharoLauncherMcpClient.js";
@@ -24,19 +20,15 @@ import {
   closeProjectGateway,
   type ProjectGatewayRuntimeOptions,
 } from "../gateway/projectGateway.js";
-import type { PortClaimChecks } from "../ports/portClaims.js";
 import {
   defaultPlexusStateRoot,
   defaultWorkspaceId,
   loadProjectState,
-  projectImageRepositoryWorkspaces,
   projectStatePathForConfig,
   projectStateRootForConfig,
   runtimeStatusForImages,
   sanitizeRuntimeId,
   saveProjectState,
-  type ProjectImageRepositoryWorkspaceCleanupPolicy,
-  type ProjectImageRepositoryWorkspaceCleanupRecord,
   type ProjectImageState,
   type ProjectState,
 } from "../workspace/projectState.js";
@@ -49,11 +41,8 @@ export type ProjectCleanupResourceKind =
   | "state-file"
   | "image-process"
   | "launcher-image"
-  | "image-port-claim"
   | "endpoint-handoff"
   | "gateway"
-  | "gateway-port-claim"
-  | "repository-workspace"
   | "route";
 
 export type ProjectCleanupResourceStatus =
@@ -68,7 +57,6 @@ export interface ProjectCleanupResource {
   id: string;
   projectId: string;
   workspaceId: string;
-  targetId: string;
   imageId?: string;
   imageName?: string;
   path?: string;
@@ -92,10 +80,7 @@ export interface ProjectCleanupOptions {
   confirm?: boolean;
   deleteStateFile?: boolean;
   deleteLauncherImages?: boolean;
-  repositoryWorkspaceCleanupPolicy?: ProjectImageRepositoryWorkspaceCleanupPolicy;
-  repositoryWorkspaceArchiveRoot?: string;
   pharoLauncherMcpClient?: PharoLauncherMcpToolClient;
-  portClaimChecks?: PortClaimChecks;
   gateway?: ProjectGatewayRuntimeOptions;
   now?: () => Date;
 }
@@ -112,7 +97,6 @@ export interface ProjectCleanupResult {
   resources: ProjectCleanupResource[];
   failures: ProjectCleanupFailure[];
   stoppedImages: ProjectImageState[];
-  repositoryWorkspaceCleanups: ProjectImageRepositoryWorkspaceCleanupRecord[];
   deletedLauncherImages: string[];
   gatewayClosed: boolean;
 }
@@ -131,12 +115,11 @@ function projectStateRoot(
 
 function resourceBase(state: ProjectState): Pick<
   ProjectCleanupResource,
-  "projectId" | "workspaceId" | "targetId" | "status"
+  "projectId" | "workspaceId" | "status"
 > {
   return {
     projectId: state.projectId,
     workspaceId: state.workspaceId,
-    targetId: state.targetId,
     status: "planned",
   };
 }
@@ -161,15 +144,13 @@ interface CleanupResourcesInput {
   stateRoot: string;
   statePath: string;
   state: ProjectState;
-  imageClaimsRoot?: string;
 }
 
 function imageCleanupResources(
   input: CleanupResourcesInput,
   image: ProjectImageState,
 ): ProjectCleanupResource[] {
-  const resources: ProjectCleanupResource[] = [
-  ];
+  const resources: ProjectCleanupResource[] = [];
 
   if (image.status === "running" || image.pid !== undefined) {
     resources.push({
@@ -193,18 +174,6 @@ function imageCleanupResources(
     });
   }
 
-  if (input.imageClaimsRoot && image.assignedPort !== undefined) {
-    resources.push({
-      ...resourceBase(input.state),
-      kind: "image-port-claim",
-      id: `${input.imageClaimsRoot}:${image.assignedPort}`,
-      imageId: image.id,
-      imageName: image.imageName,
-      path: input.imageClaimsRoot,
-      port: image.assignedPort,
-    });
-  }
-
   const handoffPath = endpointHandoffPath({
     projectRoot: input.projectRoot,
     stateRoot: input.stateRoot,
@@ -222,17 +191,6 @@ function imageCleanupResources(
     });
   }
 
-  for (const workspace of projectImageRepositoryWorkspaces(image)) {
-    resources.push({
-      ...resourceBase(input.state),
-      kind: "repository-workspace",
-      id: `${image.id}:${workspace.repository.id}`,
-      imageId: image.id,
-      imageName: image.imageName,
-      path: workspace.path,
-    });
-  }
-
   return resources;
 }
 
@@ -247,16 +205,6 @@ function gatewayCleanupResources(
       id: state.gateway.endpoint ?? state.gateway.controlEndpoint ?? "gateway",
       ...(state.gateway.port !== undefined ? { port: state.gateway.port } : {}),
       ...(state.gateway.pid !== undefined ? { pid: state.gateway.pid } : {}),
-    });
-  }
-
-  if (state.gateway?.managedByProject && state.gateway.claim) {
-    resources.push({
-      ...resourceBase(state),
-      kind: "gateway-port-claim",
-      id: `${state.gateway.claim.claimsRoot}:${state.gateway.claim.assignedPort}`,
-      path: state.gateway.claim.claimsRoot,
-      port: state.gateway.claim.assignedPort,
     });
   }
 
@@ -335,7 +283,6 @@ async function launcherClientForCleanup(input: {
         projectRoot: input.projectRoot,
         config: input.config,
         workspaceId: input.state.workspaceId,
-        targetId: input.state.targetId,
         stateRoot: input.stateRoot,
       }),
     }),
@@ -367,37 +314,12 @@ function stateWithoutDeletedLauncherImages(
   };
 }
 
-function markRepositoryWorkspaceCleanupResources(
-  resources: ProjectCleanupResource[],
-  records: ProjectImageRepositoryWorkspaceCleanupRecord[],
-): void {
-  for (const record of records) {
-    markResources(
-      resources,
-      "repository-workspace",
-      record.decision === "deleted" || record.decision === "archived"
-        ? "cleaned"
-        : "skipped",
-      (resource) => resource.id === `${record.imageId}:${record.repositoryId}`,
-      record.message ?? `Repository workspace cleanup decision: ${record.decision}`,
-    );
-  }
-}
-
 function recordProjectCloseResult(options: {
   closeResult: ProjectCloseResult;
   resources: ProjectCleanupResource[];
   stoppedImages: ProjectImageState[];
-  repositoryWorkspaceCleanups: ProjectImageRepositoryWorkspaceCleanupRecord[];
 }): ProjectState | undefined {
   options.stoppedImages.push(...options.closeResult.stoppedImages);
-  options.repositoryWorkspaceCleanups.push(
-    ...options.closeResult.repositoryWorkspaceCleanups,
-  );
-  markRepositoryWorkspaceCleanupResources(
-    options.resources,
-    options.closeResult.repositoryWorkspaceCleanups,
-  );
   return options.closeResult.state;
 }
 
@@ -406,14 +328,12 @@ function recordProjectCloseError(options: {
   resources: ProjectCleanupResource[];
   failures: ProjectCleanupFailure[];
   stoppedImages: ProjectImageState[];
-  repositoryWorkspaceCleanups: ProjectImageRepositoryWorkspaceCleanupRecord[];
 }): ProjectState | undefined {
   const closeResult = options.error.result;
   const latestState = recordProjectCloseResult({
     closeResult,
     resources: options.resources,
     stoppedImages: options.stoppedImages,
-    repositoryWorkspaceCleanups: options.repositoryWorkspaceCleanups,
   });
 
   for (const failure of closeResult.failures) {
@@ -435,13 +355,9 @@ async function closeProjectForCleanup(options: {
   statePath: string;
   workspaceId: string;
   pharoLauncherMcpClient?: PharoLauncherMcpToolClient;
-  checks: PortClaimChecks;
-  repositoryWorkspaceCleanupPolicy?: ProjectImageRepositoryWorkspaceCleanupPolicy;
-  repositoryWorkspaceArchiveRoot?: string;
   resources: ProjectCleanupResource[];
   failures: ProjectCleanupFailure[];
   stoppedImages: ProjectImageState[];
-  repositoryWorkspaceCleanups: ProjectImageRepositoryWorkspaceCleanupRecord[];
 }): Promise<ProjectState | undefined> {
   try {
     const closeResult = await closeProject({
@@ -449,19 +365,12 @@ async function closeProjectForCleanup(options: {
       stateRoot: options.stateRoot,
       workspaceId: options.workspaceId,
       pharoLauncherMcpClient: options.pharoLauncherMcpClient,
-      portClaimChecks: options.checks,
-      repositoryWorkspaceCleanupPolicy:
-        options.repositoryWorkspaceCleanupPolicy ?? "preserve",
-      ...(options.repositoryWorkspaceArchiveRoot
-        ? { repositoryWorkspaceArchiveRoot: options.repositoryWorkspaceArchiveRoot }
-        : {}),
     });
 
     return recordProjectCloseResult({
       closeResult,
       resources: options.resources,
       stoppedImages: options.stoppedImages,
-      repositoryWorkspaceCleanups: options.repositoryWorkspaceCleanups,
     });
   } catch (error) {
     if (error instanceof ProjectCloseError) {
@@ -470,8 +379,7 @@ async function closeProjectForCleanup(options: {
         resources: options.resources,
         failures: options.failures,
         stoppedImages: options.stoppedImages,
-        repositoryWorkspaceCleanups: options.repositoryWorkspaceCleanups,
-      });
+        });
     }
 
     options.failures.push({
@@ -674,17 +582,14 @@ export async function cleanupProjectOwnedResources(
   const deleteLauncherImages = options.deleteLauncherImages ?? true;
   const failures: ProjectCleanupFailure[] = [];
   const stoppedImages: ProjectImageState[] = [];
-  const repositoryWorkspaceCleanups: ProjectImageRepositoryWorkspaceCleanupRecord[] = [];
   const deletedLauncherImages: string[] = [];
   let gatewayClosed = false;
-  const imageClaimsRoot = imagePortClaimsRootForConfig(projectRoot, config);
   const resources = initialState
     ? cleanupResources({
         projectRoot,
         stateRoot,
         statePath,
         state: initialState,
-        imageClaimsRoot,
       })
     : [];
 
@@ -701,15 +606,12 @@ export async function cleanupProjectOwnedResources(
       resources,
       failures,
       stoppedImages,
-      repositoryWorkspaceCleanups,
       deletedLauncherImages,
       gatewayClosed,
     };
   }
 
   const now = options.now ?? (() => new Date());
-  const checks =
-    options.portClaimChecks ?? options.gateway?.checks ?? defaultImagePortClaimChecks();
   let latestState: ProjectState | undefined = initialState;
   latestState =
     (await closeProjectForCleanup({
@@ -718,13 +620,9 @@ export async function cleanupProjectOwnedResources(
       statePath,
       workspaceId,
       pharoLauncherMcpClient: options.pharoLauncherMcpClient,
-      checks,
-      repositoryWorkspaceCleanupPolicy: options.repositoryWorkspaceCleanupPolicy,
-      repositoryWorkspaceArchiveRoot: options.repositoryWorkspaceArchiveRoot,
       resources,
       failures,
       stoppedImages,
-      repositoryWorkspaceCleanups,
     })) ?? latestState;
 
   const gatewayCleanup = await closeManagedGatewayForCleanup({
@@ -782,7 +680,6 @@ export async function cleanupProjectOwnedResources(
     resources,
     failures,
     stoppedImages,
-    repositoryWorkspaceCleanups,
     deletedLauncherImages,
     gatewayClosed,
   };

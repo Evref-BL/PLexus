@@ -14,17 +14,16 @@ import {
 function usage(): string {
   return [
     "Usage:",
-    "  plexus project open <path> [--workspace-id <id>] [--target-id <id>] [--state-root <path>] [--display-mode <headless|interactive>]",
-    "  plexus project close <path> [--workspace-id <id>] [--state-root <path>] [--repository-workspace-cleanup-policy <preserve|archive|delete-disposable>] [--repository-workspace-archive-root <path>]",
-    "  plexus project cleanup <path> [--workspace-id <id>] [--state-root <path>] [--confirm] [--delete-state] [--keep-launcher-images] [--repository-workspace-cleanup-policy <preserve|archive|delete-disposable>] [--repository-workspace-archive-root <path>]",
+    "  plexus project open <path> [--workspace-id <id>] [--state-root <path>] [--display-mode <headless|interactive>]",
+    "  plexus project close <path> [--workspace-id <id>] [--state-root <path>]",
+    "  plexus project cleanup <path> [--workspace-id <id>] [--state-root <path>] [--confirm] [--delete-state] [--keep-launcher-images]",
     "  plexus project status <path> [--workspace-id <id>] [--state-root <path>]",
     "  plexus mcp project [serve|http|--http] [--host <host>] [--port <port>] [--mcp-path <path>]",
-    "  plexus mcp pharo-launcher [--project-path <path>] [--workspace-id <id>] [--target-id <id>] [--state-root <path>]",
+    "  plexus mcp pharo-launcher [--project-path <path>] [--workspace-id <id>] [--state-root <path>]",
     "",
     "Environment:",
     "  PLEXUS_STATE_ROOT       Optional runtime state root.",
     "  PLEXUS_WORKSPACE_ID     Optional runtime workspace id.",
-    "  PLEXUS_TARGET_ID        Optional runtime target id.",
     "  PLEXUS_IMAGE_LEASE_OWNER_ID Optional scoped image lease owner id.",
     "  PLEXUS_IMAGE_LEASE_OWNER_KIND Optional lease owner kind.",
     "  PLEXUS_IMAGE_LEASE_PURPOSE Optional lease purpose.",
@@ -39,19 +38,13 @@ interface ParsedCommand {
   projectPath?: string;
   stateRoot?: string;
   workspaceId?: string;
-  targetId?: string;
   displayMode?: "headless" | "interactive";
-  repositoryWorkspaceCleanupPolicy?: "preserve" | "archive" | "delete-disposable";
-  repositoryWorkspaceArchiveRoot?: string;
   confirm?: boolean;
   deleteStateFile?: boolean;
   deleteLauncherImages?: boolean;
 }
 
 type ParsedDisplayMode = NonNullable<ParsedCommand["displayMode"]>;
-type ParsedRepositoryWorkspaceCleanupPolicy = NonNullable<
-  ParsedCommand["repositoryWorkspaceCleanupPolicy"]
->;
 
 function applyFlagOption(parsed: ParsedCommand, arg: string): boolean {
   switch (arg) {
@@ -87,22 +80,6 @@ function parseDisplayMode(value: string): ParsedDisplayMode {
   return value;
 }
 
-function parseRepositoryWorkspaceCleanupPolicy(
-  value: string,
-): ParsedRepositoryWorkspaceCleanupPolicy {
-  if (
-    value !== "preserve" &&
-    value !== "archive" &&
-    value !== "delete-disposable"
-  ) {
-    throw new Error(
-      "--repository-workspace-cleanup-policy must be preserve, archive, or delete-disposable",
-    );
-  }
-
-  return value;
-}
-
 function applyValueOption(
   parsed: ParsedCommand,
   arg: string,
@@ -118,18 +95,8 @@ function applyValueOption(
     case "--workspace-id":
       parsed.workspaceId = value;
       return;
-    case "--target-id":
-      parsed.targetId = value;
-      return;
     case "--display-mode":
       parsed.displayMode = parseDisplayMode(value);
-      return;
-    case "--repository-workspace-cleanup-policy":
-      parsed.repositoryWorkspaceCleanupPolicy =
-        parseRepositoryWorkspaceCleanupPolicy(value);
-      return;
-    case "--repository-workspace-archive-root":
-      parsed.repositoryWorkspaceArchiveRoot = value;
       return;
     default:
       throw new Error(`Unknown option: ${arg}`);
@@ -182,23 +149,6 @@ function projectLifecycleCommand(
   }
 }
 
-function repositoryWorkspaceOptions(parsed: ParsedCommand): {
-  repositoryWorkspaceCleanupPolicy?: ParsedRepositoryWorkspaceCleanupPolicy;
-  repositoryWorkspaceArchiveRoot?: string;
-} {
-  return {
-    ...(parsed.repositoryWorkspaceCleanupPolicy
-      ? {
-          repositoryWorkspaceCleanupPolicy:
-            parsed.repositoryWorkspaceCleanupPolicy,
-        }
-      : {}),
-    ...(parsed.repositoryWorkspaceArchiveRoot
-      ? { repositoryWorkspaceArchiveRoot: parsed.repositoryWorkspaceArchiveRoot }
-      : {}),
-  };
-}
-
 function printJson(value: unknown, error = false): void {
   const output = JSON.stringify(value, null, 2);
   if (error) {
@@ -219,7 +169,6 @@ async function runOpenCommand(
     projectPath: parsed.projectPath,
     stateRoot,
     workspaceId,
-    targetId: parsed.targetId ?? process.env.PLEXUS_TARGET_ID,
     displayMode: parsed.displayMode,
   });
   if (!lifecycleResult.ok || !lifecycleResult.data) {
@@ -265,7 +214,6 @@ async function runCleanupCommand(
     confirm: parsed.confirm,
     deleteStateFile: parsed.deleteStateFile,
     deleteLauncherImages: parsed.deleteLauncherImages,
-    ...repositoryWorkspaceOptions(parsed),
   });
   printJson(cleanup);
   return cleanup.ok ? 0 : 1;
@@ -281,7 +229,6 @@ async function runCloseCommand(
     projectPath: parsed.projectPath,
     stateRoot,
     workspaceId,
-    ...repositoryWorkspaceOptions(parsed),
   });
   if (!lifecycleResult.ok || !lifecycleResult.data) {
     printJson(lifecycleResult, true);
@@ -295,7 +242,6 @@ async function runCloseCommand(
     gateway: result.state?.gateway,
     images: result.state?.images ?? [],
     stoppedImages: result.stoppedImages,
-    repositoryWorkspaceCleanups: result.repositoryWorkspaceCleanups,
   });
   return 0;
 }
@@ -339,7 +285,6 @@ function handleProjectLifecycleError(error: unknown): number {
         failures: error.result.failures,
         images: error.result.state?.images ?? [],
         stoppedImages: error.result.stoppedImages,
-        repositoryWorkspaceCleanups: error.result.repositoryWorkspaceCleanups,
       },
       true,
     );
@@ -380,7 +325,6 @@ async function main(argv: string[]): Promise<number> {
       projectRoot: projectPath,
       stateRoot,
       workspaceId,
-      targetId: parsed.targetId ?? process.env.PLEXUS_TARGET_ID,
       imageLease: scopedImageLeaseOptionsFromEnvironment(process.env),
     });
     return 0;

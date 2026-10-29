@@ -23,14 +23,12 @@ const smokeProfileDefaultKeys = new Set([
   "runId",
   "timeoutBudgetJson",
   "requiredWorkspacePrefix",
-  "requiredTargetPrefix",
   "stateRoot",
   "fixtureRoot",
   "projectRoot",
   "homePath",
   "homeImageCacheNetworkPolicy",
   "workspaceId",
-  "targetId",
   "projectId",
   "imageId",
   "port",
@@ -331,21 +329,12 @@ export function buildLiveSmokeRunPlan(options, context = {}) {
     options.runId ?? defaultRunId(context.now ?? new Date(), context.pid ?? process.pid),
   );
   const workspaceId = sanitizeRuntimeId(options.workspaceId ?? runId);
-  const targetId = sanitizeRuntimeId(
-    options.targetId ?? `${projectId}--${workspaceId}`,
-  );
 
   validatePrefix(
     workspaceId,
     options.requiredWorkspacePrefix,
     "--workspaceId",
     "--requiredWorkspacePrefix",
-  );
-  validatePrefix(
-    targetId,
-    options.requiredTargetPrefix,
-    "--targetId",
-    "--requiredTargetPrefix",
   );
 
   assertDisposablePath(stateRoot, "--stateRoot", repoRoot);
@@ -371,7 +360,6 @@ export function buildLiveSmokeRunPlan(options, context = {}) {
     launcherProfileEnvironment,
     runId,
     workspaceId,
-    targetId,
     artifactRoot: resolvedArtifactRoot,
     artifactDirectory: path.join(resolvedArtifactRoot, runId),
     timeoutBudget: parseTimeoutBudget(options.timeoutBudgetJson),
@@ -678,10 +666,6 @@ export function buildKeepOpenCleanupContext({
   );
   const stateRoot = requiredString(projectPaths?.stateRoot, "projectPaths.stateRoot");
   const workspaceId = requiredString(options?.workspaceId, "options.workspaceId");
-  const targetId = requiredString(
-    openData?.state?.targetId ?? options?.targetId,
-    "openData.state.targetId",
-  );
   const copiedImages = (options?.images ?? [])
     .filter((image) => image.copied && image.imageName)
     .map((image) => ({
@@ -744,11 +728,13 @@ export function buildKeepOpenCleanupContext({
       })),
     },
     routeControl: {
-      targetId,
+      projectId: openData?.state?.projectId,
+      workspaceId,
       controlEndpoint: openData?.state?.gateway?.controlEndpoint,
       routeStatusTool: "plexus_gateway_status",
       routeStatusArguments: {
-        targetId,
+        projectId: openData?.state?.projectId,
+        workspaceId,
         refreshHealth: true,
       },
     },
@@ -766,7 +752,7 @@ export function buildKeepOpenCleanupContext({
       images: (openData?.state?.images ?? []).map((image) => ({
         id: image.id,
         imageName: image.imageName,
-        assignedPort: image.assignedPort,
+        mcpServers: image.mcpServers,
         pid: image.pid,
         status: image.status,
       })),

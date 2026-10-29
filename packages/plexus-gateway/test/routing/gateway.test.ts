@@ -35,13 +35,11 @@ const runningState: GatewayProjectState = {
   projectId: "project-123",
   projectName: "my-project",
   workspaceId: "worktree-a",
-  targetId: "project-123--worktree-a",
   updatedAt: "2026-04-25T10:00:00.000Z",
   images: [
     {
       id: "dev",
       imageName: "MyProject-dev",
-      assignedPort: 7123,
       mcpServers: mcpServers("dev", 7123),
       pid: 1234,
       status: "running",
@@ -49,7 +47,6 @@ const runningState: GatewayProjectState = {
     {
       id: "baseline",
       imageName: "MyProject-baseline",
-      assignedPort: 7124,
       mcpServers: mcpServers("baseline", 7124),
       status: "stopped",
     },
@@ -191,6 +188,51 @@ afterEach(() => {
 });
 
 describe("PlexusGateway", () => {
+  it("registers a declared image that is not running yet", async () => {
+    const gateway = new PlexusGateway();
+    const declaredState: GatewayProjectState = {
+      ...runningState,
+      images: [
+        runningState.images[0],
+        {
+          id: "p15",
+          imageName: "MyProject-p15",
+          status: "stopped",
+        },
+      ],
+    };
+
+    await registerTarget(gateway, declaredState);
+
+    const status = data(
+      await gateway.handleTool("plexus_gateway_status", {
+        projectId: "project-123",
+        workspaceId: "worktree-a",
+      }),
+    );
+    expect(status.images.map((image) => image.mcpServerId)).toEqual(["dev"]);
+  });
+
+  it("refuses a running image that has no mcpServers", async () => {
+    const gateway = new PlexusGateway();
+
+    await expect(
+      gateway.handleTool("plexus_gateway_register_target", {
+        projectRoot: makeTempDir("plexus-project-"),
+        statePath: "state.json",
+        state: {
+          ...runningState,
+          images: [
+            { id: "dev", imageName: "MyProject-dev", status: "running" },
+          ],
+        },
+      }),
+    ).resolves.toMatchObject({
+      ok: false,
+      error: "state.images[0] is running but has no mcpServers",
+    });
+  });
+
   it("registers a target route from PLexus runtime state", async () => {
     const gateway = new PlexusGateway();
     const projectRoot = makeTempDir("plexus-project-");
@@ -219,7 +261,6 @@ describe("PlexusGateway", () => {
           id: "dev",
           imageName: "MyProject-dev",
           port: 7123,
-          pid: 1234,
           status: "running",
           health: "unknown",
         },
@@ -259,12 +300,11 @@ describe("PlexusGateway", () => {
               routeReference: {
                 projectId: "project-123",
                 workspaceId: "worktree-a",
-                targetId: "project-123--worktree-a",
               },
               mcpServerIdSource:
                 "Read images[].mcpServers[].id from gateway status",
               recordHint:
-                "Record the selected mcpServerId with the scoped project/workspace/target before calling pharo_gateway tools",
+                "Record the selected mcpServerId with the scoped project and workspace before calling pharo_gateway tools",
             },
           }),
         ]),
@@ -272,54 +312,6 @@ describe("PlexusGateway", () => {
     );
   });
 
-  it("reports image creation role and source metadata from PLexus state", async () => {
-    const gateway = new PlexusGateway();
-    const createdState: GatewayProjectState = {
-      ...runningState,
-      images: [
-        {
-          ...runningState.images[0],
-          creation: {
-            role: "development",
-            source: {
-              kind: "template",
-              profileId: "pharo-13-default",
-              templateName: "Pharo 13.0 - 64bit",
-              templateCategory: "Official",
-            },
-            cleanupPolicy: "workspace_cleanup_only",
-          },
-        },
-      ],
-    };
-
-    await registerTarget(gateway, createdState);
-
-    expect(
-      data(
-        await gateway.handleTool("plexus_gateway_status", {
-          projectId: "project-123",
-          workspaceId: "worktree-a",
-        }),
-      ),
-    ).toMatchObject({
-      images: [
-        {
-          id: "dev",
-          creation: {
-            role: "development",
-            source: {
-              kind: "template",
-              profileId: "pharo-13-default",
-              templateName: "Pharo 13.0 - 64bit",
-              templateCategory: "Official",
-            },
-            cleanupPolicy: "workspace_cleanup_only",
-          },
-        },
-      ],
-    });
-  });
 
   it("refreshes health for running image routes", async () => {
     const healthClient = new FakeHealthClient();
@@ -361,7 +353,6 @@ describe("PlexusGateway", () => {
         {
           id: "dev",
           imageName: "MyProject-dev",
-          assignedPort: 7125,
           mcpServers: mcpServers("dev", 7125),
           pid: 1234,
           status: "running",
@@ -426,7 +417,6 @@ describe("PlexusGateway", () => {
         route: {
           projectId: "project-123",
           workspaceId: "worktree-a",
-          targetId: "project-123--worktree-a",
           imageId: "dev",
           mcpServerId: "dev",
           imageName: "MyProject-dev",
@@ -442,7 +432,6 @@ describe("PlexusGateway", () => {
       route: {
         projectId: "project-123",
         workspaceId: "worktree-a",
-        targetId: "project-123--worktree-a",
         imageId: "dev",
         port: 7123,
       },
@@ -513,7 +502,6 @@ describe("PlexusGateway", () => {
       route: {
         projectId: "project-123",
         workspaceId: "worktree-a",
-        targetId: "project-123--worktree-a",
         imageId: "dev",
         imageName: "MyProject-dev",
         port: 9123,
@@ -530,7 +518,6 @@ describe("PlexusGateway", () => {
         route: {
           projectId: "project-123",
           workspaceId: "worktree-a",
-          targetId: "project-123--worktree-a",
           imageId: "dev",
           mcpServerId: "dev",
           imageName: "MyProject-dev",
@@ -695,7 +682,7 @@ describe("PlexusGateway", () => {
 
     expect(result).toEqual({
       ok: false,
-      error: "MCP server id shared is duplicated in target project-123--worktree-a",
+      error: "MCP server id shared is duplicated in workspace worktree-a",
     });
   });
 
@@ -717,7 +704,6 @@ describe("PlexusGateway", () => {
         },
         projectId: "remote-project",
         workspaceId: "remote-worktree-a",
-        targetId: "remote-target-a",
       },
       images: [
         {
@@ -803,7 +789,6 @@ describe("PlexusGateway", () => {
       route: {
         projectId: "project-123",
         workspaceId: "worktree-a",
-        targetId: "project-123--worktree-a",
         imageId: "dev",
         imageName: "MyProject-dev",
         remoteGateway: {
@@ -991,7 +976,6 @@ describe("PlexusGateway", () => {
         route: {
           projectId: "project-123",
           workspaceId: "worktree-a",
-          targetId: "project-123--worktree-a",
           imageId: "dev",
           mcpServerId: "dev",
           imageName: "MyProject-dev",
@@ -1007,7 +991,6 @@ describe("PlexusGateway", () => {
         route: {
           projectId: "project-123",
           workspaceId: "worktree-a",
-          targetId: "project-123--worktree-a",
           imageId: "baseline",
           mcpServerId: "baseline",
           imageName: "MyProject-baseline",
@@ -1068,12 +1051,10 @@ describe("PlexusGateway", () => {
     const stateA: GatewayProjectState = {
       ...runningState,
       workspaceId: "worktree-a",
-      targetId: "project-123--worktree-a",
       images: [
         {
           id: "dev",
           imageName: "MyProject-worktree-a-dev",
-          assignedPort: 7123,
           mcpServers: mcpServers("dev", 7123),
           pid: 1234,
           status: "running",
@@ -1083,12 +1064,10 @@ describe("PlexusGateway", () => {
     const stateB: GatewayProjectState = {
       ...runningState,
       workspaceId: "worktree-b",
-      targetId: "project-123--worktree-b",
       images: [
         {
           id: "review",
           imageName: "MyProject-worktree-b-review",
-          assignedPort: 7125,
           mcpServers: mcpServers("review", 7125),
           pid: 5678,
           status: "running",
@@ -1115,7 +1094,7 @@ describe("PlexusGateway", () => {
     ).resolves.toMatchObject({
       ok: false,
       error:
-        "MCP server review is registered outside workspace worktree-a; requested target project-123--worktree-a, found target project-123--worktree-b",
+        "MCP server review is registered in workspace worktree-b, not worktree-a",
     });
     expect(imageRouter.calls).toEqual([]);
   });
@@ -1132,7 +1111,6 @@ describe("PlexusGateway", () => {
         {
           id: "dev",
           imageName: "MyProject-dev",
-          assignedPort: 7123,
           mcpServers: mcpServers("dev", 7123),
           pid: 1234,
           status: "running",
@@ -1145,7 +1123,6 @@ describe("PlexusGateway", () => {
         {
           id: "baseline",
           imageName: "MyProject-baseline",
-          assignedPort: 7124,
           mcpServers: mcpServers("baseline", 7124),
           pid: 5678,
           status: "running",
@@ -1264,7 +1241,6 @@ describe("PlexusGateway", () => {
         {
           id: "dev",
           imageName: "MyProject-dev",
-          assignedPort: 7123,
           mcpServers: mcpServers("dev", 7123),
           pid: 1234,
           status: "running",
@@ -1272,7 +1248,6 @@ describe("PlexusGateway", () => {
         {
           id: "baseline",
           imageName: "MyProject-baseline",
-          assignedPort: 7124,
           mcpServers: mcpServers("baseline", 7124),
           pid: 5678,
           status: "running",
@@ -1293,13 +1268,11 @@ describe("PlexusGateway", () => {
       pharoToolSchema: {
         state: "mismatched",
         activeVersion: {
-          targetId: "project-123--worktree-a",
           imageId: "dev",
         },
         sourceCount: 2,
         sources: [
           {
-            targetId: "project-123--worktree-a",
             imageId: "dev",
             compatibility: "active",
             toolCount: 1,
@@ -1312,7 +1285,6 @@ describe("PlexusGateway", () => {
             },
           },
           {
-            targetId: "project-123--worktree-a",
             imageId: "baseline",
             compatibility: "incompatible",
             toolCount: 1,
@@ -1424,7 +1396,6 @@ describe("PlexusGateway", () => {
         {
           id: "dev",
           imageName: "MyProject-dev",
-          assignedPort: 7123,
           mcpServers: mcpServers("dev", 7123),
           pid: 1234,
           status: "running",
@@ -1432,7 +1403,6 @@ describe("PlexusGateway", () => {
         {
           id: "baseline",
           imageName: "MyProject-baseline",
-          assignedPort: 7124,
           mcpServers: mcpServers("baseline", 7124),
           pid: 5678,
           status: "running",
@@ -1454,7 +1424,6 @@ describe("PlexusGateway", () => {
       pharoToolSchema: {
         state: "mismatched",
         activeVersion: {
-          targetId: "project-123--worktree-a",
           imageId: "baseline",
         },
         sources: [
@@ -1577,7 +1546,6 @@ describe("PlexusGateway", () => {
         {
           id: "dev",
           imageName: "MyProject-dev",
-          assignedPort: 7123,
           mcpServers: mcpServers("dev", 7123),
           pid: 1234,
           status: "running",
@@ -1682,7 +1650,8 @@ describe("PlexusGateway", () => {
     await registerTarget(gateway);
     const unregisterResult = data(
       await gateway.handleTool("plexus_gateway_unregister_target", {
-        targetId: "project-123--worktree-a",
+        projectId: "project-123",
+        workspaceId: "worktree-a",
       }),
     );
 
@@ -1691,18 +1660,18 @@ describe("PlexusGateway", () => {
       route: {
         projectId: "project-123",
         workspaceId: "worktree-a",
-        targetId: "project-123--worktree-a",
       },
     });
     await expect(
       gateway.handleTool("plexus_route_to_image", {
-        targetId: "project-123--worktree-a",
+        projectId: "project-123",
+        workspaceId: "worktree-a",
         mcpServerId: "dev",
         toolName: "pharo_eval",
       }),
     ).resolves.toMatchObject({
       ok: false,
-      error: "No route is registered for: project-123--worktree-a",
+      error: "No route is registered for: project-123/worktree-a",
     });
   });
 
@@ -1722,7 +1691,6 @@ describe("PlexusGateway", () => {
       removed: [
         {
           projectId: "project-123",
-          targetId: "project-123--worktree-a",
         },
       ],
     });
@@ -1736,12 +1704,10 @@ describe("PlexusGateway", () => {
     const stateA: GatewayProjectState = {
       ...runningState,
       workspaceId: "worktree-a",
-      targetId: "project-123--worktree-a",
       images: [
         {
           id: "dev",
           imageName: "MyProject-worktree-a-dev",
-          assignedPort: 7123,
           mcpServers: mcpServers("dev", 7123),
           pid: 1234,
           status: "running",
@@ -1751,12 +1717,10 @@ describe("PlexusGateway", () => {
     const stateB: GatewayProjectState = {
       ...runningState,
       workspaceId: "worktree-b",
-      targetId: "project-123--worktree-b",
       images: [
         {
           id: "dev",
           imageName: "MyProject-worktree-b-dev",
-          assignedPort: 7125,
           mcpServers: mcpServers("dev", 7125),
           pid: 5678,
           status: "running",
@@ -1778,12 +1742,10 @@ describe("PlexusGateway", () => {
     expect(routes).toMatchObject([
       {
         workspaceId: "worktree-a",
-        targetId: "project-123--worktree-a",
         images: [{ imageName: "MyProject-worktree-a-dev", port: 7123 }],
       },
       {
         workspaceId: "worktree-b",
-        targetId: "project-123--worktree-b",
         images: [{ imageName: "MyProject-worktree-b-dev", port: 7125 }],
       },
     ]);
@@ -1796,7 +1758,7 @@ describe("PlexusGateway", () => {
       }),
     ).resolves.toMatchObject({
       ok: false,
-      error: "Multiple routes match; provide targetId or workspaceId",
+      error: "Multiple routes match; provide projectId with workspaceId",
     });
 
     const routeResult = await gateway.handleTool("plexus_route_to_image", {
@@ -1809,7 +1771,6 @@ describe("PlexusGateway", () => {
       route: {
         projectId: "project-123",
         workspaceId: "worktree-b",
-        targetId: "project-123--worktree-b",
         imageName: "MyProject-worktree-b-dev",
         port: 7125,
       },

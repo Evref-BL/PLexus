@@ -19,7 +19,6 @@ export interface ImageMcpEndpoint {
 export interface ImageMcpRoute {
   projectId: string;
   workspaceId: string;
-  targetId: string;
   imageId: string;
   mcpServerId: string;
   imageName: string;
@@ -86,7 +85,7 @@ export class StreamableHttpImageMcpToolRouter implements ImageMcpToolRouter {
     const connectionInfo = await this.initializeEndpoint(route, endpoint);
     const response = await this.postJsonRpc(endpoint, {
       jsonrpc: "2.0",
-      id: `plexus-${route.targetId}-${route.imageId}-tools-${Date.now()}`,
+      id: `plexus-${route.projectId}-${route.workspaceId}-${route.imageId}-tools-${Date.now()}`,
       method: "tools/list",
     }, {
       protocolVersion: connectionInfo.protocolVersion,
@@ -114,7 +113,7 @@ export class StreamableHttpImageMcpToolRouter implements ImageMcpToolRouter {
     const connectionInfo = await this.initializeEndpoint(route, endpoint);
     const response = await this.postJsonRpc(endpoint, {
       jsonrpc: "2.0",
-      id: `plexus-${route.targetId}-${route.imageId}-${Date.now()}`,
+      id: `plexus-${route.projectId}-${route.workspaceId}-${route.imageId}-${Date.now()}`,
       method: "tools/call",
       params: {
         name: toolName,
@@ -167,7 +166,7 @@ export class StreamableHttpImageMcpToolRouter implements ImageMcpToolRouter {
     try {
       const initializeResponse = await this.postJsonRpcWithHttpMetadata(endpoint, {
         jsonrpc: "2.0",
-        id: `plexus-${route.targetId}-${route.imageId}-initialize-${Date.now()}`,
+        id: `plexus-${route.projectId}-${route.workspaceId}-${route.imageId}-initialize-${Date.now()}`,
         method: "initialize",
         params: {
           protocolVersion: imageMcpProtocolVersion,

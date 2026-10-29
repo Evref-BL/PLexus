@@ -10,11 +10,6 @@ import {
 } from "../../src/launcher/pharoLauncherMcpClient.js";
 import type { PharoMcpHealthClient } from "../../src/mcp/pharoMcpHealth.js";
 import {
-  claimPort,
-  inspectPortClaim,
-  listPortClaims,
-} from "../../src/ports/portClaims.js";
-import {
   openProject,
   ProjectOpenError,
   type LauncherCommandResult,
@@ -26,6 +21,7 @@ import {
   type ProjectState,
 } from "../../src/workspace/projectState.js";
 import { ScopedPharoLauncher } from "../../src/launcher/scopedPharoLauncherServer.js";
+import { writeImageEndpointHandoffForScript } from "../support/imageEndpointHandoff.js";
 import { defaultPharoMcpMetacelloRepositoryLocation } from "../../src/workspace/projectStartupScript.js";
 
 const tempDirs: string[] = [];
@@ -90,6 +86,7 @@ class FakePharoLauncherMcpClient implements PharoLauncherMcpToolClient {
       }
 
       this.onLaunch?.(argumentsValue);
+      writeImageEndpointHandoffForScript(argumentsValue.script);
       return (this.launchResult ?? { ok: true }) as T;
     }
 
@@ -432,27 +429,37 @@ describe("project open", () => {
         argumentsValue: {},
       },
     ]);
-    expect(healthClient.ports).toEqual([7123]);
+    expect(healthClient.endpoints).toEqual([
+      { transport: "http", host: "127.0.0.1", port: 7123, path: "/" },
+    ]);
     expect(fs.existsSync(scriptPath)).toBe(true);
     expect(loadProjectState(result.statePath)).toEqual({
       projectId: "project-123",
       projectName: "my-project",
       workspaceId: "worktree-a",
-      targetId: "project-123--worktree-a",
       runtimeStatus: "running",
       updatedAt: "2026-04-25T10:00:00.000Z",
       images: [
         {
           id: "dev",
           imageName: "MyProject-dev",
-          assignedPort: 7123,
+          mcpServers: [
+            {
+              id: "dev",
+              endpoint: {
+                transport: "http",
+                host: "127.0.0.1",
+                port: 7123,
+                path: "/",
+              },
+            },
+          ],
           pid: 1234,
           status: "running",
         },
         {
           id: "baseline",
           imageName: "MyProject-baseline",
-          assignedPort: 7100,
           status: "stopped",
         },
       ],
@@ -593,679 +600,10 @@ describe("project open", () => {
     expect(result.state.images[0]?.displayMode).toBe("interactive");
   });
 
-  it("materializes image-local repository workspaces before startup launch", async () => {
-    const plexusHome = makeTempDir("plexus-home-");
-    const previousPlexusHome = process.env.PLEXUS_HOME;
-    process.env.PLEXUS_HOME = plexusHome;
-    restorePlexusHome = () => {
-      if (previousPlexusHome === undefined) {
-        delete process.env.PLEXUS_HOME;
-      } else {
-        process.env.PLEXUS_HOME = previousPlexusHome;
-      }
-    };
-    const projectRoot = makeTempDir("plexus-project-");
-    const stateRoot = makeTempDir("plexus-state-");
-    const sourceRoot = makeTempDir("plexus-source-");
-    const imagesDir = path.join(
-      path.join(plexusHome, "profiles", "pharo-launcher-mcp"),
-      "images",
-    );
-    const sourceCommit = initRepository(sourceRoot, [
-      "MyProject-Core",
-      "MyProject-Tests",
-    ]);
-    writeProjectConfig(projectRoot, {
-      images: [
-        {
-          id: "dev",
-          imageName: "MyProject-dev",
-          active: true,
-          mcp: {
-            port: 7123,
-            loadScript: "pharo/load-mcp.st",
-          },
-          repositoryWorkspace: {
-            repository: {
-              id: "my-project",
-              originPath: sourceRoot,
-            },
-            sourceDirectory: "src",
-            baseline: "MyProject",
-            materialization: {
-              strategy: "copy",
-            },
-          },
-        },
-      ],
-    });
-    const launcherImageDir = path.join(imagesDir, "MyProject-dev");
-    fs.mkdirSync(launcherImageDir, { recursive: true });
-    fs.writeFileSync(path.join(launcherImageDir, "MyProject-dev.image"), "");
-    fs.writeFileSync(path.join(launcherImageDir, "MyProject-dev.changes"), "");
-    const pharoLauncherMcpClient = new FakePharoLauncherMcpClient(
-      [
-        {
-          pid: 1234,
-          imageName: "MyProject-dev",
-          commandLine: "PharoConsole.exe MyProject-dev.image",
-        },
-      ],
-      undefined,
-      (argumentsValue) => {
-        const scriptPath = argumentsValue.script as string;
-        fs.writeFileSync(
-          path.join(
-            path.dirname(scriptPath),
-            "repository-workspace-load-dev.properties",
-          ),
-          [
-            "status=loaded",
-            `sourcePath=${repositoryPath}/src`,
-            "sourceDirectory=src",
-            "baseline=MyProject",
-            `currentCommit=${sourceCommit}`,
-            "",
-          ].join("\n"),
-          "utf8",
-        );
-        fs.writeFileSync(
-          path.join(
-            path.dirname(scriptPath),
-            "dependency-repository-detach-dev.properties",
-          ),
-          [
-            "status=detached",
-            "cachePath=/plexus-home/repositories/iceberg",
-            "detachedCount=2",
-            "repository.1.name=TinyLogger",
-            "repository.1.location=/plexus-home/repositories/iceberg/jecisc/TinyLogger",
-            "repository.2.name=JRPC",
-            "repository.2.location=/plexus-home/repositories/iceberg/juliendelplanque/JRPC",
-            "",
-          ].join("\n"),
-          "utf8",
-        );
-      },
-      imagesDir,
-      undefined,
-      "metadata-only",
-    );
 
-    const repositoryPath = path.join(
-      imagesDir,
-      "MyProject-dev",
-      "pharo-local",
-      "iceberg",
-      "my-project",
-    );
-    const imageMcpClient = new FakeImageMcpClient();
-    const result = await openProject({
-      projectRoot,
-      stateRoot,
-      workspaceId: "worktree-a",
-      pharoLauncherMcpClient,
-      imageMcpClient,
-      healthClient: new FakeHealthClient(true),
-      now: fixedNow,
-      sleep: async () => {},
-      poll: {
-        intervalMs: 0,
-      },
-    });
 
-    const launchIndex = pharoLauncherMcpClient.calls.findIndex(
-      (call) => call.name === "pharo_launcher_image_launch",
-    );
-    const infoIndex = pharoLauncherMcpClient.calls.findIndex(
-      (call) => call.name === "pharo_launcher_image_info",
-    );
 
-    expect(infoIndex).toBeGreaterThanOrEqual(0);
-    expect(launchIndex).toBeGreaterThan(infoIndex);
-    expect(git(repositoryPath, ["rev-parse", "HEAD"])).toBe(sourceCommit);
-    expect(imageMcpClient.calls).toEqual([
-      {
-        name: "tool_call",
-        argumentsValue: {
-          name: "repository_identity_verify",
-          arguments: {
-            name: "my-project",
-            location: repositoryPath,
-          },
-        },
-      },
-      {
-        name: "tool_call",
-        argumentsValue: {
-          name: "repository_attach",
-          arguments: {
-            name: "my-project",
-            location: repositoryPath,
-            subdirectory: "src",
-            packages: ["MyProject-Core", "MyProject-Tests"],
-          },
-        },
-      },
-      {
-        name: "tool_call",
-        argumentsValue: {
-          name: "repository_identity_verify",
-          arguments: {
-            name: "my-project",
-            location: repositoryPath,
-            subdirectory: "src",
-            packages: ["MyProject-Core", "MyProject-Tests"],
-          },
-        },
-      },
-    ]);
-    expect(result.state.images[0].repositoryWorkspace).toMatchObject({
-      path: repositoryPath,
-      sourcePath: sourceRoot,
-      currentCommit: sourceCommit,
-      baseCommit: sourceCommit,
-      materializationState: "ready",
-      dirtyState: "clean",
-      loadState: "loaded",
-      registrationState: "registered",
-      loadSourcePath: `${repositoryPath}/src`,
-      loadStatusPath: path.join(
-        stateRoot,
-        "projects",
-        "project-123",
-        "workspaces",
-        "worktree-a",
-        "scripts",
-        "repository-workspace-load-dev.properties",
-      ),
-    });
-    expect(result.state.images[0].dependencyRepositoryDetach).toEqual({
-      state: "detached",
-      statusPath: path.join(
-        stateRoot,
-        "projects",
-        "project-123",
-        "workspaces",
-        "worktree-a",
-        "scripts",
-        "dependency-repository-detach-dev.properties",
-      ),
-      cachePath: "/plexus-home/repositories/iceberg",
-      detachedCount: 2,
-      repositories: [
-        {
-          name: "TinyLogger",
-          location: "/plexus-home/repositories/iceberg/jecisc/TinyLogger",
-        },
-        {
-          name: "JRPC",
-          location: "/plexus-home/repositories/iceberg/juliendelplanque/JRPC",
-        },
-      ],
-    });
-  }, 15_000);
 
-  it("uses the project-open source path for repository workspaces without originPath", async () => {
-    const projectRoot = makeTempDir("plexus-project-");
-    const stateRoot = makeTempDir("plexus-state-");
-    const sourceRoot = makeTempDir("plexus-source-");
-    const imagesDir = makeTempDir("plexus-images-");
-    const sourceCommit = initRepository(sourceRoot, ["MyProject-Core"]);
-    writeProjectConfig(projectRoot, {
-      images: [
-        {
-          id: "dev",
-          imageName: "MyProject-dev",
-          active: true,
-          mcp: {
-            port: 7123,
-            loadScript: "pharo/load-mcp.st",
-          },
-          repositoryWorkspace: {
-            repository: {
-              id: "my-project",
-              componentId: "my-project",
-            },
-            sourceDirectory: "src",
-            baseline: "MyProject",
-            materialization: {
-              strategy: "copy",
-            },
-          },
-        },
-      ],
-    });
-    const pharoLauncherMcpClient = new FakePharoLauncherMcpClient(
-      [
-        {
-          pid: 1234,
-          imageName: "MyProject-dev",
-          commandLine: "PharoConsole.exe MyProject-dev.image",
-        },
-      ],
-      undefined,
-      (argumentsValue) => {
-        const scriptPath = argumentsValue.script as string;
-        fs.writeFileSync(
-          path.join(
-            path.dirname(scriptPath),
-            "repository-workspace-load-dev.properties",
-          ),
-          [
-            "status=loaded",
-            `sourcePath=${repositoryPath}/src`,
-            "sourceDirectory=src",
-            "baseline=MyProject",
-            "",
-          ].join("\n"),
-          "utf8",
-        );
-        fs.writeFileSync(
-          path.join(
-            path.dirname(scriptPath),
-            "dependency-repository-detach-dev.properties",
-          ),
-          [
-            "status=detached",
-            "cachePath=/plexus-home/repositories/iceberg",
-            "detachedCount=0",
-            "",
-          ].join("\n"),
-          "utf8",
-        );
-      },
-      imagesDir,
-    );
-    const repositoryPath = path.join(
-      imagesDir,
-      "MyProject-dev",
-      "pharo-local",
-      "iceberg",
-      "my-project",
-    );
-    const imageMcpClient = new FakeImageMcpClient();
-
-    const result = await openProject({
-      projectRoot,
-      sourcePath: sourceRoot,
-      stateRoot,
-      workspaceId: "worktree-a",
-      pharoLauncherMcpClient,
-      imageMcpClient,
-      healthClient: new FakeHealthClient(true),
-      now: fixedNow,
-      sleep: async () => {},
-      poll: {
-        intervalMs: 0,
-      },
-    });
-
-    expect(git(repositoryPath, ["rev-parse", "HEAD"])).toBe(sourceCommit);
-    expect(result.state.sourcePath).toBe(sourceRoot);
-    expect(result.state.images[0].repositoryWorkspace).toMatchObject({
-      repository: {
-        componentId: "my-project",
-      },
-      sourcePath: sourceRoot,
-      currentCommit: sourceCommit,
-      baseCommit: sourceCommit,
-      materializationState: "ready",
-      loadState: "loaded",
-      registrationState: "registered",
-    });
-    expect(imageMcpClient.calls[0]).toMatchObject({
-      name: "tool_call",
-      argumentsValue: {
-        name: "repository_identity_verify",
-        arguments: {
-          location: repositoryPath,
-        },
-      },
-    });
-  });
-
-  it("updates and verifies an already registered repository workspace", async () => {
-    const projectRoot = makeTempDir("plexus-project-");
-    const stateRoot = makeTempDir("plexus-state-");
-    const sourceRoot = makeTempDir("plexus-source-");
-    const imagesDir = makeTempDir("plexus-images-");
-    initRepository(sourceRoot, ["MyProject-Core"]);
-    writeProjectConfig(projectRoot, {
-      images: [
-        {
-          id: "dev",
-          imageName: "MyProject-dev",
-          active: true,
-          mcp: {
-            port: 7123,
-            loadScript: "pharo/load-mcp.st",
-          },
-          repositoryWorkspace: {
-            repository: {
-              id: "my-project",
-              originPath: sourceRoot,
-            },
-            sourceDirectory: "src",
-            baseline: "MyProject",
-            materialization: {
-              strategy: "copy",
-            },
-          },
-        },
-      ],
-    });
-    const pharoLauncherMcpClient = new FakePharoLauncherMcpClient(
-      [
-        {
-          pid: 1234,
-          imageName: "MyProject-dev",
-          commandLine: "PharoConsole.exe MyProject-dev.image",
-        },
-      ],
-      undefined,
-      (argumentsValue) => {
-        const scriptPath = argumentsValue.script as string;
-        fs.writeFileSync(
-          path.join(
-            path.dirname(scriptPath),
-            "repository-workspace-load-dev.properties",
-          ),
-          [
-            "status=loaded",
-            `sourcePath=${repositoryPath}/src`,
-            "sourceDirectory=src",
-            "baseline=MyProject",
-            "",
-          ].join("\n"),
-          "utf8",
-        );
-      },
-      imagesDir,
-    );
-
-    const repositoryPath = path.join(
-      imagesDir,
-      "MyProject-dev",
-      "pharo-local",
-      "iceberg",
-      "my-project",
-    );
-    const imageMcpClient = new FakeImageMcpClient(["my-project"]);
-
-    const result = await openProject({
-      projectRoot,
-      stateRoot,
-      workspaceId: "worktree-a",
-      pharoLauncherMcpClient,
-      imageMcpClient,
-      healthClient: new FakeHealthClient(true),
-      now: fixedNow,
-      sleep: async () => {},
-      poll: {
-        intervalMs: 0,
-      },
-    });
-
-    expect(imageMcpClient.calls.map((call) => call.name)).toEqual([
-      "tool_call",
-      "tool_call",
-      "tool_call",
-    ]);
-    expect(imageMcpClient.calls[1]).toMatchObject({
-      name: "tool_call",
-      argumentsValue: {
-        name: "repository_update",
-        arguments: {
-          name: "my-project",
-          location: repositoryPath,
-          subdirectory: "src",
-          packages: ["MyProject-Core"],
-        },
-      },
-    });
-    expect(imageMcpClient.calls[2]).toMatchObject({
-      name: "tool_call",
-      argumentsValue: {
-        name: "repository_identity_verify",
-        arguments: {
-          name: "my-project",
-          location: repositoryPath,
-          subdirectory: "src",
-          packages: ["MyProject-Core"],
-        },
-      },
-    });
-    expect(result.state.images[0].repositoryWorkspace).toMatchObject({
-      registrationState: "registered",
-      registeredRepositoryName: "my-project",
-    });
-  });
-
-  it("fails project open when repository workspace registration fails", async () => {
-    const projectRoot = makeTempDir("plexus-project-");
-    const stateRoot = makeTempDir("plexus-state-");
-    const sourceRoot = makeTempDir("plexus-source-");
-    const imagesDir = makeTempDir("plexus-images-");
-    initRepository(sourceRoot, ["MyProject-Core"]);
-    writeProjectConfig(projectRoot, {
-      images: [
-        {
-          id: "dev",
-          imageName: "MyProject-dev",
-          active: true,
-          mcp: {
-            port: 7123,
-            loadScript: "pharo/load-mcp.st",
-          },
-          repositoryWorkspace: {
-            repository: {
-              id: "my-project",
-              originPath: sourceRoot,
-            },
-            sourceDirectory: "src",
-            baseline: "MyProject",
-            materialization: {
-              strategy: "copy",
-            },
-          },
-        },
-      ],
-    });
-    const pharoLauncherMcpClient = new FakePharoLauncherMcpClient(
-      [
-        {
-          pid: 1234,
-          imageName: "MyProject-dev",
-          commandLine: "PharoConsole.exe MyProject-dev.image",
-        },
-      ],
-      undefined,
-      (argumentsValue) => {
-        const scriptPath = argumentsValue.script as string;
-        fs.writeFileSync(
-          path.join(
-            path.dirname(scriptPath),
-            "repository-workspace-load-dev.properties",
-          ),
-          [
-            "status=loaded",
-            `sourcePath=${repositoryPath}/src`,
-            "sourceDirectory=src",
-            "baseline=MyProject",
-            "",
-          ].join("\n"),
-          "utf8",
-        );
-      },
-      imagesDir,
-    );
-    const repositoryPath = path.join(
-      imagesDir,
-      "MyProject-dev",
-      "pharo-local",
-      "iceberg",
-      "my-project",
-    );
-    const imageMcpClient = new FakeImageMcpClient(
-      [],
-      {
-        result: {
-          isError: true,
-          content: [
-            {
-              type: "text",
-              text: "Iceberg refused the repository",
-            },
-          ],
-        },
-      },
-      "repository_attach",
-    );
-
-    await expect(
-      openProject({
-        projectRoot,
-        stateRoot,
-        workspaceId: "worktree-a",
-        pharoLauncherMcpClient,
-        imageMcpClient,
-        healthClient: new FakeHealthClient(true),
-        now: fixedNow,
-        sleep: async () => {},
-        poll: {
-          intervalMs: 0,
-        },
-      }),
-    ).rejects.toMatchObject({
-      result: {
-        ok: false,
-        failures: [
-          {
-            imageId: "dev",
-            message:
-              "Repository workspace registration failed for image dev: Iceberg refused the repository",
-          },
-        ],
-      },
-    });
-    const failedState = loadProjectState(
-      path.join(
-        stateRoot,
-        "projects",
-        "project-123",
-        "workspaces",
-        "worktree-a",
-        "state.json",
-      ),
-    );
-    expect(failedState?.images[0].repositoryWorkspace).toMatchObject({
-      registrationState: "failed",
-      registrationError: "Iceberg refused the repository",
-    });
-  });
-
-  it("records Pharo project load failures reported by the startup script", async () => {
-    const projectRoot = makeTempDir("plexus-project-");
-    const stateRoot = makeTempDir("plexus-state-");
-    const sourceRoot = makeTempDir("plexus-source-");
-    const imagesDir = makeTempDir("plexus-images-");
-    initRepository(sourceRoot);
-    writeProjectConfig(projectRoot, {
-      images: [
-        {
-          id: "dev",
-          imageName: "MyProject-dev",
-          active: true,
-          mcp: {
-            port: 7123,
-            loadScript: "pharo/load-mcp.st",
-          },
-          repositoryWorkspace: {
-            repository: {
-              id: "my-project",
-              originPath: sourceRoot,
-            },
-            sourceDirectory: "missing",
-            baseline: "MyProject",
-            materialization: {
-              strategy: "copy",
-            },
-          },
-        },
-      ],
-    });
-    const pharoLauncherMcpClient = new FakePharoLauncherMcpClient(
-      [
-        {
-          pid: 1234,
-          imageName: "MyProject-dev",
-          commandLine: "PharoConsole.exe MyProject-dev.image",
-        },
-      ],
-      undefined,
-      (argumentsValue) => {
-        const scriptPath = argumentsValue.script as string;
-        fs.writeFileSync(
-          path.join(
-            path.dirname(scriptPath),
-            "repository-workspace-load-dev.properties",
-          ),
-          [
-            "status=failed",
-            "sourcePath=/image/pharo-local/iceberg/my-project/missing",
-            "sourceDirectory=missing",
-            "baseline=MyProject",
-            "message=Configured Pharo project source directory does not exist",
-            "",
-          ].join("\n"),
-          "utf8",
-        );
-      },
-      imagesDir,
-    );
-
-    await expect(
-      openProject({
-        projectRoot,
-        stateRoot,
-        workspaceId: "worktree-a",
-        pharoLauncherMcpClient,
-        healthClient: new FakeHealthClient(true),
-        now: fixedNow,
-        sleep: async () => {},
-        poll: {
-          intervalMs: 0,
-        },
-      }),
-    ).rejects.toMatchObject({
-      result: {
-        ok: false,
-        failures: [
-          {
-            imageId: "dev",
-            message:
-              "Pharo project load failed for image dev: Configured Pharo project source directory does not exist",
-          },
-        ],
-      },
-    });
-    const failedState = loadProjectState(
-      path.join(
-        stateRoot,
-        "projects",
-        "project-123",
-        "workspaces",
-        "worktree-a",
-        "state.json",
-      ),
-    );
-    expect(failedState?.images[0].repositoryWorkspace).toMatchObject({
-      loadState: "failed",
-      loadError: "Configured Pharo project source directory does not exist",
-      loadSourcePath: "/image/pharo-local/iceberg/my-project/missing",
-    });
-  });
 
   it("records Pharo MCP load failures reported by the startup script before health timeout", async () => {
     const projectRoot = makeTempDir("plexus-project-");
@@ -1491,7 +829,7 @@ describe("project open", () => {
     expect(savedState?.images[0].pharoMcpLoad).toEqual(pharoMcpLoad);
   });
 
-  it("records an auto-bound MCP endpoint and releases the fallback port claim", async () => {
+  it("records the MCP endpoint the image bound and handed off", async () => {
     const claimsRoot = makeTempDir("plexus-port-claims-");
     const projectRoot = makeTempDir("plexus-project-");
     const stateRoot = makeTempDir("plexus-state-");
@@ -1589,57 +927,8 @@ describe("project open", () => {
       pid: 1234,
       status: "running",
     });
-    await expect(listPortClaims({ claimsRoot })).resolves.toEqual([]);
   });
 
-  it("falls back to the assigned port when endpoint handoff is unavailable", async () => {
-    const projectRoot = makeTempDir("plexus-project-");
-    const stateRoot = makeTempDir("plexus-state-");
-    writeProjectConfig(projectRoot, {
-      images: [
-        {
-          id: "dev",
-          imageName: "MyProject-dev",
-          active: true,
-          mcp: {
-            loadScript: "pharo/load-mcp.st",
-          },
-        },
-      ],
-    });
-    const pharoLauncherMcpClient = new FakePharoLauncherMcpClient([
-      {
-        pid: 1234,
-        imageName: "MyProject-dev",
-        commandLine: "PharoConsole.exe MyProject-dev.image",
-      },
-    ]);
-    const healthClient = new FakeHealthClient(true);
-
-    const result = await openProject({
-      projectRoot,
-      stateRoot,
-      workspaceId: "worktree-a",
-      pharoLauncherMcpClient,
-      healthClient,
-      now: fixedNow,
-      sleep: async () => {},
-      poll: {
-        intervalMs: 0,
-      },
-    });
-
-    expect(result.ok).toBe(true);
-    expect(healthClient.endpoints).toEqual([]);
-    expect(healthClient.ports).toEqual([7100]);
-    expect(result.state.images[0]).toMatchObject({
-      id: "dev",
-      assignedPort: 7100,
-      pid: 1234,
-      status: "running",
-    });
-    expect(result.state.images[0]).not.toHaveProperty("mcpServers");
-  });
 
   it("fails when endpoint handoff content is invalid", async () => {
     const projectRoot = makeTempDir("plexus-project-");
@@ -1867,7 +1156,91 @@ describe("project open", () => {
         argumentsValue: {},
       },
     ]);
-    expect(healthClient.ports).toEqual([7123]);
+    expect(healthClient.endpoints).toEqual([
+      { transport: "http", host: "127.0.0.1", port: 7123, path: "/" },
+    ]);
+  });
+
+  it("materializes an image a stale state file claims but the launcher lacks", async () => {
+    const projectRoot = makeTempDir("plexus-project-");
+    const stateRoot = makeTempDir("plexus-state-");
+    const homePath = makeTempDir("plexus-home-");
+    writeProjectConfig(projectRoot, {
+      home: {
+        path: homePath,
+        imageCache: { enabled: true, networkPolicy: "online" },
+      },
+      images: [
+        {
+          id: "dev",
+          imageName: "MyProject-{workspaceId}-dev",
+          active: true,
+          create: {
+            kind: "template",
+            templateName: "Pharo 13.0 - 64bit",
+            templateCategory: "Official",
+          },
+          mcp: {
+            port: 7123,
+            loadScript: "pharo/load-mcp.st",
+          },
+        },
+      ],
+    });
+    // An earlier config left a record for image id "dev" naming an image the
+    // launcher never held under the name this config renders.
+    saveProjectState(
+      path.join(
+        stateRoot,
+        "projects",
+        "project-123",
+        "workspaces",
+        "worktree-a",
+        "state.json",
+      ),
+      {
+        projectId: "project-123",
+        projectName: "my-project",
+        workspaceId: "worktree-a",
+        updatedAt: "2026-04-25T09:00:00.000Z",
+        images: [
+          {
+            id: "dev",
+            imageName: "MyProject-worktree-a-dev-old",
+            status: "stopped",
+          },
+        ],
+      },
+    );
+    const pharoLauncherMcpClient = new FakePharoLauncherMcpClient([
+      {
+        pid: 1234,
+        imageName: "MyProject-worktree-a-dev",
+        commandLine: "PharoConsole.exe MyProject-worktree-a-dev.image",
+      },
+    ]);
+
+    const result = await openProject({
+      projectRoot,
+      stateRoot,
+      workspaceId: "worktree-a",
+      pharoLauncherMcpClient,
+      healthClient: new FakeHealthClient(true),
+      homeImageCacheApproval: {
+        approved: true,
+        approvalId: "isolated-approval-2",
+      },
+      now: fixedNow,
+      sleep: async () => {},
+      poll: {
+        intervalMs: 0,
+      },
+    });
+
+    expect(result.ok).toBe(true);
+    expect(
+      pharoLauncherMcpClient.calls.map((call) => call.name),
+    ).toContain("pharo_launcher_image_copy_between_profiles");
   });
 
   it("opens zero-image projects as an idle runtime setup", async () => {
@@ -1891,7 +1264,6 @@ describe("project open", () => {
         projectId: "project-123",
         projectName: "my-project",
         workspaceId: "worktree-a",
-        targetId: "project-123--worktree-a",
         runtimeStatus: "idle",
         updatedAt: "2026-04-25T10:00:00.000Z",
         images: [],
@@ -2013,13 +1385,25 @@ describe("project open", () => {
         argumentsValue: {},
       },
     ]);
-    expect(healthClient.ports).toEqual([7101]);
+    expect(healthClient.endpoints).toEqual([
+      { transport: "http", host: "127.0.0.1", port: 7432, path: "/" },
+    ]);
     expect(fs.existsSync(baselineScriptPath)).toBe(true);
     expect(result.state.images).toEqual([
       {
         id: "baseline",
         imageName: "MyProject-baseline",
-        assignedPort: 7101,
+        mcpServers: [
+          {
+            id: "baseline",
+            endpoint: {
+              transport: "http",
+              host: "127.0.0.1",
+              port: 7432,
+              path: "/",
+            },
+          },
+        ],
         pid: 5678,
         status: "running",
       },
@@ -2246,7 +1630,9 @@ describe("project open", () => {
         argumentsValue: {},
       },
     ]);
-    expect(healthClient.ports).toEqual([7123]);
+    expect(healthClient.endpoints).toEqual([
+      { transport: "http", host: "127.0.0.1", port: 7123, path: "/" },
+    ]);
   });
 
   it("opens known unsupported Pharo versions without waiting for MCP health", async () => {
@@ -2400,54 +1786,6 @@ describe("project open", () => {
     expect(result.state.images[0]).not.toHaveProperty("mcpServers");
   });
 
-  it("does not claim host-local image MCP ports for known unsupported Pharo versions", async () => {
-    const claimsRoot = makeTempDir("plexus-port-claims-");
-    const projectRoot = makeTempDir("plexus-project-");
-    const stateRoot = makeTempDir("plexus-state-");
-    writeProjectConfig(projectRoot, {
-      runtime: hostLocalRuntime(claimsRoot, 7200, 7200),
-      images: [
-        {
-          id: "legacy",
-          imageName: "MyProject-legacy",
-          active: true,
-          create: {
-            kind: "template",
-            templateName: "Pharo 11.0 - 64bit",
-          },
-          mcp: {
-            port: 7200,
-            loadScript: "pharo/load-mcp.st",
-          },
-        },
-      ],
-    });
-    const pharoLauncherMcpClient = new FakePharoLauncherMcpClient([
-      {
-        pid: 1234,
-        imageName: "MyProject-legacy",
-        commandLine: "PharoConsole.exe MyProject-legacy.image",
-      },
-    ]);
-
-    const result = await openProject({
-      projectRoot,
-      stateRoot,
-      workspaceId: "worktree-a",
-      pharoLauncherMcpClient,
-      healthClient: new FakeHealthClient(false),
-      now: fixedNow,
-      sleep: async () => {},
-      poll: {
-        intervalMs: 0,
-      },
-      portClaimChecks: fakeLivePortClaimChecks,
-    });
-
-    expect(result.ok).toBe(true);
-    expect(result.state.images[0]).not.toHaveProperty("assignedPort");
-    await expect(listPortClaims({ claimsRoot })).resolves.toEqual([]);
-  });
 
   it("keeps unselected scoped images in their previous runtime state", async () => {
     const projectRoot = makeTempDir("plexus-project-");
@@ -2485,20 +1823,17 @@ describe("project open", () => {
         projectId: "project-123",
         projectName: "my-project",
         workspaceId: "worktree-a",
-        targetId: "project-123--worktree-a",
         updatedAt: "2026-04-25T09:00:00.000Z",
         images: [
           {
             id: "dev",
             imageName: "MyProject-dev",
-            assignedPort: 7100,
             pid: 1234,
             status: "running",
           },
           {
             id: "baseline",
             imageName: "MyProject-baseline",
-            assignedPort: 7101,
             status: "stopped",
           },
         ],
@@ -2529,663 +1864,39 @@ describe("project open", () => {
       {
         id: "dev",
         imageName: "MyProject-dev",
-        assignedPort: 7100,
         pid: 1234,
         status: "running",
       },
       {
         id: "baseline",
         imageName: "MyProject-baseline",
-        assignedPort: 7101,
+        mcpServers: [
+          {
+            id: "baseline",
+            endpoint: {
+              transport: "http",
+              host: "127.0.0.1",
+              port: 7432,
+              path: "/",
+            },
+          },
+        ],
         pid: 5678,
         status: "running",
       },
     ]);
   });
 
-  it("reuses previous runtime port allocations before launching", async () => {
-    const projectRoot = makeTempDir("plexus-project-");
-    const stateRoot = makeTempDir("plexus-state-");
-    writeProjectConfig(projectRoot, {
-      images: [
-        {
-          id: "dev",
-          imageName: "MyProject-dev",
-          active: true,
-          mcp: {
-            loadScript: "pharo/load-mcp.st",
-          },
-        },
-      ],
-    });
-    const previousStatePath = path.join(
-      stateRoot,
-      "projects",
-      "project-123",
-      "workspaces",
-      "worktree-a",
-      "state.json",
-    );
-    const previousState: ProjectState = {
-      projectId: "project-123",
-      projectName: "my-project",
-      workspaceId: "worktree-a",
-      targetId: "project-123--worktree-a",
-      updatedAt: "2026-04-25T09:00:00.000Z",
-      images: [
-        {
-          id: "dev",
-          imageName: "MyProject-dev",
-          assignedPort: 7130,
-          status: "stopped",
-        },
-      ],
-    };
-    saveProjectState(previousStatePath, previousState);
 
-    const result = await openProject({
-      projectRoot,
-      stateRoot,
-      workspaceId: "worktree-a",
-      pharoLauncherMcpClient: new FakePharoLauncherMcpClient([
-        {
-          pid: 1234,
-          imageName: "MyProject-dev",
-          commandLine: "PharoConsole.exe MyProject-dev.image",
-        },
-      ]),
-      healthClient: new FakeHealthClient(true),
-      now: fixedNow,
-      sleep: async () => {},
-      poll: {
-        intervalMs: 0,
-      },
-    });
 
-    expect(result.state.images[0]).toEqual({
-      id: "dev",
-      imageName: "MyProject-dev",
-      assignedPort: 7130,
-      pid: 1234,
-      status: "running",
-    });
-  });
 
-  it("uses host-local claims to allocate dynamic ports across separate state roots", async () => {
-    const claimsRoot = makeTempDir("plexus-port-claims-");
-    const projectRootA = makeTempDir("plexus-project-a-");
-    const projectRootB = makeTempDir("plexus-project-b-");
-    const stateRootA = makeTempDir("plexus-state-a-");
-    const stateRootB = makeTempDir("plexus-state-b-");
-    writeProjectConfig(projectRootA, {
-      name: "project-a",
-      id: "project-a",
-      runtime: hostLocalRuntime(claimsRoot, 7200, 7201),
-      images: [dynamicImage("dev", "ProjectA-dev")],
-    });
-    writeProjectConfig(projectRootB, {
-      name: "project-b",
-      id: "project-b",
-      runtime: hostLocalRuntime(claimsRoot, 7200, 7201),
-      images: [dynamicImage("dev", "ProjectB-dev")],
-    });
 
-    const resultA = await openProject({
-      projectRoot: projectRootA,
-      stateRoot: stateRootA,
-      workspaceId: "worktree-a",
-      pharoLauncherMcpClient: new FakePharoLauncherMcpClient([
-        {
-          pid: 1001,
-          imageName: "ProjectA-dev",
-          commandLine: "PharoConsole.exe ProjectA-dev.image",
-        },
-      ]),
-      healthClient: new FakeHealthClient(true),
-      now: fixedNow,
-      sleep: async () => {},
-      poll: { intervalMs: 0 },
-      portClaimChecks: fakeLivePortClaimChecks,
-    });
-    const resultB = await openProject({
-      projectRoot: projectRootB,
-      stateRoot: stateRootB,
-      workspaceId: "worktree-b",
-      pharoLauncherMcpClient: new FakePharoLauncherMcpClient([
-        {
-          pid: 1002,
-          imageName: "ProjectB-dev",
-          commandLine: "PharoConsole.exe ProjectB-dev.image",
-        },
-      ]),
-      healthClient: new FakeHealthClient(true),
-      now: fixedNow,
-      sleep: async () => {},
-      poll: { intervalMs: 0 },
-      portClaimChecks: fakeLivePortClaimChecks,
-    });
 
-    expect(resultA.state.images[0].assignedPort).toBe(7200);
-    expect(resultB.state.images[0].assignedPort).toBe(7201);
-    await expect(listPortClaims({ claimsRoot })).resolves.toMatchObject([
-      { projectId: "project-a", workspaceId: "worktree-a", assignedPort: 7200 },
-      { projectId: "project-b", workspaceId: "worktree-b", assignedPort: 7201 },
-    ]);
-  });
 
-  it("rejects unrelated projects that request the same configured image MCP port by default", async () => {
-    const claimsRoot = makeTempDir("plexus-port-claims-");
-    const projectRootA = makeTempDir("plexus-project-a-");
-    const projectRootB = makeTempDir("plexus-project-b-");
-    const stateRootA = makeTempDir("plexus-state-a-");
-    const stateRootB = makeTempDir("plexus-state-b-");
-    writeProjectConfig(projectRootA, {
-      name: "project-a",
-      id: "project-a",
-      runtime: hostLocalRuntime(claimsRoot, 7200, 7209),
-      images: [
-        {
-          id: "dev",
-          imageName: "ProjectA-dev",
-          active: true,
-          mcp: {
-            port: 7200,
-            loadScript: "pharo/load-mcp.st",
-          },
-        },
-      ],
-    });
-    writeProjectConfig(projectRootB, {
-      name: "project-b",
-      id: "project-b",
-      runtime: hostLocalRuntime(claimsRoot, 7200, 7209),
-      images: [
-        {
-          id: "dev",
-          imageName: "ProjectB-dev",
-          active: true,
-          mcp: {
-            port: 7200,
-            loadScript: "pharo/load-mcp.st",
-          },
-        },
-      ],
-    });
-    const pharoLauncherMcpClientB = new FakePharoLauncherMcpClient([
-      {
-        pid: 2002,
-        imageName: "ProjectB-dev",
-        commandLine: "PharoConsole.exe ProjectB-dev.image",
-      },
-    ]);
 
-    await openProject({
-      projectRoot: projectRootA,
-      stateRoot: stateRootA,
-      workspaceId: "worktree-a",
-      pharoLauncherMcpClient: new FakePharoLauncherMcpClient([
-        {
-          pid: 2001,
-          imageName: "ProjectA-dev",
-          commandLine: "PharoConsole.exe ProjectA-dev.image",
-        },
-      ]),
-      healthClient: new FakeHealthClient(true),
-      now: fixedNow,
-      sleep: async () => {},
-      poll: { intervalMs: 0 },
-      portClaimChecks: fakeLivePortClaimChecks,
-    });
 
-    await expect(
-      openProject({
-        projectRoot: projectRootB,
-        stateRoot: stateRootB,
-        workspaceId: "worktree-b",
-        pharoLauncherMcpClient: pharoLauncherMcpClientB,
-        healthClient: new FakeHealthClient(true),
-        now: fixedNow,
-        sleep: async () => {},
-        poll: { intervalMs: 0 },
-        portClaimChecks: fakeLivePortClaimChecks,
-      }),
-    ).rejects.toThrow(
-      "Project project-b image dev cannot use image MCP port 7200: already claimed",
-    );
-    expect(pharoLauncherMcpClientB.calls).toEqual([]);
-    await expect(listPortClaims({ claimsRoot })).resolves.toMatchObject([
-      {
-        projectId: "project-a",
-        workspaceId: "worktree-a",
-        targetId: "project-a--worktree-a",
-        purpose: "image-mcp",
-        imageId: "dev",
-        assignedPort: 7200,
-        pid: 2001,
-        claimedAt: "2026-04-25T10:00:00.000Z",
-        updatedAt: "2026-04-25T10:00:00.000Z",
-      },
-    ]);
-  });
 
-  it("keeps dynamic host-local allocation away from sibling workspace state", async () => {
-    const claimsRoot = makeTempDir("plexus-port-claims-");
-    const projectRoot = makeTempDir("plexus-project-");
-    const stateRoot = makeTempDir("plexus-state-");
-    writeProjectConfig(projectRoot, {
-      runtime: hostLocalRuntime(claimsRoot, 7200, 7201),
-      images: [dynamicImage()],
-    });
-    saveProjectState(
-      path.join(
-        stateRoot,
-        "projects",
-        "project-123",
-        "workspaces",
-        "worktree-a",
-        "state.json",
-      ),
-      {
-        projectId: "project-123",
-        projectName: "my-project",
-        workspaceId: "worktree-a",
-        targetId: "project-123--worktree-a",
-        updatedAt: "2026-04-25T09:00:00.000Z",
-        images: [
-          {
-            id: "dev",
-            imageName: "MyProject-dev",
-            assignedPort: 7200,
-            pid: 1111,
-            status: "running",
-          },
-        ],
-      },
-    );
 
-    const result = await openProject({
-      projectRoot,
-      stateRoot,
-      workspaceId: "worktree-b",
-      pharoLauncherMcpClient: new FakePharoLauncherMcpClient([
-        {
-          pid: 2222,
-          imageName: "MyProject-dev",
-          commandLine: "PharoConsole.exe MyProject-dev.image",
-        },
-      ]),
-      healthClient: new FakeHealthClient(true),
-      now: fixedNow,
-      sleep: async () => {},
-      poll: { intervalMs: 0 },
-    });
-
-    expect(result.state.images[0].assignedPort).toBe(7201);
-    await expect(listPortClaims({ claimsRoot })).resolves.toMatchObject([
-      { projectId: "project-123", workspaceId: "worktree-b", assignedPort: 7201 },
-    ]);
-  });
-
-  it("reclaims stale host-local image port claims before dynamic allocation", async () => {
-    const claimsRoot = makeTempDir("plexus-port-claims-");
-    const projectRoot = makeTempDir("plexus-project-");
-    const stateRoot = makeTempDir("plexus-state-");
-    writeProjectConfig(projectRoot, {
-      runtime: hostLocalRuntime(claimsRoot, 7200, 7200),
-      images: [dynamicImage()],
-    });
-    await claimPort({
-      claimsRoot,
-      projectId: "old-project",
-      projectName: "Old Project",
-      workspaceId: "old-worktree",
-      targetId: "old-project--old-worktree",
-      purpose: "image-mcp",
-      imageId: "dev",
-      requestedPort: 7200,
-      pid: 999_999,
-      claimId: "stale-image-claim",
-      now: () => new Date("2026-04-25T09:00:00.000Z"),
-    });
-
-    const result = await openProject({
-      projectRoot,
-      stateRoot,
-      workspaceId: "worktree-a",
-      pharoLauncherMcpClient: new FakePharoLauncherMcpClient([
-        {
-          pid: 3003,
-          imageName: "MyProject-dev",
-          commandLine: "PharoConsole.exe MyProject-dev.image",
-        },
-      ]),
-      healthClient: new FakeHealthClient(true),
-      now: fixedNow,
-      sleep: async () => {},
-      poll: { intervalMs: 0 },
-      portClaimChecks: {
-        isProcessAlive: async () => false,
-        isPortListening: async () => false,
-      },
-    });
-
-    expect(result.state.images[0].assignedPort).toBe(7200);
-    const claims = await listPortClaims({ claimsRoot });
-    expect(claims).toMatchObject([
-      {
-        projectId: "project-123",
-        workspaceId: "worktree-a",
-        targetId: "project-123--worktree-a",
-        purpose: "image-mcp",
-        imageId: "dev",
-        assignedPort: 7200,
-        pid: 3003,
-        claimedAt: "2026-04-25T10:00:00.000Z",
-        updatedAt: "2026-04-25T10:00:00.000Z",
-      },
-    ]);
-    expect(claims[0].claimId).not.toBe("stale-image-claim");
-  });
-
-  it("treats occupied host listener ports as unavailable before launch", async () => {
-    const claimsRoot = makeTempDir("plexus-port-claims-");
-    const projectRoot = makeTempDir("plexus-project-");
-    const stateRoot = makeTempDir("plexus-state-");
-    const server = await listenOnLoopback();
-    const address = server.address();
-    if (!address || typeof address === "string") {
-      throw new Error("Expected TCP listener address");
-    }
-    writeProjectConfig(projectRoot, {
-      runtime: hostLocalRuntime(claimsRoot, address.port, address.port),
-      images: [dynamicImage()],
-    });
-    const pharoLauncherMcpClient = new FakePharoLauncherMcpClient([
-      {
-        pid: 3333,
-        imageName: "MyProject-dev",
-        commandLine: "PharoConsole.exe MyProject-dev.image",
-      },
-    ]);
-
-    try {
-      await expect(
-        openProject({
-          projectRoot,
-          stateRoot,
-          workspaceId: "worktree-a",
-          pharoLauncherMcpClient,
-          healthClient: new FakeHealthClient(true),
-          now: fixedNow,
-          sleep: async () => {},
-          poll: { intervalMs: 0 },
-        }),
-      ).rejects.toThrow(`No available port in range ${address.port}-${address.port}`);
-      expect(pharoLauncherMcpClient.calls).toEqual([]);
-    } finally {
-      await new Promise<void>((resolve, reject) =>
-        server.close((error) => (error ? reject(error) : resolve())),
-      );
-    }
-  });
-
-  it("fails configured image MCP ports clearly when a host listener already owns the port", async () => {
-    const claimsRoot = makeTempDir("plexus-port-claims-");
-    const projectRoot = makeTempDir("plexus-project-");
-    const stateRoot = makeTempDir("plexus-state-");
-    const server = await listenOnLoopback();
-    const address = server.address();
-    if (!address || typeof address === "string") {
-      throw new Error("Expected TCP listener address");
-    }
-    writeProjectConfig(projectRoot, {
-      runtime: hostLocalRuntime(claimsRoot, address.port, address.port),
-      images: [
-        {
-          id: "dev",
-          imageName: "MyProject-dev",
-          active: true,
-          mcp: {
-            port: address.port,
-            loadScript: "pharo/load-mcp.st",
-          },
-        },
-      ],
-    });
-    const pharoLauncherMcpClient = new FakePharoLauncherMcpClient([
-      {
-        pid: 3333,
-        imageName: "MyProject-dev",
-        commandLine: "PharoConsole.exe MyProject-dev.image",
-      },
-    ]);
-
-    try {
-      await expect(
-        openProject({
-          projectRoot,
-          stateRoot,
-          workspaceId: "worktree-a",
-          pharoLauncherMcpClient,
-          healthClient: new FakeHealthClient(true),
-          now: fixedNow,
-          sleep: async () => {},
-          poll: { intervalMs: 0 },
-        }),
-      ).rejects.toThrow(
-        `Project project-123 image dev cannot use image MCP port ${address.port}: occupied by a host listener`,
-      );
-      expect(pharoLauncherMcpClient.calls).toEqual([]);
-    } finally {
-      await new Promise<void>((resolve, reject) =>
-        server.close((error) => (error ? reject(error) : resolve())),
-      );
-    }
-  });
-
-  it("allows duplicate configured image MCP ports across projects with explicit project-state coordination", async () => {
-    const projectRootA = makeTempDir("plexus-project-a-");
-    const projectRootB = makeTempDir("plexus-project-b-");
-    const stateRootA = makeTempDir("plexus-state-a-");
-    const stateRootB = makeTempDir("plexus-state-b-");
-    writeProjectConfig(projectRootA, {
-      name: "project-a",
-      id: "project-a",
-      runtime: projectStateRuntime(7200, 7209),
-      images: [
-        {
-          id: "dev",
-          imageName: "ProjectA-dev",
-          active: true,
-          mcp: {
-            port: 7200,
-            loadScript: "pharo/load-mcp.st",
-          },
-        },
-      ],
-    });
-    writeProjectConfig(projectRootB, {
-      name: "project-b",
-      id: "project-b",
-      runtime: projectStateRuntime(7200, 7209),
-      images: [
-        {
-          id: "dev",
-          imageName: "ProjectB-dev",
-          active: true,
-          mcp: {
-            port: 7200,
-            loadScript: "pharo/load-mcp.st",
-          },
-        },
-      ],
-    });
-
-    const resultA = await openProject({
-      projectRoot: projectRootA,
-      stateRoot: stateRootA,
-      workspaceId: "worktree-a",
-      pharoLauncherMcpClient: new FakePharoLauncherMcpClient([
-        {
-          pid: 4001,
-          imageName: "ProjectA-dev",
-          commandLine: "PharoConsole.exe ProjectA-dev.image",
-        },
-      ]),
-      healthClient: new FakeHealthClient(true),
-      now: fixedNow,
-      sleep: async () => {},
-      poll: { intervalMs: 0 },
-    });
-    const resultB = await openProject({
-      projectRoot: projectRootB,
-      stateRoot: stateRootB,
-      workspaceId: "worktree-b",
-      pharoLauncherMcpClient: new FakePharoLauncherMcpClient([
-        {
-          pid: 4002,
-          imageName: "ProjectB-dev",
-          commandLine: "PharoConsole.exe ProjectB-dev.image",
-        },
-      ]),
-      healthClient: new FakeHealthClient(true),
-      now: fixedNow,
-      sleep: async () => {},
-      poll: { intervalMs: 0 },
-    });
-
-    expect(resultA.state.images[0]).toMatchObject({
-      assignedPort: 7200,
-      status: "running",
-    });
-    expect(resultB.state.images[0]).toMatchObject({
-      assignedPort: 7200,
-      status: "running",
-    });
-  });
-
-  it("fails fixed-port host-local conflicts before launching and names the owner", async () => {
-    const claimsRoot = makeTempDir("plexus-port-claims-");
-    const projectRoot = makeTempDir("plexus-project-");
-    const stateRoot = makeTempDir("plexus-state-");
-    writeProjectConfig(projectRoot, {
-      runtime: hostLocalRuntime(claimsRoot, 7200, 7209),
-    });
-    await claimPort({
-      claimsRoot,
-      projectId: "other-project",
-      projectName: "Other Project",
-      workspaceId: "other-worktree",
-      targetId: "other-project--other-worktree",
-      purpose: "image-mcp",
-      imageId: "dev",
-      requestedPort: 7123,
-      now: fixedNow,
-    });
-    const pharoLauncherMcpClient = new FakePharoLauncherMcpClient([
-      {
-        pid: 4444,
-        imageName: "MyProject-dev",
-        commandLine: "PharoConsole.exe MyProject-dev.image",
-      },
-    ]);
-
-    let rejection: unknown;
-    try {
-      await openProject({
-        projectRoot,
-        stateRoot,
-        workspaceId: "worktree-a",
-        pharoLauncherMcpClient,
-        healthClient: new FakeHealthClient(true),
-        now: fixedNow,
-      });
-    } catch (error) {
-      rejection = error;
-    }
-
-    expect(rejection).toBeInstanceOf(Error);
-    expect((rejection as Error).message).toContain(
-      "Project project-123 image dev cannot use image MCP port 7123",
-    );
-    expect((rejection as Error).message).toContain(
-      "other-project--other-worktree",
-    );
-    expect(pharoLauncherMcpClient.calls).toEqual([]);
-  });
-
-  it("keeps a fixed port claimed by the same compatible target", async () => {
-    const claimsRoot = makeTempDir("plexus-port-claims-");
-    const projectRoot = makeTempDir("plexus-project-");
-    const stateRoot = makeTempDir("plexus-state-");
-    writeProjectConfig(projectRoot, {
-      runtime: hostLocalRuntime(claimsRoot, 7200, 7209),
-    });
-    await claimPort({
-      claimsRoot,
-      projectId: "project-123",
-      projectName: "my-project",
-      workspaceId: "worktree-a",
-      targetId: "project-123--worktree-a",
-      purpose: "image-mcp",
-      imageId: "dev",
-      requestedPort: 7123,
-      now: fixedNow,
-    });
-
-    const result = await openProject({
-      projectRoot,
-      stateRoot,
-      workspaceId: "worktree-a",
-      pharoLauncherMcpClient: new FakePharoLauncherMcpClient([
-        {
-          pid: 5555,
-          imageName: "MyProject-dev",
-          commandLine: "PharoConsole.exe MyProject-dev.image",
-        },
-      ]),
-      healthClient: new FakeHealthClient(true),
-      now: fixedNow,
-      sleep: async () => {},
-      poll: { intervalMs: 0 },
-    });
-
-    expect(result.state.images[0]).toMatchObject({
-      id: "dev",
-      assignedPort: 7123,
-      status: "running",
-    });
-  });
-
-  it("releases host-local claims created for images that fail to open", async () => {
-    const claimsRoot = makeTempDir("plexus-port-claims-");
-    const projectRoot = makeTempDir("plexus-project-");
-    const stateRoot = makeTempDir("plexus-state-");
-    writeProjectConfig(projectRoot, {
-      runtime: hostLocalRuntime(claimsRoot, 7200, 7209),
-      images: [dynamicImage()],
-    });
-
-    await expect(
-      openProject({
-        projectRoot,
-        stateRoot,
-        workspaceId: "worktree-a",
-        pharoLauncherMcpClient: new FakePharoLauncherMcpClient(
-          [],
-          new Error("launch failed"),
-        ),
-        healthClient: new FakeHealthClient(true),
-        now: fixedNow,
-        sleep: async () => {},
-      }),
-    ).rejects.toThrow(ProjectOpenError);
-
-    await expect(inspectPortClaim({ claimsRoot, port: 7200 })).resolves.toEqual({
-      status: "available",
-      port: 7200,
-    });
-  });
 
   it("marks active images failed and still writes state when launch fails", async () => {
     const projectRoot = makeTempDir("plexus-project-");
@@ -3217,13 +1928,11 @@ describe("project open", () => {
       {
         id: "dev",
         imageName: "MyProject-dev",
-        assignedPort: 7123,
         status: "failed",
       },
       {
         id: "baseline",
         imageName: "MyProject-baseline",
-        assignedPort: 7100,
         status: "stopped",
       },
     ]);
@@ -3489,8 +2198,9 @@ describe("project open", () => {
           {
             imageId: "dev",
             imageName: "MyProject-dev",
-            message:
-              "Image MyProject-dev process 987654321 exited before Pharo MCP became healthy on port 7123. Launcher logs: /tmp/myproject-dev.out.log, /tmp/myproject-dev.err.log",
+            message: expect.stringContaining(
+              "Image MyProject-dev process 987654321 exited before Pharo MCP became healthy or wrote its endpoint to ",
+            ),
             launcherToolName: "pharo_launcher_image_launch",
             launcherResult: launchResult,
             process: launchedProcess,
@@ -3511,7 +2221,6 @@ describe("project open", () => {
       id: "dev",
       imageName: "MyProject-dev",
       pid: 987654321,
-      assignedPort: 7123,
       status: "failed",
     });
     expect(
@@ -3556,7 +2265,6 @@ describe("project open", () => {
     ).toEqual({
       id: "dev",
       imageName: "MyProject-dev",
-      assignedPort: 7123,
       status: "failed",
     });
   });
