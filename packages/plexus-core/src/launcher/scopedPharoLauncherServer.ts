@@ -25,7 +25,7 @@ import {
   HttpGatewayRouteRegistry,
   type ProjectLifecycleRouteRegistry,
 } from "../lifecycle/projectLifecycle.js";
-import { openProject } from "../lifecycle/projectOpen.js";
+import { openProject, ProjectOpenError } from "../lifecycle/projectOpen.js";
 import {
   formatToolResultPayload,
   toolResultDetailFromArguments,
@@ -1483,7 +1483,8 @@ export class ScopedPharoLauncher {
     const projectConfig = loadProjectConfig(scope.projectRoot);
     const now = this.options.now?.() ?? new Date();
     const lease = this.imageLeaseForMutation(scope, projectConfig, imageId, now);
-    const openResult = await (this.options.projectOpen ?? openProject)({
+    const openResult = await this.startingImage(imageId, () =>
+      (this.options.projectOpen ?? openProject)({
       projectRoot: scope.projectRoot,
       workspaceId: scope.workspaceId,
       stateRoot: scope.stateRoot,
@@ -1495,7 +1496,8 @@ export class ScopedPharoLauncher {
       ),
       homeImageCacheClient: this.options.homeImageCacheClient ??
         this.options.pharoLauncherMcpClient,
-    });
+      }),
+    );
     const statePath = statePathForScope(scope, projectConfig);
     const leasedState = this.recordImageLease(
       scope,
@@ -1506,6 +1508,32 @@ export class ScopedPharoLauncher {
     );
 
     return await this.imageInfo(imageId);
+  }
+
+  /**
+   * "One or more project images failed to open" tells the caller nothing it can
+   * act on. The per-image failure says what actually happened — which VM holds
+   * the image, which tool frees it — so raise that instead.
+   */
+  private async startingImage<T>(
+    imageId: string,
+    start: () => Promise<T>,
+  ): Promise<T> {
+    try {
+      return await start();
+    } catch (error) {
+      if (!(error instanceof ProjectOpenError)) {
+        throw error;
+      }
+
+      const failure = error.result.failures.find(
+        (candidate) => candidate.imageId === imageId,
+      );
+
+      throw failure
+        ? new ScopedPharoLauncherError(failure.message)
+        : error;
+    }
   }
 
   async setImageDisplayMode(
@@ -1831,14 +1859,13 @@ export const scopedPharoLauncherTools = [
   {
     name: "pharo_launcher_image_stop",
     description:
-      "Stop one workspace-scoped image through PLexus project close policy.",
+      "Stop the process PLexus started for one workspace-scoped image. Stops only that process, never another VM on the same image.",
     inputSchema: objectSchema(
       {
         imageId: stringSchema,
-        confirm: { type: "boolean" },
-      detail: toolResultDetailSchema,
+        detail: toolResultDetailSchema,
       },
-      ["imageId", "confirm"],
+      ["imageId"],
     ),
   },
   {
@@ -1946,7 +1973,6 @@ export function createScopedPharoLauncherServer(
           );
 
         case "pharo_launcher_image_stop":
-          requireConfirm(input);
           return textResult(
             await facade.stopImage(requireString(input, "imageId")),
             false,

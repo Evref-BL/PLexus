@@ -687,20 +687,52 @@ async function pollStartupProcessForImage(
   });
 }
 
-async function processForImage(
+/**
+ * Every VM the host has on this image, ours or not. PLexus owns at most one of
+ * them, so the rest are only ever read — to refuse a launch that would make a
+ * second, and to name what is in the way.
+ */
+export async function processesForImage(
   client: PharoLauncherMcpToolClient,
   imageName: string,
-): Promise<LauncherProcess | undefined> {
+): Promise<LauncherProcess[]> {
   const result = await client.callTool<LauncherCommandResult<LauncherProcess[]>>(
     "pharo_launcher_process_list",
     {},
   );
   assertLauncherOk(result, "pharo_launcher_process_list");
-  const processes = launcherResultData(result) ?? [];
 
-  return processes.find((process) =>
+  return (launcherResultData(result) ?? []).filter((process) =>
     processDirectlyMatchesImage(process, imageName),
   );
+}
+
+async function processForImage(
+  client: PharoLauncherMcpToolClient,
+  imageName: string,
+): Promise<LauncherProcess | undefined> {
+  return (await processesForImage(client, imageName))[0];
+}
+
+/**
+ * Two VMs on one image file overwrite each other's saves, so a launch that
+ * would make the second is refused rather than reported: reporting it would
+ * mean an image has N runtimes, and every tool would need a pid to say which.
+ */
+export class ImageAlreadyRunningError extends Error {
+  constructor(
+    readonly imageName: string,
+    readonly processes: readonly LauncherProcess[],
+  ) {
+    const pids = processes.map((process) => process.pid).join(", ");
+    super(
+      `Image ${imageName} is already running as pid ${pids}. ` +
+        `Saving from two VMs on one image file overwrites the file, so PLexus ` +
+        `will not start a second. Stop it with pharo_launcher_image_stop if ` +
+        `PLexus started it, or end pid ${pids} yourself if something else did.`,
+    );
+    this.name = "ImageAlreadyRunningError";
+  }
 }
 
 function processTimeoutError(imageName: string): Error {
@@ -865,6 +897,13 @@ async function launchImageAndPollProcess(
   intervalMs: number,
   sleep: (durationMs: number) => Promise<void>,
 ): Promise<ImageLaunchRuntime> {
+  // Ask the host, not the record: a VM started from PharoLauncher or by another
+  // agent counts just as much as one of ours.
+  const running = await processesForImage(processClient, imageName);
+  if (running.length > 0) {
+    throw new ImageAlreadyRunningError(imageName, running);
+  }
+
   const launchOutcome = launchClient
     .callTool<LauncherCommandResult>("pharo_launcher_image_launch", {
       imageName,

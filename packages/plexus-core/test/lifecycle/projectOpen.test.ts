@@ -45,6 +45,7 @@ interface ToolCall {
 class FakePharoLauncherMcpClient implements PharoLauncherMcpToolClient {
   readonly calls: ToolCall[] = [];
   private processListCallCount = 0;
+  private answeredPreLaunchCheck = false;
 
   constructor(
     private readonly processes: LauncherProcess[] | LauncherProcess[][] = [],
@@ -55,9 +56,19 @@ class FakePharoLauncherMcpClient implements PharoLauncherMcpToolClient {
       | LauncherCommandResult
       | Promise<LauncherCommandResult>,
     private readonly imageInfoMode: "paths" | "metadata-only" = "paths",
+    /** Something else already holds the image when open checks. */
+    private readonly occupiedBefore: LauncherProcess[] = [],
   ) {}
 
   private nextProcesses(): LauncherProcess[] {
+    // The first list is open's pre-launch check, and nothing is on the image
+    // yet: a fake that answered "already running" there would make every
+    // launch refuse itself. Later calls are the post-launch polls.
+    if (!this.answeredPreLaunchCheck) {
+      this.answeredPreLaunchCheck = true;
+      return this.occupiedBefore;
+    }
+
     if (this.processes.length === 0) {
       this.processListCallCount += 1;
       return [];
@@ -414,6 +425,10 @@ describe("project open", () => {
     expect(result.ok).toBe(true);
     expect(pharoLauncherMcpClient.calls).toEqual([
       {
+        name: "pharo_launcher_process_list",
+        argumentsValue: {},
+      },
+      {
         name: "pharo_launcher_image_launch",
         argumentsValue: {
           imageName: "MyProject-dev",
@@ -545,7 +560,7 @@ describe("project open", () => {
       imageIds: ["dev"],
     });
 
-    expect(pharoLauncherMcpClient.calls[0]).toMatchObject({
+    expect(pharoLauncherMcpClient.calls[1]).toMatchObject({
       name: "pharo_launcher_image_launch",
       argumentsValue: {
         imageName: "MyProject-dev",
@@ -586,7 +601,7 @@ describe("project open", () => {
       imageIds: ["dev"],
     });
 
-    expect(pharoLauncherMcpClient.calls[0]).toMatchObject({
+    expect(pharoLauncherMcpClient.calls[1]).toMatchObject({
       name: "pharo_launcher_image_launch",
       argumentsValue: {
         displayMode: "interactive",
@@ -1140,6 +1155,10 @@ describe("project open", () => {
         },
       },
       {
+        name: "pharo_launcher_process_list",
+        argumentsValue: {},
+      },
+      {
         name: "pharo_launcher_image_launch",
         argumentsValue: {
           imageName: "MyProject-worktree-a-dev",
@@ -1368,6 +1387,10 @@ describe("project open", () => {
 
     expect(result.ok).toBe(true);
     expect(pharoLauncherMcpClient.calls).toEqual([
+      {
+        name: "pharo_launcher_process_list",
+        argumentsValue: {},
+      },
       {
         name: "pharo_launcher_image_launch",
         argumentsValue: {
@@ -1613,6 +1636,10 @@ describe("project open", () => {
         },
       },
       {
+        name: "pharo_launcher_process_list",
+        argumentsValue: {},
+      },
+      {
         name: "pharo_launcher_image_launch",
         argumentsValue: {
           imageName: "MyProject-worktree-a-dev",
@@ -1685,6 +1712,10 @@ describe("project open", () => {
 
     expect(result.ok).toBe(true);
     expect(pharoLauncherMcpClient.calls).toEqual([
+      {
+        name: "pharo_launcher_process_list",
+        argumentsValue: {},
+      },
       {
         name: "pharo_launcher_image_launch",
         argumentsValue: {
@@ -2134,7 +2165,8 @@ describe("project open", () => {
       pharoLauncherMcpClient.calls.filter(
         (call) => call.name === "pharo_launcher_process_list",
       ),
-    ).toHaveLength(2);
+      // One to check the image is free before launching, then the polls.
+    ).toHaveLength(3);
   });
 
   it("fails fast when a launched image exits before MCP health", async () => {
@@ -2217,7 +2249,8 @@ describe("project open", () => {
       pharoLauncherMcpClient.calls.filter(
         (call) => call.name === "pharo_launcher_process_list",
       ),
-    ).toHaveLength(2);
+      // One to check the image is free before launching, then the polls.
+    ).toHaveLength(3);
   });
 
   it("marks active images failed when the launched process is not visible", async () => {
@@ -2258,5 +2291,53 @@ describe("project open", () => {
       imageName: "MyProject-dev",
       status: "failed",
     });
+  });
+
+  it("refuses to launch an image another VM already holds", async () => {
+    const projectRoot = makeTempDir("plexus-project-");
+    const stateRoot = makeTempDir("plexus-state-");
+    writeProjectConfig(projectRoot);
+    // Nothing PLexus started: no pid in the state, a stranger on the image.
+    const pharoLauncherMcpClient = new FakePharoLauncherMcpClient(
+      [],
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      "paths",
+      [
+        {
+          pid: 4242,
+          imageName: "MyProject-dev",
+          commandLine: "pharo MyProject-dev.image",
+        },
+      ],
+    );
+
+    await expect(
+      openProject({
+        projectRoot,
+        stateRoot,
+        workspaceId: "worktree-a",
+        pharoLauncherMcpClient,
+        healthClient: new FakeHealthClient(true),
+        now: fixedNow,
+        sleep: async () => {},
+        poll: { intervalMs: 0, processTimeoutMs: 0 },
+        imageIds: ["dev"],
+      }),
+    ).rejects.toThrow(ProjectOpenError);
+
+    // Refused before launching, so the stranger is left running and alone.
+    expect(
+      pharoLauncherMcpClient.calls.some(
+        (call) => call.name === "pharo_launcher_image_launch",
+      ),
+    ).toBe(false);
+    expect(
+      pharoLauncherMcpClient.calls.some(
+        (call) => call.name === "pharo_launcher_process_kill",
+      ),
+    ).toBe(false);
   });
 });

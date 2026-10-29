@@ -39,6 +39,21 @@ class FakePharoLauncherMcpClient implements PharoLauncherMcpToolClient {
     argumentsValue: Record<string, unknown> = {},
   ): Promise<T> {
     this.calls.push({ name, argumentsValue });
+
+    // Close confirms the pid it recorded against the host before signalling it.
+    if (name === "pharo_launcher_process_list") {
+      return {
+        ok: true,
+        data: [
+          {
+            pid: 1234,
+            imageName: "MyProject-dev",
+            commandLine: "pharo MyProject-dev.image",
+          },
+        ],
+      } as T;
+    }
+
     return { ok: true } as T;
   }
 }
@@ -310,9 +325,13 @@ describe("project cleanup", () => {
     expect(result.confirmed).toBe(true);
     expect(launcherClient.calls).toEqual([
       {
+        name: "pharo_launcher_process_list",
+        argumentsValue: {},
+      },
+      {
         name: "pharo_launcher_process_kill",
         argumentsValue: {
-          imageName: "MyProject-dev",
+          pid: 1234,
           confirm: true,
         },
       },

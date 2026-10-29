@@ -21,9 +21,31 @@ import {
   type ProjectState,
 } from "../workspace/projectState.js";
 
+import { processesForImage } from "./projectOpen.js";
+
 interface LauncherCommandResult<T = unknown> {
   ok: boolean;
   data?: T;
+}
+
+/**
+ * The pid PLexus recorded when it launched this image, confirmed against the
+ * host before we signal it. A recorded pid that no longer runs this image was
+ * reused by something else, and killing it would be killing a stranger.
+ */
+async function ownedProcessPid(
+  client: PharoLauncherMcpToolClient,
+  imageState: ProjectImageState,
+): Promise<number | undefined> {
+  if (imageState.pid === undefined) {
+    return undefined;
+  }
+
+  const processes = await processesForImage(client, imageState.imageName);
+
+  return processes.some((process) => process.pid === imageState.pid)
+    ? imageState.pid
+    : undefined;
 }
 
 export interface ProjectCloseOptions {
@@ -184,15 +206,23 @@ async function stopProjectImages(options: {
 }): Promise<void> {
   for (const imageState of options.images) {
     try {
-      const killResult = await options.client.callTool<LauncherCommandResult>(
-        "pharo_launcher_process_kill",
-        {
-          imageName: imageState.imageName,
-          confirm: true,
-        },
-      );
+      // By pid, never by name: killing by name reaches every VM on the image,
+      // including ones PLexus never started. We stop what we started.
+      // Nothing of ours is running: the image is already stopped, so record
+      // that and leave any stranger on the image alone.
+      const pid = await ownedProcessPid(options.client, imageState);
+      if (pid !== undefined) {
+        const killResult = await options.client.callTool<LauncherCommandResult>(
+          "pharo_launcher_process_kill",
+          {
+            pid,
+            confirm: true,
+          },
+        );
 
-      assertLauncherOk(killResult, "pharo_launcher_process_kill");
+        assertLauncherOk(killResult, "pharo_launcher_process_kill");
+      }
+
       imageState.status = "stopped";
       delete imageState.pid;
       clearImageEndpointRuntimeState({

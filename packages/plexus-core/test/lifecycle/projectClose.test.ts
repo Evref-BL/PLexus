@@ -33,13 +33,30 @@ interface ToolCall {
 class FakePharoLauncherMcpClient implements PharoLauncherMcpToolClient {
   readonly calls: ToolCall[] = [];
 
-  constructor(private readonly killError?: Error) {}
+  constructor(
+    private readonly killError?: Error,
+    /** What the host is running; close confirms its pid against this. */
+    private readonly processes: { pid: number; imageName: string }[] = [
+      { pid: 1234, imageName: "MyProject-dev" },
+    ],
+  ) {}
 
   async callTool<T = unknown>(
     name: string,
     argumentsValue: Record<string, unknown> = {},
   ): Promise<T> {
     this.calls.push({ name, argumentsValue });
+
+    if (name === "pharo_launcher_process_list") {
+      const listed = {
+        ok: true,
+        data: this.processes.map((process) => ({
+          ...process,
+          commandLine: `pharo ${process.imageName}.image`,
+        })),
+      } satisfies LauncherCommandResult<unknown>;
+      return listed as T;
+    }
 
     if (name !== "pharo_launcher_process_kill") {
       throw new Error(`Unexpected tool call: ${name}`);
@@ -191,9 +208,13 @@ describe("project close", () => {
     expect(result.ok).toBe(true);
     expect(pharoLauncherMcpClient.calls).toEqual([
       {
+        name: "pharo_launcher_process_list",
+        argumentsValue: {},
+      },
+      {
         name: "pharo_launcher_process_kill",
         argumentsValue: {
-          imageName: "MyProject-dev",
+          pid: 1234,
           confirm: true,
         },
       },
@@ -300,7 +321,10 @@ describe("project close", () => {
         },
       ],
     });
-    const pharoLauncherMcpClient = new FakePharoLauncherMcpClient();
+    const pharoLauncherMcpClient = new FakePharoLauncherMcpClient(undefined, [
+      { pid: 1234, imageName: "MyProject-dev" },
+      { pid: 5678, imageName: "MyProject-baseline" },
+    ]);
 
     const result = await closeProject({
       projectRoot,
@@ -321,9 +345,13 @@ describe("project close", () => {
     ]);
     expect(pharoLauncherMcpClient.calls).toEqual([
       {
+        name: "pharo_launcher_process_list",
+        argumentsValue: {},
+      },
+      {
         name: "pharo_launcher_process_kill",
         argumentsValue: {
-          imageName: "MyProject-baseline",
+          pid: 5678,
           confirm: true,
         },
       },
@@ -406,6 +434,52 @@ describe("project close", () => {
         imageName: "MyProject-dev",
         pid: 1234,
         status: "running",
+      },
+    ]);
+  });
+
+  it("leaves a VM it did not start alone", async () => {
+    const projectRoot = makeTempDir("plexus-project-");
+    const stateRoot = makeTempDir("plexus-state-");
+    writeProjectConfig(projectRoot);
+    writeRuntimeState(stateRoot, {
+      projectId: "project-123",
+      projectName: "my-project",
+      workspaceId: "worktree-a",
+      updatedAt: "2026-04-25T10:00:00.000Z",
+      images: [
+        {
+          id: "dev",
+          imageName: "MyProject-dev",
+          pid: 1234,
+          status: "running",
+        },
+      ],
+    });
+    // The pid PLexus recorded is gone; a different VM holds the image now.
+    const pharoLauncherMcpClient = new FakePharoLauncherMcpClient(undefined, [
+      { pid: 9999, imageName: "MyProject-dev" },
+    ]);
+
+    const result = await closeProject({
+      projectRoot,
+      stateRoot,
+      workspaceId: "worktree-a",
+      pharoLauncherMcpClient,
+      now: fixedNow,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(
+      pharoLauncherMcpClient.calls.some(
+        (call) => call.name === "pharo_launcher_process_kill",
+      ),
+    ).toBe(false);
+    expect(loadProjectState(result.statePath)?.images).toEqual([
+      {
+        id: "dev",
+        imageName: "MyProject-dev",
+        status: "stopped",
       },
     ]);
   });
