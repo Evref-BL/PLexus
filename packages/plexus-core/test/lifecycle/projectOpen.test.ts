@@ -1430,7 +1430,7 @@ describe("project open", () => {
       ],
     });
 
-    await openProject({
+    const firstOpen = await openProject({
       projectRoot,
       stateRoot,
       workspaceId: "worktree-a",
@@ -1452,13 +1452,17 @@ describe("project open", () => {
       projectRoot,
       stateRoot,
       workspaceId: "worktree-a",
+      isPidAlive: () => false,
+      isPortListening: async () => false,
     });
-    const summaries = launcher.listImages().images;
+    const summaries = (await launcher.listImages()).images;
 
-    expect(summaries.map((image) => [image.imageId, image.status])).toEqual([
-      ["dev", "declared"],
-      ["baseline", "running"],
-    ]);
+    // The rows list what is declared; the state file is where "something
+    // created it" shows up, and only baseline was opened.
+    expect(summaries.map((image) => image.imageId)).toEqual(["dev", "baseline"]);
+    expect(
+      loadProjectState(firstOpen.statePath)?.images.map((image) => image.id),
+    ).toEqual(["baseline"]);
 
     await openProject({
       projectRoot,
@@ -1479,11 +1483,8 @@ describe("project open", () => {
     });
 
     expect(
-      launcher.listImages().images.map((image) => [image.imageId, image.status]),
-    ).toEqual([
-      ["dev", "running"],
-      ["baseline", "running"],
-    ]);
+      loadProjectState(firstOpen.statePath)?.images.map((image) => image.id),
+    ).toEqual(["dev", "baseline"]);
   });
 
   it("blocks prepared image cache copies without explicit approval", async () => {

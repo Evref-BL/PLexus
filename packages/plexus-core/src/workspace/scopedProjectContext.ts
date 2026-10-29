@@ -261,10 +261,6 @@ function startAffordance(
   imageConfig: ProjectImageConfig,
   status: ScopedImageStatus,
 ): ScopedImageAffordance {
-  if (!imageConfig.active) {
-    return denied("Image is inactive in project config");
-  }
-
   if (status === "running") {
     return denied("Image is already running");
   }
@@ -283,10 +279,6 @@ function openInteractiveAffordance(
   imageConfig: ProjectImageConfig,
   status: ScopedImageStatus,
 ): ScopedImageAffordance {
-  if (!imageConfig.active) {
-    return denied("Image is inactive in project config");
-  }
-
   if (status === "starting") {
     return denied("Image is already starting");
   }
@@ -301,10 +293,6 @@ function displayModeAffordance(
   status: ScopedImageStatus,
   toolName: "pharo_launcher_image_show" | "pharo_launcher_image_hide",
 ): ScopedImageAffordance {
-  if (!imageConfig.active) {
-    return denied("Image is inactive in project config");
-  }
-
   if (status === "starting") {
     return denied("Image is already starting");
   }
@@ -330,10 +318,6 @@ function resetAffordance(
   imageConfig: ProjectImageConfig,
   status: ScopedImageStatus,
 ): ScopedImageAffordance {
-  if (!imageConfig.active) {
-    return denied("Image is inactive in project config");
-  }
-
   if (status === "starting") {
     return denied("Image is already starting");
   }

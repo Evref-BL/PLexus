@@ -240,14 +240,15 @@ describe("scoped project context", () => {
           "Deletion is reserved for PLexus workspace cleanup policy, not the scoped launcher surface",
       },
     });
-    expect(context.images[1].affordances.start).toEqual({
-      allowed: false,
-      reason: "Image is inactive in project config",
+    // `active` says what project open starts by itself. It is not a gate: a
+    // declared image can always be started, or there is no way to start it.
+    expect(context.images[1].affordances.start).toMatchObject({
+      allowed: true,
+      toolName: "pharo_launcher_image_start",
     });
-    expect(context.images[1].affordances.reset).toEqual({
-      allowed: false,
-      reason: "Image is inactive in project config",
-    });
+    // Reset is still denied, but on its own policy rather than on `active`.
+    expect(context.images[1].affordances.reset.allowed).toBe(false);
+    expect(context.images[1].affordances.reset.reason).not.toContain("inactive");
     const interactiveContext = buildScopedProjectContext({
       projectRoot,
       projectConfig: {

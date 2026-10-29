@@ -12,6 +12,7 @@ import type {
   ProjectLifecycleRouteRegistration,
   ProjectLifecycleRouteRegistry,
 } from "../../src/lifecycle/projectLifecycle.js";
+import { imageMcpEndpointHandoffPath } from "../../src/gateway/projectImageMcpEndpoint.js";
 import {
   projectStatePathForConfig,
   saveProjectState,
@@ -20,6 +21,7 @@ import {
 } from "../../src/workspace/projectState.js";
 import { resolvePlexusHomePath } from "../../src/config/plexusHome.js";
 import { describePharoLauncherMcpProfile } from "../../src/launcher/pharoLauncherProfile.js";
+import { loadProjectConfig } from "../../src/config/projectConfig.js";
 import {
   ScopedPharoLauncher,
   createScopedPharoLauncherServer,
@@ -82,6 +84,14 @@ function statePath(projectRoot: string, stateRoot: string): string {
   });
 }
 
+function configOnDisk(projectRoot: string) {
+  try {
+    return loadProjectConfig(projectRoot);
+  } catch {
+    return projectConfig();
+  }
+}
+
 function launcherImageDirectory(
   projectRoot: string,
   stateRoot: string,
@@ -90,12 +100,58 @@ function launcherImageDirectory(
   return path.join(
     describePharoLauncherMcpProfile({
       projectRoot,
-      config: projectConfig(),
+      config: configOnDisk(projectRoot),
       workspaceId: "worktree-a",
       stateRoot,
     }).imagesDir,
     imageName,
   );
+}
+
+function materializeLauncherImage(
+  projectRoot: string,
+  stateRoot: string,
+): void {
+  fs.mkdirSync(
+    launcherImageDirectory(projectRoot, stateRoot, "MyProject-worktree-a-dev"),
+    { recursive: true },
+  );
+}
+
+function writeEndpointHandoff(projectRoot: string, stateRoot: string): void {
+  const filePath = imageMcpEndpointHandoffPath({
+    projectRoot,
+    projectId: "project-123",
+    workspaceId: "worktree-a",
+    stateRoot,
+    imageId: "dev",
+  });
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  fs.writeFileSync(
+    filePath,
+    "transport=http\nhost=127.0.0.1\nport=7123\npath=/\n",
+    "utf8",
+  );
+}
+
+function removeEndpointHandoff(projectRoot: string, stateRoot: string): void {
+  fs.rmSync(
+    imageMcpEndpointHandoffPath({
+      projectRoot,
+      projectId: "project-123",
+      workspaceId: "worktree-a",
+      stateRoot,
+      imageId: "dev",
+    }),
+    { force: true },
+  );
+}
+
+/** Make the host agree that the image exists and its MCP answers. */
+function liveImage(projectRoot: string, stateRoot: string) {
+  materializeLauncherImage(projectRoot, stateRoot);
+  writeEndpointHandoff(projectRoot, stateRoot);
+  return { isPidAlive: () => true, isPortListening: async () => true };
 }
 
 function runningState(): ProjectState {
@@ -145,12 +201,28 @@ function imageLease(
   };
 }
 
-function fakeLauncherClient() {
+function fakeLauncherClient(host?: {
+  projectRoot: string;
+  stateRoot: string;
+}) {
   const calls: Array<{ name: string; argumentsValue: Record<string, unknown> }> =
     [];
   const client: PharoLauncherMcpToolClient = {
     async callTool(name, argumentsValue) {
       calls.push({ name, argumentsValue });
+      if (host && (name.includes("create") || name.includes("copy"))) {
+        materializeLauncherImage(host.projectRoot, host.stateRoot);
+      }
+      if (host && name.includes("delete")) {
+        fs.rmSync(
+          launcherImageDirectory(
+            host.projectRoot,
+            host.stateRoot,
+            "MyProject-worktree-a-dev",
+          ),
+          { recursive: true, force: true },
+        );
+      }
       return { ok: true };
     },
   };
@@ -168,6 +240,10 @@ function recordingRouteRegistry(
     unregisterProjectRoute() {},
   };
 }
+
+beforeEach(() => {
+  temporaryPlexusHome();
+});
 
 afterEach(() => {
   for (const tempDir of tempDirs.splice(0)) {
@@ -222,16 +298,18 @@ describe("scoped pharo launcher facade", () => {
     });
   });
 
-  it("reports scoped image listings without raw launcher mutation handles", () => {
+  it("reports scoped image listings without raw launcher mutation handles", async () => {
     const projectRoot = makeTempDir("plexus-project-");
     const stateRoot = makeTempDir("plexus-state-");
     writeProjectConfig(projectRoot);
     saveProjectState(statePath(projectRoot, stateRoot), runningState());
 
-    const result = new ScopedPharoLauncher({
+    const result = await new ScopedPharoLauncher({
       projectRoot,
       stateRoot,
       workspaceId: "worktree-a",
+      isPidAlive: () => false,
+      isPortListening: async () => false,
     }).listImages();
 
     expect(result).toMatchObject({
@@ -248,7 +326,8 @@ describe("scoped pharo launcher facade", () => {
         {
           imageId: "dev",
           active: true,
-          status: "running",
+          // The record says running; no image file exists, so the row says so.
+          status: "absent",
         },
       ],
     });
@@ -259,7 +338,62 @@ describe("scoped pharo launcher facade", () => {
     expect(serialized).not.toContain(stateRoot);
   });
 
-  it("reports image lease metadata from scoped runtime state", () => {
+  it("observes image status on the host instead of reading the record", async () => {
+    const projectRoot = makeTempDir("plexus-project-");
+    const stateRoot = makeTempDir("plexus-state-");
+    writeProjectConfig(projectRoot);
+    // The record claims the image is running, and it is the only thing that
+    // does: nothing has been created and nothing is listening.
+    saveProjectState(statePath(projectRoot, stateRoot), runningState());
+
+    const observe = async (
+      options: Partial<ConstructorParameters<typeof ScopedPharoLauncher>[0]>,
+    ) =>
+      (
+        await new ScopedPharoLauncher({
+          projectRoot,
+          stateRoot,
+          workspaceId: "worktree-a",
+          isPidAlive: () => false,
+          isPortListening: async () => false,
+          ...options,
+        }).listImages()
+      ).images[0];
+
+    expect(await observe({})).toMatchObject({
+      status: "absent",
+      runtime: {
+        materialized: false,
+        process: { alive: false },
+        endpoint: { handoff: "missing", listening: false },
+      },
+    });
+
+    materializeLauncherImage(projectRoot, stateRoot);
+    expect(await observe({})).toMatchObject({
+      status: "stopped",
+      runtime: { materialized: true },
+    });
+
+    expect(await observe({ isPidAlive: () => true })).toMatchObject({
+      status: "starting",
+      runtime: { process: { alive: true } },
+    });
+
+    writeEndpointHandoff(projectRoot, stateRoot);
+    expect(await observe({ isPortListening: async () => true })).toMatchObject({
+      status: "running",
+      runtime: {
+        endpoint: {
+          handoff: "valid",
+          listening: true,
+          url: "http://127.0.0.1:7123/",
+        },
+      },
+    });
+  });
+
+  it("reports image lease metadata from scoped runtime state", async () => {
     const projectRoot = makeTempDir("plexus-project-");
     const stateRoot = makeTempDir("plexus-state-");
     writeProjectConfig(projectRoot);
@@ -277,10 +411,12 @@ describe("scoped pharo launcher facade", () => {
       ],
     });
 
-    const result = new ScopedPharoLauncher({
+    const result = await new ScopedPharoLauncher({
       projectRoot,
       stateRoot,
       workspaceId: "worktree-a",
+      isPidAlive: () => false,
+      isPortListening: async () => false,
     }).listImages();
 
     expect(result.images[0]).toMatchObject({
@@ -523,8 +659,8 @@ describe("scoped pharo launcher facade", () => {
   it("creates only declared images from an approved project template policy", async () => {
     const projectRoot = makeTempDir("plexus-project-");
     const stateRoot = makeTempDir("plexus-state-");
-    const homePath = makeTempDir("plexus-home-");
-    const { client, calls } = fakeLauncherClient();
+    const homePath = temporaryPlexusHome();
+    const { client, calls } = fakeLauncherClient({ projectRoot, stateRoot });
     writeProjectConfig(projectRoot, {
       home: {
         path: homePath,
@@ -1213,7 +1349,7 @@ describe("scoped pharo launcher facade", () => {
       home: { imageCache: { enabled: false, networkPolicy: "online" } },
       runtime: { launcherProfile: { templateCatalog: { source: "none" } } },
     });
-    const { client, calls } = fakeLauncherClient();
+    const { client, calls } = fakeLauncherClient({ projectRoot, stateRoot });
     const failedState: ProjectState = {
       ...runningState(),
       runtimeStatus: "idle",
@@ -1321,8 +1457,11 @@ describe("scoped pharo launcher facade", () => {
       stateRoot,
       workspaceId: "worktree-a",
       pharoLauncherMcpClient: client,
+      isPidAlive: () => true,
+      isPortListening: async () => true,
       now: () => new Date("2026-05-18T12:00:00.000Z"),
       projectClose: async (options) => {
+        removeEndpointHandoff(projectRoot, stateRoot);
         stops.push(options);
         const state = {
           ...runningState(),
@@ -1348,6 +1487,7 @@ describe("scoped pharo launcher facade", () => {
         };
       },
       projectOpen: async (options) => {
+        writeEndpointHandoff(projectRoot, stateRoot);
         starts.push(options);
         const state = {
           ...runningState(),
@@ -1474,8 +1614,12 @@ describe("scoped pharo launcher facade", () => {
       projectRoot,
       stateRoot,
       workspaceId: "worktree-a",
+      isPidAlive: () => true,
+      isPortListening: async () => true,
       projectOpen: async (options) => {
         starts.push(options);
+        materializeLauncherImage(projectRoot, stateRoot);
+        writeEndpointHandoff(projectRoot, stateRoot);
         const state = runningState();
         state.images[0] = {
           ...state.images[0],
@@ -1546,10 +1690,15 @@ describe("scoped pharo launcher facade", () => {
       ],
     });
 
+    materializeLauncherImage(projectRoot, stateRoot);
+    writeEndpointHandoff(projectRoot, stateRoot);
+
     const launcher = new ScopedPharoLauncher({
       projectRoot,
       stateRoot,
       workspaceId: "worktree-a",
+      isPidAlive: () => true,
+      isPortListening: async () => true,
       now: () => new Date("2026-05-23T12:00:00.000Z"),
       fetch: async (url, init) => {
         calls.push("snapshot");
@@ -1595,6 +1744,7 @@ describe("scoped pharo launcher facade", () => {
       },
       projectClose: async (options) => {
         calls.push("close");
+        removeEndpointHandoff(projectRoot, stateRoot);
         expect(options).toMatchObject({
           imageIds: ["dev"],
         });
@@ -1622,6 +1772,7 @@ describe("scoped pharo launcher facade", () => {
       },
       projectOpen: async (options) => {
         calls.push("open");
+        writeEndpointHandoff(projectRoot, stateRoot);
         expect(options).toMatchObject({
           imageIds: ["dev"],
           displayMode: "interactive",
