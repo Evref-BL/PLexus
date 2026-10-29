@@ -172,7 +172,10 @@ async function registerTarget(
   stateFilePath?: string,
 ): Promise<void> {
   const projectRoot = makeTempDir("plexus-project-");
-  const statePath = path.join(projectRoot, stateFilePath ?? "state.json");
+  // resolve, not join: a caller laying several workspaces out under one state
+  // root passes an absolute path, and joining one onto projectRoot builds a
+  // path Windows rejects.
+  const statePath = path.resolve(projectRoot, stateFilePath ?? "state.json");
   fs.mkdirSync(path.dirname(statePath), { recursive: true });
   fs.writeFileSync(statePath, JSON.stringify(state), "utf8");
   const endpoints = path.join(path.dirname(statePath), "mcp-endpoints");
