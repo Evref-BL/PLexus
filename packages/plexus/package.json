@@ -7,7 +7,7 @@
   "repository": {
     "type": "git",
     "url": "git+https://github.com/Evref-BL/PLexus.git",
-    "directory": "packages/plexus-core"
+    "directory": "packages/plexus"
   },
   "type": "module",
   "main": "./dist/index.js",

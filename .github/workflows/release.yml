@@ -39,7 +39,7 @@ jobs:
         env:
           EVENT_NAME: ${{ github.event_name }}
         run: |
-          plexus_version=$(node -p "require('./packages/plexus-core/package.json').version")
+          plexus_version=$(node -p "require('./packages/plexus/package.json').version")
 
           if [[ "$plexus_version" == *-* ]]; then
             echo "Prerelease version $plexus_version; skipping release."

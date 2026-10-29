@@ -48,7 +48,7 @@ jobs:
         env:
           RELEASE_TAG: ${{ github.event.release.tag_name || inputs.release_tag }}
         run: |
-          plexus_version=$(node -p "require('./packages/plexus-core/package.json').version")
+          plexus_version=$(node -p "require('./packages/plexus/package.json').version")
 
           if ! [[ "$plexus_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo "@evref-bl/plexus must use a release SemVer version: $plexus_version" >&2
@@ -70,7 +70,7 @@ jobs:
 
       - name: Wait for published packages
         run: |
-          version="$(node -p "require('./packages/plexus-core/package.json').version")"
+          version="$(node -p "require('./packages/plexus/package.json').version")"
           destination="$(mktemp -d)"
           trap 'rm -rf "$destination"' EXIT
           # Fetch the tarballs, not just the metadata: consumers install from
@@ -99,8 +99,8 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
-          plexus_version="$(node -p "require('./packages/plexus-core/package.json').version")"
-          mcp_version="$(sed -nE 's/export const defaultPharoMcpVersion = "([0-9]+\.[0-9]+\.[0-9]+)";/\1/p' packages/plexus-core/src/workspace/projectStartupScript.ts)"
+          plexus_version="$(node -p "require('./packages/plexus/package.json').version")"
+          mcp_version="$(sed -nE 's/export const defaultPharoMcpVersion = "([0-9]+\.[0-9]+\.[0-9]+)";/\1/p' packages/plexus/src/workspace/projectStartupScript.ts)"
           [[ "$mcp_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
           jq -nc --arg plexus_version "$plexus_version" --arg mcp_version "$mcp_version" \
             '{event_type: "component-release", client_payload: {component: "plexus", version: $plexus_version, mcp_version: $mcp_version}}' |

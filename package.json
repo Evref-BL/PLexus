@@ -10,11 +10,11 @@
   },
   "type": "module",
   "bin": {
-    "plexus": "./packages/plexus-core/dist/cli.js",
-    "plexus-gateway": "./packages/plexus-core/dist/gateway/server/index.js"
+    "plexus": "./packages/plexus/dist/cli.js",
+    "plexus-gateway": "./packages/plexus/dist/gateway/server/index.js"
   },
   "workspaces": [
-    "packages/plexus-core"
+    "packages/plexus"
   ],
   "engines": {
     "node": ">=22.12.0"

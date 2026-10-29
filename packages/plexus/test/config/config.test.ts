@@ -104,7 +104,7 @@ describe("loadPharoLauncherMcpConfig", () => {
 
     const corePackage = JSON.parse(
       fs.readFileSync(
-        path.join(repoRoot, "packages", "plexus-core", "package.json"),
+        path.join(repoRoot, "packages", "plexus", "package.json"),
         "utf8",
       ),
     ) as {

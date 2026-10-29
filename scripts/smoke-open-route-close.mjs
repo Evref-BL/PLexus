@@ -11,8 +11,8 @@ import {
   loadPharoLauncherMcpConfig,
   loadProjectState,
   PlexusProjectLifecycle,
-} from "../packages/plexus-core/dist/index.js";
-import { PlexusGateway } from "../packages/plexus-core/dist/gateway/server/index.js";
+} from "../packages/plexus/dist/index.js";
+import { PlexusGateway } from "../packages/plexus/dist/gateway/server/index.js";
 import {
   applySmokeProfileDefaults,
   assertKeepOpenShowcaseBoundary,

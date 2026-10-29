@@ -231,7 +231,7 @@ export function createProjectLifecycleServer(
 ): Server {
   const server = new Server(
     {
-      name: "plexus-core",
+      name: "plexus",
       version: "0.1.0",
     },
     {
@@ -367,7 +367,7 @@ export async function startProjectLifecycleHttpServer(
 
         writeJsonResponse(response, 200, {
           ok: true,
-          service: "plexus-core",
+          service: "plexus",
           mcpPath,
         });
         return;
