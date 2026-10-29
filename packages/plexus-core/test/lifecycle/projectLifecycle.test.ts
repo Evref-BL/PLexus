@@ -510,10 +510,7 @@ describe("project lifecycle tools", () => {
     const lifecycle = new PlexusProjectLifecycle({
       routeRegistry,
       gateway: {
-        checks: {
-          isPortListening: () => false,
-          isProcessAlive: () => false,
-        },
+        isPortListening: async () => false,
       },
     });
 
@@ -575,10 +572,7 @@ describe("project lifecycle tools", () => {
       routeRegistry,
       pharoLauncherMcpClient: launcherClient,
       gateway: {
-        checks: {
-          isPortListening: () => false,
-          isProcessAlive: () => false,
-        },
+        isPortListening: async () => false,
       },
     });
 
@@ -1883,10 +1877,7 @@ describe("project lifecycle tools", () => {
     const lifecycle = new PlexusProjectLifecycle({
       gateway: {
         now: () => new Date("2026-05-24T11:50:00.000Z"),
-        checks: {
-          isProcessAlive: async () => false,
-          isPortListening: async () => false,
-        },
+        isPortListening: async () => false,
       },
     });
 

@@ -188,6 +188,51 @@ afterEach(() => {
 });
 
 describe("PlexusGateway", () => {
+  it("registers a declared image that is not running yet", async () => {
+    const gateway = new PlexusGateway();
+    const declaredState: GatewayProjectState = {
+      ...runningState,
+      images: [
+        runningState.images[0],
+        {
+          id: "p15",
+          imageName: "MyProject-p15",
+          status: "stopped",
+        },
+      ],
+    };
+
+    await registerTarget(gateway, declaredState);
+
+    const status = data(
+      await gateway.handleTool("plexus_gateway_status", {
+        projectId: "project-123",
+        workspaceId: "worktree-a",
+      }),
+    );
+    expect(status.images.map((image) => image.mcpServerId)).toEqual(["dev"]);
+  });
+
+  it("refuses a running image that has no mcpServers", async () => {
+    const gateway = new PlexusGateway();
+
+    await expect(
+      gateway.handleTool("plexus_gateway_register_target", {
+        projectRoot: makeTempDir("plexus-project-"),
+        statePath: "state.json",
+        state: {
+          ...runningState,
+          images: [
+            { id: "dev", imageName: "MyProject-dev", status: "running" },
+          ],
+        },
+      }),
+    ).resolves.toMatchObject({
+      ok: false,
+      error: "state.images[0] is running but has no mcpServers",
+    });
+  });
+
   it("registers a target route from PLexus runtime state", async () => {
     const gateway = new PlexusGateway();
     const projectRoot = makeTempDir("plexus-project-");

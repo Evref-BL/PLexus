@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import { joinPathLike } from "../support/pathStyle.js";
 import path from "node:path";
 import {
   loadProjectConfig,
@@ -1051,7 +1052,26 @@ function previousImageState(
   return previousState?.images.find((image) => image.id === imageId);
 }
 
+// Whether the launcher already holds this image is the launcher's answer, not
+// the record's: a state file left behind by an earlier config names an image id
+// that no longer corresponds to any launcher image, and keying on the id alone
+// then skips materialization for an image nothing ever created.
+function launcherImageMaterialized(options: {
+  imagesDirectory: string | undefined;
+  previousState: ProjectState | undefined;
+  imageState: ProjectImageState;
+}): boolean {
+  if (options.imagesDirectory === undefined) {
+    return Boolean(previousImageState(options.previousState, options.imageState.id));
+  }
+
+  return fs.existsSync(
+    joinPathLike(options.imagesDirectory, options.imageState.imageName),
+  );
+}
+
 function shouldMaterializeImageFromHomeCache(options: {
+  imagesDirectory: string | undefined;
   previousState: ProjectState | undefined;
   imageConfig: ProjectImageConfig;
   imageState: ProjectImageState;
@@ -1060,7 +1080,7 @@ function shouldMaterializeImageFromHomeCache(options: {
   return Boolean(
     options.approval &&
       projectImageCanUseHomeImageCache(options.imageConfig) &&
-      !previousImageState(options.previousState, options.imageState.id),
+      !launcherImageMaterialized(options),
   );
 }
 
@@ -1135,6 +1155,8 @@ async function materializeProjectImageForOpen(
   imageState: ProjectImageState,
 ): Promise<void> {
   const homeMaterialization = shouldMaterializeImageFromHomeCache({
+    imagesDirectory:
+      context.launcherProfileEnvironment?.PHARO_LAUNCHER_MCP_IMAGES_DIR,
     previousState: context.previousState,
     imageConfig,
     imageState,

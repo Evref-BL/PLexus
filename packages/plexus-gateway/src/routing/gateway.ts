@@ -486,9 +486,18 @@ function imageRouteInput(
     ? (image.pharoMcpContract as GatewayProjectImageState["pharoMcpContract"])
     : undefined;
   const unsupportedPharoMcp = pharoMcpContract?.status === "unsupported";
-  if (mcpServers === undefined && !unsupportedPharoMcp && !remoteGateway) {
+  const status = gatewayImageStatusInput(image, index);
+  // Only a running image owes us an endpoint. A declared image that is
+  // stopped, starting or failed has none yet, and refusing it would refuse the
+  // whole registration, taking its running siblings down with it.
+  if (
+    mcpServers === undefined &&
+    status === "running" &&
+    !unsupportedPharoMcp &&
+    !remoteGateway
+  ) {
     throw new GatewayInputError(
-      `state.images[${index}] must include mcpServers`,
+      `state.images[${index}] is running but has no mcpServers`,
     );
   }
 
@@ -496,7 +505,7 @@ function imageRouteInput(
     id: requireString(image, "id"),
     imageName: requireString(image, "imageName"),
     ...(mcpServers ? { mcpServers } : {}),
-    status: gatewayImageStatusInput(image, index),
+    status,
     ...(pharoMcpContract ? { pharoMcpContract } : {}),
   };
 }

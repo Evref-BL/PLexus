@@ -1161,6 +1161,88 @@ describe("project open", () => {
     ]);
   });
 
+  it("materializes an image a stale state file claims but the launcher lacks", async () => {
+    const projectRoot = makeTempDir("plexus-project-");
+    const stateRoot = makeTempDir("plexus-state-");
+    const homePath = makeTempDir("plexus-home-");
+    writeProjectConfig(projectRoot, {
+      home: {
+        path: homePath,
+        imageCache: { enabled: true, networkPolicy: "online" },
+      },
+      images: [
+        {
+          id: "dev",
+          imageName: "MyProject-{workspaceId}-dev",
+          active: true,
+          create: {
+            kind: "template",
+            templateName: "Pharo 13.0 - 64bit",
+            templateCategory: "Official",
+          },
+          mcp: {
+            port: 7123,
+            loadScript: "pharo/load-mcp.st",
+          },
+        },
+      ],
+    });
+    // An earlier config left a record for image id "dev" naming an image the
+    // launcher never held under the name this config renders.
+    saveProjectState(
+      path.join(
+        stateRoot,
+        "projects",
+        "project-123",
+        "workspaces",
+        "worktree-a",
+        "state.json",
+      ),
+      {
+        projectId: "project-123",
+        projectName: "my-project",
+        workspaceId: "worktree-a",
+        updatedAt: "2026-04-25T09:00:00.000Z",
+        images: [
+          {
+            id: "dev",
+            imageName: "MyProject-worktree-a-dev-old",
+            status: "stopped",
+          },
+        ],
+      },
+    );
+    const pharoLauncherMcpClient = new FakePharoLauncherMcpClient([
+      {
+        pid: 1234,
+        imageName: "MyProject-worktree-a-dev",
+        commandLine: "PharoConsole.exe MyProject-worktree-a-dev.image",
+      },
+    ]);
+
+    const result = await openProject({
+      projectRoot,
+      stateRoot,
+      workspaceId: "worktree-a",
+      pharoLauncherMcpClient,
+      healthClient: new FakeHealthClient(true),
+      homeImageCacheApproval: {
+        approved: true,
+        approvalId: "isolated-approval-2",
+      },
+      now: fixedNow,
+      sleep: async () => {},
+      poll: {
+        intervalMs: 0,
+      },
+    });
+
+    expect(result.ok).toBe(true);
+    expect(
+      pharoLauncherMcpClient.calls.map((call) => call.name),
+    ).toContain("pharo_launcher_image_copy_between_profiles");
+  });
+
   it("opens zero-image projects as an idle runtime setup", async () => {
     const projectRoot = makeTempDir("plexus-project-");
     const stateRoot = makeTempDir("plexus-state-");
