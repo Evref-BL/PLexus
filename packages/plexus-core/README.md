@@ -8,5 +8,5 @@ npm install --global @evref-bl/plexus
 plexus --help
 ```
 
-For gateway embedding, use `@evref-bl/plexus-gateway`. Configuration and MCP
+For gateway embedding, import `@evref-bl/plexus/gateway`. Configuration and MCP
 usage are documented at https://github.com/Evref-BL/PLexus.

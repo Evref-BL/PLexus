@@ -7,7 +7,6 @@ const root = path.resolve(import.meta.dirname, "..", "..");
 const manifests = [
   "package.json",
   "packages/plexus-core/package.json",
-  "packages/plexus-gateway/package.json",
 ];
 
 function dependenciesOf(file) {

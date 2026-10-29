@@ -1,8 +1,8 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { describe, expect, it } from "vitest";
-import { PlexusGateway, type GatewayToolResult } from "../../src/routing/gateway.js";
-import { createGatewayServerWithOptions } from "../../src/mcp/server.js";
+import { PlexusGateway, type GatewayToolResult } from "../../../../src/gateway/server/routing/gateway.js";
+import { createGatewayServerWithOptions } from "../../../../src/gateway/server/mcp/server.js";
 
 function textPayload(result: unknown): Record<string, unknown> {
   const content = (result as { content?: Array<{ type: string; text?: string }> })

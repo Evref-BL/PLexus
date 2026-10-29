@@ -6,11 +6,11 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import { afterEach, describe, expect, it } from "vitest";
-import { PlexusGateway, type GatewayToolResult } from "../../src/routing/gateway.js";
+import { PlexusGateway, type GatewayToolResult } from "../../../../src/gateway/server/routing/gateway.js";
 import type {
   ImageMcpRoute,
   ImageMcpToolRouter,
-} from "../../src/routing/imageMcpRouter.js";
+} from "../../../../src/gateway/server/routing/imageMcpRouter.js";
 import {
   createGatewayServerWithOptions,
   createGatewayFromEnvironment,
@@ -18,7 +18,7 @@ import {
   parseGatewayEnvironmentOptions,
   parseGatewayServerCliOptions,
   startGatewayHttpServer,
-} from "../../src/mcp/server.js";
+} from "../../../../src/gateway/server/mcp/server.js";
 
 const servers: http.Server[] = [];
 

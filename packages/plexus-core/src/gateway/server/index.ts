@@ -29,7 +29,7 @@ const modulePath = comparablePath(fileURLToPath(import.meta.url));
 
 if (entrypointPath && modulePath === entrypointPath) {
   assertFreshSourceBuildForEntrypoint(modulePath, {
-    packageName: "@evref-bl/plexus-gateway",
+    packageName: "@evref-bl/plexus",
     buildCommand: "npm run build",
   });
 

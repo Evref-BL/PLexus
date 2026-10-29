@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   assertFreshSourceBuildForEntrypoint,
   findStaleSourceBuild,
-} from "../../src/support/sourceBuildPreflight.js";
+} from "../../../../src/gateway/server/support/sourceBuildPreflight.js";
 
 const tempDirs: string[] = [];
 

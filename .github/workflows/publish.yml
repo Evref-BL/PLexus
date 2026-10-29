@@ -49,15 +49,9 @@ jobs:
           RELEASE_TAG: ${{ github.event.release.tag_name || inputs.release_tag }}
         run: |
           plexus_version=$(node -p "require('./packages/plexus-core/package.json').version")
-          gateway_version=$(node -p "require('./packages/plexus-gateway/package.json').version")
 
           if ! [[ "$plexus_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo "@evref-bl/plexus must use a release SemVer version: $plexus_version" >&2
-            exit 1
-          fi
-
-          if [ "$gateway_version" != "$plexus_version" ]; then
-            echo "Published PLexus workspaces must share one version: $plexus_version and $gateway_version." >&2
             exit 1
           fi
 
@@ -69,12 +63,10 @@ jobs:
       - name: Verify package contents
         run: |
           npm pack --workspace @evref-bl/plexus --dry-run
-          npm pack --workspace @evref-bl/plexus-gateway --dry-run
 
       - name: Publish packages
         run: |
           npm publish --workspace @evref-bl/plexus --access public
-          npm publish --workspace @evref-bl/plexus-gateway --access public
 
       - name: Wait for published packages
         run: |
@@ -86,7 +78,6 @@ jobs:
           for _ in {1..60}; do
             if npm pack \
               "@evref-bl/plexus@${version}" \
-              "@evref-bl/plexus-gateway@${version}" \
               --pack-destination "$destination" \
               --prefer-online >/dev/null 2>&1; then
               exit 0

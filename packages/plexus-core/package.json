@@ -2,7 +2,7 @@
   "name": "@evref-bl/plexus",
   "version": "0.7.0",
   "private": false,
-  "description": "PLexus CLI for project-scoped Pharo runtime orchestration.",
+  "description": "PLexus: project-scoped Pharo runtime orchestration and MCP gateway.",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
@@ -16,11 +16,16 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
     },
+    "./gateway": {
+      "types": "./dist/gateway/server/index.d.ts",
+      "import": "./dist/gateway/server/index.js"
+    },
     "./package.json": "./package.json"
   },
   "types": "./dist/index.d.ts",
   "bin": {
-    "plexus": "dist/cli.js"
+    "plexus": "dist/cli.js",
+    "plexus-gateway": "dist/gateway/server/index.js"
   },
   "files": [
     "README.md",

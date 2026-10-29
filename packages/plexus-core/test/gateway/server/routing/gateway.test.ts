@@ -7,13 +7,13 @@ import {
   PlexusGateway,
   type GatewayImageHealthClient,
   type GatewayToolResult,
-} from "../../src/routing/gateway.js";
+} from "../../../../src/gateway/server/routing/gateway.js";
 import type {
   ImageMcpConnectionInfo,
   ImageMcpRoute,
   ImageMcpToolRouter,
-} from "../../src/routing/imageMcpRouter.js";
-import type { GatewayProjectState } from "../../src/routing/routingTable.js";
+} from "../../../../src/gateway/server/routing/imageMcpRouter.js";
+import type { GatewayProjectState } from "../../../../src/gateway/server/routing/routingTable.js";
 
 const tempDirs: string[] = [];
 

@@ -40,12 +40,6 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
         run: |
           plexus_version=$(node -p "require('./packages/plexus-core/package.json').version")
-          gateway_version=$(node -p "require('./packages/plexus-gateway/package.json').version")
-
-          if [ "$gateway_version" != "$plexus_version" ]; then
-            echo "Published PLexus workspaces must share one version: $plexus_version and $gateway_version." >&2
-            exit 1
-          fi
 
           if [[ "$plexus_version" == *-* ]]; then
             echo "Prerelease version $plexus_version; skipping release."

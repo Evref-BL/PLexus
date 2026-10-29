@@ -55,16 +55,32 @@ function newestSourceFile(sourceRoot: string):
   return newest;
 }
 
+function packageRootAboveDist(distFile: string): string | undefined {
+  let directory = path.dirname(distFile);
+  while (true) {
+    if (path.basename(directory) === "dist") {
+      return path.dirname(directory);
+    }
+
+    const parent = path.dirname(directory);
+    if (parent === directory) {
+      return undefined;
+    }
+    directory = parent;
+  }
+}
+
 export function findStaleSourceBuild(
   distEntrypointPath: string,
 ): SourceBuildStaleness | undefined {
   const distFile = path.resolve(distEntrypointPath);
-  const distDirectory = path.dirname(distFile);
-  if (path.basename(distDirectory) !== "dist") {
+  // Walk up to the "dist" directory rather than assuming the entrypoint sits
+  // directly inside it: a bin can live deeper, as this one does.
+  const packageRoot = packageRootAboveDist(distFile);
+  if (packageRoot === undefined) {
     return undefined;
   }
 
-  const packageRoot = path.dirname(distDirectory);
   const sourceRoot = path.join(packageRoot, "src");
   if (
     !fs.existsSync(path.join(packageRoot, "package.json")) ||

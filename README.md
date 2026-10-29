@@ -11,7 +11,7 @@ is reserved before the image is running.
 ## Packages
 
 - `@evref-bl/plexus` manages project images and their lifecycle.
-- `@evref-bl/plexus-gateway` forwards MCP calls to registered image MCP servers.
+- `@evref-bl/plexus/gateway` forwards MCP calls to the image MCP servers it discovers.
 
 The gateway is independent of project configuration. PLexus resolves image
 state and registers server endpoints; the gateway stores those routes in memory
@@ -107,13 +107,11 @@ plexus-gateway
 Its HTTP mode has two MCP paths backed by one route table:
 
 - `/mcp` forwards typed Pharo MCP calls by `mcpServerId`.
-- `/control-mcp` registers, inspects, and removes routes for PLexus lifecycle
-  operations.
+- `/control-mcp` reports what the gateway currently resolves, for PLexus
+  lifecycle diagnostics.
 
-`mcpServerId` is required for routed calls. It names a server endpoint, not an
-image: `dev-code` and `dev-tools` can both belong to image `dev` while using
-different ports.
+`mcpServerId` is required for routed calls and names the image's MCP server.
+Nothing registers a route: the gateway reads the project state file and the
+endpoint handoff each image writes, when the call arrives.
 
-Image MCP routes are lifecycle diagnostics. Route registration belongs to
-PLexus and gateway control; normal forwarding clients only call the `/mcp`
-surface.
+Normal forwarding clients only call the `/mcp` surface.

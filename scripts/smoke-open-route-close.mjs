@@ -12,7 +12,7 @@ import {
   loadProjectState,
   PlexusProjectLifecycle,
 } from "../packages/plexus-core/dist/index.js";
-import { PlexusGateway } from "../packages/plexus-gateway/dist/index.js";
+import { PlexusGateway } from "../packages/plexus-core/dist/gateway/server/index.js";
 import {
   applySmokeProfileDefaults,
   assertKeepOpenShowcaseBoundary,
