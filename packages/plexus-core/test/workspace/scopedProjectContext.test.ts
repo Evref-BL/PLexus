@@ -15,7 +15,6 @@ const projectConfig: ProjectConfig = {
     {
       id: "dev",
       imageName: "MyProject-{workspaceId}-dev",
-      active: true,
       mcp: {
         loadScript: "pharo/load-mcp.st",
       },
@@ -29,7 +28,6 @@ const projectConfig: ProjectConfig = {
     {
       id: "baseline",
       imageName: "MyProject-{workspaceId}-baseline",
-      active: false,
       mcp: {
         loadScript: "pharo/load-mcp.st",
       },
@@ -258,7 +256,6 @@ describe("scoped project context", () => {
           {
             id: "preview",
             imageName: "MyProject-{workspaceId}-preview",
-            active: true,
           },
         ],
       },

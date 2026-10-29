@@ -98,12 +98,6 @@ export interface ProjectLifecycleRouteRegistration {
 }
 
 export interface ProjectLifecycleRouteRegistry {
-  registerProjectRoute(
-    input: ProjectLifecycleRouteRegistration,
-  ): Promise<unknown> | unknown;
-  unregisterProjectRoute(
-    input: ProjectLifecycleRouteReference,
-  ): Promise<unknown> | unknown;
   getRouteStatus?(
     input: ProjectLifecycleRouteReference & { refreshHealth?: boolean },
   ): Promise<unknown> | unknown;
@@ -311,7 +305,7 @@ export type ProjectLifecycleRuntimeDiagnosticHealth =
 
 export interface ProjectLifecycleRouteTableDiagnostics {
   status:
-    | "registered"
+    | "resolved"
     | "missing"
     | "unavailable"
     | "not-configured"
@@ -332,7 +326,6 @@ export interface ProjectLifecycleRouteTableDiagnostics {
 
 export interface ProjectLifecycleProjectDiagnostics {
   declaredImageCount: number;
-  activeImageCount: number;
   runtimeImageCount: number;
 }
 
@@ -914,7 +907,6 @@ function projectDiagnostics(
 ): ProjectLifecycleProjectDiagnostics {
   return {
     declaredImageCount: config.images.length,
-    activeImageCount: config.images.filter((image) => image.active).length,
     runtimeImageCount: state?.images.length ?? 0,
   };
 }
@@ -1083,10 +1075,6 @@ function routeTableDiagnostics(
 
   const images = Array.isArray(route.images) ? route.images : [];
   const statePath = registeredRouteStatePath(route);
-  const statePathMismatch =
-    statePath !== undefined &&
-    expectedStatePath !== undefined &&
-    !sameResolvedPath(statePath, expectedStatePath);
   const routableImages: ProjectLifecycleRouteTableDiagnostics["routableImages"] = images
     .filter(isObject)
     .map((image) => {
@@ -1104,32 +1092,13 @@ function routeTableDiagnostics(
         ...(endpoint ? { endpoint } : {}),
         routingMode,
         ...(typeof image.status === "string" ? { status: image.status } : {}),
-        ...(statePathMismatch
-          ? {
-              routable: {
-                ok: false,
-                code: "image_unavailable",
-                message:
-                  "Registered gateway route uses a different PLexus runtime state path",
-              },
-            }
-          : "routable" in image
-            ? { routable: image.routable }
-            : {}),
+        ...("routable" in image ? { routable: image.routable } : {}),
       };
     });
 
   return {
-    status: statePathMismatch ? "unavailable" : "registered",
+    status: "resolved",
     ...(statePath ? { statePath } : {}),
-    ...(statePathMismatch && expectedStatePath ? { expectedStatePath } : {}),
-    ...(statePathMismatch
-      ? {
-          error:
-            `Registered gateway route state path ${statePath} does not match ` +
-            `selected lifecycle state path ${expectedStatePath}`,
-        }
-      : {}),
     routableImages,
   };
 }
@@ -1362,16 +1331,6 @@ export class HttpGatewayRouteRegistry implements ProjectLifecycleRouteRegistry {
     this.url = options.url ?? `http://${host}:${port}${mcpPath}`;
     this.timeoutMs = options.timeoutMs ?? 10_000;
     this.fetchFn = options.fetch ?? fetch;
-  }
-
-  registerProjectRoute(
-    input: ProjectLifecycleRouteRegistration,
-  ): Promise<unknown> {
-    return this.callTool("plexus_gateway_register_target", input);
-  }
-
-  unregisterProjectRoute(input: ProjectLifecycleRouteReference): Promise<unknown> {
-    return this.callTool("plexus_gateway_unregister_target", input);
   }
 
   getRouteStatus(
@@ -1902,14 +1861,6 @@ export class PlexusProjectLifecycle {
     const routeRegistry =
       this.routeRegistry ?? this.routeRegistryForProject(context.config, state);
 
-    await this.unregisterRoute(
-      {
-        projectId: context.projectId,
-        workspaceId: context.workspaceId,
-      },
-      routeRegistry,
-    );
-
     if (state?.gateway?.managedByProject) {
       await closeProjectGateway({
         ...this.gateway,
@@ -2000,32 +1951,13 @@ export class PlexusProjectLifecycle {
         projectRoot: openResult.projectRoot,
         config,
         state: openResult.state,
+        statePath: openResult.statePath,
       });
       startedProjectGateway = gatewayResult.started;
       saveProjectState(openResult.statePath, openResult.state);
       routeRegistry = this.routeRegistryFromControlUrl(gatewayResult.routeControlUrl);
     }
 
-    try {
-      await this.registerRoute(
-        {
-          projectRoot: openResult.projectRoot,
-          statePath: openResult.statePath,
-          state: openResult.state,
-        },
-        routeRegistry,
-      );
-    } catch (error) {
-      if (startedProjectGateway) {
-        await closeProjectGateway({
-          ...this.gateway,
-          state: openResult.state,
-        });
-        saveProjectState(openResult.statePath, openResult.state);
-      }
-
-      throw error;
-    }
   }
 
   private async discoverGatewayPharoTools(
@@ -2161,36 +2093,6 @@ export class PlexusProjectLifecycle {
     );
   }
 
-  private async unregisterClosedProjectRoute(
-    input: ProjectCloseToolInput,
-    projectRoot: string,
-    config: ProjectConfig | undefined,
-    closeResult: ProjectCloseResult,
-    routeRegistry: ProjectLifecycleRouteRegistry | undefined,
-  ): Promise<void> {
-    if (closeResult.state) {
-      await this.unregisterRoute(
-        {
-          projectId: closeResult.state.projectId,
-          workspaceId: closeResult.state.workspaceId,
-        },
-        routeRegistry,
-      );
-      return;
-    }
-
-    const workspaceId = input.workspaceId
-      ? sanitizeRuntimeId(input.workspaceId)
-      : defaultWorkspaceId(projectRoot);
-    await this.unregisterRoute(
-      {
-        projectId: config ? projectConfigId(config) : undefined,
-        workspaceId,
-      },
-      routeRegistry,
-    );
-  }
-
   private async closeManagedProjectGateway(
     closeResult: ProjectCloseResult,
   ): Promise<void> {
@@ -2208,32 +2110,10 @@ export class PlexusProjectLifecycle {
     saveProjectState(closeResult.statePath, closeResult.state);
   }
 
-  private async unregisterClosedProjectRouteAndGateway(
-    input: ProjectCloseToolInput,
-    projectRoot: string,
-    config: ProjectConfig | undefined,
+  private async closeProjectGatewayForClose(
     closeResult: ProjectCloseResult,
-    routeRegistry: ProjectLifecycleRouteRegistry | undefined,
   ): Promise<void> {
-    let unregisterError: unknown;
-
-    try {
-      await this.unregisterClosedProjectRoute(
-        input,
-        projectRoot,
-        config,
-        closeResult,
-        routeRegistry,
-      );
-    } catch (error) {
-      unregisterError = error;
-    } finally {
-      await this.closeManagedProjectGateway(closeResult);
-    }
-
-    if (unregisterError) {
-      throw unregisterError;
-    }
+    await this.closeManagedProjectGateway(closeResult);
   }
 
   async close(
@@ -2259,18 +2139,7 @@ export class PlexusProjectLifecycle {
         stateRoot: this.effectiveStateRoot(input.stateRoot),
         workspaceId: input.workspaceId,
       });
-      const projectRoot = path.resolve(input.projectPath);
-      const config =
-        !this.routeRegistry || !closeResult.state
-          ? loadProjectConfig(projectRoot)
-          : undefined;
-      await this.unregisterClosedProjectRouteAndGateway(
-        input,
-        projectRoot,
-        config,
-        closeResult,
-        this.routeRegistryForCloseResult(config, closeResult),
-      );
+      await this.closeProjectGatewayForClose(closeResult);
 
       return result(closeResult);
     } catch (error) {
@@ -2288,38 +2157,12 @@ export class PlexusProjectLifecycle {
       return undefined;
     }
 
-    const routeRegistry = this.routeRegistryForProject(config, state);
-    if (!routeRegistry) {
-      routeResource.status = "skipped";
-      routeResource.reason =
-        "No route registry is configured for this project scope.";
-      return undefined;
-    }
-
-    try {
-      await this.unregisterRoute(
-        { projectId: state.projectId, workspaceId: state.workspaceId },
-        routeRegistry,
-      );
-      routeResource.status = "cleaned";
-      return undefined;
-    } catch (error) {
-      const skipReason = idempotentRouteCleanupReason(error);
-      if (skipReason) {
-        routeResource.status = "skipped";
-        routeResource.reason = skipReason;
-        return undefined;
-      }
-
-      const message = errorMessage(error);
-      routeResource.status = "failed";
-      routeResource.reason = message;
-      return {
-        kind: "route",
-        id: `${state.projectId}/${state.workspaceId}`,
-        message,
-      };
-    }
+    // Routes are read from the state file, so removing the file removes the
+    // route. There is nothing of ours left behind to clean up.
+    routeResource.status = "skipped";
+    routeResource.reason =
+      "Routes are resolved from project files; removing them removes the route.";
+    return undefined;
   }
 
   async cleanup(
@@ -2482,20 +2325,7 @@ export class PlexusProjectLifecycle {
         );
       }
 
-      const rescueResult = await this.imageRescue(options);
-      if (rescueResult.state) {
-        const config = loadProjectConfig(rescueResult.projectRoot);
-        await this.registerRoute(
-          {
-            projectRoot: rescueResult.projectRoot,
-            statePath: rescueResult.statePath,
-            state: rescueResult.state,
-          },
-          this.routeRegistryForProject(config, rescueResult.state),
-        );
-      }
-
-      return result(rescueResult);
+      return result(await this.imageRescue(options));
     } catch (error) {
       return failure(error);
     }
@@ -2669,28 +2499,6 @@ export class PlexusProjectLifecycle {
           },
           routeRegistry,
         );
-        if (
-          routeRegistry &&
-          registeredRouteStatePath(route) &&
-          !sameResolvedPath(registeredRouteStatePath(route), statePath)
-        ) {
-          await this.registerRoute(
-            {
-              projectRoot,
-              statePath,
-              state,
-            },
-            routeRegistry,
-          );
-          route = await this.getRouteStatus(
-            {
-              projectId: state.projectId,
-              workspaceId: state.workspaceId,
-              refreshHealth: input.refreshHealth,
-            },
-            routeRegistry,
-          );
-        }
       } catch (error) {
         routeError = error;
       }
@@ -2788,28 +2596,6 @@ export class PlexusProjectLifecycle {
     }
 
     return unwrapToolLikeResult(await routeRegistry.getRouteStatus(input));
-  }
-
-  private async registerRoute(
-    input: ProjectLifecycleRouteRegistration,
-    routeRegistry = this.routeRegistry,
-  ): Promise<void> {
-    if (!routeRegistry) {
-      return;
-    }
-
-    unwrapToolLikeResult(await routeRegistry.registerProjectRoute(input));
-  }
-
-  private async unregisterRoute(
-    input: ProjectLifecycleRouteReference,
-    routeRegistry = this.routeRegistry,
-  ): Promise<void> {
-    if (!routeRegistry) {
-      return;
-    }
-
-    unwrapToolLikeResult(await routeRegistry.unregisterProjectRoute(input));
   }
 
   private routeRegistryFromControlUrl(url: string): ProjectLifecycleRouteRegistry {

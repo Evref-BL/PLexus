@@ -146,7 +146,6 @@ export interface ScopedImageGatewayRouteMetadata {
 
 export interface ScopedImageContext {
   imageId: string;
-  active: boolean;
   status: ScopedImageStatus;
   displayMode: ProjectImageDisplayMode;
   ownership: ScopedImageOwnership;
@@ -164,7 +163,6 @@ export interface ScopedProjectContext {
 export interface ScopedImageDiagnosticContext {
   imageId: string;
   launcherImageName: string;
-  active: boolean;
   status: ScopedImageStatus;
   displayMode: ProjectImageDisplayMode;
   mcpServers?: ProjectImageState["mcpServers"];
@@ -478,7 +476,6 @@ function scopedImageContext(
 ): ScopedImageContext {
   return {
     imageId: imageConfig.id,
-    active: imageConfig.active,
     status: imageStatus(imageState),
     displayMode: imageState?.displayMode ?? projectImageDisplayMode(imageConfig),
     ownership: {
@@ -506,7 +503,6 @@ function scopedImageDiagnostics(
   return {
     imageId: imageConfig.id,
     launcherImageName,
-    active: imageConfig.active,
     status: imageStatus(imageState),
     displayMode: imageState?.displayMode ?? projectImageDisplayMode(imageConfig),
     ...(imageState?.mcpServers ? { mcpServers: imageState.mcpServers } : {}),

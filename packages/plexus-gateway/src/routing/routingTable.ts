@@ -1,5 +1,11 @@
-import fs from "node:fs";
 import path from "node:path";
+
+import {
+  discoverImageMcpServers,
+  readProjectState,
+  type RouteDiscoveryDependencies,
+  type RouteDiscoverySource,
+} from "./routeDiscovery.js";
 
 export type GatewayProjectImageStatus =
   | "starting"
@@ -283,119 +289,41 @@ function imageRouteMetadata(
   };
 }
 
-// The route key is the pair the caller gives, never a third identifier that
-// could disagree with it.
-function routeKey(projectId: string, workspaceId: string): string {
-  return `${projectId}/${workspaceId}`;
-}
-
+/**
+ * Routes are resolved when asked, from the project's own files: the state file
+ * for what is declared, the handoff files for what is listening. Nothing is
+ * registered, so nothing can go stale.
+ */
 export class PlexusRoutingTable {
-  private readonly targets = new Map<string, GatewayProjectRoute>();
+  private readonly sources: RouteDiscoverySource[];
+  private readonly dependencies: RouteDiscoveryDependencies;
+  // Health is the outcome of calls we made, which no file records.
+  private readonly health = new Map<string, GatewayImageHealth>();
 
-  upsertProject(
-    projectRoot: string,
-    statePath: string,
-    state: GatewayProjectState,
-  ): GatewayProjectRoute {
-    const mcpServerIds = new Set<string>();
-    for (const image of state.images) {
-      for (const server of imageMcpServers(image)) {
-        if (mcpServerIds.has(server.id)) {
-          throw new Error(
-            `MCP server id ${server.id} is duplicated in workspace ${state.workspaceId}`,
-          );
-        }
-        mcpServerIds.add(server.id);
-      }
-    }
-
-    const existing = this.targets.get(
-      routeKey(state.projectId, state.workspaceId),
-    );
-    const existingHealth = new Map(
-      existing?.images.map((image) => [image.mcpServerId, image.health]) ?? [],
-    );
-    const route: GatewayProjectRoute = {
-      projectId: state.projectId,
-      projectName: state.projectName,
-      workspaceId: state.workspaceId,
-      projectRoot: path.resolve(projectRoot),
-      statePath,
-      ...(state.pharoMcpContract
-        ? { pharoMcpContract: state.pharoMcpContract }
-        : {}),
-      updatedAt: state.updatedAt,
-      images: state.images.flatMap((image) =>
-        imageMcpServers(image).map((server) => {
-          const port = server.endpoint.port;
-          const health = existingHealth.get(server.id) ?? "unknown";
-          return {
-            id: image.id,
-            mcpServerId: server.id,
-            imageName: image.imageName,
-            ...(port !== undefined ? { port } : {}),
-            endpoint: server.endpoint,
-            status: image.status,
-            health,
-            routable: imageRoutability(state.pharoMcpContract, {
-              ...image,
-              endpoint: server.endpoint,
-              health,
-              remoteGateway: state.remoteGateway,
-            }),
-            routeMetadata: imageRouteMetadata(state, server.id),
-            ...(image.pharoMcpContract
-              ? { pharoMcpContract: image.pharoMcpContract }
-              : {}),
-            updatedAt: state.updatedAt,
-          };
-        }),
-      ),
-      ...(state.remoteGateway ? { remoteGateway: state.remoteGateway } : {}),
-    };
-
-    this.targets.set(routeKey(route.projectId, route.workspaceId), route);
-    return route;
+  constructor(
+    sources: readonly RouteDiscoverySource[] = [],
+    dependencies: RouteDiscoveryDependencies = {},
+  ) {
+    this.sources = [...sources];
+    this.dependencies = dependencies;
   }
 
-  removeProjectWorkspace(
-    projectId: string,
-    workspaceId: string,
-  ): GatewayProjectRoute | undefined {
-    const key = routeKey(projectId, workspaceId);
-    const route = this.targets.get(key);
-    if (route) {
-      this.targets.delete(key);
-    }
-
-    return route;
-  }
-
-  removeRoutesWithMissingStatePaths(
-    statePathExists: (statePath: string) => boolean = fs.existsSync,
-  ): GatewayProjectRoute[] {
-    const removed: GatewayProjectRoute[] = [];
-
-    for (const route of this.listTargets()) {
-      if (!statePathExists(route.statePath)) {
-        const deleted = this.removeProjectWorkspace(
-          route.projectId,
-          route.workspaceId,
-        );
-        if (deleted) {
-          removed.push(deleted);
-        }
-      }
-    }
-
-    return removed;
+  /**
+   * Which projects this gateway looks in. A source is a directory, not a
+   * route: it cannot go stale, because nothing is claimed about what is in it.
+   */
+  addSource(source: RouteDiscoverySource): void {
+    this.sources.push(source);
   }
 
   getProjectWorkspace(
     projectId: string,
     workspaceId: string,
   ): GatewayProjectRoute | undefined {
-    return this.targets.get(routeKey(projectId, workspaceId));
+    return this.listTargets().find(
+      (route) =>
+        route.projectId === projectId && route.workspaceId === workspaceId,
+    );
   }
 
   listProjectTargets(projectId: string): GatewayProjectRoute[] {
@@ -403,7 +331,15 @@ export class PlexusRoutingTable {
   }
 
   listTargets(): GatewayProjectRoute[] {
-    return [...this.targets.values()];
+    const routes: GatewayProjectRoute[] = [];
+    for (const source of this.sources) {
+      const route = this.resolve(source);
+      if (route) {
+        routes.push(route);
+      }
+    }
+
+    return routes;
   }
 
   findMcpServerOutsideWorkspace(
@@ -424,14 +360,70 @@ export class PlexusRoutingTable {
     mcpServerId: string,
     health: GatewayImageHealth,
   ): void {
-    const project = this.targets.get(routeKey(projectId, workspaceId));
-    const image = project?.images.find(
-      (candidate) => candidate.mcpServerId === mcpServerId,
-    );
-    if (image) {
-      image.health = health;
-      image.routable = imageRoutability(project?.pharoMcpContract, image);
-      image.updatedAt = new Date().toISOString();
-    }
+    this.health.set(healthKey(projectId, workspaceId, mcpServerId), health);
   }
+
+  private resolve(
+    source: RouteDiscoverySource,
+  ): GatewayProjectRoute | undefined {
+    const state = readProjectState(source.statePath, this.dependencies);
+    if (!state) {
+      return undefined;
+    }
+
+    const images = state.images.flatMap((image) =>
+      discoverImageMcpServers(
+        source.statePath,
+        image.id,
+        this.dependencies,
+      ).map((server) => {
+        const health =
+          this.health.get(
+            healthKey(state.projectId, state.workspaceId, server.id),
+          ) ?? "unknown";
+        return {
+          id: image.id,
+          mcpServerId: server.id,
+          imageName: image.imageName,
+          port: server.endpoint.port,
+          endpoint: server.endpoint,
+          status: image.status,
+          health,
+          routable: imageRoutability(state.pharoMcpContract, {
+            ...image,
+            endpoint: server.endpoint,
+            health,
+            remoteGateway: state.remoteGateway,
+          }),
+          routeMetadata: imageRouteMetadata(state, server.id),
+          ...(image.pharoMcpContract
+            ? { pharoMcpContract: image.pharoMcpContract }
+            : {}),
+          updatedAt: state.updatedAt,
+        };
+      }),
+    );
+
+    return {
+      projectId: state.projectId,
+      projectName: state.projectName,
+      workspaceId: state.workspaceId,
+      projectRoot: path.resolve(source.projectRoot),
+      statePath: source.statePath,
+      ...(state.pharoMcpContract
+        ? { pharoMcpContract: state.pharoMcpContract }
+        : {}),
+      updatedAt: state.updatedAt,
+      images,
+      ...(state.remoteGateway ? { remoteGateway: state.remoteGateway } : {}),
+    };
+  }
+}
+
+function healthKey(
+  projectId: string,
+  workspaceId: string,
+  mcpServerId: string,
+): string {
+  return `${projectId}/${workspaceId}/${mcpServerId}`;
 }

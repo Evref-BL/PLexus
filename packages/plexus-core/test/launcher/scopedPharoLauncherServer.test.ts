@@ -45,7 +45,6 @@ function projectConfig(overrides: Record<string, unknown> = {}) {
       {
         id: "dev",
         imageName: "MyProject-{workspaceId}-dev",
-        active: true,
         mcp: {
           port: 7123,
           loadScript: "pharo/load-mcp.st",
@@ -325,7 +324,6 @@ describe("scoped pharo launcher facade", () => {
       images: [
         {
           imageId: "dev",
-          active: true,
           // The record says running; no image file exists, so the row says so.
           status: "absent",
         },
@@ -786,7 +784,6 @@ describe("scoped pharo launcher facade", () => {
           ...projectConfig().images[0],
           id: "experiment",
           imageName: "MyProject-{workspaceId}-experiment",
-          active: true,
           mcp: {
             port: 7124,
             loadScript: "pharo/load-mcp.st",
@@ -823,7 +820,6 @@ describe("scoped pharo launcher facade", () => {
           ...projectConfig().images[0],
           id: "experiment",
           imageName: "MyProject-{workspaceId}-{imageId}",
-          active: true,
           mcp: {
             port: 7124,
             loadScript: "pharo/load-mcp.st",
@@ -1041,7 +1037,6 @@ describe("scoped pharo launcher facade", () => {
         {
           id: "dev",
           imageName: "MyProject-{workspaceId}-dev",
-          active: true,
           mcp: {
             port: 7123,
             loadScript: "pharo/load-mcp.st",
@@ -1213,22 +1208,9 @@ describe("scoped pharo launcher facade", () => {
         imageIds: ["dev"],
       }),
     ]);
-    expect(routeRegistrations).toEqual([
-      expect.objectContaining({
-        projectRoot,
-        statePath: statePath(projectRoot, stateRoot),
-        state: expect.objectContaining({
-          images: [expect.objectContaining({ id: "dev", status: "running" })],
-        }),
-      }),
-      expect.objectContaining({
-        projectRoot,
-        statePath: statePath(projectRoot, stateRoot),
-        state: expect.objectContaining({
-          images: [expect.objectContaining({ id: "dev", status: "stopped" })],
-        }),
-      }),
-    ]);
+    // Starting and stopping an image registers nothing: the gateway reads
+    // the state file and the endpoint handoffs when a call arrives.
+    expect(routeRegistrations).toEqual([]);
   });
 
   it("blocks scoped mutations when an active image lease belongs to another owner", async () => {
@@ -1432,7 +1414,6 @@ describe("scoped pharo launcher facade", () => {
         {
           id: "preview",
           imageName: "MyProject-{workspaceId}-preview",
-          active: true,
           displayMode: "interactive",
           mcp: {
             port: 7124,

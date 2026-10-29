@@ -15,6 +15,7 @@ import {
   toolResultDetailSchema,
   type ToolResultDetail,
 } from "../support/toolResultFormatting.js";
+import type { RouteDiscoverySource } from "../routing/routeDiscovery.js";
 
 const stringSchema = { type: "string", minLength: 1 } as const;
 const optionalStringSchema = { type: "string", minLength: 1 } as const;
@@ -37,48 +38,17 @@ const routeReferenceProperties = {
   detail: toolResultDetailSchema,
 } as const;
 
-const projectStateSchema = {
-  type: "object",
-  additionalProperties: true,
-} as const;
-
 export const gatewayTools = [
-  {
-    name: "plexus_gateway_register_target",
-    description:
-      "Register or update one gateway target route from PLexus runtime state.",
-    inputSchema: objectSchema(
-      {
-        projectRoot: stringSchema,
-        statePath: stringSchema,
-        state: projectStateSchema,
-        detail: toolResultDetailSchema,
-      },
-      ["projectRoot", "statePath", "state"],
-    ),
-  },
-  {
-    name: "plexus_gateway_unregister_target",
-    description:
-      "Remove a registered gateway target route without opening or closing project images.",
-    inputSchema: objectSchema(routeReferenceProperties),
-  },
   {
     name: "plexus_gateway_status",
     description:
-      "Return gateway route status for registered targets/images. Optionally refresh route health or the project-wide Pharo tool schema fingerprint.",
+      "Return gateway route status for the project images discovered right now. Optionally refresh route health or the project-wide Pharo tool schema fingerprint.",
     inputSchema: objectSchema({
       ...routeReferenceProperties,
       refreshHealth: { type: "boolean" },
       refreshTools: { type: "boolean" },
       toolSchemaMcpServerId: optionalStringSchema,
     }),
-  },
-  {
-    name: "plexus_gateway_cleanup_stale_routes",
-    description:
-      "Remove registered gateway target routes whose runtime state files are gone.",
-    inputSchema: objectSchema({ detail: toolResultDetailSchema }),
   },
 ] as const;
 
@@ -114,6 +84,7 @@ export interface GatewayEnvironmentOptions {
   pharoTools: Tool[];
   pharoScope: GatewayRouteReferenceInput;
   pharoToolSchemaMcpServerId?: string;
+  routeSources?: RouteDiscoverySource[];
 }
 
 function gatewaySurface(surface: GatewaySurface): boolean {
@@ -434,7 +405,16 @@ export function parseGatewayEnvironmentOptions(
     pharoToolSchemaMcpServerId: optionalStringEnv(
       env.PLEXUS_PHARO_TOOL_SCHEMA_MCP_SERVER_ID,
     ),
+    routeSources: routeSourcesFromEnvironment(env),
   };
+}
+
+function routeSourcesFromEnvironment(
+  env: NodeJS.ProcessEnv,
+): RouteDiscoverySource[] {
+  const projectRoot = optionalStringEnv(env.PLEXUS_PROJECT_ROOT);
+  const statePath = optionalStringEnv(env.PLEXUS_PROJECT_STATE_PATH);
+  return projectRoot && statePath ? [{ projectRoot, statePath }] : [];
 }
 
 export function createGatewayFromEnvironment(
@@ -443,6 +423,7 @@ export function createGatewayFromEnvironment(
   const options = parseGatewayEnvironmentOptions(env);
   return {
     gateway: new PlexusGateway({
+      routeSources: options.routeSources,
       pharoTools: options.pharoTools,
       pharoScope: options.pharoScope,
       pharoToolSchemaMcpServerId: options.pharoToolSchemaMcpServerId,

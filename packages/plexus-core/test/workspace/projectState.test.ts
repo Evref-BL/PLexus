@@ -24,7 +24,6 @@ const config: ProjectConfig = {
     {
       id: "dev",
       imageName: "MyProject-dev",
-      active: true,
       mcp: {
         port: 7123,
         loadScript: "pharo/load-mcp.st",
@@ -33,7 +32,6 @@ const config: ProjectConfig = {
     {
       id: "baseline",
       imageName: "MyProject-baseline",
-      active: false,
       mcp: {
         port: 7124,
         loadScript: "pharo/load-mcp.st",
@@ -222,18 +220,18 @@ describe("project state", () => {
     );
   });
 
-  it("creates runtime image state from active project images", () => {
+  it("creates stopped runtime records for declared project images", () => {
     expect(createProjectState(config, "2026-04-25T10:00:00.000Z")).toEqual({
       projectId: "project-123",
       projectName: "my-project",
       workspaceId: "default",
-      runtimeStatus: "starting",
+      runtimeStatus: "idle",
       updatedAt: "2026-04-25T10:00:00.000Z",
       images: [
         {
           id: "dev",
           imageName: "MyProject-dev",
-          status: "starting",
+          status: "stopped",
         },
         {
           id: "baseline",
@@ -273,7 +271,6 @@ describe("project state", () => {
           {
             id: "legacy",
             imageName: "MyProject-legacy",
-            active: true,
             create: {
               kind: "template",
               templateName: "Pharo 11.0 - 64bit",
@@ -286,7 +283,6 @@ describe("project state", () => {
           {
             id: "current",
             imageName: "MyProject-current",
-            active: true,
             create: {
               kind: "template",
               templateName: "Pharo 13.0 - 64bit",
@@ -335,7 +331,6 @@ describe("project state", () => {
           {
             id: "legacy",
             imageName: "MyProject-legacy",
-            active: true,
             create: {
               kind: "template",
               templateName: "Pharo 11.0 - 64bit",
@@ -348,7 +343,6 @@ describe("project state", () => {
           {
             id: "current",
             imageName: "MyProject-current",
-            active: true,
             create: {
               kind: "template",
               templateName: "Pharo 13.0 - 64bit",
@@ -393,7 +387,6 @@ describe("project state", () => {
           {
             id: "plain",
             imageName: "MyProject-plain",
-            active: true,
             mcp: {
               port: 7100,
               loadScript: "pharo/load-mcp.st",
@@ -403,7 +396,6 @@ describe("project state", () => {
           {
             id: "current",
             imageName: "MyProject-current",
-            active: true,
             create: {
               kind: "template",
               templateName: "Pharo 13.0 - 64bit",
@@ -470,7 +462,7 @@ describe("project state", () => {
       {
         id: "dev",
         imageName: "MyProject-dev",
-        status: "starting",
+        status: "stopped",
       },
       {
         id: "baseline",

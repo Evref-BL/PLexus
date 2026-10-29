@@ -863,7 +863,6 @@ function targetConfigFromSource(
     ...sourceConfig,
     id: targetImageId,
     imageName: targetImageName,
-    active: true,
   };
 }
 

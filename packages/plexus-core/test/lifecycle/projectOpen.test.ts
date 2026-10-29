@@ -307,7 +307,6 @@ function dynamicImage(id = "dev", imageName = "MyProject-dev") {
   return {
     id,
     imageName,
-    active: true,
     mcp: {
       loadScript: "pharo/load-mcp.st",
     },
@@ -337,7 +336,6 @@ function writeProjectConfig(
       {
         id: "dev",
         imageName: "MyProject-dev",
-        active: true,
         mcp: {
           port: 7123,
           loadScript: "pharo/load-mcp.st",
@@ -346,7 +344,6 @@ function writeProjectConfig(
       {
         id: "baseline",
         imageName: "MyProject-baseline",
-        active: false,
         mcp: {
           loadScript: "pharo/load-mcp.st",
         },
@@ -401,6 +398,7 @@ describe("project open", () => {
       poll: {
         intervalMs: 0,
       },
+      imageIds: ["dev"],
     });
 
     const scriptPath = path.join(
@@ -457,11 +455,6 @@ describe("project open", () => {
           pid: 1234,
           status: "running",
         },
-        {
-          id: "baseline",
-          imageName: "MyProject-baseline",
-          status: "stopped",
-        },
       ],
     });
   });
@@ -491,6 +484,7 @@ describe("project open", () => {
       poll: {
         intervalMs: 0,
       },
+      imageIds: ["dev"],
     });
 
     const scriptPath = path.join(
@@ -521,7 +515,6 @@ describe("project open", () => {
         {
           id: "dev",
           imageName: "MyProject-dev",
-          active: true,
           displayMode: "interactive",
           mcp: {
             port: 7123,
@@ -549,6 +542,7 @@ describe("project open", () => {
       poll: {
         intervalMs: 0,
       },
+      imageIds: ["dev"],
     });
 
     expect(pharoLauncherMcpClient.calls[0]).toMatchObject({
@@ -589,6 +583,7 @@ describe("project open", () => {
       poll: {
         intervalMs: 0,
       },
+      imageIds: ["dev"],
     });
 
     expect(pharoLauncherMcpClient.calls[0]).toMatchObject({
@@ -652,6 +647,7 @@ describe("project open", () => {
           intervalMs: 0,
           healthTimeoutMs: 60_000,
         },
+        imageIds: ["dev"],
       }),
     ).rejects.toMatchObject({
       result: {
@@ -692,7 +688,6 @@ describe("project open", () => {
         {
           id: "dev",
           imageName: "MyProject-dev",
-          active: true,
           mcp: {
             port: 7123,
             loadScript: "pharo/load-mcp.st",
@@ -742,6 +737,7 @@ describe("project open", () => {
       poll: {
         intervalMs: 0,
       },
+      imageIds: ["dev"],
     });
 
     expect(result.ok).toBe(true);
@@ -804,6 +800,7 @@ describe("project open", () => {
       poll: {
         intervalMs: 0,
       },
+      imageIds: ["dev"],
     });
 
     const pharoMcpLoad = result.state.images[0].pharoMcpLoad;
@@ -839,7 +836,6 @@ describe("project open", () => {
         {
           id: "dev",
           imageName: "MyProject-dev",
-          active: true,
           mcp: {
             loadScript: "pharo/load-mcp.st",
           },
@@ -887,6 +883,7 @@ describe("project open", () => {
         intervalMs: 0,
       },
       portClaimChecks: fakeLivePortClaimChecks,
+      imageIds: ["dev"],
     });
 
     const scriptPath = path.join(
@@ -938,7 +935,6 @@ describe("project open", () => {
         {
           id: "dev",
           imageName: "MyProject-dev",
-          active: true,
           mcp: {
             loadScript: "pharo/load-mcp.st",
           },
@@ -985,6 +981,7 @@ describe("project open", () => {
         poll: {
           intervalMs: 0,
         },
+        imageIds: ["dev"],
       }),
     ).rejects.toThrow(ProjectOpenError);
   });
@@ -997,7 +994,6 @@ describe("project open", () => {
         {
           id: "dev",
           imageName: "MyProject-dev",
-          active: true,
           mcp: {
             loadScript: "pharo/load-mcp.st",
           },
@@ -1025,6 +1021,7 @@ describe("project open", () => {
           intervalMs: 0,
           healthTimeoutMs: 1,
         },
+        imageIds: ["dev"],
       }),
     ).rejects.toThrow(ProjectOpenError);
   });
@@ -1042,7 +1039,6 @@ describe("project open", () => {
         {
           id: "dev",
           imageName: "MyProject-{workspaceId}-dev",
-          active: true,
           create: {
             kind: "template",
             templateName: "Pharo 13.0 - 64bit",
@@ -1079,6 +1075,7 @@ describe("project open", () => {
       poll: {
         intervalMs: 0,
       },
+      imageIds: ["dev"],
     });
 
     const scriptPath = path.join(
@@ -1174,7 +1171,6 @@ describe("project open", () => {
         {
           id: "dev",
           imageName: "MyProject-{workspaceId}-dev",
-          active: true,
           create: {
             kind: "template",
             templateName: "Pharo 13.0 - 64bit",
@@ -1235,6 +1231,7 @@ describe("project open", () => {
       poll: {
         intervalMs: 0,
       },
+      imageIds: ["dev"],
     });
 
     expect(result.ok).toBe(true);
@@ -1255,6 +1252,7 @@ describe("project open", () => {
       stateRoot,
       workspaceId: "worktree-a",
       now: fixedNow,
+      imageIds: ["dev"],
     });
 
     expect(result).toMatchObject({
@@ -1304,6 +1302,7 @@ describe("project open", () => {
       poll: {
         intervalMs: 0,
       },
+      imageIds: ["dev"],
     });
 
     expect(result.state.images[0]).toMatchObject({
@@ -1321,7 +1320,6 @@ describe("project open", () => {
         {
           id: "dev",
           imageName: "MyProject-dev",
-          active: true,
           mcp: {
             loadScript: "pharo/load-mcp.st",
           },
@@ -1329,7 +1327,6 @@ describe("project open", () => {
         {
           id: "baseline",
           imageName: "MyProject-baseline",
-          active: true,
           mcp: {
             loadScript: "pharo/load-mcp.st",
           },
@@ -1418,13 +1415,11 @@ describe("project open", () => {
         {
           id: "dev",
           imageName: "MyProject-dev",
-          active: true,
           mcp: { loadScript: "pharo/load-mcp.st" },
         },
         {
           id: "baseline",
           imageName: "MyProject-baseline",
-          active: true,
           mcp: { loadScript: "pharo/load-mcp.st" },
         },
       ],
@@ -1508,7 +1503,6 @@ describe("project open", () => {
         {
           id: "dev",
           imageName: "MyProject-{workspaceId}-dev",
-          active: true,
           preparedImage: {
             cacheId: "pharo-13-mcp",
             copyMode: "copy-on-open",
@@ -1534,6 +1528,7 @@ describe("project open", () => {
         poll: {
           intervalMs: 0,
         },
+        imageIds: ["dev"],
       }),
     ).rejects.toThrow(ProjectOpenError);
     expect(pharoLauncherMcpClient.calls).toEqual([]);
@@ -1560,7 +1555,6 @@ describe("project open", () => {
         {
           id: "dev",
           imageName: "MyProject-{workspaceId}-dev",
-          active: true,
           preparedImage: {
             cacheId: "pharo-13-mcp",
             copyMode: "copy-on-open",
@@ -1596,6 +1590,7 @@ describe("project open", () => {
       poll: {
         intervalMs: 0,
       },
+      imageIds: ["pharo-13-mcp", "dev"],
     });
 
     const scriptPath = path.join(
@@ -1644,7 +1639,6 @@ describe("project open", () => {
         {
           id: "legacy",
           imageName: "MyProject-legacy",
-          active: true,
           create: {
             kind: "template",
             templateName: "Pharo 11.0 - 64bit",
@@ -1676,6 +1670,7 @@ describe("project open", () => {
       poll: {
         intervalMs: 0,
       },
+      imageIds: ["legacy"],
     });
 
     const scriptPath = path.join(
@@ -1731,7 +1726,6 @@ describe("project open", () => {
         {
           id: "plain",
           imageName: "MyProject-plain",
-          active: true,
           mcp: {
             port: 7123,
             loadScript: "pharo/load-mcp.st",
@@ -1760,6 +1754,7 @@ describe("project open", () => {
       poll: {
         intervalMs: 0,
       },
+      imageIds: ["plain"],
     });
 
     const scriptPath = path.join(
@@ -1796,7 +1791,6 @@ describe("project open", () => {
         {
           id: "dev",
           imageName: "MyProject-dev",
-          active: true,
           mcp: {
             loadScript: "pharo/load-mcp.st",
           },
@@ -1804,7 +1798,6 @@ describe("project open", () => {
         {
           id: "baseline",
           imageName: "MyProject-baseline",
-          active: true,
           mcp: {
             loadScript: "pharo/load-mcp.st",
           },
@@ -1831,11 +1824,6 @@ describe("project open", () => {
             imageName: "MyProject-dev",
             pid: 1234,
             status: "running",
-          },
-          {
-            id: "baseline",
-            imageName: "MyProject-baseline",
-            status: "stopped",
           },
         ],
       },
@@ -1913,6 +1901,7 @@ describe("project open", () => {
         healthClient: new FakeHealthClient(true),
         now: fixedNow,
         sleep: async () => {},
+        imageIds: ["dev"],
       }),
     ).rejects.toThrow(ProjectOpenError);
 
@@ -1930,11 +1919,6 @@ describe("project open", () => {
         id: "dev",
         imageName: "MyProject-dev",
         status: "failed",
-      },
-      {
-        id: "baseline",
-        imageName: "MyProject-baseline",
-        status: "stopped",
       },
     ]);
   });
@@ -1967,6 +1951,7 @@ describe("project open", () => {
         healthClient: new FakeHealthClient(true),
         now: fixedNow,
         sleep: async () => {},
+        imageIds: ["dev"],
       }),
     ).rejects.toMatchObject({
       result: {
@@ -2021,6 +2006,7 @@ describe("project open", () => {
         processTimeoutMs: 60_000,
         healthTimeoutMs: 60_000,
       },
+      imageIds: ["dev"],
     });
 
     expect(result.state.images[0]).toMatchObject({
@@ -2068,6 +2054,7 @@ describe("project open", () => {
           processTimeoutMs: 60_000,
           healthTimeoutMs: 60_000,
         },
+        imageIds: ["dev"],
       }),
     ).rejects.toMatchObject({
       result: {
@@ -2134,6 +2121,7 @@ describe("project open", () => {
         processTimeoutMs: 60_000,
         healthTimeoutMs: 60_000,
       },
+      imageIds: ["dev"],
     });
 
     expect(result.state.images[0]).toMatchObject({
@@ -2192,6 +2180,7 @@ describe("project open", () => {
           processTimeoutMs: 60_000,
           healthTimeoutMs: 60_000,
         },
+        imageIds: ["dev"],
       }),
     ).rejects.toMatchObject({
       result: {
@@ -2249,6 +2238,7 @@ describe("project open", () => {
           intervalMs: 0,
           processTimeoutMs: 0,
         },
+        imageIds: ["dev"],
       }),
     ).rejects.toThrow(ProjectOpenError);
 

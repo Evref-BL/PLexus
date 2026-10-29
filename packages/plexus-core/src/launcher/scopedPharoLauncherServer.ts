@@ -146,7 +146,6 @@ interface LauncherProfileSummary {
 
 interface WorkspaceImageSummary {
   imageId: string;
-  active: boolean;
   /** Observed when the row was built, never read from the state record. */
   status: ImageRuntimeStatus;
   runtime: ImageRuntimeObservation;
@@ -509,7 +508,6 @@ function imageSummary(
   const displayMode = imageState?.displayMode ?? defaultDisplayMode;
   return {
     imageId: imageConfig.id,
-    active: imageConfig.active,
     status: runtime.status,
     runtime,
     displayMode,
@@ -1066,27 +1064,6 @@ export class ScopedPharoLauncher {
       : undefined;
   }
 
-  private async refreshRegisteredProjectRoute(
-    scope: ResolvedScope,
-    statePath: string,
-    state: ProjectState | undefined,
-  ): Promise<void> {
-    if (!state) {
-      return;
-    }
-
-    const routeRegistry = this.routeRegistryForState(state);
-    if (!routeRegistry) {
-      return;
-    }
-
-    await routeRegistry.registerProjectRoute({
-      projectRoot: scope.projectRoot,
-      statePath,
-      state,
-    });
-  }
-
   private async snapshotImageBeforeDisplayModeRestart(
     scope: ResolvedScope,
     imageState: ProjectImageState,
@@ -1478,7 +1455,6 @@ export class ScopedPharoLauncher {
 
       const nextState = stateWithImageLease(state, imageId, lease, now);
       saveProjectState(statePath, nextState);
-      await this.refreshRegisteredProjectRoute(scope, statePath, nextState);
     } finally {
       if (ownsClient) {
         await client.close?.();
@@ -1527,11 +1503,6 @@ export class ScopedPharoLauncher {
       imageId,
       lease,
       now,
-    );
-    await this.refreshRegisteredProjectRoute(
-      scope,
-      statePath,
-      leasedState ?? openResult.state,
     );
 
     return await this.imageInfo(imageId);
@@ -1641,11 +1612,6 @@ export class ScopedPharoLauncher {
       imageId,
       lease,
       now,
-    );
-    await this.refreshRegisteredProjectRoute(
-      scope,
-      statePath,
-      leasedState ?? closeResult.state,
     );
 
     return await this.imageInfo(imageId);

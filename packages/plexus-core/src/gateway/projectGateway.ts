@@ -17,6 +17,7 @@ import type {
 
 export interface ProjectGatewayProcessStartOptions {
   projectRoot: string;
+  statePath: string;
   host: string;
   port: number;
   routePath: string;
@@ -61,6 +62,8 @@ export interface EnsureProjectGatewayOptions extends ProjectGatewayRuntimeOption
   projectRoot: string;
   config: ProjectConfig;
   state: ProjectState;
+  /** Where the gateway looks to discover this project's images. */
+  statePath: string;
 }
 
 export interface EnsureProjectGatewayResult {
@@ -87,6 +90,8 @@ export class ProjectGatewayDeploymentError extends Error {
 
 export interface ProjectGatewayChildEnvironmentOptions {
   env?: NodeJS.ProcessEnv;
+  projectRoot?: string;
+  statePath?: string;
   pharoTools?: readonly Tool[];
   pharoMcpContract?: PharoMcpContractReference;
 }
@@ -99,6 +104,15 @@ export function projectGatewayChildEnvironment(
     ...options.env,
     PLEXUS_GATEWAY_SURFACE: "gateway",
   };
+
+  // The gateway resolves routes from these, so it needs no registration.
+  if (options.projectRoot !== undefined) {
+    childEnv.PLEXUS_PROJECT_ROOT = options.projectRoot;
+  }
+
+  if (options.statePath !== undefined) {
+    childEnv.PLEXUS_PROJECT_STATE_PATH = options.statePath;
+  }
 
   if (options.pharoTools !== undefined) {
     childEnv.PLEXUS_PHARO_TOOLS_JSON = JSON.stringify(options.pharoTools);
@@ -143,6 +157,8 @@ export class DetachedProjectGatewayProcessManager
         windowsHide: true,
         env: projectGatewayChildEnvironment({
           env: this.env,
+          projectRoot: options.projectRoot,
+          statePath: options.statePath,
           pharoTools: options.pharoTools,
           pharoMcpContract: options.pharoMcpContract,
         }),
@@ -434,6 +450,7 @@ async function ensureProjectLocalGateway(
     options.pharoMcpContract ?? options.state.pharoMcpContract;
   const started = await processManager.start({
       projectRoot: options.projectRoot,
+      statePath: options.statePath,
       host: policy.host,
       port: policy.port,
       routePath: policy.mcpPath,

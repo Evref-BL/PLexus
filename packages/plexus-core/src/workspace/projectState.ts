@@ -500,7 +500,7 @@ export function createProjectState(
       ...(image.displayMode !== undefined
         ? { displayMode: projectImageDisplayMode(image) }
         : {}),
-      status: image.active ? "starting" : "stopped",
+      status: "stopped",
       ...(previousImage?.lease ? { lease: previousImage.lease } : {}),
       ...supportState,
     };

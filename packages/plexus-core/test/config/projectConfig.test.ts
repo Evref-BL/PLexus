@@ -20,7 +20,6 @@ function validProjectConfig() {
       {
         id: "dev",
         imageName: "MyProject-dev",
-        active: true,
         mcp: {
           port: 7123,
           loadScript: "pharo/load-mcp.st",
@@ -32,7 +31,6 @@ function validProjectConfig() {
       {
         id: "baseline",
         imageName: "MyProject-baseline",
-        active: false,
         mcp: {
           port: 7124,
           loadScript: "pharo/load-mcp.st",
@@ -879,7 +877,6 @@ describe("project config", () => {
           {
             id: "dev",
             imageName: "Shared",
-            active: true,
             mcp: {
               port: 0,
               loadScript: "",
@@ -915,7 +912,6 @@ describe("project config", () => {
           {
             id: "dev",
             imageName: "Shared",
-            active: true,
             mcp: {
               port: 0,
               loadScript: "",
@@ -950,8 +946,7 @@ describe("project config", () => {
           "images[0].mcp.port must be an integer between 1 and 65535",
           "images[0].mcp.loadScript must be a non-empty string",
           "images[0].git.transport must be one of ssh, https, http",
-          "images[1].active must be a boolean",
-          "images[1].mcp.port must be an integer between 1 and 65535",
+              "images[1].mcp.port must be an integer between 1 and 65535",
           "images[1].git.ssh.publicKey must be a non-empty string",
           "images[1].git.ssh.privateKey must be a non-empty string",
           "image ids must be unique: dev",

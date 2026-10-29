@@ -53,10 +53,7 @@ describe("gateway package boundary", () => {
 
   it("keeps default gateway-owned MCP tools to route management", () => {
     expect(gatewayTools.map((tool) => tool.name)).toEqual([
-      "plexus_gateway_register_target",
-      "plexus_gateway_unregister_target",
       "plexus_gateway_status",
-      "plexus_gateway_cleanup_stale_routes",
     ]);
     expect(rawRoutingTool.name).toBe("plexus_route_to_image");
   });
