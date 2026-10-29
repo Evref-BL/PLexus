@@ -3,6 +3,7 @@ import { ProjectCloseError } from "./lifecycle/projectClose.js";
 import { PlexusProjectLifecycle } from "./lifecycle/projectLifecycle.js";
 import { ProjectOpenError } from "./lifecycle/projectOpen.js";
 import {
+  ScopedPharoLauncher,
   scopedImageLeaseOptionsFromEnvironment,
   startScopedPharoLauncherServer,
 } from "./launcher/scopedPharoLauncherServer.js";
@@ -11,6 +12,64 @@ import {
   startProjectLifecycleServerFromCli,
 } from "./mcp/server.js";
 
+/**
+ * The image is the unit of work, so it is the unit of the CLI. `start` rather
+ * than the launcher's `launch`: the commoner word wins over the domain's.
+ */
+async function runImageCommand(
+  parsed: ParsedCommand,
+  stateRoot: string | undefined,
+  workspaceId: string | undefined,
+): Promise<number> {
+  const projectRoot =
+    parsed.projectPath ?? process.env.PLEXUS_PROJECT_ROOT ?? process.cwd();
+  const launcher = new ScopedPharoLauncher({
+    projectRoot,
+    ...(workspaceId === undefined ? {} : { workspaceId }),
+    ...(stateRoot === undefined ? {} : { stateRoot }),
+    imageLease: scopedImageLeaseOptionsFromEnvironment(process.env),
+  });
+
+  const needsImageId = (): string => {
+    if (!parsed.imageId) {
+      throw new Error(`plexus image ${parsed.command} requires an image id`);
+    }
+    return parsed.imageId;
+  };
+
+  try {
+    switch (parsed.command) {
+      case "list":
+        return print(await launcher.listImages());
+      case "create":
+        return print(await launcher.createImage(needsImageId()));
+      case "start":
+        return print(
+          await launcher.startImage(needsImageId(), parsed.displayMode),
+        );
+      case "stop":
+        return print(await launcher.stopImage(needsImageId()));
+      default:
+        console.error(usage());
+        return 2;
+    }
+  } catch (error) {
+    console.error(
+      JSON.stringify(
+        { ok: false, error: error instanceof Error ? error.message : String(error) },
+        null,
+        2,
+      ),
+    );
+    return 1;
+  }
+}
+
+function print(value: unknown): number {
+  console.log(JSON.stringify(value, null, 2));
+  return 0;
+}
+
 function usage(): string {
   return [
     "Usage:",
@@ -18,6 +77,7 @@ function usage(): string {
     "  plexus project close <path> [--workspace-id <id>] [--state-root <path>]",
     "  plexus project cleanup <path> [--workspace-id <id>] [--state-root <path>] [--confirm] [--delete-state] [--keep-launcher-images]",
     "  plexus project status <path> [--workspace-id <id>] [--state-root <path>]",
+    "  plexus image list|create|start|stop <imageId> [--project-path <path>] [--workspace-id <id>] [--state-root <path>] [--display-mode <headless|interactive>]",
     "  plexus mcp project [serve|http|--http] [--host <host>] [--port <port>] [--mcp-path <path>]",
     "  plexus mcp pharo-launcher [--project-path <path>] [--workspace-id <id>] [--state-root <path>]",
     "",
@@ -36,6 +96,7 @@ interface ParsedCommand {
   scope?: string;
   command?: string;
   projectPath?: string;
+  imageId?: string;
   stateRoot?: string;
   workspaceId?: string;
   displayMode?: "headless" | "interactive";
@@ -107,8 +168,14 @@ function parseCommand(argv: string[]): ParsedCommand {
   const [scope, command] = argv;
   const projectCommandHasPath = scope === "project";
   const projectPath = projectCommandHasPath ? argv[2] : undefined;
-  const rest = projectCommandHasPath ? argv.slice(3) : argv.slice(2);
-  const parsed: ParsedCommand = { scope, command, projectPath };
+  // `image <verb> <imageId>`: the image is the subject, the project is context.
+  const imageId =
+    scope === "image" && argv[2] && !argv[2].startsWith("--")
+      ? argv[2]
+      : undefined;
+  const consumed = projectCommandHasPath || imageId ? 3 : 2;
+  const rest = argv.slice(consumed);
+  const parsed: ParsedCommand = { scope, command, projectPath, imageId };
 
   for (let index = 0; index < rest.length; index += 1) {
     const arg = rest[index];
@@ -313,6 +380,10 @@ async function main(argv: string[]): Promise<number> {
     parsed.workspaceId ??
     process.env.PLEXUS_WORKSPACE_ID;
   const stateRoot = parsed.stateRoot ?? process.env.PLEXUS_STATE_ROOT;
+
+  if (parsed.scope === "image") {
+    return await runImageCommand(parsed, stateRoot, workspaceId);
+  }
 
   if (parsed.scope === "mcp" && parsed.command === "pharo-launcher") {
     const projectPath = parsed.projectPath ?? process.env.PLEXUS_PROJECT_ROOT;
