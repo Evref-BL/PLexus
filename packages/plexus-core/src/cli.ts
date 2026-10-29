@@ -15,8 +15,8 @@ function usage(): string {
   return [
     "Usage:",
     "  plexus project open <path> [--workspace-id <id>] [--target-id <id>] [--state-root <path>] [--display-mode <headless|interactive>]",
-    "  plexus project close <path> [--workspace-id <id>] [--state-root <path>] [--repository-workspace-cleanup-policy <preserve|archive|delete-disposable>] [--repository-workspace-archive-root <path>]",
-    "  plexus project cleanup <path> [--workspace-id <id>] [--state-root <path>] [--confirm] [--delete-state] [--keep-launcher-images] [--repository-workspace-cleanup-policy <preserve|archive|delete-disposable>] [--repository-workspace-archive-root <path>]",
+    "  plexus project close <path> [--workspace-id <id>] [--state-root <path>]",
+    "  plexus project cleanup <path> [--workspace-id <id>] [--state-root <path>] [--confirm] [--delete-state] [--keep-launcher-images]",
     "  plexus project status <path> [--workspace-id <id>] [--state-root <path>]",
     "  plexus mcp project [serve|http|--http] [--host <host>] [--port <port>] [--mcp-path <path>]",
     "  plexus mcp pharo-launcher [--project-path <path>] [--workspace-id <id>] [--target-id <id>] [--state-root <path>]",
@@ -41,17 +41,12 @@ interface ParsedCommand {
   workspaceId?: string;
   targetId?: string;
   displayMode?: "headless" | "interactive";
-  repositoryWorkspaceCleanupPolicy?: "preserve" | "archive" | "delete-disposable";
-  repositoryWorkspaceArchiveRoot?: string;
   confirm?: boolean;
   deleteStateFile?: boolean;
   deleteLauncherImages?: boolean;
 }
 
 type ParsedDisplayMode = NonNullable<ParsedCommand["displayMode"]>;
-type ParsedRepositoryWorkspaceCleanupPolicy = NonNullable<
-  ParsedCommand["repositoryWorkspaceCleanupPolicy"]
->;
 
 function applyFlagOption(parsed: ParsedCommand, arg: string): boolean {
   switch (arg) {
@@ -87,22 +82,6 @@ function parseDisplayMode(value: string): ParsedDisplayMode {
   return value;
 }
 
-function parseRepositoryWorkspaceCleanupPolicy(
-  value: string,
-): ParsedRepositoryWorkspaceCleanupPolicy {
-  if (
-    value !== "preserve" &&
-    value !== "archive" &&
-    value !== "delete-disposable"
-  ) {
-    throw new Error(
-      "--repository-workspace-cleanup-policy must be preserve, archive, or delete-disposable",
-    );
-  }
-
-  return value;
-}
-
 function applyValueOption(
   parsed: ParsedCommand,
   arg: string,
@@ -123,13 +102,6 @@ function applyValueOption(
       return;
     case "--display-mode":
       parsed.displayMode = parseDisplayMode(value);
-      return;
-    case "--repository-workspace-cleanup-policy":
-      parsed.repositoryWorkspaceCleanupPolicy =
-        parseRepositoryWorkspaceCleanupPolicy(value);
-      return;
-    case "--repository-workspace-archive-root":
-      parsed.repositoryWorkspaceArchiveRoot = value;
       return;
     default:
       throw new Error(`Unknown option: ${arg}`);
@@ -180,23 +152,6 @@ function projectLifecycleCommand(
     default:
       return undefined;
   }
-}
-
-function repositoryWorkspaceOptions(parsed: ParsedCommand): {
-  repositoryWorkspaceCleanupPolicy?: ParsedRepositoryWorkspaceCleanupPolicy;
-  repositoryWorkspaceArchiveRoot?: string;
-} {
-  return {
-    ...(parsed.repositoryWorkspaceCleanupPolicy
-      ? {
-          repositoryWorkspaceCleanupPolicy:
-            parsed.repositoryWorkspaceCleanupPolicy,
-        }
-      : {}),
-    ...(parsed.repositoryWorkspaceArchiveRoot
-      ? { repositoryWorkspaceArchiveRoot: parsed.repositoryWorkspaceArchiveRoot }
-      : {}),
-  };
 }
 
 function printJson(value: unknown, error = false): void {
@@ -265,7 +220,6 @@ async function runCleanupCommand(
     confirm: parsed.confirm,
     deleteStateFile: parsed.deleteStateFile,
     deleteLauncherImages: parsed.deleteLauncherImages,
-    ...repositoryWorkspaceOptions(parsed),
   });
   printJson(cleanup);
   return cleanup.ok ? 0 : 1;
@@ -281,7 +235,6 @@ async function runCloseCommand(
     projectPath: parsed.projectPath,
     stateRoot,
     workspaceId,
-    ...repositoryWorkspaceOptions(parsed),
   });
   if (!lifecycleResult.ok || !lifecycleResult.data) {
     printJson(lifecycleResult, true);
@@ -295,7 +248,6 @@ async function runCloseCommand(
     gateway: result.state?.gateway,
     images: result.state?.images ?? [],
     stoppedImages: result.stoppedImages,
-    repositoryWorkspaceCleanups: result.repositoryWorkspaceCleanups,
   });
   return 0;
 }
@@ -339,7 +291,6 @@ function handleProjectLifecycleError(error: unknown): number {
         failures: error.result.failures,
         images: error.result.state?.images ?? [],
         stoppedImages: error.result.stoppedImages,
-        repositoryWorkspaceCleanups: error.result.repositoryWorkspaceCleanups,
       },
       true,
     );

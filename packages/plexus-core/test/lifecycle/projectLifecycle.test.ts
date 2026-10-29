@@ -515,7 +515,6 @@ describe("project lifecycle tools", () => {
         statePath: "state.json",
         state: runningState,
         stoppedImages: runningState.images,
-        repositoryWorkspaceCleanups: [],
         failures: [],
       }),
     });
@@ -850,8 +849,6 @@ describe("project lifecycle tools", () => {
       projectPath: projectRoot,
       stateRoot: "/host/state",
       workspaceId: "worktree-a",
-      repositoryWorkspaceCleanupPolicy: "archive",
-      repositoryWorkspaceArchiveRoot: "/host/archive",
     });
     await lifecycle.handleTool("plexus_project_cleanup", {
       projectPath: projectRoot,
@@ -894,8 +891,6 @@ describe("project lifecycle tools", () => {
         argumentsValue: {
           projectPath: "/remote/project-a",
           workspaceId: "remote-worktree-a",
-          repositoryWorkspaceCleanupPolicy: "archive",
-          repositoryWorkspaceArchiveRoot: "/host/archive",
         },
       },
       {
@@ -1077,7 +1072,6 @@ describe("project lifecycle tools", () => {
               projectRoot: "/remote/project-a",
               statePath: "/remote/state/project-a/worktree-a/state.json",
               stoppedImages: [],
-              repositoryWorkspaceCleanups: [],
               failures: [],
             } as T,
           };
@@ -1096,7 +1090,6 @@ describe("project lifecycle tools", () => {
               resources: [],
               failures: [],
               stoppedImages: [],
-              repositoryWorkspaceCleanups: [],
               deletedLauncherImages: [],
               gatewayClosed: false,
             } as T,
@@ -2805,277 +2798,8 @@ describe("project lifecycle tools", () => {
     });
   });
 
-  it("reports planned repository workspaces from status diagnostics before open", async () => {
-    const projectRoot = makeTempDir("plexus-project-");
-    const stateRoot = makeTempDir("plexus-state-");
-    writeProjectConfig(projectRoot, {
-      images: [
-        {
-          id: "dev",
-          imageName: "MyProject-{workspaceId}-dev",
-          active: true,
-          mcp: {
-            port: 7123,
-            loadScript: "pharo/load-mcp.st",
-          },
-          repositoryWorkspace: {
-            repository: {
-              id: "my-project",
-              componentId: "my-project",
-            },
-            sourceDirectory: "src",
-            baseline: "MyProject",
-            branch: "task/image-workspace",
-            baseBranch: "main",
-            materialization: {
-              strategy: "copy",
-            },
-          },
-        },
-      ],
-    });
-    const lifecycle = new PlexusProjectLifecycle({
-      gateway: {
-        checks: {
-          isPortListening: async () => false,
-        },
-      },
-    });
 
-    const result = await lifecycle.handleTool("plexus_project_status", {
-      projectPath: projectRoot,
-      stateRoot,
-      workspaceId: "worktree-a",
-      includeDiagnostics: true,
-    });
 
-    expect(result).toMatchObject({
-      ok: true,
-      data: {
-        context: {
-          images: [
-            {
-              imageId: "dev",
-              status: "declared",
-              repositoryWorkspace: {
-                path: "image-local://dev/pharo-local/iceberg/my-project",
-                materializationStrategy: "copy",
-                sourceDirectory: "src",
-                baseline: "MyProject",
-                branch: "task/image-workspace",
-                baseBranch: "main",
-                dirtyState: "unknown",
-                loadState: "not-loaded",
-              },
-            },
-          ],
-        },
-        diagnostics: {
-          repositoryWorkspaces: [
-            {
-              imageId: "dev",
-              imageName: "MyProject-worktree-a-dev",
-              status: "declared",
-              workspace: {
-                path: "image-local://dev/pharo-local/iceberg/my-project",
-                materializationStrategy: "copy",
-                sourceDirectory: "src",
-                baseline: "MyProject",
-                branch: "task/image-workspace",
-                baseBranch: "main",
-                dirtyState: "unknown",
-                loadState: "not-loaded",
-              },
-              cleanup: {
-                defaultPolicy: "preserve",
-                destructivePolicyRequired: true,
-                reviewRequired: false,
-                recommendedAction: "materialize",
-              },
-            },
-          ],
-        },
-      },
-    });
-  });
-
-  it("reports multiple planned repository workspaces from status diagnostics before open", async () => {
-    const projectRoot = makeTempDir("plexus-project-");
-    const stateRoot = makeTempDir("plexus-state-");
-    writeProjectConfig(projectRoot, {
-      images: [
-        {
-          id: "dev",
-          imageName: "MyProject-{workspaceId}-dev",
-          active: true,
-          mcp: {
-            port: 7123,
-            loadScript: "pharo/load-mcp.st",
-          },
-          repositoryWorkspaces: [
-            {
-              repository: {
-                id: "my-project",
-                componentId: "my-project",
-              },
-              sourceDirectory: "src",
-              baseline: "MyProject",
-              materialization: {
-                strategy: "copy",
-              },
-            },
-            {
-              repository: {
-                id: "dependency",
-                remoteUrl: "git@github.com:Example/Dependency.git",
-              },
-              sourceDirectory: "repository",
-              baseline: "Dependency",
-              materialization: {
-                strategy: "clone",
-              },
-            },
-          ],
-        },
-      ],
-    });
-    const lifecycle = new PlexusProjectLifecycle({
-      gateway: {
-        checks: {
-          isPortListening: async () => false,
-        },
-      },
-    });
-
-    const result = await lifecycle.handleTool("plexus_project_status", {
-      projectPath: projectRoot,
-      stateRoot,
-      workspaceId: "worktree-a",
-      includeDiagnostics: true,
-    });
-
-    expect(result).toMatchObject({
-      ok: true,
-      data: {
-        context: {
-          images: [
-            {
-              imageId: "dev",
-              repositoryWorkspaces: [
-                {
-                  path: "image-local://dev/pharo-local/iceberg/my-project",
-                  baseline: "MyProject",
-                },
-                {
-                  path: "image-local://dev/pharo-local/iceberg/dependency",
-                  baseline: "Dependency",
-                },
-              ],
-            },
-          ],
-        },
-        diagnostics: {
-          repositoryWorkspaces: [
-            {
-              imageId: "dev",
-              workspace: {
-                repository: {
-                  id: "my-project",
-                },
-                baseline: "MyProject",
-              },
-            },
-            {
-              imageId: "dev",
-              workspace: {
-                repository: {
-                  id: "dependency",
-                },
-                baseline: "Dependency",
-              },
-            },
-          ],
-        },
-      },
-    });
-  });
-
-  it("reports live dirty repository workspaces that need review from status diagnostics", async () => {
-    const projectRoot = makeTempDir("plexus-project-");
-    const stateRoot = makeTempDir("plexus-state-");
-    const repositoryPath = path.join(makeTempDir("plexus-repo-"), "my-project");
-    const commit = initRepository(repositoryPath);
-    writeFile(path.join(repositoryPath, "src", "Dirty.class.st"), "dirty");
-    writeProjectConfig(projectRoot);
-    saveProjectState(statePath(stateRoot), {
-      projectId: "project-123",
-      projectName: "my-project",
-      workspaceId: "worktree-a",
-      targetId: "project-123--worktree-a",
-      updatedAt: "2026-04-25T10:00:00.000Z",
-      images: [
-        {
-          id: "dev",
-          imageName: "MyProject-dev",
-          status: "stopped",
-          repositoryWorkspace: {
-            repository: {
-              id: "my-project",
-              originPath: repositoryPath,
-            },
-            path: repositoryPath,
-            materializationStrategy: "copy",
-            sourceDirectory: "src",
-            baseline: "MyProject",
-            materializationState: "ready",
-            diagnostics: [],
-            dirtyState: "clean",
-            loadState: "not-loaded",
-            baseCommit: commit,
-          },
-        },
-      ],
-    });
-    const lifecycle = new PlexusProjectLifecycle({
-      gateway: {
-        checks: {
-          isPortListening: async () => false,
-        },
-      },
-    });
-
-    const result = await lifecycle.handleTool("plexus_project_status", {
-      projectPath: projectRoot,
-      stateRoot,
-      workspaceId: "worktree-a",
-      includeDiagnostics: true,
-    });
-
-    expect(result).toMatchObject({
-      ok: true,
-      data: {
-        diagnostics: {
-          repositoryWorkspaces: [
-            {
-              imageId: "dev",
-              workspace: {
-                path: repositoryPath,
-                dirtyState: "dirty",
-                currentCommit: commit,
-              },
-              cleanup: {
-                defaultPolicy: "preserve",
-                destructivePolicyRequired: true,
-                reviewRequired: true,
-                recommendedAction: "review",
-                message: expect.stringContaining("uncommitted changes"),
-              },
-            },
-          ],
-        },
-      },
-    });
-  }, 15_000);
 
   it("reports detached dependency repositories from status diagnostics", async () => {
     const projectRoot = makeTempDir("plexus-project-");

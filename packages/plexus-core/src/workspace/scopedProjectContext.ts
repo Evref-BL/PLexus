@@ -13,12 +13,9 @@ import {
   defaultWorkspaceId,
   loadProjectState,
   projectStatePathForConfig,
-  projectImageRepositoryWorkspaceStates,
-  projectImageRepositoryWorkspaces,
   renderProjectImageName,
   sanitizeRuntimeId,
   type ProjectImageState,
-  type ProjectImageRepositoryWorkspaceState,
   type ProjectImageStatus,
   type ProjectState,
 } from "./projectState.js";
@@ -130,22 +127,12 @@ export interface ScopedImageCleanupPaths {
   ombuDirectoryPath?: string;
 }
 
-export interface ScopedImageRepositoryWorkspaceCleanupMetadata {
-  path: string;
-  dirtyState: ProjectImageRepositoryWorkspaceState["dirtyState"];
-  defaultPolicy: "preserve";
-  destructivePolicyRequired: true;
-  lastDecision?: ProjectImageRepositoryWorkspaceState["cleanupState"];
-}
-
 export interface ScopedImageCleanupMetadata {
   disposable: true;
   statePath: string;
   launcherImageName: string;
   policy: ScopedImageCleanupPolicy;
   paths: ScopedImageCleanupPaths;
-  repositoryWorkspace?: ScopedImageRepositoryWorkspaceCleanupMetadata;
-  repositoryWorkspaces?: ScopedImageRepositoryWorkspaceCleanupMetadata[];
 }
 
 export interface ScopedImageGatewayRouteMetadata {
@@ -169,8 +156,6 @@ export interface ScopedImageContext {
   ownership: ScopedImageOwnership;
   affordances: ScopedImageAffordances;
   route: ScopedImageGatewayRouteMetadata;
-  repositoryWorkspace?: ProjectImageRepositoryWorkspaceState;
-  repositoryWorkspaces?: ProjectImageRepositoryWorkspaceState[];
 }
 
 export interface ScopedProjectContext {
@@ -189,8 +174,6 @@ export interface ScopedImageDiagnosticContext {
   assignedPort?: number;
   mcpServers?: ProjectImageState["mcpServers"];
   pid?: number;
-  repositoryWorkspace?: ProjectImageRepositoryWorkspaceState;
-  repositoryWorkspaces?: ProjectImageRepositoryWorkspaceState[];
   cleanup: ScopedImageCleanupMetadata;
 }
 
@@ -250,24 +233,6 @@ function cleanupPaths(
       : {}),
     ...(imageState?.ombuDirectoryPath
       ? { ombuDirectoryPath: imageState.ombuDirectoryPath }
-      : {}),
-  };
-}
-
-function repositoryWorkspaceCleanupMetadata(
-  repositoryWorkspaceState: ProjectImageRepositoryWorkspaceState | undefined,
-): ScopedImageRepositoryWorkspaceCleanupMetadata | undefined {
-  if (!repositoryWorkspaceState) {
-    return undefined;
-  }
-
-  return {
-    path: repositoryWorkspaceState.path,
-    dirtyState: repositoryWorkspaceState.dirtyState,
-    defaultPolicy: "preserve",
-    destructivePolicyRequired: true,
-    ...(repositoryWorkspaceState.cleanupState
-      ? { lastDecision: repositoryWorkspaceState.cleanupState }
       : {}),
   };
 }
@@ -535,34 +500,11 @@ function renderedLauncherImageName(
   );
 }
 
-function repositoryWorkspaces(
-  scope: ScopedProjectContextScope,
-  imageConfig: ProjectImageConfig,
-  imageState: ProjectImageState | undefined,
-): ProjectImageRepositoryWorkspaceState[] {
-  return imageState
-    ? projectImageRepositoryWorkspaces(imageState)
-    : projectImageRepositoryWorkspaceStates(imageConfig, {
-      projectId: scope.projectId,
-      projectName: scope.projectName,
-      workspaceId: scope.workspaceId,
-      targetId: scope.targetId,
-      imageId: imageConfig.id,
-    });
-}
-
 function scopedImageContext(
   scope: ScopedProjectContextScope,
   imageConfig: ProjectImageConfig,
   imageState: ProjectImageState | undefined,
 ): ScopedImageContext {
-  const repositoryWorkspaceStates = repositoryWorkspaces(
-    scope,
-    imageConfig,
-    imageState,
-  );
-  const repositoryWorkspaceState = repositoryWorkspaceStates[0];
-
   return {
     imageId: imageConfig.id,
     active: imageConfig.active,
@@ -578,12 +520,6 @@ function scopedImageContext(
     },
     affordances: lifecycleAffordances(imageConfig, imageState),
     route: routeMetadata(scope, imageConfig.id),
-    ...(repositoryWorkspaceState
-      ? { repositoryWorkspace: repositoryWorkspaceState }
-      : {}),
-    ...(repositoryWorkspaceStates.length > 0
-      ? { repositoryWorkspaces: repositoryWorkspaceStates }
-      : {}),
   };
 }
 
@@ -597,23 +533,6 @@ function scopedImageDiagnostics(
     imageConfig,
     imageState,
   );
-  const repositoryWorkspaceStates = repositoryWorkspaces(
-    scope,
-    imageConfig,
-    imageState,
-  );
-  const repositoryWorkspaceState = repositoryWorkspaceStates[0];
-  const repositoryWorkspaceCleanup =
-    repositoryWorkspaceCleanupMetadata(repositoryWorkspaceState);
-  const repositoryWorkspaceCleanups = repositoryWorkspaceStates
-    .map((workspace) => repositoryWorkspaceCleanupMetadata(workspace))
-    .filter(
-      (
-        cleanup,
-      ): cleanup is ScopedImageRepositoryWorkspaceCleanupMetadata =>
-        cleanup !== undefined,
-    );
-
   return {
     imageId: imageConfig.id,
     launcherImageName,
@@ -625,24 +544,12 @@ function scopedImageDiagnostics(
       : {}),
     ...(imageState?.mcpServers ? { mcpServers: imageState.mcpServers } : {}),
     ...(imageState?.pid ? { pid: imageState.pid } : {}),
-    ...(repositoryWorkspaceState
-      ? { repositoryWorkspace: repositoryWorkspaceState }
-      : {}),
-    ...(repositoryWorkspaceStates.length > 0
-      ? { repositoryWorkspaces: repositoryWorkspaceStates }
-      : {}),
     cleanup: {
       disposable: true,
       statePath: scope.statePath,
       launcherImageName,
       policy: "workspace_cleanup_only",
       paths: cleanupPaths(imageState),
-      ...(repositoryWorkspaceCleanup
-        ? { repositoryWorkspace: repositoryWorkspaceCleanup }
-        : {}),
-      ...(repositoryWorkspaceCleanups.length > 0
-        ? { repositoryWorkspaces: repositoryWorkspaceCleanups }
-        : {}),
     },
   };
 }

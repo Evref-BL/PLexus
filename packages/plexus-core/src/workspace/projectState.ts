@@ -1,6 +1,5 @@
 import fs from "node:fs";
 import {
-  imageRepositoryWorkspaceConfigs,
   projectImageDisplayMode,
   projectConfigId,
   projectMcpStartupMode,
@@ -10,8 +9,6 @@ import {
   type ProjectImageConfig,
   type ProjectImageCreationCleanupPolicy,
   type ProjectPharoMcpLoadPolicy,
-  type ProjectImageRepositoryWorkspaceConfig,
-  type ProjectImageRepositoryWorkspaceMaterializationStrategy,
   type ProjectGatewayMode,
   type ProjectRuntimePortRange,
 } from "../config/projectConfig.js";
@@ -93,20 +90,6 @@ export interface ProjectImagePharoMcpContractState
   reason?: string;
 }
 
-export type ProjectImageRepositoryWorkspaceDirtyState =
-  | "unknown"
-  | "clean"
-  | "dirty";
-export type ProjectImageRepositoryWorkspaceLoadState =
-  | "not-loaded"
-  | "pending"
-  | "loaded"
-  | "failed";
-export type ProjectImageRepositoryWorkspaceRegistrationState =
-  | "pending"
-  | "registered"
-  | "failed"
-  | "skipped";
 export type ProjectImageDependencyRepositoryDetachState =
   | "detached"
   | "failed"
@@ -114,22 +97,6 @@ export type ProjectImageDependencyRepositoryDetachState =
 export type ProjectImagePharoMcpLoadState =
   | "provided"
   | "loaded"
-  | "failed";
-export type ProjectImageRepositoryWorkspaceMaterializationState =
-  | "planned"
-  | "ready"
-  | "reused"
-  | "failed";
-export type ProjectImageRepositoryWorkspaceCleanupPolicy =
-  | "preserve"
-  | "archive"
-  | "delete-disposable";
-export type ProjectImageRepositoryWorkspaceCleanupDecision =
-  | "preserved"
-  | "archived"
-  | "deleted"
-  | "refused"
-  | "missing"
   | "failed";
 export type ProjectImageLeaseOwnerKind =
   | "target"
@@ -149,57 +116,6 @@ export interface ProjectImageLeaseState {
   repositoryPath?: string;
   branch?: string;
   cleanupCommand?: string;
-}
-
-export interface ProjectImageRepositoryWorkspaceRepositoryState {
-  id: string;
-  componentId?: string;
-  remoteUrl?: string;
-  originPath?: string;
-}
-
-export interface ProjectImageRepositoryWorkspaceCleanupRecord {
-  policy: ProjectImageRepositoryWorkspaceCleanupPolicy;
-  decision: ProjectImageRepositoryWorkspaceCleanupDecision;
-  imageId: string;
-  repositoryId: string;
-  path: string;
-  dirtyState: ProjectImageRepositoryWorkspaceDirtyState;
-  recordedAt: string;
-  branch?: string;
-  baseCommit?: string;
-  currentCommit?: string;
-  archivePath?: string;
-  message?: string;
-}
-
-export interface ProjectImageRepositoryWorkspaceState {
-  repository: ProjectImageRepositoryWorkspaceRepositoryState;
-  path: string;
-  materializationStrategy: ProjectImageRepositoryWorkspaceMaterializationStrategy;
-  sourceDirectory: string;
-  baseline: string;
-  loadGroup?: string;
-  pharoVersion?: number;
-  templateName?: string;
-  templateCategory?: string;
-  branch?: string;
-  baseBranch?: string;
-  baseCommit?: string;
-  currentCommit?: string;
-  sourcePath?: string;
-  materializationState: ProjectImageRepositoryWorkspaceMaterializationState;
-  diagnostics: string[];
-  dirtyState: ProjectImageRepositoryWorkspaceDirtyState;
-  loadState: ProjectImageRepositoryWorkspaceLoadState;
-  loadSourcePath?: string;
-  loadStatusPath?: string;
-  loadError?: string;
-  registrationState?: ProjectImageRepositoryWorkspaceRegistrationState;
-  registeredRepositoryName?: string;
-  registeredPackageNames?: string[];
-  registrationError?: string;
-  cleanupState?: ProjectImageRepositoryWorkspaceCleanupRecord;
 }
 
 export interface ProjectImageDetachedDependencyRepositoryState {
@@ -242,8 +158,6 @@ export interface ProjectImageState {
   pharoMcpContract?: ProjectImagePharoMcpContractState;
   pharoMcpLoad?: ProjectImagePharoMcpLoadStatus;
   dependencyRepositoryDetach?: ProjectImageDependencyRepositoryDetachStatus;
-  repositoryWorkspace?: ProjectImageRepositoryWorkspaceState;
-  repositoryWorkspaces?: ProjectImageRepositoryWorkspaceState[];
   imagePath?: string;
   imageDirectoryPath?: string;
   changesPath?: string;
@@ -604,17 +518,10 @@ export function loadProjectState(filePath: string): ProjectState | undefined {
     return undefined;
   }
 
-  const state = JSON.parse(fs.readFileSync(filePath, "utf8")) as ProjectState;
-  for (const image of state.images) {
-    syncProjectImageRepositoryWorkspaceAliases(image);
-  }
-  return state;
+  return JSON.parse(fs.readFileSync(filePath, "utf8")) as ProjectState;
 }
 
 export function saveProjectState(filePath: string, state: ProjectState): void {
-  for (const image of state.images) {
-    syncProjectImageRepositoryWorkspaceAliases(image);
-  }
   fs.mkdirSync(dirnamePathLike(filePath), { recursive: true });
   fs.writeFileSync(filePath, `${JSON.stringify(state, null, 2)}\n`, "utf8");
 }
@@ -696,11 +603,6 @@ export interface ProjectImageNameTemplateContext {
   imageId: string;
 }
 
-export interface ProjectImageRepositoryWorkspacePathTemplateContext
-  extends ProjectImageNameTemplateContext {
-  repositoryId: string;
-}
-
 export function renderProjectImageName(
   template: string,
   context: ProjectImageNameTemplateContext,
@@ -709,120 +611,6 @@ export function renderProjectImageName(
     /\{(projectId|projectName|workspaceId|targetId|imageId)\}/g,
     (_match, key: keyof ProjectImageNameTemplateContext) => context[key],
   );
-}
-
-export function renderProjectImageRepositoryWorkspacePath(
-  template: string,
-  context: ProjectImageRepositoryWorkspacePathTemplateContext,
-): string {
-  return template.replace(
-    /\{(projectId|projectName|workspaceId|targetId|imageId|repositoryId)\}/g,
-    (
-      _match,
-      key: keyof ProjectImageRepositoryWorkspacePathTemplateContext,
-    ) => context[key],
-  );
-}
-
-function defaultRepositoryWorkspacePath(
-  context: ProjectImageRepositoryWorkspacePathTemplateContext,
-): string {
-  return (
-    `image-local://${sanitizeRuntimeId(context.imageId)}/pharo-local/iceberg/` +
-    sanitizeRuntimeId(context.repositoryId)
-  );
-}
-
-export function projectImageRepositoryWorkspaceState(
-  image: ProjectImageConfig,
-  context: ProjectImageNameTemplateContext,
-): ProjectImageRepositoryWorkspaceState | undefined {
-  return projectImageRepositoryWorkspaceStates(image, context)[0];
-}
-
-function projectImageRepositoryWorkspaceConfigState(
-  workspace: ProjectImageRepositoryWorkspaceConfig,
-  context: ProjectImageNameTemplateContext,
-): ProjectImageRepositoryWorkspaceState {
-  const pathContext = {
-    ...context,
-    repositoryId: workspace.repository.id,
-  };
-  const path = workspace.materialization.path
-    ? renderProjectImageRepositoryWorkspacePath(
-        workspace.materialization.path,
-        pathContext,
-      )
-    : defaultRepositoryWorkspacePath(pathContext);
-
-  return {
-    repository: {
-      id: workspace.repository.id,
-      ...(workspace.repository.componentId
-        ? { componentId: workspace.repository.componentId }
-        : {}),
-      ...(workspace.repository.remoteUrl
-        ? { remoteUrl: workspace.repository.remoteUrl }
-        : {}),
-      ...(workspace.repository.originPath
-        ? { originPath: workspace.repository.originPath }
-        : {}),
-    },
-    path,
-    materializationStrategy: workspace.materialization.strategy,
-    sourceDirectory: workspace.sourceDirectory,
-    baseline: workspace.baseline,
-    ...(workspace.loadGroup ? { loadGroup: workspace.loadGroup } : {}),
-    ...(workspace.pharoVersion !== undefined
-      ? { pharoVersion: workspace.pharoVersion }
-      : {}),
-    ...(workspace.templateName ? { templateName: workspace.templateName } : {}),
-    ...(workspace.templateCategory
-      ? { templateCategory: workspace.templateCategory }
-      : {}),
-    ...(workspace.branch ? { branch: workspace.branch } : {}),
-    ...(workspace.baseBranch ? { baseBranch: workspace.baseBranch } : {}),
-    ...(workspace.baseCommit ? { baseCommit: workspace.baseCommit } : {}),
-    materializationState: "planned",
-    diagnostics: [],
-    dirtyState: "unknown",
-    loadState: "not-loaded",
-  };
-}
-
-export function projectImageRepositoryWorkspaceStates(
-  image: ProjectImageConfig,
-  context: ProjectImageNameTemplateContext,
-): ProjectImageRepositoryWorkspaceState[] {
-  return imageRepositoryWorkspaceConfigs(image).map((workspace) =>
-    projectImageRepositoryWorkspaceConfigState(workspace, context),
-  );
-}
-
-export function projectImageRepositoryWorkspaces(
-  image: Pick<
-    ProjectImageState,
-    "repositoryWorkspace" | "repositoryWorkspaces"
-  >,
-): ProjectImageRepositoryWorkspaceState[] {
-  if (image.repositoryWorkspaces && image.repositoryWorkspaces.length > 0) {
-    return image.repositoryWorkspaces;
-  }
-  return image.repositoryWorkspace ? [image.repositoryWorkspace] : [];
-}
-
-export function syncProjectImageRepositoryWorkspaceAliases(
-  image: ProjectImageState,
-): void {
-  const workspaces = projectImageRepositoryWorkspaces(image);
-  if (workspaces.length === 0) {
-    delete image.repositoryWorkspace;
-    delete image.repositoryWorkspaces;
-    return;
-  }
-
-  image.repositoryWorkspaces = workspaces;
-  image.repositoryWorkspace = workspaces[0];
 }
 
 export function runtimeStatusForImages(
@@ -911,10 +699,6 @@ export function createProjectState(
       targetId,
       imageId: image.id,
     };
-    const repositoryWorkspaces = projectImageRepositoryWorkspaceStates(
-      image,
-      imageContext,
-    );
     const assignedPort = assignedProjectImagePort({
       image,
       canUsePharoMcpPort,
@@ -935,12 +719,6 @@ export function createProjectState(
       status: image.active ? "starting" : "stopped",
       ...(previousImage?.lease ? { lease: previousImage.lease } : {}),
       ...supportState,
-      ...(repositoryWorkspaces.length > 0
-        ? {
-            repositoryWorkspaces,
-            repositoryWorkspace: repositoryWorkspaces[0],
-          }
-        : {}),
     };
   });
 

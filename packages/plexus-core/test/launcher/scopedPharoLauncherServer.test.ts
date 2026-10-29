@@ -1058,7 +1058,6 @@ describe("scoped pharo launcher facade", () => {
           statePath: statePath(projectRoot, stateRoot),
           state,
           stoppedImages: [],
-          repositoryWorkspaceCleanups: [],
           failures: [],
         };
       },
@@ -1142,7 +1141,6 @@ describe("scoped pharo launcher facade", () => {
             statePath: statePath(projectRoot, stateRoot),
             state: runningState(),
             stoppedImages: [],
-            repositoryWorkspaceCleanups: [],
             failures: [],
           };
         },
@@ -1200,7 +1198,6 @@ describe("scoped pharo launcher facade", () => {
           statePath: statePath(projectRoot, stateRoot),
           state,
           stoppedImages: state.images,
-          repositoryWorkspaceCleanups: [],
           failures: [],
         };
       },
@@ -1256,7 +1253,6 @@ describe("scoped pharo launcher facade", () => {
           statePath: statePath(projectRoot, stateRoot),
           state: failedState,
           stoppedImages: failedState.images,
-          repositoryWorkspaceCleanups: [],
           failures: [],
         };
       },
@@ -1361,17 +1357,6 @@ describe("scoped pharo launcher facade", () => {
           statePath: statePath(projectRoot, stateRoot),
           state,
           stoppedImages: state.images,
-          repositoryWorkspaceCleanups: [
-            {
-              policy: "delete-disposable" as const,
-              decision: "deleted" as const,
-              imageId: "dev",
-              repositoryId: "my-project",
-              path: "/private/plexus/repository-workspace",
-              dirtyState: "clean" as const,
-              recordedAt: "2026-05-18T12:00:00.000Z",
-            },
-          ],
           failures: [],
         };
       },
@@ -1420,7 +1405,6 @@ describe("scoped pharo launcher facade", () => {
         stateRoot,
         imageIds: ["dev"],
         pharoLauncherMcpClient: client,
-        repositoryWorkspaceCleanupPolicy: "delete-disposable",
       }),
     ]);
     expect(calls).toEqual([
@@ -1478,24 +1462,12 @@ describe("scoped pharo launcher facade", () => {
           endpointRecorded: true,
           contractStatus: "matching",
         },
-        repositoryWorkspaceCleanupPolicy: "delete-disposable",
-        repositoryWorkspaceCleanup: {
-          attempted: true,
-          decisions: [
-            {
-              repositoryId: "my-project",
-              decision: "deleted",
-              dirtyState: "clean",
-            },
-          ],
-        },
       },
     });
     const serialized = JSON.stringify(result);
     expect(serialized).not.toContain("MyProject-worktree-a-dev");
     expect(serialized).not.toContain("MyProject-worktree-a-preview");
     expect(serialized).not.toContain(stateRoot);
-    expect(serialized).not.toContain("/private/plexus/repository-workspace");
 
     const savedState = JSON.parse(
       fs.readFileSync(statePath(projectRoot, stateRoot), "utf8"),
@@ -1660,7 +1632,6 @@ describe("scoped pharo launcher facade", () => {
           statePath: statePath(projectRoot, stateRoot),
           state,
           stoppedImages: state.images,
-          repositoryWorkspaceCleanups: [],
           failures: [],
         };
       },

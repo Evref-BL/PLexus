@@ -68,37 +68,6 @@ export interface ProjectImagePreparedImageConfig {
   copyMode: ProjectImagePreparedCopyMode;
 }
 
-export type ProjectImageRepositoryWorkspaceMaterializationStrategy =
-  | "copy"
-  | "git-worktree"
-  | "clone";
-
-export interface ProjectImageRepositoryIdentityConfig {
-  id: string;
-  componentId?: string;
-  remoteUrl?: string;
-  originPath?: string;
-}
-
-export interface ProjectImageRepositoryWorkspaceMaterializationConfig {
-  strategy: ProjectImageRepositoryWorkspaceMaterializationStrategy;
-  path?: string;
-}
-
-export interface ProjectImageRepositoryWorkspaceConfig {
-  repository: ProjectImageRepositoryIdentityConfig;
-  sourceDirectory: string;
-  baseline: string;
-  loadGroup?: string;
-  pharoVersion?: number;
-  templateName?: string;
-  templateCategory?: string;
-  branch?: string;
-  baseBranch?: string;
-  baseCommit?: string;
-  materialization: ProjectImageRepositoryWorkspaceMaterializationConfig;
-}
-
 export interface ProjectImageConfig {
   id: string;
   imageName: string;
@@ -107,8 +76,6 @@ export interface ProjectImageConfig {
   mcp: ProjectImageMcpConfig;
   create?: ProjectImageCreateConfig;
   preparedImage?: ProjectImagePreparedImageConfig;
-  repositoryWorkspace?: ProjectImageRepositoryWorkspaceConfig;
-  repositoryWorkspaces?: ProjectImageRepositoryWorkspaceConfig[];
   git?: ProjectImageGitConfig;
 }
 
@@ -1101,167 +1068,6 @@ function parseImagePreparedImage(
   };
 }
 
-function parseImageRepositoryIdentity(
-  value: unknown,
-  issues: string[],
-  pathPrefix: string,
-): ProjectImageRepositoryIdentityConfig {
-  if (!isObject(value)) {
-    issues.push(`${pathPrefix}.repository must be an object`);
-    return { id: "" };
-  }
-
-  const componentId = optionalStringField(
-    value,
-    "componentId",
-    issues,
-    `${pathPrefix}.repository`,
-  );
-  const remoteUrl = optionalStringField(
-    value,
-    "remoteUrl",
-    issues,
-    `${pathPrefix}.repository`,
-  );
-  const originPath = optionalStringField(
-    value,
-    "originPath",
-    issues,
-    `${pathPrefix}.repository`,
-  );
-  if (!componentId && !remoteUrl && !originPath) {
-    issues.push(
-      `${pathPrefix}.repository must set at least one of componentId, remoteUrl, or originPath`,
-    );
-  }
-
-  return {
-    id: stringField(value, "id", issues, `${pathPrefix}.repository`),
-    ...(componentId ? { componentId } : {}),
-    ...(remoteUrl ? { remoteUrl } : {}),
-    ...(originPath ? { originPath } : {}),
-  };
-}
-
-function parseImageRepositoryWorkspaceMaterialization(
-  value: unknown,
-  issues: string[],
-  pathPrefix: string,
-): ProjectImageRepositoryWorkspaceMaterializationConfig {
-  const materializationPath = `${pathPrefix}.materialization`;
-  if (value === undefined) {
-    return { strategy: "copy" };
-  }
-
-  if (!isObject(value)) {
-    issues.push(`${materializationPath} must be an object`);
-    return { strategy: "copy" };
-  }
-
-  const strategyValue = value.strategy ?? "copy";
-  const strategy =
-    strategyValue === "copy" ||
-    strategyValue === "git-worktree" ||
-    strategyValue === "clone"
-      ? strategyValue
-      : "copy";
-  if (strategy !== strategyValue) {
-    issues.push(
-      `${materializationPath}.strategy must be one of copy, git-worktree, clone`,
-    );
-  }
-
-  const path = optionalStringField(value, "path", issues, materializationPath);
-
-  return {
-    strategy,
-    ...(path ? { path } : {}),
-  };
-}
-
-function parseImageRepositoryWorkspace(
-  value: unknown,
-  issues: string[],
-  workspacePath: string,
-): ProjectImageRepositoryWorkspaceConfig | undefined {
-  if (value === undefined) {
-    return undefined;
-  }
-
-  if (!isObject(value)) {
-    issues.push(`${workspacePath} must be an object`);
-    return undefined;
-  }
-
-  const pharoVersion = optionalPositiveIntegerField(
-    value,
-    "pharoVersion",
-    issues,
-    workspacePath,
-  );
-
-  return {
-    repository: parseImageRepositoryIdentity(value.repository, issues, workspacePath),
-    sourceDirectory: stringField(value, "sourceDirectory", issues, workspacePath),
-    baseline: stringField(value, "baseline", issues, workspacePath),
-    loadGroup: optionalStringField(value, "loadGroup", issues, workspacePath),
-    ...(pharoVersion !== undefined ? { pharoVersion } : {}),
-    templateName: optionalStringField(value, "templateName", issues, workspacePath),
-    templateCategory: optionalStringField(
-      value,
-      "templateCategory",
-      issues,
-      workspacePath,
-    ),
-    branch: optionalStringField(value, "branch", issues, workspacePath),
-    baseBranch: optionalStringField(value, "baseBranch", issues, workspacePath),
-    baseCommit: optionalStringField(value, "baseCommit", issues, workspacePath),
-    materialization: parseImageRepositoryWorkspaceMaterialization(
-      value.materialization,
-      issues,
-      workspacePath,
-    ),
-  };
-}
-
-function parseImageRepositoryWorkspaces(
-  value: unknown,
-  issues: string[],
-  pathPrefix: string,
-): ProjectImageRepositoryWorkspaceConfig[] | undefined {
-  if (value === undefined) {
-    return undefined;
-  }
-
-  const workspacesPath = `${pathPrefix}.repositoryWorkspaces`;
-  if (!Array.isArray(value)) {
-    issues.push(`${workspacesPath} must be an array`);
-    return undefined;
-  }
-
-  return value.map((workspace, index) =>
-    parseImageRepositoryWorkspace(
-      workspace,
-      issues,
-      `${workspacesPath}[${index}]`,
-    ) ?? {
-      repository: { id: "" },
-      sourceDirectory: "",
-      baseline: "",
-      materialization: { strategy: "copy" },
-    },
-  );
-}
-
-export function imageRepositoryWorkspaceConfigs(
-  image: Pick<ProjectImageConfig, "repositoryWorkspace" | "repositoryWorkspaces">,
-): ProjectImageRepositoryWorkspaceConfig[] {
-  if (image.repositoryWorkspaces && image.repositoryWorkspaces.length > 0) {
-    return image.repositoryWorkspaces;
-  }
-  return image.repositoryWorkspace ? [image.repositoryWorkspace] : [];
-}
-
 function parseImages(
   value: unknown,
   issues: string[],
@@ -1283,20 +1089,6 @@ function parseImages(
       };
     }
 
-    const repositoryWorkspace = parseImageRepositoryWorkspace(
-      image.repositoryWorkspace,
-      issues,
-      `${pathPrefix}.repositoryWorkspace`,
-    );
-    const repositoryWorkspaces = parseImageRepositoryWorkspaces(
-      image.repositoryWorkspaces,
-      issues,
-      pathPrefix,
-    );
-    const effectiveRepositoryWorkspaces =
-      repositoryWorkspaces ??
-      (repositoryWorkspace ? [repositoryWorkspace] : undefined);
-
     return {
       id: stringField(image, "id", issues, pathPrefix),
       imageName: stringField(image, "imageName", issues, pathPrefix),
@@ -1314,11 +1106,6 @@ function parseImages(
         issues,
         pathPrefix,
       ),
-      repositoryWorkspace:
-        repositoryWorkspace ?? effectiveRepositoryWorkspaces?.[0],
-      ...(effectiveRepositoryWorkspaces
-        ? { repositoryWorkspaces: effectiveRepositoryWorkspaces }
-        : {}),
       git: parseImageGit(image.git, issues, pathPrefix),
     };
   });
@@ -2000,50 +1787,6 @@ function collectDuplicatePorts(images: ProjectImageConfig[], issues: string[]): 
   }
 }
 
-function collectDuplicateActiveRepositoryWorkspacePaths(
-  images: ProjectImageConfig[],
-  issues: string[],
-): void {
-  const seen = new Set<string>();
-  for (const image of images) {
-    if (!image.active) {
-      continue;
-    }
-
-    for (const workspace of imageRepositoryWorkspaceConfigs(image)) {
-      const path = workspace.materialization.path;
-      if (!path) {
-        continue;
-      }
-
-      if (seen.has(path)) {
-        issues.push(`active image repository workspace paths must be unique: ${path}`);
-      } else {
-        seen.add(path);
-      }
-    }
-  }
-}
-
-function collectDuplicateRepositoryWorkspaceIds(
-  images: ProjectImageConfig[],
-  issues: string[],
-): void {
-  images.forEach((image, imageIndex) => {
-    const seen = new Set<string>();
-    for (const workspace of imageRepositoryWorkspaceConfigs(image)) {
-      const repositoryId = workspace.repository.id;
-      if (seen.has(repositoryId)) {
-        issues.push(
-          `images[${imageIndex}] repository workspace ids must be unique: ${repositoryId}`,
-        );
-      } else {
-        seen.add(repositoryId);
-      }
-    }
-  });
-}
-
 function validateImagePortPolicy(config: ProjectConfig, issues: string[]): void {
   const allocation = resolveProjectRuntimePolicy(config).imagePorts.allocation;
   config.images.forEach((image, index) => {
@@ -2171,8 +1914,6 @@ export function parseProjectConfig(value: unknown): ProjectConfig {
     issues,
   );
   collectDuplicatePorts(config.images, issues);
-  collectDuplicateRepositoryWorkspaceIds(config.images, issues);
-  collectDuplicateActiveRepositoryWorkspacePaths(config.images, issues);
   validateImagePortPolicy(config, issues);
   validatePreparedImageReferences(config, issues);
   validateRemoteNodeConfig(config, issues);

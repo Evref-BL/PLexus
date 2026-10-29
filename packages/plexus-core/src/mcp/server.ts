@@ -104,11 +104,6 @@ export const projectLifecycleTools = [
         projectPath: stringSchema,
         workspaceId: optionalStringSchema,
         stateRoot: optionalStringSchema,
-        repositoryWorkspaceCleanupPolicy: {
-          type: "string",
-          enum: ["preserve", "archive", "delete-disposable"],
-        },
-        repositoryWorkspaceArchiveRoot: optionalStringSchema,
       detail: toolResultDetailSchema,
       },
       ["projectPath"],
@@ -126,11 +121,6 @@ export const projectLifecycleTools = [
         confirm: { type: "boolean" },
         deleteStateFile: { type: "boolean" },
         deleteLauncherImages: { type: "boolean" },
-        repositoryWorkspaceCleanupPolicy: {
-          type: "string",
-          enum: ["preserve", "archive", "delete-disposable"],
-        },
-        repositoryWorkspaceArchiveRoot: optionalStringSchema,
       },
       ["projectPath"],
     ),

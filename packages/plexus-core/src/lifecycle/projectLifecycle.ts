@@ -73,26 +73,18 @@ import {
   type ProjectOpenResult,
 } from "./projectOpen.js";
 import {
-  inspectProjectImageRepositoryWorkspace,
-} from "../workspace/projectRepositoryWorkspace.js";
-import {
   defaultPlexusStateRoot,
   defaultTargetId,
   defaultWorkspaceId,
   loadProjectState,
   projectStateRootForConfig,
   projectStatePathForConfig,
-  projectImageRepositoryWorkspaceStates,
-  projectImageRepositoryWorkspaces,
   renderProjectImageName,
   runtimeStatusForImages,
   sanitizeRuntimeId,
   saveProjectState,
   type ProjectImageMcpEndpoint,
   type ProjectImageMcpServer,
-  type ProjectImageRepositoryWorkspaceCleanupPolicy,
-  type ProjectImageRepositoryWorkspaceCleanupRecord,
-  type ProjectImageRepositoryWorkspaceState,
   type ProjectImageState,
   type ProjectGatewayState,
   type ProjectState,
@@ -249,8 +241,6 @@ export interface ProjectCloseToolInput {
   projectPath: string;
   stateRoot?: string;
   workspaceId?: string;
-  repositoryWorkspaceCleanupPolicy?: ProjectImageRepositoryWorkspaceCleanupPolicy;
-  repositoryWorkspaceArchiveRoot?: string;
 }
 
 export interface ProjectCleanupToolInput {
@@ -260,8 +250,6 @@ export interface ProjectCleanupToolInput {
   confirm?: boolean;
   deleteStateFile?: boolean;
   deleteLauncherImages?: boolean;
-  repositoryWorkspaceCleanupPolicy?: ProjectImageRepositoryWorkspaceCleanupPolicy;
-  repositoryWorkspaceArchiveRoot?: string;
 }
 
 export interface ProjectStatusToolInput extends ProjectLifecycleRouteReference {
@@ -464,21 +452,6 @@ export interface ProjectLifecycleGatewayDiagnostics {
   repair?: ProjectLifecycleGatewayRepairAffordance;
 }
 
-export interface ProjectLifecycleRepositoryWorkspaceDiagnostic {
-  imageId: string;
-  imageName: string;
-  status: ProjectImageState["status"] | "declared";
-  workspace: ProjectImageRepositoryWorkspaceState;
-  cleanup: {
-    defaultPolicy: "preserve";
-    destructivePolicyRequired: true;
-    reviewRequired: boolean;
-    recommendedAction: "none" | "materialize" | "review" | "repair";
-    message: string;
-    lastDecision?: ProjectImageRepositoryWorkspaceCleanupRecord;
-  };
-}
-
 export interface ProjectLifecycleDependencyRepositoryDetachDiagnostic {
   imageId: string;
   imageName: string;
@@ -547,7 +520,6 @@ export interface ProjectLifecycleDiagnostics {
   remoteTopology: ProjectLifecycleRemoteTopologyDiagnostics;
   imagePortPolicy: ProjectLifecycleImagePortPolicyDiagnostics;
   launcherProfile: PharoLauncherMcpProfileDiagnostic;
-  repositoryWorkspaces: ProjectLifecycleRepositoryWorkspaceDiagnostic[];
   dependencyRepositoryDetaches: ProjectLifecycleDependencyRepositoryDetachDiagnostic[];
   imageRecovery: ProjectLifecycleImageRecoveryDiagnostic[];
   imageMcpPorts: Array<{
@@ -681,27 +653,6 @@ function optionalDisplayMode(
   }
 
   throw new ProjectLifecycleInputError(`${key} must be headless or interactive`);
-}
-
-function optionalRepositoryWorkspaceCleanupPolicy(
-  input: Record<string, unknown>,
-): ProjectImageRepositoryWorkspaceCleanupPolicy | undefined {
-  const value = input.repositoryWorkspaceCleanupPolicy;
-  if (value === undefined) {
-    return undefined;
-  }
-
-  if (
-    value === "preserve" ||
-    value === "archive" ||
-    value === "delete-disposable"
-  ) {
-    return value;
-  }
-
-  throw new ProjectLifecycleInputError(
-    "repositoryWorkspaceCleanupPolicy must be preserve, archive, or delete-disposable",
-  );
 }
 
 function optionalNumber(
@@ -1278,145 +1229,6 @@ function imagePortCoordinationDiagnostics(
     message:
       "Image MCP ports are coordinated by scanning PLexus project state; this only protects workspaces sharing this state root.",
   };
-}
-
-function repositoryWorkspaceCleanupDiagnostic(
-  workspace: ProjectImageRepositoryWorkspaceState,
-  inspection:
-    | ReturnType<typeof inspectProjectImageRepositoryWorkspace>
-    | undefined,
-): ProjectLifecycleRepositoryWorkspaceDiagnostic["cleanup"] {
-  const lastDecision = workspace.cleanupState;
-  if (!inspection) {
-    return {
-      defaultPolicy: "preserve",
-      destructivePolicyRequired: true,
-      reviewRequired: false,
-      recommendedAction: "materialize",
-      message:
-        "Repository workspace is planned; destructive cleanup is unavailable until it is materialized.",
-      ...(lastDecision ? { lastDecision } : {}),
-    };
-  }
-
-  if (!inspection.exists) {
-    return {
-      defaultPolicy: "preserve",
-      destructivePolicyRequired: true,
-      reviewRequired: true,
-      recommendedAction: "materialize",
-      message: "Repository workspace path is missing.",
-      ...(lastDecision ? { lastDecision } : {}),
-    };
-  }
-
-  if (!inspection.isGitRepository) {
-    return {
-      defaultPolicy: "preserve",
-      destructivePolicyRequired: true,
-      reviewRequired: true,
-      recommendedAction: "repair",
-      message: "Repository workspace path exists but is not a Git repository.",
-      ...(lastDecision ? { lastDecision } : {}),
-    };
-  }
-
-  if (inspection.dirtyState === "dirty") {
-    return {
-      defaultPolicy: "preserve",
-      destructivePolicyRequired: true,
-      reviewRequired: true,
-      recommendedAction: "review",
-      message:
-        "Repository workspace has uncommitted changes; preserve, archive, or hand off before deletion.",
-      ...(lastDecision ? { lastDecision } : {}),
-    };
-  }
-
-  return {
-    defaultPolicy: "preserve",
-    destructivePolicyRequired: true,
-    reviewRequired: false,
-    recommendedAction: "none",
-    message:
-      "Repository workspace is clean; destructive cleanup still requires an explicit policy.",
-    ...(lastDecision ? { lastDecision } : {}),
-  };
-}
-
-function liveRepositoryWorkspaceState(
-  workspace: ProjectImageRepositoryWorkspaceState,
-  inspection:
-    | ReturnType<typeof inspectProjectImageRepositoryWorkspace>
-    | undefined,
-): ProjectImageRepositoryWorkspaceState {
-  if (!inspection) {
-    return workspace;
-  }
-
-  return {
-    ...workspace,
-    path: inspection.path,
-    dirtyState: inspection.dirtyState,
-    diagnostics: [...workspace.diagnostics, ...inspection.diagnostics],
-    ...(inspection.branch ? { branch: inspection.branch } : {}),
-    ...(inspection.currentCommit
-      ? { currentCommit: inspection.currentCommit }
-      : {}),
-  };
-}
-
-function repositoryWorkspaceDiagnostics(
-  projectRoot: string,
-  config: ProjectConfig,
-  state: ProjectState | undefined,
-  scope: {
-    projectId: string;
-    workspaceId: string;
-    targetId: string;
-  },
-): ProjectLifecycleRepositoryWorkspaceDiagnostic[] {
-  return config.images
-    .flatMap((imageConfig) => {
-      const imageState = state?.images.find((image) => image.id === imageConfig.id);
-      const context = {
-        projectId: scope.projectId,
-        projectName: config.name,
-        workspaceId: scope.workspaceId,
-        targetId: scope.targetId,
-        imageId: imageConfig.id,
-      };
-      const workspaces = imageState
-        ? projectImageRepositoryWorkspaces(imageState)
-        : projectImageRepositoryWorkspaceStates(imageConfig, context);
-
-      return workspaces.map((workspace) => {
-        const inspection = imageState
-          ? inspectProjectImageRepositoryWorkspace({
-              projectRoot,
-              imageState,
-              workspace,
-            })
-          : undefined;
-        const liveWorkspace = liveRepositoryWorkspaceState(workspace, inspection);
-
-        return {
-          imageId: imageConfig.id,
-          imageName:
-            imageState?.imageName ??
-            renderProjectImageName(imageConfig.imageName, context),
-          status: imageState?.status ?? "declared",
-          workspace: liveWorkspace,
-          cleanup: repositoryWorkspaceCleanupDiagnostic(liveWorkspace, inspection),
-        };
-      });
-    })
-    .filter(
-      (
-        item,
-      ): item is ProjectLifecycleRepositoryWorkspaceDiagnostic =>
-        item !== undefined,
-    );
 }
 
 function dependencyRepositoryDetachDiagnostics(
@@ -2891,15 +2703,6 @@ export class PlexusProjectLifecycle {
         projectRoot: input.projectPath,
         stateRoot: this.effectiveStateRoot(input.stateRoot),
         workspaceId: input.workspaceId,
-        ...(input.repositoryWorkspaceCleanupPolicy
-          ? {
-              repositoryWorkspaceCleanupPolicy:
-                input.repositoryWorkspaceCleanupPolicy,
-            }
-          : {}),
-        ...(input.repositoryWorkspaceArchiveRoot
-          ? { repositoryWorkspaceArchiveRoot: input.repositoryWorkspaceArchiveRoot }
-          : {}),
       });
       const projectRoot = path.resolve(input.projectPath);
       const config =
@@ -3015,9 +2818,6 @@ export class PlexusProjectLifecycle {
         deleteStateFile: input.deleteStateFile,
         deleteLauncherImages: input.deleteLauncherImages,
         pharoLauncherMcpClient: this.pharoLauncherMcpClient,
-        repositoryWorkspaceCleanupPolicy:
-          input.repositoryWorkspaceCleanupPolicy,
-        repositoryWorkspaceArchiveRoot: input.repositoryWorkspaceArchiveRoot,
         gateway: this.gateway,
       });
 
@@ -3169,12 +2969,6 @@ export class PlexusProjectLifecycle {
             projectPath: requireString(input, "projectPath"),
             stateRoot: optionalString(input, "stateRoot"),
             workspaceId: optionalString(input, "workspaceId"),
-            repositoryWorkspaceCleanupPolicy:
-              optionalRepositoryWorkspaceCleanupPolicy(input),
-            repositoryWorkspaceArchiveRoot: optionalString(
-              input,
-              "repositoryWorkspaceArchiveRoot",
-            ),
           });
 
         case "plexus_project_cleanup":
@@ -3187,12 +2981,6 @@ export class PlexusProjectLifecycle {
             deleteLauncherImages: optionalBooleanValue(
               input,
               "deleteLauncherImages",
-            ),
-            repositoryWorkspaceCleanupPolicy:
-              optionalRepositoryWorkspaceCleanupPolicy(input),
-            repositoryWorkspaceArchiveRoot: optionalString(
-              input,
-              "repositoryWorkspaceArchiveRoot",
             ),
           });
 
@@ -3433,12 +3221,6 @@ export class PlexusProjectLifecycle {
         stateRoot,
         env: this.gateway.env,
       }),
-      repositoryWorkspaces: repositoryWorkspaceDiagnostics(
-        projectRoot,
-        config,
-        state,
-        scope,
-      ),
       dependencyRepositoryDetaches:
         dependencyRepositoryDetachDiagnostics(state),
       imageRecovery: imageRecoveryDiagnostics({

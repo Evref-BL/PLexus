@@ -188,15 +188,6 @@ interface ScopedImageResetSummary {
   started: boolean;
   lifecycle: ScopedImageLifecycleStatus;
   route: ScopedImageRouteStatus;
-  repositoryWorkspaceCleanupPolicy: "delete-disposable";
-  repositoryWorkspaceCleanup: {
-    attempted: boolean;
-    decisions: Array<{
-      repositoryId: string;
-      decision: string;
-      dirtyState: string;
-    }>;
-  };
 }
 
 interface ResetImageOptions {
@@ -913,15 +904,6 @@ function resetCloseError(
   imageId: string,
   error: ProjectCloseError,
 ): ScopedPharoLauncherError {
-  const cleanup = error.result.repositoryWorkspaceCleanups.find(
-    (record) => record.imageId === imageId,
-  );
-  if (cleanup) {
-    return new ScopedPharoLauncherError(
-      `Image ${imageId} reset could not clean its disposable repository workspace: ${cleanup.decision} (${cleanup.dirtyState})`,
-    );
-  }
-
   const failure = error.result.failures.find(
     (record) => record.imageId === imageId,
   );
@@ -952,16 +934,6 @@ function resetSummary(
     started,
     lifecycle: lifecycleStatus(image),
     route: routeStatus(image, imageState),
-    repositoryWorkspaceCleanupPolicy: "delete-disposable",
-    repositoryWorkspaceCleanup: {
-      attempted: Boolean(closeResult),
-      decisions:
-        closeResult?.repositoryWorkspaceCleanups.map((record) => ({
-          repositoryId: record.repositoryId,
-          decision: record.decision,
-          dirtyState: record.dirtyState,
-        })) ?? [],
-    },
   };
 }
 
@@ -1776,7 +1748,6 @@ export class ScopedPharoLauncher {
           stateRoot: scope.stateRoot,
           imageIds: [imageId],
           pharoLauncherMcpClient: this.options.pharoLauncherMcpClient,
-          repositoryWorkspaceCleanupPolicy: "delete-disposable",
         });
       } catch (error) {
         if (error instanceof ProjectCloseError) {

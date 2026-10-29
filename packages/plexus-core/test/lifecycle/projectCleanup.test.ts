@@ -19,7 +19,6 @@ import {
 } from "../../src/gateway/projectImageMcpEndpoint.js";
 import {
   saveProjectState,
-  type ProjectImageRepositoryWorkspaceState,
   type ProjectState,
 } from "../../src/workspace/projectState.js";
 
@@ -84,14 +83,7 @@ function writeFile(filePath: string, contents: string): void {
   fs.writeFileSync(filePath, contents, "utf8");
 }
 
-function initRepository(repositoryPath: string): string {
-  fs.mkdirSync(repositoryPath, { recursive: true });
-  git(repositoryPath, ["init", "--initial-branch=main"]);
-  writeFile(path.join(repositoryPath, "src", "BaselineOfMyProject.class.st"), "baseline");
-  git(repositoryPath, ["add", "."]);
-  git(repositoryPath, ["commit", "-m", "Initial"]);
-  return git(repositoryPath, ["rev-parse", "HEAD"]);
-}
+
 
 function writeProjectConfig(
   projectRoot: string,
@@ -166,25 +158,6 @@ function statePath(stateRoot: string): string {
   );
 }
 
-function repositoryWorkspace(
-  repositoryPath: string,
-): ProjectImageRepositoryWorkspaceState {
-  return {
-    repository: {
-      id: "my-project",
-      originPath: repositoryPath,
-    },
-    path: repositoryPath,
-    materializationStrategy: "copy",
-    sourceDirectory: "src",
-    baseline: "MyProject",
-    materializationState: "ready",
-    diagnostics: [],
-    dirtyState: "clean",
-    loadState: "not-loaded",
-  };
-}
-
 function ownedCreationState() {
   return {
     source: {
@@ -235,7 +208,6 @@ async function writeClaimFixtures(input: {
 function writeRuntimeState(input: {
   projectRoot: string;
   stateRoot: string;
-  repositoryPath: string;
   gatewayClaimsRoot: string;
   devStatus?: "running" | "stopped";
 }): ProjectState {
@@ -282,7 +254,6 @@ function writeRuntimeState(input: {
           },
         ],
         creation: ownedCreationState(),
-        repositoryWorkspace: repositoryWorkspace(input.repositoryPath),
       },
       {
         id: "baseline",
@@ -321,14 +292,11 @@ describe("project cleanup", () => {
     const stateRoot = makeTempDir("plexus-state-");
     const imageClaimsRoot = makeTempDir("plexus-image-claims-");
     const gatewayClaimsRoot = makeTempDir("plexus-gateway-claims-");
-    const repositoryPath = makeTempDir("plexus-repository-");
-    initRepository(repositoryPath);
     writeProjectConfig(projectRoot, imageClaimsRoot);
     await writeClaimFixtures({ imageClaimsRoot, gatewayClaimsRoot });
     writeRuntimeState({
       projectRoot,
       stateRoot,
-      repositoryPath,
       gatewayClaimsRoot,
     });
 
@@ -354,7 +322,6 @@ describe("project cleanup", () => {
         "endpoint-handoff",
         "gateway",
         "gateway-port-claim",
-        "repository-workspace",
       ]),
     );
     expect(result.resources.every((resource) => resource.status === "planned"))
@@ -373,14 +340,11 @@ describe("project cleanup", () => {
     const stateRoot = makeTempDir("plexus-state-");
     const imageClaimsRoot = makeTempDir("plexus-image-claims-");
     const gatewayClaimsRoot = makeTempDir("plexus-gateway-claims-");
-    const repositoryPath = makeTempDir("plexus-repository-");
-    initRepository(repositoryPath);
     writeProjectConfig(projectRoot, imageClaimsRoot);
     await writeClaimFixtures({ imageClaimsRoot, gatewayClaimsRoot });
     writeRuntimeState({
       projectRoot,
       stateRoot,
-      repositoryPath,
       gatewayClaimsRoot,
     });
     const launcherClient = new FakePharoLauncherMcpClient();
@@ -392,7 +356,6 @@ describe("project cleanup", () => {
       workspaceId: "worktree-a",
       confirm: true,
       deleteStateFile: true,
-      repositoryWorkspaceCleanupPolicy: "delete-disposable",
       pharoLauncherMcpClient: launcherClient,
       portClaimChecks: checks,
       gateway: {
@@ -435,7 +398,6 @@ describe("project cleanup", () => {
     await expect(
       inspectPortClaim({ claimsRoot: gatewayClaimsRoot, port: 8133, checks }),
     ).resolves.toMatchObject({ status: "available" });
-    expect(fs.existsSync(repositoryPath)).toBe(false);
     expect(fs.existsSync(statePath(stateRoot))).toBe(false);
     expect(result.resources).toEqual(
       expect.arrayContaining([
