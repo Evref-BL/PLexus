@@ -1,22 +1,12 @@
 import { spawn } from "node:child_process";
 import net from "node:net";
-import os from "node:os";
-import path from "node:path";
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import { loadPlexusGatewayConfig } from "../config/config.js";
-import {
-  claimPort,
-  inspectPortClaim,
-  releasePortClaim,
-  type PortClaimChecks,
-  type PortClaimRecord,
-} from "../ports/portClaims.js";
 import {
   projectConfigId,
   resolveProjectRuntimePolicy,
   type ProjectConfig,
   type ProjectLocalGatewayPolicy,
-  type ProjectRuntimePortRange,
   type ProjectSharedGatewayPolicy,
 } from "../config/projectConfig.js";
 import type {
@@ -24,9 +14,6 @@ import type {
   ProjectGatewayState,
   ProjectState,
 } from "../workspace/projectState.js";
-
-export const defaultGatewayPortClaimsDirectoryName = "plexus-port-claims";
-export const gatewayPortClaimPurpose = "gateway";
 
 export interface ProjectGatewayProcessStartOptions {
   projectRoot: string;
@@ -57,9 +44,8 @@ export interface ProjectGatewayProcessManager {
 }
 
 export interface ProjectGatewayRuntimeOptions {
-  claimsRoot?: string;
-  checks?: PortClaimChecks;
   processManager?: ProjectGatewayProcessManager;
+  isPortListening?: (port: number) => Promise<boolean>;
   env?: NodeJS.ProcessEnv;
   pharoTools?: readonly Tool[];
   pharoMcpContract?: PharoMcpContractReference;
@@ -90,7 +76,6 @@ export interface CloseProjectGatewayOptions extends ProjectGatewayRuntimeOptions
 export interface CloseProjectGatewayResult {
   closed: boolean;
   stoppedProcess: boolean;
-  releasedClaim: boolean;
 }
 
 export class ProjectGatewayDeploymentError extends Error {
@@ -199,10 +184,6 @@ function isNodeError(error: unknown): error is NodeJS.ErrnoException {
   return error instanceof Error && "code" in error;
 }
 
-export function defaultGatewayPortClaimsRoot(): string {
-  return path.join(os.tmpdir(), defaultGatewayPortClaimsDirectoryName);
-}
-
 function hostForUrl(host: string): string {
   return host.includes(":") && !host.startsWith("[") ? `[${host}]` : host;
 }
@@ -255,15 +236,12 @@ function localGatewayState(
   policy: ProjectLocalGatewayPolicy,
   state: ProjectState,
   port: number | undefined,
-  claim: PortClaimRecord | undefined,
   pid: number | undefined,
-  claimsRoot: string | undefined,
 ): ProjectGatewayState {
   return {
     mode: "project-local",
     host: policy.host,
     ...(port !== undefined ? { port } : {}),
-    ...(policy.portRange ? { portRange: { ...policy.portRange } } : {}),
     routePath: policy.mcpPath,
     controlPath: policy.routeControlMcpPath,
     ...(port !== undefined
@@ -279,15 +257,6 @@ function localGatewayState(
     owningProjectId: state.projectId,
     managedByProject: true,
     ...(pid !== undefined ? { pid } : {}),
-    ...(claim && claimsRoot
-      ? {
-          claim: {
-            claimsRoot,
-            claimId: claim.claimId,
-            assignedPort: claim.assignedPort,
-          },
-        }
-      : {}),
   };
 }
 
@@ -302,8 +271,6 @@ export function projectGatewayStatus(
 
   const stateGateway =
     state?.gateway?.mode === "project-local" ? state.gateway : undefined;
-  const statePort = stateGateway?.port;
-  const policyPort = policy.port ?? statePort;
 
   return {
     ...localGatewayState(
@@ -312,61 +279,36 @@ export function projectGatewayStatus(
         projectId: projectConfigId(config),
         projectName: config.name,
         workspaceId: "",
-        targetId: "",
         updatedAt: "",
         images: [],
       },
-      policyPort,
-      undefined,
-      undefined,
+      policy.port,
       undefined,
     ),
     ...(stateGateway?.pid ? { pid: stateGateway.pid } : {}),
-    ...(stateGateway?.claim ? { claim: stateGateway.claim } : {}),
   };
-}
-
-function rangeContains(range: ProjectRuntimePortRange, port: number): boolean {
-  return port >= range.start && port <= range.end;
 }
 
 function existingGatewayMatchesPolicy(
   gateway: ProjectGatewayState | undefined,
   policy: ProjectLocalGatewayPolicy,
-  claimsRoot: string,
 ): gateway is ProjectGatewayState & {
   port: number;
   controlEndpoint: string;
-  claim: NonNullable<ProjectGatewayState["claim"]>;
 } {
-  if (
-    !gateway ||
-    gateway.mode !== "project-local" ||
-    !gateway.managedByProject ||
-    !gateway.port ||
-    !gateway.controlEndpoint ||
-    !gateway.claim
-  ) {
-    return false;
-  }
-
-  if (
-    gateway.host !== policy.host ||
-    gateway.routePath !== policy.mcpPath ||
-    gateway.controlPath !== policy.routeControlMcpPath ||
-    gateway.claim.claimsRoot !== claimsRoot
-  ) {
-    return false;
-  }
-
-  if (policy.port !== undefined) {
-    return gateway.port === policy.port;
-  }
-
-  return policy.portRange ? rangeContains(policy.portRange, gateway.port) : false;
+  return Boolean(
+    gateway &&
+      gateway.mode === "project-local" &&
+      gateway.managedByProject &&
+      gateway.port === policy.port &&
+      gateway.controlEndpoint &&
+      gateway.host === policy.host &&
+      gateway.routePath === policy.mcpPath &&
+      gateway.controlPath === policy.routeControlMcpPath,
+  );
 }
 
-async function isPortUnavailable(host: string, port: number): Promise<boolean> {
+export async function isPortInUse(host: string, port: number): Promise<boolean> {
   return new Promise((resolve) => {
     const server = net.createServer();
     const finish = (unavailable: boolean): void => {
@@ -381,29 +323,6 @@ async function isPortUnavailable(host: string, port: number): Promise<boolean> {
   });
 }
 
-function gatewayChecks(
-  host: string,
-  checks: PortClaimChecks | undefined,
-): PortClaimChecks {
-  return {
-    ...checks,
-    isPortListening:
-      checks?.isPortListening ?? ((port) => isPortUnavailable(host, port)),
-  };
-}
-
-function gatewayClaimsRoot(
-  env: NodeJS.ProcessEnv,
-  optionsRoot: string | undefined,
-): string {
-  return (
-    optionsRoot ??
-    env.PLEXUS_PORT_CLAIMS_ROOT ??
-    env.PLEXUS_GATEWAY_PORT_CLAIMS_ROOT ??
-    defaultGatewayPortClaimsRoot()
-  );
-}
-
 function gatewayHealthUrl(gateway: ProjectGatewayState): string | undefined {
   if (!gateway.controlEndpoint) {
     return undefined;
@@ -414,6 +333,23 @@ function gatewayHealthUrl(gateway: ProjectGatewayState): string | undefined {
   url.search = "";
   url.hash = "";
   return url.toString();
+}
+
+async function gatewayIsHealthy(
+  gateway: ProjectGatewayState,
+  options: ProjectGatewayRuntimeOptions,
+): Promise<boolean> {
+  const healthUrl = gatewayHealthUrl(gateway);
+  if (!healthUrl) {
+    return false;
+  }
+
+  try {
+    const response = await (options.fetch ?? fetch)(healthUrl, { method: "GET" });
+    return response.ok;
+  } catch {
+    return false;
+  }
 }
 
 async function waitForGatewayHealth(
@@ -458,67 +394,17 @@ async function waitForGatewayHealth(
   );
 }
 
-async function existingGatewayIsListening(
-  gateway: ProjectGatewayState & {
-    port: number;
-    controlEndpoint: string;
-    claim: NonNullable<ProjectGatewayState["claim"]>;
-  },
-  checks: PortClaimChecks,
-): Promise<boolean> {
-  const inspection = await inspectPortClaim({
-    claimsRoot: gateway.claim.claimsRoot,
-    port: gateway.port,
-    checks,
-  });
-  if (
-    inspection.status !== "claimed" ||
-    inspection.record.claimId !== gateway.claim.claimId
-  ) {
-    return false;
-  }
-
-  return Boolean(await checks.isPortListening?.(gateway.port, inspection.record));
-}
-
-function gatewayClaimErrorMessage(
-  policy: ProjectLocalGatewayPolicy,
-  error: unknown,
-): string {
-  const portDescription =
-    policy.port !== undefined
-      ? String(policy.port)
-      : `${policy.portRange?.start}-${policy.portRange?.end}`;
-  const base = `Project-local gateway port ${portDescription} is already claimed or unavailable`;
-  if (!isObjectWithExistingClaim(error)) {
-    return `${base}: ${error instanceof Error ? error.message : String(error)}`;
-  }
-
-  const owner = error.existingClaim
-    ? ` by project ${error.existingClaim.projectId} workspace ${error.existingClaim.workspaceId}`
-    : "";
-  return `${base}${owner}: ${error.message}`;
-}
-
-function isObjectWithExistingClaim(
-  error: unknown,
-): error is Error & { existingClaim?: PortClaimRecord } {
-  return error instanceof Error && "existingClaim" in error;
-}
-
 async function ensureProjectLocalGateway(
   options: EnsureProjectGatewayOptions,
   policy: ProjectLocalGatewayPolicy,
 ): Promise<EnsureProjectGatewayResult> {
   const env = options.env ?? process.env;
-  const claimsRoot = gatewayClaimsRoot(env, options.claimsRoot);
-  const checks = gatewayChecks(policy.host, options.checks);
   const processManager =
     options.processManager ?? new DetachedProjectGatewayProcessManager(env);
 
   if (
-    existingGatewayMatchesPolicy(options.state.gateway, policy, claimsRoot) &&
-    (await existingGatewayIsListening(options.state.gateway, checks))
+    existingGatewayMatchesPolicy(options.state.gateway, policy) &&
+    (await gatewayIsHealthy(options.state.gateway, options))
   ) {
     return {
       gateway: options.state.gateway,
@@ -532,59 +418,34 @@ async function ensureProjectLocalGateway(
       ...options,
       state: options.state,
       processManager,
-      checks,
     });
   }
 
-  let claim: PortClaimRecord;
-  try {
-    claim = await claimPort({
-      claimsRoot,
-      projectId: options.state.projectId,
-      projectName: options.state.projectName,
-      workspaceId: options.state.workspaceId,
-      targetId: options.state.targetId,
-      purpose: gatewayPortClaimPurpose,
-      requestedPort: policy.port,
-      portRange: policy.portRange,
-      now: options.now,
-      checks,
-    });
-  } catch (error) {
+  const portInUse =
+    options.isPortListening ?? ((port) => isPortInUse(policy.host, port));
+  if (await portInUse(policy.port)) {
     throw new ProjectGatewayDeploymentError(
-      gatewayClaimErrorMessage(policy, error),
+      `Project-local gateway port ${policy.port} is already in use. ` +
+        "Set runtime.gateway.port to a free port, or stop whatever holds it.",
     );
   }
 
-  let started: ProjectGatewayProcessStartResult;
   const pharoMcpContract =
     options.pharoMcpContract ?? options.state.pharoMcpContract;
-  try {
-    started = await processManager.start({
+  const started = await processManager.start({
       projectRoot: options.projectRoot,
       host: policy.host,
-      port: claim.assignedPort,
+      port: policy.port,
       routePath: policy.mcpPath,
       controlPath: policy.routeControlMcpPath,
       state: options.state,
       ...(options.pharoTools !== undefined
         ? { pharoTools: options.pharoTools }
         : {}),
-      ...(pharoMcpContract !== undefined ? { pharoMcpContract } : {}),
-    });
-  } catch (error) {
-    await releasePortClaim({ claimsRoot, claim });
-    throw error;
-  }
+    ...(pharoMcpContract !== undefined ? { pharoMcpContract } : {}),
+  });
 
-  const gateway = localGatewayState(
-    policy,
-    options.state,
-    claim.assignedPort,
-    claim,
-    started.pid,
-    claimsRoot,
-  );
+  const gateway = localGatewayState(policy, options.state, policy.port, started.pid);
   options.state.gateway = gateway;
 
   if (!gateway.controlEndpoint) {
@@ -600,7 +461,6 @@ async function ensureProjectLocalGateway(
       ...options,
       state: options.state,
       processManager,
-      checks,
     });
     throw error;
   }
@@ -637,7 +497,6 @@ export async function closeProjectGateway(
     return {
       closed: false,
       stoppedProcess: false,
-      releasedClaim: false,
     };
   }
 
@@ -660,18 +519,6 @@ export async function closeProjectGateway(
     }
   }
 
-  let releasedClaim = false;
-  if (gateway.managedByProject && gateway.claim) {
-    const release = await releasePortClaim({
-      claimsRoot: gateway.claim.claimsRoot,
-      claim: {
-        claimId: gateway.claim.claimId,
-        assignedPort: gateway.claim.assignedPort,
-      },
-    });
-    releasedClaim = release.released;
-  }
-
   delete options.state.gateway;
 
   if (stopError) {
@@ -681,6 +528,5 @@ export async function closeProjectGateway(
   return {
     closed: true,
     stoppedProcess,
-    releasedClaim,
   };
 }

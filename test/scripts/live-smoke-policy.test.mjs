@@ -101,10 +101,6 @@ test("allocates stable run, workspace, target, and artifact ids", () => {
   assert.equal(plan.runId, "smoke-2026-05-17T01-23-45-000Z-1234");
   assert.equal(plan.workspaceId, plan.runId);
   assert.equal(
-    plan.targetId,
-    `smoke-open-route-close--${plan.workspaceId}`,
-  );
-  assert.equal(
     plan.artifactDirectory,
     path.join(path.resolve("C:/work/artifacts"), plan.runId),
   );
@@ -138,14 +134,12 @@ test("defaults launcher profile to the project-owned root used by project-open",
   );
 });
 
-test("enforces configured workspace and target prefixes", () => {
+test("enforces the configured workspace prefix", () => {
   assert.doesNotThrow(() =>
     buildLiveSmokeRunPlan(
       baseOptions({
         workspaceId: "smoke-nightly-1",
-        targetId: "smoke-nightly-target-1",
         requiredWorkspacePrefix: "smoke-nightly",
-        requiredTargetPrefix: "smoke-nightly",
       }),
       { repoRoot },
     ),
@@ -652,7 +646,6 @@ test("keep-open cleanup context records scoped close and status commands", () =>
         PHARO_LAUNCHER_MCP_PROFILE: "plexus-showcase",
       },
       workspaceId: "showcase-1",
-      targetId: "showcase-target-1",
       createdSourceImageName: "PlexusSmokeSource",
       images: [
         {
@@ -667,7 +660,6 @@ test("keep-open cleanup context records scoped close and status commands", () =>
       state: {
         projectId: "showcase",
         workspaceId: "showcase-1",
-        targetId: "showcase-target-1",
         gateway: {
           endpoint: "http://127.0.0.1:8133/mcp",
           controlEndpoint: "http://127.0.0.1:8133/control-mcp",
@@ -676,7 +668,6 @@ test("keep-open cleanup context records scoped close and status commands", () =>
           {
             id: "dev",
             imageName: "PlexusSmokedev",
-            assignedPort: 7100,
             pid: 12345,
             status: "running",
           },
@@ -710,10 +701,8 @@ test("keep-open cleanup context records scoped close and status commands", () =>
     stateRoot: "C:/work/showcase/state",
     workspaceId: "showcase-1",
   });
-  assert.equal(
-    context.routeControl.targetId,
-    "showcase-target-1",
-  );
+  assert.equal(context.routeControl.projectId, "showcase");
+  assert.equal(context.routeControl.workspaceId, "showcase-1");
   assert.deepEqual(context.launcherCleanup.deleteImageToolCalls, [
     {
       tool: "pharo_launcher_image_delete",

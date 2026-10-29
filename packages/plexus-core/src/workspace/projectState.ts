@@ -2,7 +2,6 @@ import fs from "node:fs";
 import {
   projectImageDisplayMode,
   projectConfigId,
-  projectMcpStartupMode,
   resolveProjectRuntimePolicy,
   type ProjectConfig,
   type ProjectImageDisplayMode,
@@ -10,7 +9,6 @@ import {
   type ProjectImageCreationCleanupPolicy,
   type ProjectPharoMcpLoadPolicy,
   type ProjectGatewayMode,
-  type ProjectRuntimePortRange,
 } from "../config/projectConfig.js";
 import {
   basenamePathLike,
@@ -24,10 +22,6 @@ export const plexusProjectsStateDirectoryName = "projects";
 export const plexusWorkspacesStateDirectoryName = "workspaces";
 export const projectStateFileName = "state.json";
 export const defaultWorkspaceIdValue = "default";
-export const defaultProjectPortRange = {
-  start: 7_100,
-  end: 7_199,
-} as const;
 
 export type ProjectImageStatus = "starting" | "running" | "stopped" | "failed";
 export type ProjectRuntimeStatus = "idle" | "starting" | "running" | "failed";
@@ -62,7 +56,7 @@ export type ProjectImageCreationSourceState =
 
 export interface ProjectImageCreationRouteState {
   serverName: "pharo_gateway";
-  targetKey: "targetId";
+  targetKey: "workspaceId";
   imageArgument: "mcpServerId";
   imageId: string;
 }
@@ -149,7 +143,6 @@ export interface ProjectImageState {
   id: string;
   imageName: string;
   displayMode?: ProjectImageDisplayMode;
-  assignedPort?: number;
   mcpServers?: ProjectImageMcpServer[];
   pid?: number;
   status: ProjectImageStatus;
@@ -201,25 +194,17 @@ export interface ProjectImageState {
   };
 }
 
-export interface ProjectGatewayClaimState {
-  claimsRoot: string;
-  claimId: string;
-  assignedPort: number;
-}
-
 export interface ProjectGatewayState {
   mode: ProjectGatewayMode;
   endpoint?: string;
   controlEndpoint?: string;
   host?: string;
   port?: number;
-  portRange?: ProjectRuntimePortRange;
   routePath?: string;
   controlPath?: string;
   owningProjectId?: string;
   managedByProject: boolean;
   pid?: number;
-  claim?: ProjectGatewayClaimState;
 }
 
 export interface ProjectRemoteGatewayState {
@@ -227,14 +212,12 @@ export interface ProjectRemoteGatewayState {
   endpoint: ProjectImageMcpEndpoint;
   projectId?: string;
   workspaceId?: string;
-  targetId?: string;
 }
 
 export interface ProjectState {
   projectId: string;
   projectName: string;
   workspaceId: string;
-  targetId: string;
   sourcePath?: string;
   runtimeStatus?: ProjectRuntimeStatus;
   gateway?: ProjectGatewayState;
@@ -244,28 +227,17 @@ export interface ProjectState {
   updatedAt: string;
 }
 
-export interface ProjectPortRange {
-  start: number;
-  end: number;
-}
-
 export interface CreateProjectStateOptions {
   updatedAt?: string;
   previousState?: ProjectState;
-  portRange?: ProjectPortRange;
-  reservedPorts?: Iterable<number>;
   workspaceId?: string;
-  targetId?: string;
   sourcePath?: string;
 }
 
 interface NormalizedCreateProjectStateOptions {
   updatedAt: string;
   previousState?: ProjectState;
-  portRange?: ProjectPortRange;
-  reservedPorts: Set<number>;
   workspaceId: string;
-  targetId?: string;
   sourcePath?: string;
 }
 
@@ -281,13 +253,6 @@ export interface ProjectStatePathForConfigOptions {
   config: ProjectConfig;
   workspaceId?: string;
   stateRoot?: string;
-}
-
-export class PortAllocationError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "PortAllocationError";
-  }
 }
 
 export class ProjectStateError extends Error {
@@ -309,9 +274,6 @@ export function defaultWorkspaceId(projectRoot: string): string {
   return sanitizeRuntimeId(basenamePathLike(projectRoot));
 }
 
-export function defaultTargetId(projectId: string, workspaceId: string): string {
-  return `${projectId}--${workspaceId}`;
-}
 
 export function projectWorkspacesStateDirectoryPath(
   options: Omit<ProjectStatePathOptions, "workspaceId">,
@@ -365,35 +327,6 @@ export function projectStatePathForConfig(
     workspaceId: options.workspaceId,
     stateRoot: projectStateRootForConfig(options.config, options.stateRoot),
   });
-}
-
-function validatePortRange(range: ProjectPortRange): void {
-  if (
-    !Number.isInteger(range.start) ||
-    !Number.isInteger(range.end) ||
-    range.start < 1 ||
-    range.end > 65_535 ||
-    range.start > range.end
-  ) {
-    throw new PortAllocationError(
-      "Port range must use integer ports between 1 and 65535 with start <= end",
-    );
-  }
-}
-
-function nextAvailablePort(
-  range: ProjectPortRange,
-  unavailablePorts: Set<number>,
-): number {
-  for (let port = range.start; port <= range.end; port += 1) {
-    if (!unavailablePorts.has(port)) {
-      return port;
-    }
-  }
-
-  throw new PortAllocationError(
-    `No available port in range ${range.start}-${range.end}`,
-  );
 }
 
 function pharoMajorVersionFromText(value: string | undefined): number | undefined {
@@ -468,16 +401,6 @@ function pharoMcpSupportState(
   };
 }
 
-function imageCanUsePharoMcpPort(
-  supportState: Pick<ProjectImageState, "pharoMcpContract">,
-  image: ProjectImageConfig,
-): boolean {
-  return (
-    projectMcpStartupMode(image.mcp) !== "disabled" &&
-    supportState.pharoMcpContract?.status !== "unsupported"
-  );
-}
-
 function normalizeCreateProjectStateOptions(
   optionsOrUpdatedAt: string | CreateProjectStateOptions | undefined,
 ): NormalizedCreateProjectStateOptions {
@@ -486,10 +409,7 @@ function normalizeCreateProjectStateOptions(
     return {
       updatedAt: optionsOrUpdatedAt,
       previousState: undefined,
-      portRange: undefined,
-      reservedPorts: new Set(),
       workspaceId,
-      targetId: undefined,
       sourcePath: undefined,
     };
   }
@@ -503,11 +423,7 @@ function normalizeCreateProjectStateOptions(
   return {
     updatedAt: optionsOrUpdatedAt?.updatedAt ?? new Date().toISOString(),
     previousState: optionsOrUpdatedAt?.previousState,
-    portRange: optionsOrUpdatedAt?.portRange,
-    reservedPorts: new Set(optionsOrUpdatedAt?.reservedPorts ?? []),
     workspaceId,
-    targetId:
-      optionsOrUpdatedAt?.targetId ?? optionsOrUpdatedAt?.previousState?.targetId,
     sourcePath:
       optionsOrUpdatedAt?.sourcePath ?? optionsOrUpdatedAt?.previousState?.sourcePath,
   };
@@ -526,80 +442,10 @@ export function saveProjectState(filePath: string, state: ProjectState): void {
   fs.writeFileSync(filePath, `${JSON.stringify(state, null, 2)}\n`, "utf8");
 }
 
-export interface ReservedProjectPortOwner {
-  port: number;
-  projectId: string;
-  projectName: string;
-  workspaceId: string;
-  targetId: string;
-  imageId: string;
-  imageName: string;
-  status: ProjectImageStatus;
-}
-
-export function collectReservedProjectPortOwners(
-  options: Omit<ProjectStatePathOptions, "workspaceId"> & {
-    excludeWorkspaceId?: string;
-  },
-): ReservedProjectPortOwner[] {
-  const workspacesDir = projectWorkspacesStateDirectoryPath(options);
-  if (!fs.existsSync(workspacesDir)) {
-    return [];
-  }
-
-  const excludedWorkspaceId = options.excludeWorkspaceId
-    ? sanitizeRuntimeId(options.excludeWorkspaceId)
-    : undefined;
-  const owners: ReservedProjectPortOwner[] = [];
-
-  for (const entry of fs.readdirSync(workspacesDir, { withFileTypes: true })) {
-    if (!entry.isDirectory() || entry.name === excludedWorkspaceId) {
-      continue;
-    }
-
-    const state = loadProjectState(
-      joinPathLike(workspacesDir, entry.name, projectStateFileName),
-    );
-    if (!state) {
-      continue;
-    }
-
-    for (const image of state.images) {
-      if (image.status !== "stopped" && image.assignedPort !== undefined) {
-        owners.push({
-          port: image.assignedPort,
-          projectId: state.projectId,
-          projectName: state.projectName,
-          workspaceId: state.workspaceId,
-          targetId: state.targetId,
-          imageId: image.id,
-          imageName: image.imageName,
-          status: image.status,
-        });
-      }
-    }
-  }
-
-  return owners;
-}
-
-export function collectReservedProjectPorts(
-  options: Omit<ProjectStatePathOptions, "workspaceId"> & {
-    excludeWorkspaceId?: string;
-  },
-): number[] {
-  return [
-    ...new Set(
-      collectReservedProjectPortOwners(options).map((owner) => owner.port),
-    ),
-  ];
-}
-
 export interface ProjectImageNameTemplateContext {
   projectId: string;
   projectName: string;
   workspaceId: string;
-  targetId: string;
   imageId: string;
 }
 
@@ -608,7 +454,7 @@ export function renderProjectImageName(
   context: ProjectImageNameTemplateContext,
 ): string {
   return template.replace(
-    /\{(projectId|projectName|workspaceId|targetId|imageId)\}/g,
+    /\{(projectId|projectName|workspaceId|imageId)\}/g,
     (_match, key: keyof ProjectImageNameTemplateContext) => context[key],
   );
 }
@@ -632,90 +478,28 @@ export function runtimeStatusForImages(
   return "idle";
 }
 
-function assignedProjectImagePort(input: {
-  image: ProjectImageConfig;
-  canUsePharoMcpPort: boolean;
-  previousPort: number | undefined;
-  configuredPorts: ReadonlySet<number>;
-  unavailablePorts: Set<number>;
-  reservedPorts: ReadonlySet<number>;
-  portRange: ProjectRuntimePortRange;
-}): number | undefined {
-  if (!input.canUsePharoMcpPort) {
-    return undefined;
-  }
-
-  const configuredPort = input.image.mcp.port;
-  if (configuredPort !== undefined && input.reservedPorts.has(configuredPort)) {
-    throw new PortAllocationError(
-      `Configured port ${configuredPort} is already reserved by another workspace`,
-    );
-  }
-
-  const assignedPort =
-    configuredPort ??
-    (input.previousPort !== undefined &&
-    !input.configuredPorts.has(input.previousPort) &&
-    !input.unavailablePorts.has(input.previousPort)
-      ? input.previousPort
-      : nextAvailablePort(input.portRange, input.unavailablePorts));
-
-  input.unavailablePorts.add(assignedPort);
-  return assignedPort;
-}
-
 export function createProjectState(
   config: ProjectConfig,
   optionsOrUpdatedAt?: string | CreateProjectStateOptions,
 ): ProjectState {
   const options = normalizeCreateProjectStateOptions(optionsOrUpdatedAt);
-  const runtime = resolveProjectRuntimePolicy(config);
-  const portRange = options.portRange ?? runtime.imagePorts.range;
-  validatePortRange(portRange);
-
-  const targetId =
-    options.targetId ??
-    defaultTargetId(projectConfigId(config), options.workspaceId);
-  const configuredPorts = new Set(
-    config.images
-      .filter((image) =>
-        imageCanUsePharoMcpPort(pharoMcpSupportState(config, image), image),
-      )
-      .map((image) => image.mcp.port)
-      .filter((port): port is number => port !== undefined),
-  );
-  const unavailablePorts = new Set([...options.reservedPorts, ...configuredPorts]);
   const images: ProjectImageState[] = config.images.map((image) => {
     const supportState = pharoMcpSupportState(config, image);
-    const canUsePharoMcpPort = imageCanUsePharoMcpPort(supportState, image);
     const previousImage = options.previousState?.images.find(
       (candidate) => candidate.id === image.id,
     );
-    const previousPort = previousImage?.assignedPort;
     const imageContext = {
       projectId: projectConfigId(config),
       projectName: config.name,
       workspaceId: options.workspaceId,
-      targetId,
       imageId: image.id,
     };
-    const assignedPort = assignedProjectImagePort({
-      image,
-      canUsePharoMcpPort,
-      previousPort,
-      configuredPorts,
-      unavailablePorts,
-      reservedPorts: options.reservedPorts,
-      portRange,
-    });
-
     return {
       id: image.id,
       imageName: renderProjectImageName(image.imageName, imageContext),
       ...(image.displayMode !== undefined
         ? { displayMode: projectImageDisplayMode(image) }
         : {}),
-      ...(assignedPort !== undefined ? { assignedPort } : {}),
       status: image.active ? "starting" : "stopped",
       ...(previousImage?.lease ? { lease: previousImage.lease } : {}),
       ...supportState,
@@ -737,7 +521,6 @@ export function createProjectState(
     projectId: projectConfigId(config),
     projectName: config.name,
     workspaceId: options.workspaceId,
-    targetId,
     ...(options.sourcePath ?? options.previousState?.sourcePath
       ? { sourcePath: options.sourcePath ?? options.previousState?.sourcePath }
       : {}),

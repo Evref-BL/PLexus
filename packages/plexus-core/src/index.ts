@@ -1,10 +1,8 @@
 export * from "./config/config.js";
 export * from "./images/homeImageCache.js";
-export * from "./ports/imagePortClaims.js";
 export * from "./images/imageRescue.js";
 export * from "./launcher/pharoLauncherMcpClient.js";
 export * from "./mcp/pharoMcpHealth.js";
-export * from "./ports/portClaims.js";
 export * from "./images/preparedImageCache.js";
 export * from "./lifecycle/projectClose.js";
 export * from "./lifecycle/projectCleanup.js";
@@ -17,4 +15,3 @@ export * from "./workspace/projectStartupScript.js";
 export * from "./workspace/projectState.js";
 export * from "./workspace/scopedProjectContext.js";
 export * from "./launcher/scopedPharoLauncherServer.js";
-export * from "./config/target.js";

@@ -1,10 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
 import {
-  defaultImagePortClaimChecks,
-  imagePortClaimsRootForConfig,
-} from "../ports/imagePortClaims.js";
-import {
   createStdioPharoLauncherMcpClient,
   type PharoLauncherMcpToolClient,
 } from "../launcher/pharoLauncherMcpClient.js";
@@ -24,7 +20,6 @@ import {
   closeProjectGateway,
   type ProjectGatewayRuntimeOptions,
 } from "../gateway/projectGateway.js";
-import type { PortClaimChecks } from "../ports/portClaims.js";
 import {
   defaultPlexusStateRoot,
   defaultWorkspaceId,
@@ -46,10 +41,8 @@ export type ProjectCleanupResourceKind =
   | "state-file"
   | "image-process"
   | "launcher-image"
-  | "image-port-claim"
   | "endpoint-handoff"
   | "gateway"
-  | "gateway-port-claim"
   | "route";
 
 export type ProjectCleanupResourceStatus =
@@ -64,7 +57,6 @@ export interface ProjectCleanupResource {
   id: string;
   projectId: string;
   workspaceId: string;
-  targetId: string;
   imageId?: string;
   imageName?: string;
   path?: string;
@@ -89,7 +81,6 @@ export interface ProjectCleanupOptions {
   deleteStateFile?: boolean;
   deleteLauncherImages?: boolean;
   pharoLauncherMcpClient?: PharoLauncherMcpToolClient;
-  portClaimChecks?: PortClaimChecks;
   gateway?: ProjectGatewayRuntimeOptions;
   now?: () => Date;
 }
@@ -124,12 +115,11 @@ function projectStateRoot(
 
 function resourceBase(state: ProjectState): Pick<
   ProjectCleanupResource,
-  "projectId" | "workspaceId" | "targetId" | "status"
+  "projectId" | "workspaceId" | "status"
 > {
   return {
     projectId: state.projectId,
     workspaceId: state.workspaceId,
-    targetId: state.targetId,
     status: "planned",
   };
 }
@@ -154,7 +144,6 @@ interface CleanupResourcesInput {
   stateRoot: string;
   statePath: string;
   state: ProjectState;
-  imageClaimsRoot?: string;
 }
 
 function imageCleanupResources(
@@ -182,18 +171,6 @@ function imageCleanupResources(
       imageId: image.id,
       imageName: image.imageName,
       reason: "Image has PLexus creation ownership metadata.",
-    });
-  }
-
-  if (input.imageClaimsRoot && image.assignedPort !== undefined) {
-    resources.push({
-      ...resourceBase(input.state),
-      kind: "image-port-claim",
-      id: `${input.imageClaimsRoot}:${image.assignedPort}`,
-      imageId: image.id,
-      imageName: image.imageName,
-      path: input.imageClaimsRoot,
-      port: image.assignedPort,
     });
   }
 
@@ -228,16 +205,6 @@ function gatewayCleanupResources(
       id: state.gateway.endpoint ?? state.gateway.controlEndpoint ?? "gateway",
       ...(state.gateway.port !== undefined ? { port: state.gateway.port } : {}),
       ...(state.gateway.pid !== undefined ? { pid: state.gateway.pid } : {}),
-    });
-  }
-
-  if (state.gateway?.managedByProject && state.gateway.claim) {
-    resources.push({
-      ...resourceBase(state),
-      kind: "gateway-port-claim",
-      id: `${state.gateway.claim.claimsRoot}:${state.gateway.claim.assignedPort}`,
-      path: state.gateway.claim.claimsRoot,
-      port: state.gateway.claim.assignedPort,
     });
   }
 
@@ -316,7 +283,6 @@ async function launcherClientForCleanup(input: {
         projectRoot: input.projectRoot,
         config: input.config,
         workspaceId: input.state.workspaceId,
-        targetId: input.state.targetId,
         stateRoot: input.stateRoot,
       }),
     }),
@@ -389,7 +355,6 @@ async function closeProjectForCleanup(options: {
   statePath: string;
   workspaceId: string;
   pharoLauncherMcpClient?: PharoLauncherMcpToolClient;
-  checks: PortClaimChecks;
   resources: ProjectCleanupResource[];
   failures: ProjectCleanupFailure[];
   stoppedImages: ProjectImageState[];
@@ -400,7 +365,6 @@ async function closeProjectForCleanup(options: {
       stateRoot: options.stateRoot,
       workspaceId: options.workspaceId,
       pharoLauncherMcpClient: options.pharoLauncherMcpClient,
-      portClaimChecks: options.checks,
     });
 
     return recordProjectCloseResult({
@@ -620,14 +584,12 @@ export async function cleanupProjectOwnedResources(
   const stoppedImages: ProjectImageState[] = [];
   const deletedLauncherImages: string[] = [];
   let gatewayClosed = false;
-  const imageClaimsRoot = imagePortClaimsRootForConfig(projectRoot, config);
   const resources = initialState
     ? cleanupResources({
         projectRoot,
         stateRoot,
         statePath,
         state: initialState,
-        imageClaimsRoot,
       })
     : [];
 
@@ -650,8 +612,6 @@ export async function cleanupProjectOwnedResources(
   }
 
   const now = options.now ?? (() => new Date());
-  const checks =
-    options.portClaimChecks ?? options.gateway?.checks ?? defaultImagePortClaimChecks();
   let latestState: ProjectState | undefined = initialState;
   latestState =
     (await closeProjectForCleanup({
@@ -660,7 +620,6 @@ export async function cleanupProjectOwnedResources(
       statePath,
       workspaceId,
       pharoLauncherMcpClient: options.pharoLauncherMcpClient,
-      checks,
       resources,
       failures,
       stoppedImages,

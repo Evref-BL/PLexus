@@ -40,7 +40,6 @@ export interface ResolvePharoLauncherMcpProfileOptions {
   projectRoot: string;
   config: ProjectConfig;
   workspaceId: string;
-  targetId: string;
   stateRoot?: string;
   env?: NodeJS.ProcessEnv;
 }

@@ -42,7 +42,6 @@ async function callGatewayStatus(
       await client.callTool({
         name: "plexus_gateway_status",
         arguments: {
-          targetId: "target-123",
           ...(detail ? { detail } : {}),
         },
       }),

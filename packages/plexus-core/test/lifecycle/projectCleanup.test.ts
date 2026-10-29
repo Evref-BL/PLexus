@@ -3,16 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import {
-  gatewayPortClaimPurpose,
-  type ProjectGatewayProcessManager,
-  type ProjectGatewayProcessStopOptions,
-} from "../../src/gateway/projectGateway.js";
-import {
-  imageMcpPortClaimPurpose,
-} from "../../src/ports/imagePortClaims.js";
 import type { PharoLauncherMcpToolClient } from "../../src/launcher/pharoLauncherMcpClient.js";
-import { claimPort, inspectPortClaim } from "../../src/ports/portClaims.js";
 import { cleanupProjectOwnedResources } from "../../src/lifecycle/projectCleanup.js";
 import {
   imageMcpEndpointHandoffPath,
@@ -82,7 +73,6 @@ function writeFile(filePath: string, contents: string): void {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   fs.writeFileSync(filePath, contents, "utf8");
 }
-
 
 
 function writeProjectConfig(
@@ -167,42 +157,11 @@ function ownedCreationState() {
     cleanupPolicy: "workspace_cleanup_only" as const,
     route: {
       serverName: "pharo_gateway" as const,
-      targetKey: "targetId" as const,
+      targetKey: "workspaceId" as const,
       imageArgument: "mcpServerId" as const,
       imageId: "dev",
     },
   };
-}
-
-async function writeClaimFixtures(input: {
-  imageClaimsRoot: string;
-  gatewayClaimsRoot: string;
-}): Promise<void> {
-  await claimPort({
-    claimsRoot: input.imageClaimsRoot,
-    requestedPort: 7200,
-    claimId: "image-claim",
-    projectId: "project-123",
-    projectName: "my-project",
-    workspaceId: "worktree-a",
-    targetId: "project-123--worktree-a",
-    purpose: imageMcpPortClaimPurpose,
-    imageId: "dev",
-    checks,
-    now: fixedNow,
-  });
-  await claimPort({
-    claimsRoot: input.gatewayClaimsRoot,
-    requestedPort: 8133,
-    claimId: "gateway-claim",
-    projectId: "project-123",
-    projectName: "my-project",
-    workspaceId: "worktree-a",
-    targetId: "project-123--worktree-a",
-    purpose: gatewayPortClaimPurpose,
-    checks,
-    now: fixedNow,
-  });
 }
 
 function writeRuntimeState(input: {
@@ -215,7 +174,6 @@ function writeRuntimeState(input: {
     projectId: "project-123",
     projectName: "my-project",
     workspaceId: "worktree-a",
-    targetId: "project-123--worktree-a",
     updatedAt: "2026-04-25T10:00:00.000Z",
     runtimeStatus: input.devStatus === "stopped" ? "idle" : "running",
     gateway: {
@@ -229,17 +187,11 @@ function writeRuntimeState(input: {
       owningProjectId: "project-123",
       managedByProject: true,
       pid: 9876,
-      claim: {
-        claimsRoot: input.gatewayClaimsRoot,
-        claimId: "gateway-claim",
-        assignedPort: 8133,
-      },
     },
     images: [
       {
         id: "dev",
         imageName: "MyProject-dev",
-        assignedPort: 7200,
         pid: input.devStatus === "stopped" ? undefined : 1234,
         status: input.devStatus ?? "running",
         mcpServers: [
@@ -258,7 +210,6 @@ function writeRuntimeState(input: {
       {
         id: "baseline",
         imageName: "MyProject-baseline",
-        assignedPort: 7201,
         status: "stopped",
       },
     ],
@@ -293,7 +244,6 @@ describe("project cleanup", () => {
     const imageClaimsRoot = makeTempDir("plexus-image-claims-");
     const gatewayClaimsRoot = makeTempDir("plexus-gateway-claims-");
     writeProjectConfig(projectRoot, imageClaimsRoot);
-    await writeClaimFixtures({ imageClaimsRoot, gatewayClaimsRoot });
     writeRuntimeState({
       projectRoot,
       stateRoot,
@@ -318,20 +268,12 @@ describe("project cleanup", () => {
         "state-file",
         "image-process",
         "launcher-image",
-        "image-port-claim",
         "endpoint-handoff",
         "gateway",
-        "gateway-port-claim",
       ]),
     );
     expect(result.resources.every((resource) => resource.status === "planned"))
       .toBe(true);
-    await expect(
-      inspectPortClaim({ claimsRoot: imageClaimsRoot, port: 7200, checks }),
-    ).resolves.toMatchObject({ status: "claimed" });
-    await expect(
-      inspectPortClaim({ claimsRoot: gatewayClaimsRoot, port: 8133, checks }),
-    ).resolves.toMatchObject({ status: "claimed" });
     expect(fs.existsSync(statePath(stateRoot))).toBe(true);
   }, 15_000);
 
@@ -341,7 +283,6 @@ describe("project cleanup", () => {
     const imageClaimsRoot = makeTempDir("plexus-image-claims-");
     const gatewayClaimsRoot = makeTempDir("plexus-gateway-claims-");
     writeProjectConfig(projectRoot, imageClaimsRoot);
-    await writeClaimFixtures({ imageClaimsRoot, gatewayClaimsRoot });
     writeRuntimeState({
       projectRoot,
       stateRoot,
@@ -392,12 +333,6 @@ describe("project cleanup", () => {
       ),
     ).toBe(false);
     expect(gatewayProcessManager.stops).toHaveLength(1);
-    await expect(
-      inspectPortClaim({ claimsRoot: imageClaimsRoot, port: 7200, checks }),
-    ).resolves.toMatchObject({ status: "available" });
-    await expect(
-      inspectPortClaim({ claimsRoot: gatewayClaimsRoot, port: 8133, checks }),
-    ).resolves.toMatchObject({ status: "available" });
     expect(fs.existsSync(statePath(stateRoot))).toBe(false);
     expect(result.resources).toEqual(
       expect.arrayContaining([

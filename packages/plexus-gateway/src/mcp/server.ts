@@ -34,7 +34,6 @@ function objectSchema(
 const routeReferenceProperties = {
   projectId: optionalStringSchema,
   workspaceId: optionalStringSchema,
-  targetId: optionalStringSchema,
   detail: toolResultDetailSchema,
 } as const;
 
@@ -431,7 +430,6 @@ export function parseGatewayEnvironmentOptions(
     pharoScope: {
       projectId: env.PLEXUS_PROJECT_ID,
       workspaceId: env.PLEXUS_WORKSPACE_ID,
-      targetId: env.PLEXUS_TARGET_ID,
     },
     pharoToolSchemaMcpServerId: optionalStringEnv(
       env.PLEXUS_PHARO_TOOL_SCHEMA_MCP_SERVER_ID,

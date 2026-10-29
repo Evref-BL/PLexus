@@ -227,20 +227,17 @@ describe("project state", () => {
       projectId: "project-123",
       projectName: "my-project",
       workspaceId: "default",
-      targetId: "project-123--default",
       runtimeStatus: "starting",
       updatedAt: "2026-04-25T10:00:00.000Z",
       images: [
         {
           id: "dev",
           imageName: "MyProject-dev",
-          assignedPort: 7123,
           status: "starting",
         },
         {
           id: "baseline",
           imageName: "MyProject-baseline",
-          assignedPort: 7124,
           status: "stopped",
         },
       ],
@@ -316,7 +313,6 @@ describe("project state", () => {
       }),
       expect.objectContaining({
         id: "current",
-        assignedPort: 7124,
         pharoVersion: "13",
         pharoMcpContract: expect.objectContaining({
           status: "matching",
@@ -381,7 +377,6 @@ describe("project state", () => {
       }),
       expect.objectContaining({
         id: "current",
-        assignedPort: 7100,
         pharoMcpContract: expect.objectContaining({
           status: "matching",
         }),
@@ -431,7 +426,6 @@ describe("project state", () => {
     expect(state.images[0]).not.toHaveProperty("assignedPort");
     expect(state.images[1]).toMatchObject({
       id: "current",
-      assignedPort: 7100,
     });
   });
 
@@ -447,7 +441,6 @@ describe("project state", () => {
       projectId: "project-123",
       projectName: "my-project",
       workspaceId: "default",
-      targetId: "project-123--default",
       runtimeStatus: "idle",
       updatedAt: "2026-04-25T10:00:00.000Z",
       images: [],
@@ -477,54 +470,16 @@ describe("project state", () => {
       {
         id: "dev",
         imageName: "MyProject-dev",
-        assignedPort: 7123,
         status: "starting",
       },
       {
         id: "baseline",
         imageName: "MyProject-baseline",
-        assignedPort: 7100,
         status: "stopped",
       },
     ]);
   });
 
-  it("allocates missing image ports from the runtime policy range", () => {
-    const dynamicConfig: ProjectConfig = {
-      ...config,
-      runtime: {
-        ...defaultRuntimePolicy(),
-        imagePorts: {
-          ...defaultRuntimePolicy().imagePorts,
-          range: {
-            start: 7_200,
-            end: 7_201,
-          },
-        },
-      },
-      images: [
-        {
-          ...config.images[0],
-          mcp: {
-            loadScript: "pharo/load-mcp.st",
-          },
-        },
-        {
-          ...config.images[1],
-          mcp: {
-            loadScript: "pharo/load-mcp.st",
-          },
-        },
-      ],
-    };
-
-    expect(
-      createProjectState(dynamicConfig, {
-        updatedAt: "2026-04-25T10:00:00.000Z",
-        workspaceId: "worktree-a",
-      }).images.map((image) => image.assignedPort),
-    ).toEqual([7_200, 7_201]);
-  });
 
   it("reuses previous runtime allocations for unconfigured image ports", () => {
     const dynamicConfig: ProjectConfig = {
@@ -548,13 +503,11 @@ describe("project state", () => {
           projectId: "project-123",
           projectName: "my-project",
           workspaceId: "worktree-a",
-          targetId: "project-123--worktree-a",
           updatedAt: "2026-04-25T09:00:00.000Z",
           images: [
             {
               id: "baseline",
               imageName: "MyProject-baseline",
-              assignedPort: 7130,
               status: "stopped",
             },
           ],
@@ -563,7 +516,6 @@ describe("project state", () => {
     ).toEqual({
       id: "baseline",
       imageName: "MyProject-baseline",
-      assignedPort: 7130,
       status: "stopped",
     });
   });
@@ -577,13 +529,11 @@ describe("project state", () => {
           projectId: "project-123",
           projectName: "my-project",
           workspaceId: "worktree-a",
-          targetId: "project-123--worktree-a",
           updatedAt: "2026-04-25T09:00:00.000Z",
           images: [
             {
               id: "dev",
               imageName: "MyProject-dev",
-              assignedPort: 7123,
               status: "running",
               lease: {
                 ownerId: "workspace-a",
@@ -607,35 +557,6 @@ describe("project state", () => {
     });
   });
 
-  it("fails when dynamic port allocation exhausts the range", () => {
-    const dynamicConfig: ProjectConfig = {
-      ...config,
-      images: [
-        {
-          ...config.images[0],
-          mcp: {
-            loadScript: "pharo/load-mcp.st",
-          },
-        },
-        {
-          ...config.images[1],
-          mcp: {
-            loadScript: "pharo/load-mcp.st",
-          },
-        },
-      ],
-    };
-
-    expect(() =>
-      createProjectState(dynamicConfig, {
-        workspaceId: "worktree-a",
-        portRange: {
-          start: 7100,
-          end: 7100,
-        },
-      }),
-    ).toThrow(PortAllocationError);
-  });
 
   it("persists runtime state with allocated ports", () => {
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "plexus-state-"));
@@ -667,9 +588,6 @@ describe("project state", () => {
     const projectRoot = path.join("C:", "dev", "code", "git", "PLexus-task-123");
 
     expect(defaultWorkspaceId(projectRoot)).toBe("PLexus-task-123");
-    expect(defaultTargetId("project-123", "PLexus-task-123")).toBe(
-      "project-123--PLexus-task-123",
-    );
   });
 
   it("renders image names from runtime identity tokens", () => {
@@ -678,31 +596,9 @@ describe("project state", () => {
         projectId: "project-123",
         projectName: "my-project",
         workspaceId: "worktree-a",
-        targetId: "project-123--worktree-a",
         imageId: "dev",
       }),
     ).toBe("PLexus-worktree-a-dev");
   });
 
-  it("allocates around ports reserved by sibling workspaces", () => {
-    const dynamicConfig: ProjectConfig = {
-      ...config,
-      images: [
-        {
-          ...config.images[0],
-          mcp: {
-            loadScript: "pharo/load-mcp.st",
-          },
-        },
-      ],
-    };
-
-    expect(
-      createProjectState(dynamicConfig, {
-        workspaceId: "worktree-b",
-        reservedPorts: [7100],
-        updatedAt: "2026-04-25T10:00:00.000Z",
-      }).images[0].assignedPort,
-    ).toBe(7101);
-  });
 });

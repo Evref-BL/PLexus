@@ -12,7 +12,6 @@ import {
   generateImageStartupScript,
   imageDependencyRepositoryDetachStatusPath,
   imagePharoMcpLoadStatusPath,
-  imageRepositoryWorkspaceLoadStatusPath,
   imageStartupScriptFileName,
   imageStartupScriptPath,
   ProjectStartupScriptError,
@@ -39,9 +38,23 @@ const config: ProjectConfig = {
 const imageState: ProjectImageState = {
   id: "dev",
   imageName: "MyProject-dev",
-  assignedPort: 7123,
   status: "starting",
 };
+
+const endpointHandoffPath = path.join(
+  "C:",
+  "dev",
+  "code",
+  "git",
+  "my-project",
+  ".plexus",
+  "projects",
+  "project-123",
+  "workspaces",
+  "my-project",
+  "mcp-endpoints",
+  "dev.properties",
+);
 
 describe("project startup scripts", () => {
   it("derives the default MCP tag from the published version", () => {
@@ -95,12 +108,13 @@ describe("project startup scripts", () => {
     );
   });
 
-  it("generates a Smalltalk script that loads MCP and starts the assigned port", () => {
+  it("generates a Smalltalk script that loads MCP and hands off its endpoint", () => {
     const projectRoot = path.join("C:", "dev", "code", "git", "my-project");
     const source = generateImageStartupScript({
       projectRoot,
       imageConfig: config.images[0],
       imageState,
+      endpointHandoffPath,
     });
 
     expect(source).toContain(
@@ -116,7 +130,7 @@ describe("project startup scripts", () => {
     expect(source).toContain("mcp port: 7123.");
     expect(source).toContain("mcp start.");
     expect(source).not.toContain("bindToLoopback");
-    expect(source).not.toContain("endpointFile writeStreamDo:");
+    expect(source).toContain("endpointFile writeStreamDo:");
     expect(source).toContain(
       "Smalltalk globals at: #PLexusMCPServer put: mcp.",
     );
@@ -137,6 +151,7 @@ describe("project startup scripts", () => {
       projectRoot,
       imageConfig: config.images[0],
       imageState,
+      endpointHandoffPath,
       dependencyRepositoryCachePath: dependencyCachePath,
       dependencyRepositoryNetworkPolicy: "local-only",
     });
@@ -200,6 +215,7 @@ describe("project startup scripts", () => {
       imageState: {
         ...imageState,
       },
+      endpointHandoffPath,
       dependencyRepositoryCachePath: dependencyCachePath,
       dependencyRepositoryDetachStatusPath: detachStatusPath,
     });
@@ -240,6 +256,7 @@ describe("project startup scripts", () => {
       sourcePath,
       imageConfig: config.images[0],
       imageState,
+      endpointHandoffPath,
     });
 
     expect(source).toContain(
@@ -270,6 +287,7 @@ describe("project startup scripts", () => {
       projectRoot,
       imageConfig: config.images[0],
       imageState,
+      endpointHandoffPath,
       pharoMcpLoadStatusPath: statusPath,
     });
 
@@ -302,6 +320,7 @@ describe("project startup scripts", () => {
         },
       },
       imageState,
+      endpointHandoffPath,
       pharoMcpLoadStatusPath: path.join(
         "C:",
         "dev",
@@ -337,6 +356,7 @@ describe("project startup scripts", () => {
         },
       },
       imageState,
+      endpointHandoffPath,
     });
 
     expect(source).toContain("Use the Pharo MCP project already present in the image.");
@@ -359,6 +379,7 @@ describe("project startup scripts", () => {
         },
       },
       imageState,
+      endpointHandoffPath,
       pharoMcpLoadStatusPath: path.join(
         "C:",
         "dev",
@@ -419,6 +440,7 @@ describe("project startup scripts", () => {
         },
       },
       imageState,
+      endpointHandoffPath,
     });
 
     expect(source).toContain("Project image mcp.startupMode is disabled.");
@@ -454,6 +476,7 @@ describe("project startup scripts", () => {
         },
       },
       imageState,
+      endpointHandoffPath,
       pharoMcpLoadStatusPath: statusPath,
     });
 
@@ -467,21 +490,6 @@ describe("project startup scripts", () => {
     expect(source).toContain("Semaphore new wait.");
   });
 
-  it("fails supported MCP startup generation when no port is assigned", () => {
-    expect(() =>
-      generateImageStartupScript({
-        projectRoot: path.join("C:", "dev", "code", "git", "my-project"),
-        imageConfig: config.images[0],
-        imageState: {
-          id: "dev",
-          imageName: "MyProject-dev",
-          status: "starting",
-        },
-      }),
-    ).toThrow(
-      "Project image dev requires Pharo MCP startup but has no assigned MCP port",
-    );
-  });
 
   it("generates endpoint handoff startup for dynamic-port images", () => {
     const projectRoot = path.join("C:", "dev", "code", "git", "my-project");
@@ -496,7 +504,6 @@ describe("project startup scripts", () => {
       imageState: {
         id: "dev",
         imageName: "MyProject-dev",
-        assignedPort: 7123,
         status: "starting",
       },
       endpointHandoffPath: path.join(
@@ -603,7 +610,7 @@ describe("project startup scripts", () => {
     expect(source).toContain("mcp port: 0.");
     expect(source).toContain("endpointPort := mcp port.");
     expect(source).toContain(
-      "MCP did not report a bound port after starting on port 0.",
+      "MCP did not report a bound port after starting.",
     );
   });
 
@@ -625,6 +632,7 @@ describe("project startup scripts", () => {
         projectRoot,
         imageConfig: config.images[0],
         imageState,
+        endpointHandoffPath,
       });
 
       expect(source).toContain(
@@ -648,6 +656,7 @@ describe("project startup scripts", () => {
         },
       },
       imageState,
+      endpointHandoffPath,
     });
 
     expect(source).toContain("credentialsProvider useCustomSsh: true.");
@@ -674,6 +683,7 @@ describe("project startup scripts", () => {
         },
       },
       imageState,
+      endpointHandoffPath,
     });
 
     expect(source).toContain("remoteTypeSelector: #scpUrl.");
@@ -702,6 +712,7 @@ describe("project startup scripts", () => {
         },
       },
       imageState,
+      endpointHandoffPath,
     });
 
     expect(source).toContain(
@@ -725,6 +736,7 @@ describe("project startup scripts", () => {
         },
       },
       imageState,
+      endpointHandoffPath,
     });
 
     expect(source).toContain(
@@ -740,6 +752,7 @@ describe("project startup scripts", () => {
       projectRoot,
       imageConfig: config.images[0],
       imageState,
+      endpointHandoffPath,
       repository: {
         githubUser: "Evref-BL",
         project: "MCP",
@@ -763,6 +776,7 @@ describe("project startup scripts", () => {
         config,
         imageId: "dev",
         imageState,
+        endpointHandoffPath,
         workspaceId: "worktree-a",
         stateRoot,
       });
@@ -806,6 +820,7 @@ describe("project startup scripts", () => {
         config,
         imageId: "dev",
         imageState,
+        endpointHandoffPath,
         workspaceId: "worktree-a",
         stateRoot,
       });
@@ -857,6 +872,7 @@ describe("project startup scripts", () => {
         },
         imageId: "dev",
         imageState,
+        endpointHandoffPath,
       });
 
       expect(result.source).toContain(
@@ -881,6 +897,7 @@ describe("project startup scripts", () => {
         config,
         imageId: "missing",
         imageState,
+        endpointHandoffPath,
       }),
     ).toThrow(ProjectStartupScriptError);
   });

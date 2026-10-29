@@ -1,9 +1,4 @@
 import path from "node:path";
-import {
-  defaultImagePortClaimChecks,
-  imagePortClaimsRootForConfig,
-  releaseImagePortClaimIfOwned,
-} from "../ports/imagePortClaims.js";
 import { loadProjectConfig } from "../config/projectConfig.js";
 import {
   createStdioPharoLauncherMcpClient,
@@ -25,7 +20,6 @@ import {
   type ProjectImageState,
   type ProjectState,
 } from "../workspace/projectState.js";
-import type { PortClaimChecks } from "../ports/portClaims.js";
 
 interface LauncherCommandResult<T = unknown> {
   ok: boolean;
@@ -39,7 +33,6 @@ export interface ProjectCloseOptions {
   imageIds?: string[];
   pharoLauncherMcpClient?: PharoLauncherMcpToolClient;
   now?: () => Date;
-  portClaimChecks?: PortClaimChecks;
   env?: NodeJS.ProcessEnv;
 }
 
@@ -129,31 +122,6 @@ function addProjectCloseFailure(
     imageName: imageState.imageName,
     message: errorMessage(error),
   });
-}
-
-async function releaseProjectImagePortClaims(options: {
-  state: LoadedProjectCloseState;
-  imageStates: ProjectImageState[];
-  claimsRoot: string | undefined;
-  checks: PortClaimChecks;
-  failures: ProjectCloseFailure[];
-}): Promise<void> {
-  if (!options.claimsRoot) {
-    return;
-  }
-
-  for (const imageState of options.imageStates) {
-    try {
-      await releaseImagePortClaimIfOwned({
-        state: options.state,
-        image: imageState,
-        claimsRoot: options.claimsRoot,
-        checks: options.checks,
-      });
-    } catch (error) {
-      addProjectCloseFailure(options.failures, imageState, error);
-    }
-  }
 }
 
 function clearImageEndpointRuntimeStates(options: {
@@ -258,10 +226,6 @@ export async function closeProject(
   const state = loadProjectState(statePath);
   const now = options.now ?? (() => new Date());
   const resolvedStateRoot = projectStateRootForConfig(config, options.stateRoot);
-  const claimsRoot = imagePortClaimsRootForConfig(projectRoot, config);
-  const portClaimChecks =
-    options.portClaimChecks ?? defaultImagePortClaimChecks();
-
   if (!state) {
     return {
       ok: true,
@@ -278,13 +242,6 @@ export async function closeProject(
   const failures: ProjectCloseFailure[] = [];
 
   if (images.length === 0) {
-    await releaseProjectImagePortClaims({
-      state,
-      imageStates: selected,
-      claimsRoot,
-      checks: portClaimChecks,
-      failures,
-    });
     clearImageEndpointRuntimeStates({
       projectRoot,
       projectId: state.projectId,
@@ -309,7 +266,6 @@ export async function closeProject(
         projectRoot,
         config,
         workspaceId,
-        targetId: state.targetId,
         stateRoot: resolvedStateRoot,
       }),
     }));
@@ -324,14 +280,6 @@ export async function closeProject(
       stateRoot: resolvedStateRoot,
       images,
       stoppedImages,
-      failures,
-    });
-
-    await releaseProjectImagePortClaims({
-      state,
-      imageStates: selected.filter((image) => image.status !== "running"),
-      claimsRoot,
-      checks: portClaimChecks,
       failures,
     });
 

@@ -20,7 +20,6 @@ import {
   isAbsolutePathLike,
   joinPathLike,
   resolvePathLike,
-  sanitizePathSegment,
 } from "../support/pathStyle.js";
 import {
   projectStateDirectoryPath,
@@ -72,7 +71,7 @@ export interface GenerateImageStartupScriptOptions {
   sourcePath?: string;
   imageConfig: ProjectImageConfig;
   imageState: ProjectImageState;
-  endpointHandoffPath?: string;
+  endpointHandoffPath: string;
   pharoMcpLoadStatusPath?: string;
   dependencyRepositoryDetachStatusPath?: string;
   dependencyRepositoryCachePath?: string;
@@ -336,18 +335,19 @@ function fetchRepositoryBeforeLoad(
 
 function generateEndpointHandoffStartupScript(options: {
   endpointHandoffPath: string;
+  requestedPort: number | undefined;
 }): string {
   return [
-    `"Start the MCP server on an OS-assigned loopback port and hand its endpoint to PLexus."`,
+    `"Start the MCP server and hand the port it bound to PLexus. Port 0 asks the OS for a free one."`,
     `mcp := (Smalltalk globals at: #MCP) new.`,
     `endpointFile := ${smalltalkPath(options.endpointHandoffPath)} asFileReference.`,
     `endpointFile exists ifTrue: [ endpointFile delete ].`,
     ``,
-    `mcp port: 0.`,
+    `mcp port: ${options.requestedPort ?? 0}.`,
     `mcp start.`,
     `endpointPort := mcp port.`,
     `(endpointPort isInteger and: [ endpointPort > 0 ]) ifFalse: [`,
-    `  Error signal: 'MCP did not report a bound port after starting on port 0.' ].`,
+    `  Error signal: 'MCP did not report a bound port after starting.' ].`,
     `endpointFile parent ensureCreateDirectory.`,
     `endpointFile writeStreamDo: [ :stream |`,
     `  stream nextPutAll: 'transport=http'; cr.`,
@@ -674,19 +674,6 @@ Semaphore new wait.
 `;
   }
 
-  const preferEndpointHandoff =
-    options.endpointHandoffPath !== undefined &&
-    options.imageConfig.mcp.port === undefined;
-
-  if (
-    options.imageState.assignedPort === undefined &&
-    !preferEndpointHandoff
-  ) {
-    throw new ProjectStartupScriptError(
-      `Project image ${options.imageState.id} requires Pharo MCP startup but has no assigned MCP port`,
-    );
-  }
-
   const repository = options.repository ?? defaultPharoMcpMetacelloRepository;
   const loadPolicy = projectMcpLoadPolicy(options.imageConfig.mcp);
   const loadScriptPath =
@@ -707,16 +694,10 @@ Semaphore new wait.
     loadPolicy,
   });
 
-  const requiredMcpStartup = preferEndpointHandoff
-    ? generateEndpointHandoffStartupScript({
-        endpointHandoffPath: options.endpointHandoffPath!,
-      })
-    : [
-        `"Configure and start the MCP server."`,
-        `mcp := (Smalltalk globals at: #MCP) new.`,
-        `mcp port: ${options.imageState.assignedPort}.`,
-        `mcp start.`,
-      ].join("\n");
+  const requiredMcpStartup = generateEndpointHandoffStartupScript({
+    endpointHandoffPath: options.endpointHandoffPath,
+    requestedPort: options.imageConfig.mcp.port,
+  });
   const mcpStartup =
     startupMode === "optional"
       ? [

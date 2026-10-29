@@ -44,7 +44,6 @@ const projectReferenceProperties = {
   sourcePath: optionalStringSchema,
   projectId: optionalStringSchema,
   workspaceId: optionalStringSchema,
-  targetId: optionalStringSchema,
   stateRoot: optionalStringSchema,
   detail: toolResultDetailSchema,
 } as const;
@@ -88,7 +87,6 @@ export const projectLifecycleTools = [
         projectPath: stringSchema,
         sourcePath: optionalStringSchema,
         workspaceId: optionalStringSchema,
-        targetId: optionalStringSchema,
         stateRoot: optionalStringSchema,
         displayMode: displayModeSchema,
       },
@@ -178,7 +176,6 @@ export const projectLifecycleTools = [
         targetImageName: optionalStringSchema,
         targetTemplateName: optionalStringSchema,
         targetTemplateCategory: optionalStringSchema,
-        targetMcpPort: { type: "integer", minimum: 1, maximum: 65_535 },
         sourceHistoryDirectoryPath: optionalStringSchema,
         historyFilePath: optionalStringSchema,
         selection: historyEntrySelectionSchema,

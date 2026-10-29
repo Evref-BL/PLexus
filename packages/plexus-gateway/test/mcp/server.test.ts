@@ -74,7 +74,6 @@ class DirectRouteGateway extends PlexusGateway {
       route: {
         projectId: "project-123",
         workspaceId: "worktree-a",
-        targetId: "project-123--worktree-a",
         imageId: "dev",
         imageName: "MyProject-dev",
         port: 7123,
@@ -203,13 +202,11 @@ const runningState = {
   projectId: "project-123",
   projectName: "Project 123",
   workspaceId: "worktree-a",
-  targetId: "project-123--worktree-a",
   updatedAt: "2026-05-17T00:00:00.000Z",
   images: [
     {
       id: "dev",
       imageName: "Project123-dev",
-      assignedPort: 7123,
       mcpServers: [
         {
           id: "dev",
@@ -313,7 +310,10 @@ describe("gateway server", () => {
           },
         },
       ]),
-      pharoScope: { targetId: runningState.targetId },
+      pharoScope: {
+        projectId: runningState.projectId,
+        workspaceId: runningState.workspaceId,
+      },
     });
     await gateway.registerProjectRoute({
       projectRoot: "C:/dev/code/project-123",
@@ -365,7 +365,8 @@ describe("gateway server", () => {
       imageRouter,
       pharoTools: [repositoryOperationTool(["create", "update", "pull"])],
       pharoScope: {
-        targetId: runningState.targetId,
+        projectId: runningState.projectId,
+        workspaceId: runningState.workspaceId,
       },
     });
     const server = createGatewayServerWithOptions(gateway, {
@@ -429,12 +430,10 @@ describe("gateway server", () => {
       });
       expect(imageRouter.listCalls).toEqual([
         expect.objectContaining({
-          targetId: "project-123--worktree-a",
           imageId: "dev",
           port: 7123,
         }),
         expect.objectContaining({
-          targetId: "project-123--worktree-a",
           imageId: "dev",
           port: 7123,
         }),
@@ -453,7 +452,8 @@ describe("gateway server", () => {
     const gateway = new PlexusGateway({
       imageRouter,
       pharoScope: {
-        targetId: runningState.targetId,
+        projectId: runningState.projectId,
+        workspaceId: runningState.workspaceId,
       },
     });
     const server = createGatewayServerWithOptions(gateway, {
@@ -482,7 +482,6 @@ describe("gateway server", () => {
             {
               id: "baseline",
               imageName: "Project123-baseline",
-              assignedPort: 7124,
               mcpServers: [
                 {
                   id: "baseline",
@@ -537,7 +536,8 @@ describe("gateway server", () => {
     const gateway = new PlexusGateway({
       imageRouter,
       pharoScope: {
-        targetId: runningState.targetId,
+        projectId: runningState.projectId,
+        workspaceId: runningState.workspaceId,
       },
       pharoToolSchemaMcpServerId: "baseline",
     });
@@ -567,7 +567,6 @@ describe("gateway server", () => {
             {
               id: "baseline",
               imageName: "Project123-baseline",
-              assignedPort: 7124,
               mcpServers: [
                 {
                   id: "baseline",
@@ -736,7 +735,6 @@ describe("gateway server", () => {
           plexusRoute: {
             projectId: "project-123",
             workspaceId: "worktree-a",
-            targetId: "project-123--worktree-a",
             imageId: "dev",
             imageName: "MyProject-dev",
             port: 7123,
@@ -815,7 +813,6 @@ describe("gateway server", () => {
       pharoScope: {
         projectId: "project-123",
         workspaceId: "task-123",
-        targetId: "project-123--task-123",
       },
     });
   });
@@ -972,7 +969,7 @@ describe("gateway server", () => {
         content: [
           {
             type: "text",
-            text: expect.stringContaining("\"targetId\": \"project-123--worktree-a\""),
+            text: expect.stringContaining("\"workspaceId\": \"worktree-a\""),
           },
         ],
       },
@@ -981,7 +978,7 @@ describe("gateway server", () => {
     await expect(
       postMcpPath(port, "/control-mcp", "tools/call", {
         name: "plexus_gateway_status",
-        arguments: { targetId: "project-123--worktree-a" },
+        arguments: { projectId: "project-123", workspaceId: "worktree-a" },
       }),
     ).resolves.toMatchObject({
       result: {

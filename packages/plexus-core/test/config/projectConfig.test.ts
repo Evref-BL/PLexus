@@ -54,22 +54,9 @@ function defaultRuntimePolicy() {
     gateway: {
       mode: "project-local",
       host: "127.0.0.1",
-      portRange: {
-        start: 8_133,
-        end: 8_199,
-      },
+      port: 8_133,
       mcpPath: "/mcp",
       routeControlMcpPath: "/control-mcp",
-    },
-    imagePorts: {
-      allocation: "configured-or-dynamic",
-      range: {
-        start: 7_100,
-        end: 7_199,
-      },
-      coordination: {
-        mode: "host-local",
-      },
     },
     launcherProfile: {
       mode: "project-owned",
@@ -258,17 +245,6 @@ describe("project config", () => {
         mcpUrl: "http://gateway.local:8133/mcp",
         routeControlMcpUrl: "http://gateway.local:8133/control-mcp",
       },
-      imagePorts: {
-        allocation: "configured-or-dynamic",
-        range: {
-          start: 7_200,
-          end: 7_299,
-        },
-        coordination: {
-          mode: "host-local",
-          root: "C:\\dev\\plexus-port-claims",
-        },
-      },
       launcherProfile: {
         mode: "project-owned",
         name: "my-project-isolated",
@@ -283,21 +259,6 @@ describe("project config", () => {
     expect(parseProjectConfig(config)).toEqual(config);
   });
 
-  it("keeps project-state image port coordination as an explicit opt-in", () => {
-    const config: ReturnType<typeof validProjectConfig> & { runtime?: unknown } =
-      validProjectConfig();
-    config.runtime = {
-      imagePorts: {
-        coordination: {
-          mode: "project-state",
-        },
-      },
-    };
-
-    expect(parseProjectConfig(config).runtime?.imagePorts.coordination).toEqual({
-      mode: "project-state",
-    });
-  });
 
   it("allows external launcher profile policy as an explicit opt-out", () => {
     const config: ReturnType<typeof validProjectConfig> & { runtime?: unknown } =
@@ -509,12 +470,6 @@ describe("project config", () => {
               workspaceId: "task-a",
               remoteWorkspaceId: "remote-task-a",
               remoteProjectPath: "/workspaces/project-a",
-              targets: [
-                {
-                  targetId: "task-a-dev",
-                  remoteTargetId: "remote-task-a-dev",
-                },
-              ],
             },
           ],
         },
@@ -535,12 +490,6 @@ describe("project config", () => {
             workspaceId: "task-a",
             remoteWorkspaceId: "remote-task-a",
             remoteProjectPath: "/workspaces/project-a",
-            targets: [
-              {
-                targetId: "task-a-dev",
-                remoteTargetId: "remote-task-a-dev",
-              },
-            ],
           },
         ],
       },
@@ -560,12 +509,6 @@ describe("project config", () => {
           workspaces: [
             {
               remoteWorkspaceId: "remote-task-a",
-              targets: [
-                {
-                  remoteTargetId: "remote-target-a",
-                },
-                "not-a-target",
-              ],
             },
             "not-a-workspace",
           ],
@@ -583,14 +526,6 @@ describe("project config", () => {
           workspaces: [
             {
               workspaceId: "task-b",
-              targets: [
-                {
-                  targetId: "target-b",
-                },
-                {
-                  targetId: "target-b",
-                },
-              ],
             },
           ],
         },
@@ -622,14 +557,11 @@ describe("project config", () => {
           "runtime.remoteNodes[0].projectMcpUrl must be a valid URL",
           "runtime.remoteNodes[0].gatewayMcpUrl must be a valid URL",
           "runtime.remoteNodes[0].workspaces[0].workspaceId must be a non-empty string",
-          "runtime.remoteNodes[0].workspaces[0].targets[0].targetId must be a non-empty string",
-          "runtime.remoteNodes[0].workspaces[0].targets[1] must be an object",
           "runtime.remoteNodes[0].workspaces[1] must be an object",
           "runtime.remoteNodes[1].id must differ from runtime node id: host-a",
           "runtime.remoteNodes[2].parentNodeId must not equal its own id: remote-b",
           "runtime.remoteNodes[3].parentNodeId must be omitted or match runtime node id host-a for flat-tree topology",
           "remote node ids must be unique: remote-b",
-          "runtime.remoteNodes[2].workspaces[0].targets.targetId must be unique: target-b",
           "runtime.remoteNodes[3].workspaces.workspaceId must be unique: task-b",
         ]),
       );

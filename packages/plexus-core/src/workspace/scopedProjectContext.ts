@@ -9,7 +9,6 @@ import {
 } from "../config/projectConfig.js";
 import {
   defaultPlexusStateRoot,
-  defaultTargetId,
   defaultWorkspaceId,
   loadProjectState,
   projectStatePathForConfig,
@@ -27,13 +26,12 @@ export type ScopedImageCleanupPolicy = "workspace_cleanup_only";
 export type ScopedWorkspaceSourcePolicy = "caller-managed";
 export type ScopedWorkspaceImageDeclarationPolicy = "project-config";
 export type ScopedWorkspaceImageLifecyclePolicy = "scoped-affordances";
-export type ScopedWorkspaceRoutePolicy = "pharo-gateway-target-route";
+export type ScopedWorkspaceRoutePolicy = "pharo-gateway-workspace-route";
 
 export interface ScopedProjectContextScope {
   projectId: string;
   projectName: string;
   workspaceId: string;
-  targetId: string;
 }
 
 export interface ScopedProjectContextDiagnosticScope
@@ -66,7 +64,7 @@ export interface ScopedWorkspaceImagePolicyContext {
 export interface ScopedWorkspaceRoutePolicyContext {
   policy: ScopedWorkspaceRoutePolicy;
   serverName: "pharo_gateway";
-  targetKey: "targetId";
+  targetKey: "workspaceId";
   imageArgument: "mcpServerId";
 }
 
@@ -87,7 +85,6 @@ export interface ScopedWorkspaceRuntimeContract {
 export interface ScopedImageOwnership {
   projectId: string;
   workspaceId: string;
-  targetId: string;
   owned: true;
   disposable: true;
   lease?: ProjectImageState["lease"];
@@ -142,7 +139,6 @@ export interface ScopedImageGatewayRouteMetadata {
   routeReference: {
     projectId: string;
     workspaceId: string;
-    targetId: string;
   };
   mcpServerIdSource: string;
   recordHint: string;
@@ -171,7 +167,6 @@ export interface ScopedImageDiagnosticContext {
   active: boolean;
   status: ScopedImageStatus;
   displayMode: ProjectImageDisplayMode;
-  assignedPort?: number;
   mcpServers?: ProjectImageState["mcpServers"];
   pid?: number;
   cleanup: ScopedImageCleanupMetadata;
@@ -189,7 +184,6 @@ export interface BuildScopedProjectContextOptions {
   sourcePath?: string;
   projectConfig?: ProjectConfig;
   workspaceId?: string;
-  targetId?: string;
   stateRoot?: string;
   projectState?: ProjectState;
 }
@@ -392,12 +386,11 @@ function routeMetadata(
     routeReference: {
       projectId: scope.projectId,
       workspaceId: scope.workspaceId,
-      targetId: scope.targetId,
     },
     mcpServerIdSource:
       "Read a server id from images[].mcpServers[] in this scoped context",
     recordHint:
-      "Store the selected mcpServerId with the scoped project/workspace/target before calling pharo_gateway tools",
+      "Store the selected mcpServerId with the scoped project and workspace before calling pharo_gateway tools",
   };
 }
 
@@ -429,9 +422,9 @@ function workspaceContract(
         : {}),
     },
     routes: {
-      policy: "pharo-gateway-target-route",
+      policy: "pharo-gateway-workspace-route",
       serverName: "pharo_gateway",
-      targetKey: "targetId",
+      targetKey: "workspaceId",
       imageArgument: "mcpServerId",
     },
     cleanup: {
@@ -462,11 +455,6 @@ function validateProjectState(
     );
   }
 
-  if (projectState.targetId !== scope.targetId) {
-    throw new ScopedProjectContextError(
-      `Project state targetId ${projectState.targetId} does not match scoped target ${scope.targetId}`,
-    );
-  }
 
   for (const image of projectState.images) {
     if (!imageIds.has(image.id)) {
@@ -494,7 +482,6 @@ function renderedLauncherImageName(
       projectId: scope.projectId,
       projectName: scope.projectName,
       workspaceId: scope.workspaceId,
-      targetId: scope.targetId,
       imageId: imageConfig.id,
     })
   );
@@ -513,7 +500,6 @@ function scopedImageContext(
     ownership: {
       projectId: scope.projectId,
       workspaceId: scope.workspaceId,
-      targetId: scope.targetId,
       owned: true,
       disposable: true,
       ...(imageState?.lease ? { lease: imageState.lease } : {}),
@@ -539,9 +525,6 @@ function scopedImageDiagnostics(
     active: imageConfig.active,
     status: imageStatus(imageState),
     displayMode: imageState?.displayMode ?? projectImageDisplayMode(imageConfig),
-    ...(imageState?.assignedPort
-      ? { assignedPort: imageState.assignedPort }
-      : {}),
     ...(imageState?.mcpServers ? { mcpServers: imageState.mcpServers } : {}),
     ...(imageState?.pid ? { pid: imageState.pid } : {}),
     cleanup: {
@@ -563,9 +546,6 @@ function resolveScopedProjectContext(
   const workspaceId = options.workspaceId
     ? sanitizeRuntimeId(options.workspaceId)
     : defaultWorkspaceId(projectRoot);
-  const targetId =
-    options.targetId ??
-    defaultTargetId(projectConfigId(projectConfig), workspaceId);
   const runtime = resolveProjectRuntimePolicy(projectConfig);
   const configuredStateRoot =
     runtime.stateRoot.mode === "external" ? runtime.stateRoot.path : undefined;
@@ -586,7 +566,6 @@ function resolveScopedProjectContext(
     projectId: projectConfigId(projectConfig),
     projectName: projectConfig.name,
     workspaceId,
-    targetId,
     stateRoot: resolvedStateRoot,
     statePath,
   };
@@ -615,7 +594,6 @@ export function buildScopedProjectContext(
       projectId: scope.projectId,
       projectName: scope.projectName,
       workspaceId: scope.workspaceId,
-      targetId: scope.targetId,
     },
     workspace: workspaceContract(scope, projectConfig),
     images: projectConfig.images.map((imageConfig) =>

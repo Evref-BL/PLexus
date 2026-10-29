@@ -14,17 +14,16 @@ import {
 function usage(): string {
   return [
     "Usage:",
-    "  plexus project open <path> [--workspace-id <id>] [--target-id <id>] [--state-root <path>] [--display-mode <headless|interactive>]",
+    "  plexus project open <path> [--workspace-id <id>] [--state-root <path>] [--display-mode <headless|interactive>]",
     "  plexus project close <path> [--workspace-id <id>] [--state-root <path>]",
     "  plexus project cleanup <path> [--workspace-id <id>] [--state-root <path>] [--confirm] [--delete-state] [--keep-launcher-images]",
     "  plexus project status <path> [--workspace-id <id>] [--state-root <path>]",
     "  plexus mcp project [serve|http|--http] [--host <host>] [--port <port>] [--mcp-path <path>]",
-    "  plexus mcp pharo-launcher [--project-path <path>] [--workspace-id <id>] [--target-id <id>] [--state-root <path>]",
+    "  plexus mcp pharo-launcher [--project-path <path>] [--workspace-id <id>] [--state-root <path>]",
     "",
     "Environment:",
     "  PLEXUS_STATE_ROOT       Optional runtime state root.",
     "  PLEXUS_WORKSPACE_ID     Optional runtime workspace id.",
-    "  PLEXUS_TARGET_ID        Optional runtime target id.",
     "  PLEXUS_IMAGE_LEASE_OWNER_ID Optional scoped image lease owner id.",
     "  PLEXUS_IMAGE_LEASE_OWNER_KIND Optional lease owner kind.",
     "  PLEXUS_IMAGE_LEASE_PURPOSE Optional lease purpose.",
@@ -39,7 +38,6 @@ interface ParsedCommand {
   projectPath?: string;
   stateRoot?: string;
   workspaceId?: string;
-  targetId?: string;
   displayMode?: "headless" | "interactive";
   confirm?: boolean;
   deleteStateFile?: boolean;
@@ -96,9 +94,6 @@ function applyValueOption(
       return;
     case "--workspace-id":
       parsed.workspaceId = value;
-      return;
-    case "--target-id":
-      parsed.targetId = value;
       return;
     case "--display-mode":
       parsed.displayMode = parseDisplayMode(value);
@@ -174,7 +169,6 @@ async function runOpenCommand(
     projectPath: parsed.projectPath,
     stateRoot,
     workspaceId,
-    targetId: parsed.targetId ?? process.env.PLEXUS_TARGET_ID,
     displayMode: parsed.displayMode,
   });
   if (!lifecycleResult.ok || !lifecycleResult.data) {
@@ -331,7 +325,6 @@ async function main(argv: string[]): Promise<number> {
       projectRoot: projectPath,
       stateRoot,
       workspaceId,
-      targetId: parsed.targetId ?? process.env.PLEXUS_TARGET_ID,
       imageLease: scopedImageLeaseOptionsFromEnvironment(process.env),
     });
     return 0;

@@ -63,7 +63,6 @@ const imageConfig = config.images[0] as ProjectImageConfig;
 const imageState: ProjectImageState = {
   id: "dev",
   imageName: "MyProject-worktree-a-dev",
-  assignedPort: 7123,
   status: "starting",
 };
 
@@ -200,12 +199,10 @@ describe("prepared image cache", () => {
     const stateA: ProjectImageState = {
       ...imageState,
       imageName: "MyProject-worktree-a-dev",
-      assignedPort: 7123,
     };
     const stateB: ProjectImageState = {
       ...imageState,
       imageName: "MyProject-worktree-b-dev",
-      assignedPort: 7124,
     };
     const planA = buildPreparedImageCachePlan({
       projectRoot: "/repo/my-project",

@@ -134,10 +134,6 @@ function parseArgs(argv) {
         options.requiredWorkspacePrefix = next();
         markCli("requiredWorkspacePrefix");
         break;
-      case "--requiredTargetPrefix":
-        options.requiredTargetPrefix = next();
-        markCli("requiredTargetPrefix");
-        break;
       case "--stateRoot":
         options.stateRoot = next();
         markCli("stateRoot");
@@ -159,9 +155,6 @@ function parseArgs(argv) {
         options.workspaceId = next();
         markCli("workspaceId");
         break;
-      case "--targetId":
-        options.targetId = next();
-        markCli("targetId");
         break;
       case "--projectId":
         options.projectId = next();
@@ -273,8 +266,6 @@ function parseArgs(argv) {
   options.timeoutBudgetJson ??= process.env.PLEXUS_SMOKE_TIMEOUT_BUDGET_JSON;
   options.requiredWorkspacePrefix ??=
     process.env.PLEXUS_SMOKE_REQUIRED_WORKSPACE_PREFIX;
-  options.requiredTargetPrefix ??=
-    process.env.PLEXUS_SMOKE_REQUIRED_TARGET_PREFIX;
   options.stateRoot ??= process.env.PLEXUS_SMOKE_STATE_ROOT;
   options.fixtureRoot ??= process.env.PLEXUS_SMOKE_FIXTURE_ROOT;
   options.homePath ??= process.env.PLEXUS_SMOKE_HOME_PATH;
@@ -302,7 +293,6 @@ function parseArgs(argv) {
   options.workspaceId ??=
     process.env.PLEXUS_SMOKE_WORKSPACE_ID ??
     `smoke-${new Date().toISOString().replaceAll(/[^0-9A-Za-z]+/g, "-")}-${process.pid}`;
-  options.targetId ??= process.env.PLEXUS_SMOKE_TARGET_ID;
   options.toolName = process.env.PLEXUS_SMOKE_TOOL_NAME ?? options.toolName;
   options.toolArgumentsJson =
     process.env.PLEXUS_SMOKE_TOOL_ARGUMENTS_JSON ?? options.toolArgumentsJson;
@@ -354,14 +344,12 @@ function usage() {
     "  --runId <id>                 Defaults to a unique smoke id",
     "  --timeoutBudgetJson <json>   Overrides setup/open/routing/close/cleanup timeout ms",
     "  --requiredWorkspacePrefix <p> Require workspace id prefix, e.g. smoke-nightly",
-    "  --requiredTargetPrefix <p>    Require target id prefix, e.g. smoke-nightly",
     "  --projectRoot <path>          Defaults to an owned temp project",
     "  --stateRoot <path>            Required disposable state root",
     "  --fixtureRoot <path>          Defaults to an owned temp root for scenario repos",
     "  --homePath <path>             PLexus home used for home image cache smoke runs",
     "  --homeImageCacheNetworkPolicy <online|local-only>  Home cache network policy",
     "  --workspaceId <id>            Defaults to a unique smoke id",
-    "  --targetId <id>               Overrides the runtime target id",
     "  --projectId <id>              Defaults to smoke-open-route-close",
     "  --imageId <id>                Defaults to dev for the one-image path",
     "  --port <number>               Defaults to PLexus allocation",
@@ -473,7 +461,6 @@ function assertValidOptions(options) {
   options.launcherProfileEnvironment = runPlan.launcherProfileEnvironment;
   options.runId = runPlan.runId;
   options.workspaceId = runPlan.workspaceId;
-  options.targetId = runPlan.targetId;
   options.artifactRoot = runPlan.artifactRoot;
   options.artifactDirectory = runPlan.artifactDirectory;
   options.timeoutBudget = runPlan.timeoutBudget;
@@ -702,7 +689,6 @@ function initializeArtifacts(options) {
     launcherProfileEnvironment: options.launcherProfileEnvironment,
     artifactDirectory: options.artifactDirectory,
     workspaceId: options.workspaceId,
-    targetId: options.targetId,
     projectId: options.projectId,
     scenario: options.scenario,
     timeoutBudget: options.timeoutBudget,
@@ -1238,7 +1224,8 @@ async function persistentRouteStatus(openData, refreshHealth) {
     return {
       ok: true,
       data: await registry.getRouteStatus({
-        targetId: openData.state.targetId,
+        projectId: openData.state.projectId,
+        workspaceId: openData.state.workspaceId,
         refreshHealth,
       }),
     };
@@ -1285,9 +1272,17 @@ function assertOutputContains(value, expectedText, label) {
   }
 }
 
-async function routeStep(gateway, targetId, step) {
+// A route is the project and workspace pair the gateway registered.
+function routeOf(openData) {
+  return {
+    projectId: openData.state.projectId,
+    workspaceId: openData.state.workspaceId,
+  };
+}
+
+async function routeStep(gateway, route, step) {
   const routeResult = await gateway.handleTool("plexus_route_to_image", {
-    targetId,
+    ...route,
     imageId: step.imageId,
     toolName: step.toolName,
     arguments: step.arguments,
@@ -1383,12 +1378,13 @@ async function assertImageMcpToolsReady(stateAfterOpen, options) {
     const imageState = stateAfterOpen?.images.find(
       (candidate) => candidate.id === image.id,
     );
-    if (!imageState?.assignedPort) {
-      throw new Error(`Image ${image.id} is missing an assigned MCP port`);
+    const imagePort = imageState?.mcpServers?.[0]?.endpoint?.port;
+    if (!imagePort) {
+      throw new Error(`Image ${image.id} did not hand off an MCP endpoint`);
     }
 
     const result = requireJsonRpcResult(
-      await postImageJsonRpc(imageState.assignedPort, {
+      await postImageJsonRpc(imagePort, {
         jsonrpc: "2.0",
         id: `plexus-smoke-tools-${image.id}`,
         method: "tools/list",
@@ -1417,9 +1413,9 @@ async function assertImageMcpToolsReady(stateAfterOpen, options) {
   }
 }
 
-async function runDefaultRouteProbes(gateway, targetId, options) {
+async function runDefaultRouteProbes(gateway, route, options) {
   for (const image of options.images) {
-    await routeStep(gateway, targetId, {
+    await routeStep(gateway, route, {
       label: `default probe ${image.id}`,
       imageId: image.id,
       toolName: options.toolName,
@@ -1429,14 +1425,14 @@ async function runDefaultRouteProbes(gateway, targetId, options) {
   }
 }
 
-async function runConfiguredSteps(gateway, targetId, options) {
+async function runConfiguredSteps(gateway, route, options) {
   for (const step of options.steps) {
     const imageTargets = step.forEachImage
       ? options.images.map((image) => image.id)
       : [step.imageId ?? options.images[0].id];
 
     for (const imageId of imageTargets) {
-      await routeStep(gateway, targetId, {
+      await routeStep(gateway, route, {
         ...step,
         imageId,
         label: `${step.label} ${imageId}`,
@@ -1445,14 +1441,14 @@ async function runConfiguredSteps(gateway, targetId, options) {
   }
 }
 
-async function runMultiImageIsolationProbe(gateway, targetId, options) {
+async function runMultiImageIsolationProbe(gateway, route, options) {
   if (options.images.length < 2) {
     return;
   }
 
   const tokens = new Map();
   for (const image of options.images) {
-    const result = await routeStep(gateway, targetId, {
+    const result = await routeStep(gateway, route, {
       label: `isolation token ${image.id}`,
       imageId: image.id,
       toolName: "evaluate",
@@ -1473,7 +1469,7 @@ async function runMultiImageIsolationProbe(gateway, targetId, options) {
   }
 
   const firstImage = options.images[0];
-  const repeated = await routeStep(gateway, targetId, {
+  const repeated = await routeStep(gateway, route, {
     label: `isolation repeat ${firstImage.id}`,
     imageId: firstImage.id,
     toolName: "evaluate",
@@ -1485,7 +1481,7 @@ async function runMultiImageIsolationProbe(gateway, targetId, options) {
   assertOutputContains(repeated, tokens.get(firstImage.id), "isolation repeat");
 }
 
-async function runProjectEditExportScenario(gateway, targetId, projectPaths, options) {
+async function runProjectEditExportScenario(gateway, route, projectPaths, options) {
   if (options.images.length === 0) {
     return;
   }
@@ -1504,7 +1500,7 @@ async function runProjectEditExportScenario(gateway, targetId, projectPaths, opt
     initializeGitRepository(repositoryRoot);
     textResult("scenario repository", repositoryRoot);
 
-    await routeStep(gateway, targetId, {
+    await routeStep(gateway, route, {
       label: `create class ${image.id}`,
       imageId: image.id,
       toolName: "edit-class",
@@ -1520,7 +1516,7 @@ async function runProjectEditExportScenario(gateway, targetId, projectPaths, opt
       expectedText: className,
     });
 
-    await routeStep(gateway, targetId, {
+    await routeStep(gateway, route, {
       label: `create method ${image.id}`,
       imageId: image.id,
       toolName: "edit-method",
@@ -1533,7 +1529,7 @@ async function runProjectEditExportScenario(gateway, targetId, projectPaths, opt
       expectedText: "answer",
     });
 
-    await routeStep(gateway, targetId, {
+    await routeStep(gateway, route, {
       label: `work in image ${image.id}`,
       imageId: image.id,
       toolName: "evaluate",
@@ -1543,7 +1539,7 @@ async function runProjectEditExportScenario(gateway, targetId, projectPaths, opt
       expectedText: "42",
     });
 
-    await routeStep(gateway, targetId, {
+    await routeStep(gateway, route, {
       label: `create test class ${image.id}`,
       imageId: image.id,
       toolName: "edit-class",
@@ -1558,7 +1554,7 @@ async function runProjectEditExportScenario(gateway, targetId, projectPaths, opt
       expectedText: testClassName,
     });
 
-    await routeStep(gateway, targetId, {
+    await routeStep(gateway, route, {
       label: `create test method ${image.id}`,
       imageId: image.id,
       toolName: "edit-method",
@@ -1571,7 +1567,7 @@ async function runProjectEditExportScenario(gateway, targetId, projectPaths, opt
       expectedText: "testAnswer",
     });
 
-    await routeStep(gateway, targetId, {
+    await routeStep(gateway, route, {
       label: `run tests ${image.id}`,
       imageId: image.id,
       toolName: "run-tests",
@@ -1582,7 +1578,7 @@ async function runProjectEditExportScenario(gateway, targetId, projectPaths, opt
       expectedText: "Executed",
     });
 
-    await routeStep(gateway, targetId, {
+    await routeStep(gateway, route, {
       label: `create repository ${image.id}`,
       imageId: image.id,
       toolName: "edit-repository",
@@ -1595,7 +1591,7 @@ async function runProjectEditExportScenario(gateway, targetId, projectPaths, opt
       expectedText: repositoryName,
     });
 
-    await routeStep(gateway, targetId, {
+    await routeStep(gateway, route, {
       label: `diff repository ${image.id}`,
       imageId: image.id,
       toolName: "edit-repository",
@@ -1606,7 +1602,7 @@ async function runProjectEditExportScenario(gateway, targetId, projectPaths, opt
       expectedText: packageName,
     });
 
-    await routeStep(gateway, targetId, {
+    await routeStep(gateway, route, {
       label: `export repository ${image.id}`,
       imageId: image.id,
       toolName: "edit-repository",
@@ -1988,14 +1984,15 @@ function validateOpenedState(stateAfterOpen, options) {
     textResult(
       "image state",
       `${image.id} status=${imageState.status} port=${
-        imageState.assignedPort ?? "unknown"
+        imageState.mcpServers?.[0]?.endpoint?.port ?? "unknown"
       } pid=${imageState.pid ?? "unknown"}`,
     );
     if (image.active && imageState.status !== "running") {
       throw new Error(`Image ${image.id} status is ${imageState.status}, not running`);
     }
-    if (imageState.assignedPort) {
-      ports.add(imageState.assignedPort);
+    const imagePort = imageState.mcpServers?.[0]?.endpoint?.port;
+    if (imagePort) {
+      ports.add(imagePort);
     }
     if (imageState.pid) {
       pids.add(imageState.pid);
@@ -2030,7 +2027,7 @@ async function assertClosed(client, lifecycle, gateway, openData, projectPaths, 
   }
 
   const statusAfterClose = await gateway.handleTool("plexus_gateway_status", {
-    targetId: openData.state.targetId,
+    ...routeOf(openData),
     refreshHealth: true,
   });
   if (statusAfterClose.ok) {
@@ -2040,7 +2037,10 @@ async function assertClosed(client, lifecycle, gateway, openData, projectPaths, 
       )}`,
     );
   }
-  textResult("route after close", `${openData.state.targetId}=unregistered`);
+  textResult(
+    "route after close",
+    `${openData.state.projectId}/${openData.state.workspaceId}=unregistered`,
+  );
 
   const allStatusAfterClose = requireGatewayOk(
     await gateway.handleTool("plexus_gateway_status", {
@@ -2052,9 +2052,15 @@ async function assertClosed(client, lifecycle, gateway, openData, projectPaths, 
     ? allStatusAfterClose
     : [allStatusAfterClose];
   if (
-    allRoutes.some((route) => route?.targetId === openData.state.targetId)
+    allRoutes.some(
+      (route) =>
+        route?.projectId === openData.state.projectId &&
+        route?.workspaceId === openData.state.workspaceId,
+    )
   ) {
-    throw new Error(`Closed target ${openData.state.targetId} remains in status`);
+    throw new Error(
+      `Closed workspace ${openData.state.projectId}/${openData.state.workspaceId} remains in status`,
+    );
   }
   textResult("status after close", "closed target absent");
 }
@@ -2138,7 +2144,6 @@ async function main() {
     textResult("stateRoot", projectPaths.stateRoot);
     textResult("fixtureRoot", projectPaths.fixtureRoot);
     textResult("workspaceId", options.workspaceId);
-    textResult("targetId", options.targetId ?? "(derived from project/workspace)");
     for (const image of options.images) {
       textResult("imageName", `${image.id}=${image.imageName}`);
     }
@@ -2149,7 +2154,6 @@ async function main() {
         projectPath: projectPaths.projectRoot,
         stateRoot: projectPaths.stateRoot,
         workspaceId: options.workspaceId,
-        ...(options.targetId ? { targetId: options.targetId } : {}),
       });
     });
     snapshotJsonArtifact(options, "project-open-result.json", openResult);
@@ -2175,9 +2179,7 @@ async function main() {
         await registerProbeRoute(gateway, openData, projectPaths),
         "in-process probe route registration",
       );
-      recordEvent(options, "probe-route-registered", {
-        targetId: openData.state.targetId,
-      });
+      recordEvent(options, "probe-route-registered", routeOf(openData));
     }
 
     const stateAfterOpen = loadProjectState(openData.statePath);
@@ -2188,23 +2190,23 @@ async function main() {
       options.keepOpen
         ? await persistentRouteStatus(openData, false)
         : await gateway.handleTool("plexus_gateway_status", {
-            targetId: openData.state.targetId,
+            ...routeOf(openData),
             refreshHealth: false,
           }),
     );
     validateOpenedState(stateAfterOpen, options);
     await withPhaseTimeout(options, "routing", async () => {
       await assertImageMcpToolsReady(stateAfterOpen, options);
-      await runDefaultRouteProbes(gateway, openData.state.targetId, options);
-      await runMultiImageIsolationProbe(gateway, openData.state.targetId, options);
-      await runConfiguredSteps(gateway, openData.state.targetId, options);
+      await runDefaultRouteProbes(gateway, routeOf(openData), options);
+      await runMultiImageIsolationProbe(gateway, routeOf(openData), options);
+      await runConfiguredSteps(gateway, routeOf(openData), options);
     });
 
     if (options.scenario === "project-edit-export") {
       await withPhaseTimeout(options, "scenario", async () => {
         await runProjectEditExportScenario(
           gateway,
-          openData.state.targetId,
+          routeOf(openData),
           projectPaths,
           options,
         );
@@ -2230,7 +2232,8 @@ async function main() {
         cleanupContext,
       );
       recordEvent(options, "keep-open-retained", {
-        targetId: cleanupContext.routeControl.targetId,
+        projectId: cleanupContext.routeControl.projectId,
+        workspaceId: cleanupContext.routeControl.workspaceId,
         closeCommand: cleanupContext.closeCommand,
         artifactDirectory: cleanupContext.retained.artifactDirectory,
       });

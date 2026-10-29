@@ -23,7 +23,6 @@ import type {
   ProjectGatewayProcessStopOptions,
 } from "../../src/gateway/projectGateway.js";
 import type { PharoLauncherMcpToolClient } from "../../src/launcher/pharoLauncherMcpClient.js";
-import { claimPort, inspectPortClaim } from "../../src/ports/portClaims.js";
 import {
   ProjectOpenError,
   type ProjectOpenOptions,
@@ -49,13 +48,11 @@ const runningState: ProjectState = {
   projectId: "project-123",
   projectName: "my-project",
   workspaceId: "worktree-a",
-  targetId: "project-123--worktree-a",
   updatedAt: "2026-04-25T10:00:00.000Z",
   images: [
     {
       id: "dev",
       imageName: "MyProject-dev",
-      assignedPort: 7123,
       mcpServers: [
         {
           id: "dev",
@@ -113,7 +110,6 @@ class FakeRouteRegistry implements ProjectLifecycleRouteRegistry {
       data: {
         projectId: input.projectId ?? runningState.projectId,
         workspaceId: input.workspaceId ?? runningState.workspaceId,
-        targetId: input.targetId ?? runningState.targetId,
         projectRoot: registration?.projectRoot ?? "project-root",
         statePath: registration?.statePath ?? "state.json",
       },
@@ -142,7 +138,7 @@ class MissingRouteRegistry implements ProjectLifecycleRouteRegistry {
   getRouteStatus(input: ProjectLifecycleRouteReference): Promise<unknown> {
     return Promise.resolve({
       ok: false,
-      error: `No route is registered for: ${input.targetId ?? "unknown"}`,
+      error: `No route is registered for: ${input.projectId ?? "unknown"}/${input.workspaceId ?? "unknown"}`,
     });
   }
 }
@@ -239,46 +235,13 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
-function projectStateRuntime() {
-  return {
-    imagePorts: {
-      allocation: "configured-or-dynamic",
-      range: {
-        start: 7100,
-        end: 7199,
-      },
-      coordination: {
-        mode: "project-state",
-      },
-    },
-  };
-}
 
-function runtimeWithProjectStateImagePorts(
-  runtime: unknown,
-): Record<string, unknown> {
-  const defaults = projectStateRuntime();
-  if (!isRecord(runtime)) {
-    return defaults;
-  }
-
-  return {
-    ...defaults,
-    ...runtime,
-    imagePorts: isRecord(runtime.imagePorts)
-      ? {
-          ...defaults.imagePorts,
-          ...runtime.imagePorts,
-        }
-      : defaults.imagePorts,
-  };
-}
 
 function writeProjectConfig(
   projectRoot: string,
   overrides: Record<string, unknown> = {},
 ): void {
-  const runtime = runtimeWithProjectStateImagePorts(overrides.runtime);
+  const runtime = overrides.runtime;
   fs.writeFileSync(
     path.join(projectRoot, "plexus.json"),
     JSON.stringify(
@@ -526,7 +489,7 @@ describe("project lifecycle tools", () => {
 
     expect(result).toMatchObject({ ok: true });
     expect(routeRegistry.unregisters).toEqual([
-      { targetId: "project-123--worktree-a" },
+      { projectId: "project-123", workspaceId: "worktree-a" },
     ]);
   });
 
@@ -569,14 +532,14 @@ describe("project lifecycle tools", () => {
         resources: expect.arrayContaining([
           expect.objectContaining({
             kind: "route",
-            id: "project-123--worktree-a",
+            id: "project-123/worktree-a",
             status: "cleaned",
           }),
         ]),
       },
     });
     expect(routeRegistry.unregisters).toEqual([
-      { targetId: "project-123--worktree-a" },
+      { projectId: "project-123", workspaceId: "worktree-a" },
     ]);
   });
 
@@ -599,7 +562,7 @@ describe("project lifecycle tools", () => {
           cleanupPolicy: "workspace_cleanup_only",
           route: {
             serverName: "pharo_gateway",
-            targetKey: "targetId",
+            targetKey: "workspaceId",
             imageArgument: "mcpServerId",
             imageId: image.id,
           },
@@ -640,7 +603,7 @@ describe("project lifecycle tools", () => {
           }),
           expect.objectContaining({
             kind: "route",
-            id: "project-123--worktree-a",
+            id: "project-123/worktree-a",
             status: "skipped",
             reason: expect.stringContaining("fetch failed"),
           }),
@@ -648,7 +611,7 @@ describe("project lifecycle tools", () => {
       },
     });
     expect(routeRegistry.unregisters).toEqual([
-      { targetId: "project-123--worktree-a" },
+      { projectId: "project-123", workspaceId: "worktree-a" },
     ]);
     expect(launcherClient.calls).toEqual([
       {
@@ -683,12 +646,10 @@ describe("project lifecycle tools", () => {
       data: {
         projectId: "project-123",
         workspaceId: "worktree-a",
-        targetId: "project-123--worktree-a",
         context: {
           scope: {
             projectId: "project-123",
             workspaceId: "worktree-a",
-            targetId: "project-123--worktree-a",
           },
           workspace: {
             projectRoot,
@@ -807,7 +768,6 @@ describe("project lifecycle tools", () => {
                 remoteProjectPath: "/remote/project-a",
                 targets: [
                   {
-                    targetId: "task-a-dev",
                     remoteTargetId: "remote-task-a-dev",
                   },
                 ],
@@ -835,14 +795,12 @@ describe("project lifecycle tools", () => {
       sourcePath: "/host/source",
       stateRoot: "/host/state",
       workspaceId: "worktree-a",
-      targetId: "task-a-dev",
       displayMode: "headless",
     });
     await lifecycle.handleTool("plexus_project_status", {
       projectPath: projectRoot,
       stateRoot: "/host/state",
       workspaceId: "worktree-a",
-      targetId: "task-a-dev",
       includeDiagnostics: true,
     });
     await lifecycle.handleTool("plexus_project_close", {
@@ -872,7 +830,6 @@ describe("project lifecycle tools", () => {
           projectPath: "/remote/project-a",
           sourcePath: "/host/source",
           workspaceId: "remote-worktree-a",
-          targetId: "remote-task-a-dev",
           displayMode: "headless",
         },
       },
@@ -881,7 +838,6 @@ describe("project lifecycle tools", () => {
         argumentsValue: {
           projectPath: "/remote/project-a",
           workspaceId: "remote-worktree-a",
-          targetId: "remote-task-a-dev",
           refreshHealth: false,
           includeDiagnostics: true,
         },
@@ -919,7 +875,6 @@ describe("project lifecycle tools", () => {
         projectId: "remote-project",
         projectName: "remote-project",
         workspaceId: "remote-worktree-a",
-        targetId: "remote-task-a-dev",
         updatedAt: "2026-04-25T10:00:00.000Z",
         images: [
           {
@@ -936,7 +891,6 @@ describe("project lifecycle tools", () => {
         expect(argumentsValue).toMatchObject({
           projectPath: "/remote/project-a",
           workspaceId: "remote-worktree-a",
-          targetId: "remote-task-a-dev",
         });
         return { ok: true, data: remoteOpenResult as T };
       },
@@ -957,7 +911,6 @@ describe("project lifecycle tools", () => {
                 remoteProjectPath: "/remote/project-a",
                 targets: [
                   {
-                    targetId: "task-a-dev",
                     remoteTargetId: "remote-task-a-dev",
                   },
                 ],
@@ -977,7 +930,6 @@ describe("project lifecycle tools", () => {
       sourcePath: "/host/source",
       stateRoot,
       workspaceId: "worktree-a",
-      targetId: "task-a-dev",
     });
 
     expect(result).toMatchObject({
@@ -989,7 +941,6 @@ describe("project lifecycle tools", () => {
           projectId: "project-123",
           projectName: "my-project",
           workspaceId: "worktree-a",
-          targetId: "task-a-dev",
           sourcePath: "/host/source",
           remoteGateway: {
             remoteNodeId: "remote-a",
@@ -1001,7 +952,6 @@ describe("project lifecycle tools", () => {
             },
             projectId: "remote-project",
             workspaceId: "remote-worktree-a",
-            targetId: "remote-task-a-dev",
           },
         },
       },
@@ -1013,7 +963,6 @@ describe("project lifecycle tools", () => {
       state: {
         projectId: "project-123",
         workspaceId: "worktree-a",
-        targetId: "task-a-dev",
         remoteGateway: {
           remoteNodeId: "remote-a",
         },
@@ -1028,7 +977,6 @@ describe("project lifecycle tools", () => {
     expect(loadProjectState(statePath(stateRoot))).toMatchObject({
       projectId: "project-123",
       workspaceId: "worktree-a",
-      targetId: "task-a-dev",
       remoteGateway: {
         remoteNodeId: "remote-a",
       },
@@ -1048,7 +996,6 @@ describe("project lifecycle tools", () => {
         projectId: "remote-project",
         projectName: "remote-project",
         workspaceId: "remote-worktree-a",
-        targetId: "remote-task-a-dev",
         updatedAt: "2026-04-25T10:00:00.000Z",
         images: [
           {
@@ -1114,7 +1061,6 @@ describe("project lifecycle tools", () => {
                 remoteProjectPath: "/remote/project-a",
                 targets: [
                   {
-                    targetId: "task-a-dev",
                     remoteTargetId: "remote-task-a-dev",
                   },
                 ],
@@ -1133,7 +1079,6 @@ describe("project lifecycle tools", () => {
       projectPath: projectRoot,
       stateRoot,
       workspaceId: "worktree-a",
-      targetId: "task-a-dev",
     });
     await lifecycle.handleTool("plexus_project_close", {
       projectPath: projectRoot,
@@ -1144,7 +1089,6 @@ describe("project lifecycle tools", () => {
       projectPath: projectRoot,
       stateRoot,
       workspaceId: "worktree-a",
-      targetId: "task-a-dev",
     });
     await lifecycle.handleTool("plexus_project_cleanup", {
       projectPath: projectRoot,
@@ -1353,9 +1297,7 @@ describe("project lifecycle tools", () => {
     const lifecycle = new PlexusProjectLifecycle({
       routeRegistry: new FakeRouteRegistry(),
       gateway: {
-        checks: {
-          isPortListening: async () => false,
-        },
+        isPortListening: async () => false,
       },
     });
 
@@ -1425,9 +1367,7 @@ describe("project lifecycle tools", () => {
     const lifecycle = new PlexusProjectLifecycle({
       routeRegistry: new FakeRouteRegistry(),
       gateway: {
-        checks: {
-          isPortListening: async () => false,
-        },
+        isPortListening: async () => false,
       },
     });
 
@@ -1469,13 +1409,22 @@ describe("project lifecycle tools", () => {
     const stateA: ProjectState = {
       ...runningState,
       workspaceId: "worktree-a",
-      targetId: "project-123--worktree-a",
       sourcePath: sourceA,
       images: [
         {
           id: "dev",
           imageName: "MyProject-worktree-a-dev",
-          assignedPort: 7123,
+          mcpServers: [
+            {
+              id: "dev",
+              endpoint: {
+                transport: "http",
+                host: "127.0.0.1",
+                port: 7123,
+                path: "/",
+              },
+            },
+          ],
           pid: 1234,
           status: "running",
         },
@@ -1484,13 +1433,22 @@ describe("project lifecycle tools", () => {
     const stateB: ProjectState = {
       ...runningState,
       workspaceId: "worktree-b",
-      targetId: "project-123--worktree-b",
       sourcePath: sourceB,
       images: [
         {
           id: "dev",
           imageName: "MyProject-worktree-b-dev",
-          assignedPort: 7124,
+          mcpServers: [
+            {
+              id: "dev",
+              endpoint: {
+                transport: "http",
+                host: "127.0.0.1",
+                port: 7124,
+                path: "/",
+              },
+            },
+          ],
           pid: 5678,
           status: "running",
         },
@@ -1498,18 +1456,17 @@ describe("project lifecycle tools", () => {
     };
     const routesByTarget = new Map(
       [stateA, stateB].map((state) => [
-        state.targetId,
+        `${state.projectId}/${state.workspaceId}`,
         {
           projectId: state.projectId,
           workspaceId: state.workspaceId,
-          targetId: state.targetId,
           projectRoot,
           statePath:
             state.workspaceId === "worktree-a" ? stateAPath : stateBPath,
           images: state.images.map((image) => ({
             id: image.id,
             imageName: image.imageName,
-            port: image.assignedPort,
+            port: image.mcpServers?.[0]?.endpoint.port,
             status: image.status,
             routable: {
               ok: true,
@@ -1545,14 +1502,14 @@ describe("project lifecycle tools", () => {
         async getRouteStatus(input) {
           return {
             ok: true,
-            data: routesByTarget.get(input.targetId ?? ""),
+            data: routesByTarget.get(
+              `${input.projectId ?? ""}/${input.workspaceId ?? ""}`,
+            ),
           };
         },
       },
       gateway: {
-        checks: {
-          isPortListening: async () => false,
-        },
+        isPortListening: async () => false,
       },
     });
 
@@ -1573,7 +1530,6 @@ describe("project lifecycle tools", () => {
       ok: true,
       data: {
         workspaceId: "worktree-a",
-        targetId: "project-123--worktree-a",
         statePath: stateAPath,
         context: {
           workspace: {
@@ -1598,11 +1554,10 @@ describe("project lifecycle tools", () => {
           ],
         },
         diagnostics: {
-          imageMcpPorts: [
+          imageMcpRoutes: [
             {
               imageId: "dev",
               imageName: "MyProject-worktree-a-dev",
-              port: 7123,
             },
           ],
           routeTable: {
@@ -1621,7 +1576,6 @@ describe("project lifecycle tools", () => {
       ok: true,
       data: {
         workspaceId: "worktree-b",
-        targetId: "project-123--worktree-b",
         statePath: stateBPath,
         context: {
           workspace: {
@@ -1635,16 +1589,14 @@ describe("project lifecycle tools", () => {
           images: [
             {
               imageName: "MyProject-worktree-b-dev",
-              port: 7124,
             },
           ],
         },
         diagnostics: {
-          imageMcpPorts: [
+          imageMcpRoutes: [
             {
               imageId: "dev",
               imageName: "MyProject-worktree-b-dev",
-              port: 7124,
             },
           ],
           routeTable: {
@@ -1777,7 +1729,6 @@ describe("project lifecycle tools", () => {
         route: {
           projectId: "project-123",
           workspaceId: "worktree-a",
-          targetId: "project-123--worktree-a",
         },
           diagnostics: {
           toolRuntime: {
@@ -1789,10 +1740,9 @@ describe("project lifecycle tools", () => {
               identityField: "id",
             },
           },
-          imageMcpPorts: [
+          imageMcpRoutes: [
             {
               imageId: "dev",
-              port: 7123,
               pid: 1234,
             },
           ],
@@ -1872,7 +1822,7 @@ describe("project lifecycle tools", () => {
       ok: true,
       data: {
         diagnostics: {
-          imageMcpPorts: [
+          imageMcpRoutes: [
             {
               imageId: "dev",
               mcpServers: [{ id: "dev", endpoint }],
@@ -1894,7 +1844,6 @@ describe("project lifecycle tools", () => {
         },
       },
     });
-    expect(result.data?.diagnostics.imageMcpPorts[0]).not.toHaveProperty("port");
     expect(result.data?.diagnostics.routeTable.routableImages[0]).not.toHaveProperty(
       "port",
     );
@@ -1903,49 +1852,25 @@ describe("project lifecycle tools", () => {
   it("reconciles dead project-local gateway state during health refresh", async () => {
     const projectRoot = makeTempDir("plexus-project-");
     const stateRoot = makeTempDir("plexus-state-");
-    const claimsRoot = makeTempDir("plexus-claims-");
     const stateFilePath = statePath(stateRoot);
-    const gatewayClaim = await claimPort({
-      claimsRoot,
-      projectId: "project-123",
-      projectName: "my-project",
-      workspaceId: "worktree-a",
-      targetId: "project-123--worktree-a",
-      purpose: "gateway",
-      requestedPort: 8133,
-      pid: 987654321,
-      claimId: "gateway-claim",
-    });
     const staleGateway = {
       mode: "project-local" as const,
       endpoint: "http://127.0.0.1:8133/mcp",
       controlEndpoint: "http://127.0.0.1:8133/control-mcp",
       host: "127.0.0.1",
       port: 8133,
-      portRange: {
-        start: 8133,
-        end: 8133,
-      },
       routePath: "/mcp",
       controlPath: "/control-mcp",
       owningProjectId: "project-123",
       managedByProject: true,
       pid: 987654321,
-      claim: {
-        claimsRoot,
-        claimId: gatewayClaim.claimId,
-        assignedPort: gatewayClaim.assignedPort,
-      },
     };
     writeProjectConfig(projectRoot, {
       runtime: {
         gateway: {
           mode: "project-local",
           host: "127.0.0.1",
-          portRange: {
-            start: 8133,
-            end: 8133,
-          },
+          port: 8133,
           mcpPath: "/mcp",
           routeControlMcpPath: "/control-mcp",
         },
@@ -1979,10 +1904,6 @@ describe("project lifecycle tools", () => {
         gateway: {
           mode: "project-local",
           host: "127.0.0.1",
-          portRange: {
-            start: 8133,
-            end: 8133,
-          },
           managedByProject: true,
         },
         diagnostics: {
@@ -2002,11 +1923,6 @@ describe("project lifecycle tools", () => {
               controlEndpoint: "http://127.0.0.1:8133/control-mcp",
               port: 8133,
               pid: 987654321,
-              claim: {
-                claimsRoot,
-                claimId: gatewayClaim.claimId,
-                assignedPort: gatewayClaim.assignedPort,
-              },
             },
             repair: {
               allowed: true,
@@ -2015,13 +1931,11 @@ describe("project lifecycle tools", () => {
                 projectPath: projectRoot,
                 stateRoot,
                 workspaceId: "worktree-a",
-                targetId: "project-123--worktree-a",
               },
             },
           },
           routeTable: {
             status: "gateway-dead",
-            targetId: "project-123--worktree-a",
             routableImages: [],
             error: expect.stringContaining("gateway state is dead"),
           },
@@ -2033,19 +1947,6 @@ describe("project lifecycle tools", () => {
     expect(result.data?.gateway).not.toHaveProperty("pid");
     expect(result.data?.state.gateway).toBeUndefined();
     expect(loadProjectState(stateFilePath)?.gateway).toBeUndefined();
-    await expect(
-      inspectPortClaim({
-        claimsRoot,
-        port: 8133,
-        checks: {
-          isProcessAlive: async () => false,
-          isPortListening: async () => false,
-        },
-      }),
-    ).resolves.toMatchObject({
-      status: "available",
-      port: 8133,
-    });
   });
 
   it("reports running project state with missing project-local gateway state as repairable", async () => {
@@ -2067,9 +1968,7 @@ describe("project lifecycle tools", () => {
     const lifecycle = new PlexusProjectLifecycle({
       gateway: {
         now: () => new Date("2026-05-24T11:50:00.000Z"),
-        checks: {
-          isPortListening: async () => false,
-        },
+        isPortListening: async () => false,
         fetch: async () => {
           throw new Error("gateway fetch should not be attempted");
         },
@@ -2111,13 +2010,11 @@ describe("project lifecycle tools", () => {
                 projectPath: projectRoot,
                 stateRoot,
                 workspaceId: "worktree-a",
-                targetId: "project-123--worktree-a",
               },
             },
           },
           routeTable: {
             status: "gateway-dead",
-            targetId: "project-123--worktree-a",
             routableImages: [],
             error: expect.stringContaining("gateway state is dead"),
           },
@@ -2179,9 +2076,7 @@ describe("project lifecycle tools", () => {
     const lifecycle = new PlexusProjectLifecycle({
       gateway: {
         now: () => new Date("2026-05-24T11:50:00.000Z"),
-        checks: {
-          isPortListening: async () => false,
-        },
+        isPortListening: async () => false,
         fetch: async () => {
           throw new Error("gateway fetch should not be attempted");
         },
@@ -2215,7 +2110,6 @@ describe("project lifecycle tools", () => {
           },
           routeTable: {
             status: "gateway-dead",
-            targetId: "project-123--worktree-a",
           },
         },
       },
@@ -2356,7 +2250,6 @@ describe("project lifecycle tools", () => {
           {
             id: "dev",
             imageName: "MyProject-dev",
-            assignedPort: 7123,
             status: "failed",
           },
         ],
@@ -2467,14 +2360,11 @@ describe("project lifecycle tools", () => {
         );
       },
       gateway: {
-        claimsRoot,
         processManager,
         pharoTools: [pharoEvalTool],
         fetch: makeGatewayFetch(requests),
         skipHealthCheck: true,
-        checks: {
-          isPortListening: async () => false,
-        },
+        isPortListening: async () => false,
       },
     });
 
@@ -2527,7 +2417,6 @@ describe("project lifecycle tools", () => {
       data: {
         projectId: "project-123",
         workspaceId: "worktree-a",
-        targetId: "project-123--worktree-a",
       },
     });
     expect(result.data).not.toHaveProperty("projectRoot");
@@ -2539,117 +2428,17 @@ describe("project lifecycle tools", () => {
         projectRoot: "project-root",
         statePath: "state.json",
         route: {
-          targetId: "project-123--worktree-a",
         },
       },
     });
   });
 
-  it("reports host-local image port coordination diagnostics when no mode is configured", async () => {
-    const projectRoot = makeTempDir("plexus-project-");
-    const stateRoot = makeTempDir("plexus-state-");
-    const claimsRoot = makeTempDir("plexus-claims-");
-    writeProjectConfig(projectRoot, {
-      runtime: {
-        imagePorts: {
-          coordination: {
-            root: claimsRoot,
-          },
-        },
-      },
-    });
-    saveProjectState(statePath(stateRoot), runningState);
-    const lifecycle = new PlexusProjectLifecycle({
-      routeRegistry: new FakeRouteRegistry(),
-      gateway: {
-        checks: {
-          isPortListening: async () => false,
-        },
-      },
-    });
 
-    const result = await lifecycle.handleTool("plexus_project_status", {
-      projectPath: projectRoot,
-      stateRoot,
-      workspaceId: "worktree-a",
-      includeDiagnostics: true,
-    });
-
-    expect(result).toMatchObject({
-      ok: true,
-      data: {
-        diagnostics: {
-          imagePortCoordination: {
-            mode: "host-local",
-            basis: "host-local-claims",
-            claimsRoot,
-            message:
-              "Image MCP ports are coordinated by host-local port claims across PLexus projects on this host.",
-          },
-          portClaims: {
-            roots: [claimsRoot],
-          },
-        },
-      },
-    });
-  });
-
-  it("reports explicit project-state image port coordination diagnostics", async () => {
-    const projectRoot = makeTempDir("plexus-project-");
-    const stateRoot = makeTempDir("plexus-state-");
-    writeProjectConfig(projectRoot);
-    saveProjectState(statePath(stateRoot), runningState);
-    const lifecycle = new PlexusProjectLifecycle({
-      routeRegistry: new FakeRouteRegistry(),
-      gateway: {
-        checks: {
-          isPortListening: async () => false,
-        },
-      },
-    });
-
-    const result = await lifecycle.handleTool("plexus_project_status", {
-      projectPath: projectRoot,
-      stateRoot,
-      workspaceId: "worktree-a",
-      includeDiagnostics: true,
-    });
-
-    expect(result).toMatchObject({
-      ok: true,
-      data: {
-        diagnostics: {
-          imagePortCoordination: {
-            mode: "project-state",
-            basis: "project-state-scanning",
-            stateRoot,
-            message:
-              "Image MCP ports are coordinated by scanning PLexus project state; this only protects workspaces sharing this state root.",
-          },
-          portClaims: {
-            roots: [],
-          },
-        },
-      },
-    });
-  });
 
   it("reports zero-image projects as idle with operational runtime health diagnostics", async () => {
     const projectRoot = makeTempDir("plexus-project-");
     const stateRoot = makeTempDir("plexus-state-");
-    const claimsRoot = makeTempDir("plexus-claims-");
     const stateFilePath = statePath(stateRoot);
-    const gatewayClaim = await claimPort({
-      claimsRoot,
-      projectId: "project-123",
-      projectName: "my-project",
-      workspaceId: "worktree-a",
-      targetId: "project-123--worktree-a",
-      purpose: "gateway",
-      requestedPort: 8133,
-      claimId: "gateway-claim",
-      now: () => new Date("2026-04-25T10:00:00.000Z"),
-    });
     const idleState: ProjectState = {
       ...runningState,
       runtimeStatus: "idle",
@@ -2664,11 +2453,6 @@ describe("project lifecycle tools", () => {
         controlPath: "/control-mcp",
         owningProjectId: "project-123",
         managedByProject: true,
-        claim: {
-          claimsRoot,
-          claimId: gatewayClaim.claimId,
-          assignedPort: gatewayClaim.assignedPort,
-        },
       },
     };
     writeProjectConfig(projectRoot, {
@@ -2696,9 +2480,7 @@ describe("project lifecycle tools", () => {
           PHARO_LAUNCHER_MCP_INIT_SCRIPTS_DIR: "/profiles/isolated/init-scripts",
           PHARO_LAUNCHER_MCP_LOGS_DIR: "/profiles/isolated/logs",
         } as NodeJS.ProcessEnv,
-        checks: {
-          isPortListening: async () => false,
-        },
+        isPortListening: async () => false,
       },
     });
 
@@ -2715,7 +2497,6 @@ describe("project lifecycle tools", () => {
         stateRoot,
         projectId: "project-123",
         workspaceId: "worktree-a",
-        targetId: "project-123--worktree-a",
         gateway: {
           endpoint: "http://127.0.0.1:8133/mcp",
           controlEndpoint: "http://127.0.0.1:8133/control-mcp",
@@ -2734,29 +2515,13 @@ describe("project lifecycle tools", () => {
             sourcePath: projectRoot,
             stateRoot,
             statePath: stateFilePath,
-            targetId: "project-123--worktree-a",
           },
           runtimePolicy: {
-            imagePorts: {
-              allocation: "configured-or-dynamic",
-              range: {
-                start: 7100,
-                end: 7199,
-              },
-              coordination: {
-                mode: "project-state",
-              },
+            gateway: {
+              mode: "project-local",
+              host: "127.0.0.1",
+              port: 8133,
             },
-          },
-          imagePortPolicy: {
-            allocation: "configured-or-dynamic",
-            range: {
-              start: 7100,
-              end: 7199,
-            },
-            coordinationMode: "project-state",
-            projectStateRoot: stateRoot,
-            basis: "project-state",
           },
           launcherProfile: {
             ownership: "plexus-owned",
@@ -2769,30 +2534,10 @@ describe("project lifecycle tools", () => {
               "pharo-launcher-mcp",
             ),
           },
-          imagePortCoordination: {
-            mode: "project-state",
-            basis: "project-state-scanning",
-            stateRoot,
-          },
-          imageMcpPorts: [],
-          portClaims: {
-            roots: [claimsRoot],
-            active: [
-              expect.objectContaining({
-                port: 8133,
-                status: "claimed",
-                ownedByCurrentScope: true,
-              }),
-            ],
-            stale: [],
-            conflicts: [],
-            otherScopes: [],
-          },
+          imageMcpRoutes: [],
           routeTable: {
             status: "registered",
-            targetId: "project-123--worktree-a",
           },
-          conflictingListeners: [],
         },
       },
     });
@@ -2809,7 +2554,6 @@ describe("project lifecycle tools", () => {
       projectId: "project-123",
       projectName: "my-project",
       workspaceId: "worktree-a",
-      targetId: "project-123--worktree-a",
       updatedAt: "2026-04-25T10:00:00.000Z",
       images: [
         {
@@ -2841,9 +2585,7 @@ describe("project lifecycle tools", () => {
     });
     const lifecycle = new PlexusProjectLifecycle({
       gateway: {
-        checks: {
-          isPortListening: async () => false,
-        },
+        isPortListening: async () => false,
       },
     });
 
@@ -2882,239 +2624,7 @@ describe("project lifecycle tools", () => {
     });
   });
 
-  it("reports unrelated other-scope claims without degrading this scope", async () => {
-    const projectRoot = makeTempDir("plexus-project-");
-    const stateRoot = makeTempDir("plexus-state-");
-    const claimsRoot = makeTempDir("plexus-claims-");
-    const stateFilePath = statePath(stateRoot);
-    const gatewayClaim = await claimPort({
-      claimsRoot,
-      projectId: "project-123",
-      projectName: "my-project",
-      workspaceId: "worktree-a",
-      targetId: "project-123--worktree-a",
-      purpose: "gateway",
-      requestedPort: 8133,
-      claimId: "gateway-claim",
-    });
-    await claimPort({
-      claimsRoot,
-      projectId: "other-project",
-      projectName: "other-project",
-      workspaceId: "other-workspace",
-      targetId: "other-target",
-      purpose: "gateway",
-      requestedPort: 8134,
-      claimId: "other-gateway-claim",
-    });
-    await claimPort({
-      claimsRoot,
-      projectId: "stale-project",
-      projectName: "stale-project",
-      workspaceId: "stale-workspace",
-      targetId: "stale-target",
-      purpose: "image-mcp",
-      imageId: "dev",
-      requestedPort: 7124,
-      pid: 2222,
-      claimId: "other-stale-image-claim",
-    });
-    const idleState: ProjectState = {
-      ...runningState,
-      runtimeStatus: "idle",
-      images: [],
-      gateway: {
-        mode: "project-local",
-        endpoint: "http://127.0.0.1:8133/mcp",
-        controlEndpoint: "http://127.0.0.1:8133/control-mcp",
-        host: "127.0.0.1",
-        port: 8133,
-        routePath: "/mcp",
-        controlPath: "/control-mcp",
-        owningProjectId: "project-123",
-        managedByProject: true,
-        claim: {
-          claimsRoot,
-          claimId: gatewayClaim.claimId,
-          assignedPort: gatewayClaim.assignedPort,
-        },
-      },
-    };
-    writeProjectConfig(projectRoot, {
-      images: [],
-      runtime: {
-        gateway: {
-          mode: "project-local",
-          host: "127.0.0.1",
-          port: 8133,
-          mcpPath: "/mcp",
-          routeControlMcpPath: "/control-mcp",
-        },
-        imagePorts: {
-          coordination: {
-            mode: "host-local",
-            root: claimsRoot,
-          },
-        },
-      },
-    });
-    saveProjectState(stateFilePath, idleState);
-    const lifecycle = new PlexusProjectLifecycle({
-      routeRegistry: new FakeRouteRegistry(),
-      gateway: {
-        checks: {
-          isProcessAlive: async () => false,
-          isPortListening: async (port) => port === 8133 || port === 8134,
-        },
-      },
-    });
 
-    const result = await lifecycle.handleTool("plexus_project_status", {
-      projectPath: projectRoot,
-      stateRoot,
-      workspaceId: "worktree-a",
-      includeDiagnostics: true,
-    });
-
-    expect(result).toMatchObject({
-      ok: true,
-      data: {
-        diagnostics: {
-          runtime: {
-            status: "idle",
-            health: "operational",
-          },
-          portClaims: {
-            active: [
-              expect.objectContaining({
-                port: 8133,
-                status: "claimed",
-                ownedByCurrentScope: true,
-              }),
-            ],
-            stale: [],
-            conflicts: [],
-            otherScopes: [
-              expect.objectContaining({
-                port: 7124,
-                status: "stale",
-                reason: "process-dead",
-                ownedByCurrentScope: false,
-              }),
-              expect.objectContaining({
-                port: 8134,
-                status: "claimed",
-                reason: "port-listening",
-                ownedByCurrentScope: false,
-              }),
-            ],
-          },
-          staleClaims: [],
-          conflictingListeners: [],
-        },
-      },
-    });
-  });
-
-  it("degrades when another scope claims this scope's expected image port", async () => {
-    const projectRoot = makeTempDir("plexus-project-");
-    const stateRoot = makeTempDir("plexus-state-");
-    const claimsRoot = makeTempDir("plexus-claims-");
-    const stateFilePath = statePath(stateRoot);
-    const gatewayClaim = await claimPort({
-      claimsRoot,
-      projectId: "project-123",
-      projectName: "my-project",
-      workspaceId: "worktree-a",
-      targetId: "project-123--worktree-a",
-      purpose: "gateway",
-      requestedPort: 8133,
-      claimId: "gateway-claim",
-    });
-    await claimPort({
-      claimsRoot,
-      projectId: "other-project",
-      projectName: "other-project",
-      workspaceId: "other-workspace",
-      targetId: "other-target",
-      purpose: "image-mcp",
-      imageId: "dev",
-      requestedPort: 7123,
-      claimId: "other-image-claim",
-    });
-    writeProjectConfig(projectRoot, {
-      runtime: {
-        gateway: {
-          mode: "project-local",
-          host: "127.0.0.1",
-          port: 8133,
-          mcpPath: "/mcp",
-          routeControlMcpPath: "/control-mcp",
-        },
-        imagePorts: {
-          coordination: {
-            mode: "host-local",
-            root: claimsRoot,
-          },
-        },
-      },
-    });
-    saveProjectState(stateFilePath, {
-      ...runningState,
-      gateway: {
-        mode: "project-local",
-        endpoint: "http://127.0.0.1:8133/mcp",
-        controlEndpoint: "http://127.0.0.1:8133/control-mcp",
-        host: "127.0.0.1",
-        port: 8133,
-        routePath: "/mcp",
-        controlPath: "/control-mcp",
-        owningProjectId: "project-123",
-        managedByProject: true,
-        claim: {
-          claimsRoot,
-          claimId: gatewayClaim.claimId,
-          assignedPort: gatewayClaim.assignedPort,
-        },
-      },
-    });
-    const lifecycle = new PlexusProjectLifecycle({
-      routeRegistry: new FakeRouteRegistry(),
-      gateway: {
-        checks: {
-          isPortListening: async (port) => port === 7123 || port === 8133,
-        },
-      },
-    });
-
-    const result = await lifecycle.handleTool("plexus_project_status", {
-      projectPath: projectRoot,
-      stateRoot,
-      workspaceId: "worktree-a",
-      includeDiagnostics: true,
-    });
-
-    expect(result).toMatchObject({
-      ok: true,
-      data: {
-        diagnostics: {
-          runtime: {
-            status: "degraded",
-          },
-          portClaims: {
-            conflicts: [
-              expect.objectContaining({
-                port: 7123,
-                status: "claimed",
-                ownedByCurrentScope: false,
-              }),
-            ],
-            otherScopes: [],
-          },
-        },
-      },
-    });
-  });
 
   it("returns a helpful diagnostic when projectPath points at the config file", async () => {
     const projectRoot = makeTempDir("plexus-project-");
@@ -3134,118 +2644,6 @@ describe("project lifecycle tools", () => {
     expect(result.error).toContain(projectRoot);
   });
 
-  it("separates stale claims from host listener conflicts in status diagnostics", async () => {
-    const projectRoot = makeTempDir("plexus-project-");
-    const stateRoot = makeTempDir("plexus-state-");
-    const claimsRoot = makeTempDir("plexus-claims-");
-    const stateFilePath = statePath(stateRoot);
-    const diagnosticState: ProjectState = {
-      ...runningState,
-      runtimeStatus: "idle",
-      images: [
-        {
-          id: "dev",
-          imageName: "MyProject-dev",
-          assignedPort: 7123,
-          status: "stopped",
-        },
-      ],
-      gateway: {
-        mode: "project-local",
-        endpoint: "http://127.0.0.1:8133/mcp",
-        controlEndpoint: "http://127.0.0.1:8133/control-mcp",
-        host: "127.0.0.1",
-        port: 8133,
-        routePath: "/mcp",
-        controlPath: "/control-mcp",
-        owningProjectId: "project-123",
-        managedByProject: true,
-      },
-    };
-    writeProjectConfig(projectRoot, {
-      runtime: {
-        imagePorts: {
-          coordination: {
-            mode: "host-local",
-            root: claimsRoot,
-          },
-        },
-      },
-    });
-    saveProjectState(stateFilePath, diagnosticState);
-    await claimPort({
-      claimsRoot,
-      projectId: "project-123",
-      projectName: "my-project",
-      workspaceId: "worktree-a",
-      targetId: "project-123--worktree-a",
-      purpose: "image-mcp",
-      imageId: "dev",
-      requestedPort: 7124,
-      pid: 2222,
-      claimId: "stale-image-claim",
-    });
-    const lifecycle = new PlexusProjectLifecycle({
-      routeRegistry: new FakeRouteRegistry(),
-      gateway: {
-        checks: {
-          isProcessAlive: async () => false,
-          isPortListening: async (port) => port === 7123,
-        },
-      },
-    });
-
-    const result = await lifecycle.handleTool("plexus_project_status", {
-      projectPath: projectRoot,
-      stateRoot,
-      workspaceId: "worktree-a",
-      includeDiagnostics: true,
-    });
-
-    expect(result).toMatchObject({
-      ok: true,
-      data: {
-        diagnostics: {
-          runtime: {
-            status: "degraded",
-          },
-          imagePortPolicy: {
-            allocation: "configured-or-dynamic",
-            coordinationMode: "host-local",
-            configuredRoot: claimsRoot,
-            effectiveClaimsRoot: claimsRoot,
-            projectStateRoot: stateRoot,
-            basis: "host-local-claims",
-          },
-          imageMcpPorts: [
-            {
-              imageId: "dev",
-              port: 7123,
-              status: "stopped",
-            },
-          ],
-          staleClaims: [
-            expect.objectContaining({
-              port: 7124,
-              status: "stale",
-              reason: "process-dead",
-              ownedByCurrentScope: true,
-            }),
-          ],
-          conflictingListeners: [
-            {
-              port: 7123,
-              purpose: "image-mcp",
-              imageId: "dev",
-              expectedOwner: "image dev",
-              message:
-                "Image MCP port 7123 has a listener but the project image dev is stopped and has no active owned claim.",
-            },
-          ],
-        },
-      },
-    });
-  });
 
   it("keeps project status available when the route table has no configured target", async () => {
     const projectRoot = makeTempDir("plexus-project-");
@@ -3269,9 +2667,7 @@ describe("project lifecycle tools", () => {
     const lifecycle = new PlexusProjectLifecycle({
       routeRegistry: new MissingRouteRegistry(),
       gateway: {
-        checks: {
-          isPortListening: async () => false,
-        },
+        isPortListening: async () => false,
       },
     });
 
@@ -3290,16 +2686,15 @@ describe("project lifecycle tools", () => {
             status: "degraded",
           },
           routeTable: {
-            targetId: "project-123--worktree-a",
             status: "missing",
-            error: "No route is registered for: project-123--worktree-a",
+            error: "No route is registered for: project-123/worktree-a",
           },
         },
       },
     });
   });
 
-  it("starts a project-local gateway after claiming and validating its port", async () => {
+  it("starts a project-local gateway on its configured port", async () => {
     const projectRoot = makeTempDir("plexus-project-");
     const stateRoot = makeTempDir("plexus-state-");
     const claimsRoot = makeTempDir("plexus-claims-");
@@ -3320,7 +2715,6 @@ describe("project lifecycle tools", () => {
     });
     const lifecycle = new PlexusProjectLifecycle({
       gateway: {
-        claimsRoot,
         processManager,
         pharoTools: [pharoEvalTool],
         pharoMcpContract: {
@@ -3329,11 +2723,9 @@ describe("project lifecycle tools", () => {
         },
         fetch: makeGatewayFetch(requests),
         skipHealthCheck: true,
-        checks: {
-          isPortListening: async (port) => {
-            events.push(`check:${port}`);
-            return false;
-          },
+        isPortListening: async (port) => {
+          events.push(`check:${port}`);
+          return false;
         },
       },
     });
@@ -3377,12 +2769,7 @@ describe("project lifecycle tools", () => {
         },
       },
     });
-    expect(events).toEqual([
-      "check:8134",
-      "start:8134",
-      "check:8134",
-      "check:8134",
-    ]);
+    expect(events).toEqual(["check:8134", "start:8134"]);
     expect(processManager.starts).toHaveLength(1);
     expect(processManager.starts[0]).toMatchObject({
       host: "127.0.0.1",
@@ -3399,16 +2786,6 @@ describe("project lifecycle tools", () => {
       "http://127.0.0.1:8134/gateway-control",
       "http://127.0.0.1:8134/gateway-control",
     ]);
-    await expect(inspectPortClaim({ claimsRoot, port: 8134 })).resolves.toMatchObject({
-      status: "claimed",
-      record: {
-        purpose: "gateway",
-        projectId: "project-123",
-        workspaceId: "worktree-a",
-        targetId: "project-123--worktree-a",
-        assignedPort: 8134,
-      },
-    });
   });
 
   it("starts a project-local gateway with Pharo tools discovered from the running image", async () => {
@@ -3439,13 +2816,10 @@ describe("project lifecycle tools", () => {
         failures: [],
       }),
       gateway: {
-        claimsRoot,
         processManager,
         fetch: makeGatewayAndImageFetch(requests, [pharoEvalTool]),
         skipHealthCheck: true,
-        checks: {
-          isPortListening: async () => false,
-        },
+        isPortListening: async () => false,
       },
     });
 
@@ -3543,11 +2917,8 @@ describe("project lifecycle tools", () => {
     });
     const lifecycle = new PlexusProjectLifecycle({
       gateway: {
-        claimsRoot,
         processManager,
-        checks: {
-          isPortListening: async () => true,
-        },
+        isPortListening: async () => true,
       },
     });
 
@@ -3560,13 +2931,13 @@ describe("project lifecycle tools", () => {
     expect(result).toMatchObject({
       ok: false,
       error: expect.stringContaining(
-        "Project-local gateway port 8135 is already claimed or unavailable",
+        "Project-local gateway port 8135 is already in use",
       ),
     });
     expect(processManager.starts).toEqual([]);
   });
 
-  it("unregisters routes, stops the project-local gateway, and releases the port claim on close", async () => {
+  it("unregisters routes and stops the project-local gateway on close", async () => {
     const projectRoot = makeTempDir("plexus-project-");
     const stateRoot = makeTempDir("plexus-state-");
     const claimsRoot = makeTempDir("plexus-claims-");
@@ -3586,14 +2957,11 @@ describe("project lifecycle tools", () => {
     });
     const lifecycle = new PlexusProjectLifecycle({
       gateway: {
-        claimsRoot,
         processManager,
         fetch: makeGatewayFetch(requests),
         now: () => new Date("2026-04-25T11:00:00.000Z"),
         skipHealthCheck: true,
-        checks: {
-          isPortListening: async () => false,
-        },
+        isPortListening: async () => false,
       },
     });
 
@@ -3632,10 +3000,6 @@ describe("project lifecycle tools", () => {
       "http://127.0.0.1:8136/control-mcp",
       "http://127.0.0.1:8136/control-mcp",
     ]);
-    await expect(inspectPortClaim({ claimsRoot, port: 8136 })).resolves.toEqual({
-      status: "available",
-      port: 8136,
-    });
     expect(loadProjectState(statePath(stateRoot))?.gateway).toBeUndefined();
   });
 

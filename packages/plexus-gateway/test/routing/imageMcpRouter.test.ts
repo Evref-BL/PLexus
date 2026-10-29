@@ -151,7 +151,6 @@ describe("StreamableHttpImageMcpToolRouter", () => {
     const route = {
       projectId: "project-123",
       workspaceId: "worktree-a",
-      targetId: "project-123--worktree-a",
       imageId: "dev",
       mcpServerId: "dev",
       imageName: "MyProject-dev",
@@ -255,7 +254,6 @@ describe("StreamableHttpImageMcpToolRouter", () => {
     const route = {
       projectId: "project-123",
       workspaceId: "worktree-a",
-      targetId: "project-123--worktree-a",
       imageId: "dev",
       mcpServerId: "dev",
       imageName: "MyProject-dev",
@@ -344,7 +342,6 @@ describe("StreamableHttpImageMcpToolRouter", () => {
         {
           projectId: "project-123",
           workspaceId: "worktree-a",
-          targetId: "project-123--worktree-a",
           imageId: "dev",
           mcpServerId: "dev",
           imageName: "MyProject-dev",
@@ -435,7 +432,6 @@ describe("StreamableHttpImageMcpToolRouter", () => {
         {
           projectId: "project-123",
           workspaceId: "worktree-a",
-          targetId: "project-123--worktree-a",
           imageId: "dev",
           mcpServerId: "dev",
           imageName: "MyProject-dev",
@@ -489,7 +485,6 @@ describe("StreamableHttpImageMcpToolRouter", () => {
         {
           projectId: "project-123",
           workspaceId: "worktree-a",
-          targetId: "project-123--worktree-a",
           imageId: "dev",
           mcpServerId: "dev",
           imageName: "MyProject-dev",

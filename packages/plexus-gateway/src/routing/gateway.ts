@@ -13,9 +13,6 @@ import {
   PlexusRoutingTable,
   type GatewayImageMcpEndpoint,
   type GatewayImageRoute,
-  type GatewayProjectImageCreationRouteState,
-  type GatewayProjectImageCreationSourceState,
-  type GatewayProjectImageCreationState,
   type GatewayProjectImageState,
   type GatewayProjectRoute,
   type GatewayProjectState,
@@ -144,7 +141,6 @@ export interface PlexusGatewayOptions {
 export interface GatewayRouteReferenceInput {
   projectId?: string;
   workspaceId?: string;
-  targetId?: string;
 }
 
 export interface GatewayRegisterTargetInput {
@@ -177,7 +173,6 @@ export interface RouteToImageToolInput extends GatewayRouteReferenceInput {
 export interface RouteToImageRoute {
   projectId: string;
   workspaceId: string;
-  targetId: string;
   imageId: string;
   mcpServerId: string;
   imageName: string;
@@ -206,7 +201,7 @@ export type GatewayPharoToolSchemaCompatibility =
   | "unavailable";
 
 export interface GatewayPharoToolSchemaSource {
-  targetId: string;
+  workspaceId: string;
   imageId: string;
   mcpServerId: string;
   fingerprint?: string;
@@ -229,14 +224,14 @@ export type GatewayImagePharoToolSchemaState =
 export interface GatewayImagePharoToolSchemaStatus
   extends Omit<
     GatewayPharoToolSchemaSource,
-    "targetId" | "imageId" | "mcpServerId"
+    "workspaceId" | "imageId" | "mcpServerId"
   > {
   state: GatewayImagePharoToolSchemaState;
 }
 
 export interface GatewayPharoToolSchemaActiveVersion {
   fingerprint: string;
-  targetId: string;
+  workspaceId: string;
   imageId: string;
   mcpServerId: string;
   toolCount?: number;
@@ -422,126 +417,9 @@ function endpointValueInput(
   };
 }
 
-function optionalCreationString(
-  input: Record<string, unknown>,
-  pathLabel: string,
-  key: string,
-): string | undefined {
-  const value = input[key];
-  if (value === undefined) {
-    return undefined;
-  }
 
-  if (typeof value !== "string" || value.length === 0) {
-    throw new GatewayInputError(`${pathLabel}.${key} must be a non-empty string`);
-  }
 
-  return value;
-}
 
-function requireCreationString(
-  input: Record<string, unknown>,
-  pathLabel: string,
-  key: string,
-): string {
-  const value = optionalCreationString(input, pathLabel, key);
-  if (value === undefined) {
-    throw new GatewayInputError(`${pathLabel}.${key} is required`);
-  }
-
-  return value;
-}
-
-function optionalCreationObject(
-  input: Record<string, unknown>,
-  pathLabel: string,
-  key: string,
-): Record<string, unknown> | undefined {
-  const value = input[key];
-  if (value === undefined) {
-    return undefined;
-  }
-
-  if (!isObject(value)) {
-    throw new GatewayInputError(`${pathLabel}.${key} must be an object`);
-  }
-
-  return value;
-}
-
-function imageCreationSourceInput(
-  source: Record<string, unknown>,
-  pathLabel: string,
-): GatewayProjectImageCreationSourceState {
-  const profileId = optionalCreationString(source, pathLabel, "profileId");
-  const templateName = optionalCreationString(source, pathLabel, "templateName");
-  const templateCategory = optionalCreationString(
-    source,
-    pathLabel,
-    "templateCategory",
-  );
-
-  return {
-    kind: requireCreationString(source, pathLabel, "kind"),
-    ...(profileId ? { profileId } : {}),
-    ...(templateName ? { templateName } : {}),
-    ...(templateCategory ? { templateCategory } : {}),
-  };
-}
-
-function imageCreationRouteInput(
-  route: Record<string, unknown>,
-  pathLabel: string,
-): GatewayProjectImageCreationRouteState {
-  const serverName = optionalCreationString(route, pathLabel, "serverName");
-  const targetKey = optionalCreationString(route, pathLabel, "targetKey");
-  const imageArgument = optionalCreationString(route, pathLabel, "imageArgument");
-  const imageId = optionalCreationString(route, pathLabel, "imageId");
-
-  return {
-    ...(serverName ? { serverName } : {}),
-    ...(targetKey ? { targetKey } : {}),
-    ...(imageArgument ? { imageArgument } : {}),
-    ...(imageId ? { imageId } : {}),
-  };
-}
-
-function imageCreationInput(
-  image: Record<string, unknown>,
-  index: number,
-): GatewayProjectImageCreationState | undefined {
-  const value = image.creation;
-  if (value === undefined) {
-    return undefined;
-  }
-
-  const basePath = `state.images[${index}].creation`;
-  if (!isObject(value)) {
-    throw new GatewayInputError(`${basePath} must be an object`);
-  }
-
-  const source = optionalCreationObject(value, basePath, "source");
-  const route = optionalCreationObject(value, basePath, "route");
-  const creation: GatewayProjectImageCreationState = {};
-  const role = optionalCreationString(value, basePath, "role");
-  const cleanupPolicy = optionalCreationString(value, basePath, "cleanupPolicy");
-  if (role) {
-    creation.role = role;
-  }
-  if (cleanupPolicy) {
-    creation.cleanupPolicy = cleanupPolicy;
-  }
-
-  if (source) {
-    creation.source = imageCreationSourceInput(source, `${basePath}.source`);
-  }
-
-  if (route) {
-    creation.route = imageCreationRouteInput(route, `${basePath}.route`);
-  }
-
-  return creation;
-}
 
 function remoteGatewayInput(
   state: Record<string, unknown>,
@@ -561,14 +439,12 @@ function remoteGatewayInput(
   }
   const projectId = optionalString(value, "projectId");
   const workspaceId = optionalString(value, "workspaceId");
-  const targetId = optionalString(value, "targetId");
 
   return {
     remoteNodeId: requireString(value, "remoteNodeId"),
     endpoint: endpointValueInput(endpoint, "state.remoteGateway.endpoint"),
     ...(projectId ? { projectId } : {}),
     ...(workspaceId ? { workspaceId } : {}),
-    ...(targetId ? { targetId } : {}),
   };
 }
 
@@ -605,41 +481,22 @@ function imageRouteInput(
     );
   }
 
-  const assignedPort = image.assignedPort;
   const mcpServers = mcpServersInput(image, index);
   const pharoMcpContract = isObject(image.pharoMcpContract)
     ? (image.pharoMcpContract as GatewayProjectImageState["pharoMcpContract"])
     : undefined;
-  const creation = imageCreationInput(image, index);
   const unsupportedPharoMcp = pharoMcpContract?.status === "unsupported";
-  const pid = image.pid;
-  if (
-    assignedPort !== undefined &&
-    (typeof assignedPort !== "number" || !Number.isInteger(assignedPort))
-  ) {
+  if (mcpServers === undefined && !unsupportedPharoMcp && !remoteGateway) {
     throw new GatewayInputError(
-      `state.images[${index}].assignedPort must be an integer`,
+      `state.images[${index}] must include mcpServers`,
     );
-  }
-  if (mcpServers === undefined && !unsupportedPharoMcp) {
-    if (!remoteGateway) {
-      throw new GatewayInputError(
-        `state.images[${index}] must include mcpServers`,
-      );
-    }
-  }
-  if (pid !== undefined && (typeof pid !== "number" || !Number.isInteger(pid))) {
-    throw new GatewayInputError(`state.images[${index}].pid must be an integer`);
   }
 
   return {
     id: requireString(image, "id"),
     imageName: requireString(image, "imageName"),
-    ...(assignedPort !== undefined ? { assignedPort } : {}),
     ...(mcpServers ? { mcpServers } : {}),
-    ...(pid ? { pid } : {}),
     status: gatewayImageStatusInput(image, index),
-    ...(creation ? { creation } : {}),
     ...(pharoMcpContract ? { pharoMcpContract } : {}),
   };
 }
@@ -660,7 +517,6 @@ function stateInput(input: Record<string, unknown>): GatewayProjectState {
     projectId: requireString(value, "projectId"),
     projectName: requireString(value, "projectName"),
     workspaceId: requireString(value, "workspaceId"),
-    targetId: requireString(value, "targetId"),
     updatedAt: requireString(value, "updatedAt"),
     ...(remoteGateway ? { remoteGateway } : {}),
     ...(isObject(value.pharoMcpContract)
@@ -757,7 +613,7 @@ function schemaSourceActiveVersion(
 ): GatewayPharoToolSchemaActiveVersion {
   return {
     fingerprint: source.fingerprint,
-    targetId: source.targetId,
+    workspaceId: source.workspaceId,
     imageId: source.imageId,
     mcpServerId: source.mcpServerId,
     ...(source.toolCount !== undefined ? { toolCount: source.toolCount } : {}),
@@ -794,7 +650,7 @@ function markSchemaSourceCompatibility(
   return {
     ...source,
     compatibility:
-      source.targetId === active.targetId &&
+      source.workspaceId === active.workspaceId &&
       source.mcpServerId === active.mcpServerId
         ? "active"
         : "compatible",
@@ -887,7 +743,10 @@ export class PlexusGateway {
     try {
       const route = this.findRegisteredRoute(input);
       const removed = route
-        ? this.routingTable.removeTarget(route.targetId)
+        ? this.routingTable.removeProjectWorkspace(
+            route.projectId,
+            route.workspaceId,
+          )
         : undefined;
 
       return result({
@@ -1041,14 +900,12 @@ export class PlexusGateway {
           return this.unregisterTarget({
             projectId: optionalString(input, "projectId"),
             workspaceId: optionalString(input, "workspaceId"),
-            targetId: optionalString(input, "targetId"),
           });
 
         case "plexus_gateway_status":
           return this.status({
             projectId: optionalString(input, "projectId"),
             workspaceId: optionalString(input, "workspaceId"),
-            targetId: optionalString(input, "targetId"),
             refreshTools: optionalBoolean(input, "refreshTools"),
             refreshHealth: optionalBoolean(input, "refreshHealth"),
             toolSchemaMcpServerId: optionalString(
@@ -1064,7 +921,6 @@ export class PlexusGateway {
           return this.routeToImage({
             projectId: optionalString(input, "projectId"),
             workspaceId: optionalString(input, "workspaceId"),
-            targetId: optionalString(input, "targetId"),
             mcpServerId: requireString(input, "mcpServerId"),
             toolName: requireString(input, "toolName"),
             arguments: optionalObject(input, "arguments"),
@@ -1084,10 +940,6 @@ export class PlexusGateway {
   private findRegisteredRoute(
     input: GatewayRouteReferenceInput,
   ): GatewayProjectRoute | undefined {
-    if (input.targetId) {
-      return this.routingTable.getTarget(input.targetId);
-    }
-
     if (input.projectId && input.workspaceId) {
       return this.routingTable.getProjectWorkspace(
         input.projectId,
@@ -1095,23 +947,12 @@ export class PlexusGateway {
       );
     }
 
-    throw new GatewayInputError(
-      "targetId or projectId with workspaceId is required",
-    );
+    throw new GatewayInputError("projectId with workspaceId is required");
   }
 
   private async resolveProjectRoutes(
     input: GatewayRouteReferenceInput,
   ): Promise<GatewayProjectRoute[]> {
-    if (input.targetId) {
-      return [
-        assertProjectRoute(
-          this.routingTable.getTarget(input.targetId),
-          input.targetId,
-        ),
-      ];
-    }
-
     if (input.projectId && input.workspaceId) {
       return [
         assertProjectRoute(
@@ -1137,14 +978,12 @@ export class PlexusGateway {
     const routes = await this.resolveProjectRoutes(input);
 
     if (routes.length === 0) {
-      throw new GatewayInputError(
-        "targetId or projectId with workspaceId is required",
-      );
+      throw new GatewayInputError("projectId with workspaceId is required");
     }
 
     if (routes.length > 1) {
       throw new GatewayInputError(
-        "Multiple routes match; provide targetId or workspaceId",
+        "Multiple routes match; provide projectId with workspaceId",
       );
     }
 
@@ -1168,7 +1007,6 @@ export class PlexusGateway {
     const route = {
       projectId: project.projectId,
       workspaceId: project.workspaceId,
-      targetId: project.targetId,
       imageId: image.id,
       mcpServerId: image.mcpServerId,
       imageName: image.imageName,
@@ -1316,7 +1154,7 @@ export class PlexusGateway {
 
     const source = this.pharoToolSchemaStatus.sources.find(
       (candidate) =>
-        candidate.targetId === route.targetId &&
+        candidate.workspaceId === route.workspaceId &&
         candidate.mcpServerId === mcpServerId,
     );
     if (!source) {
@@ -1362,7 +1200,7 @@ export class PlexusGateway {
   ): GatewayImagePharoToolSchemaStatus {
     const source = this.pharoToolSchemaStatus.sources.find(
       (candidate) =>
-        candidate.targetId === route.targetId &&
+        candidate.workspaceId === route.workspaceId &&
         candidate.mcpServerId === image.mcpServerId,
     );
 
@@ -1403,7 +1241,6 @@ export class PlexusGateway {
     return {
       projectId: project.projectId,
       workspaceId: project.workspaceId,
-      targetId: project.targetId,
       imageId: image.id,
       mcpServerId: image.mcpServerId,
       imageName: image.imageName,
@@ -1429,7 +1266,7 @@ export class PlexusGateway {
       if (tools.length > 0) {
         return {
           source: {
-            targetId: project.targetId,
+            workspaceId: project.workspaceId,
             imageId: image.id,
             mcpServerId: image.mcpServerId,
             fingerprint: toolSchemaFingerprint(tools),
@@ -1443,7 +1280,7 @@ export class PlexusGateway {
       const error = "MCP tools/list returned no tools";
       return {
         source: {
-          targetId: project.targetId,
+          workspaceId: project.workspaceId,
           imageId: image.id,
           mcpServerId: image.mcpServerId,
           ...schemaSourceConnectionFields(connectionInfo),
@@ -1456,7 +1293,7 @@ export class PlexusGateway {
       const connectionInfo = this.imageRouter.connectionInfo?.(route);
       return {
         source: {
-          targetId: project.targetId,
+          workspaceId: project.workspaceId,
           imageId: image.id,
           mcpServerId: image.mcpServerId,
           ...schemaSourceConnectionFields(connectionInfo),
@@ -1500,7 +1337,7 @@ export class PlexusGateway {
         );
         if (probe.source.error) {
           errors.push(
-            `${project.targetId}/${image.mcpServerId}: ${probe.source.error}`,
+            `${project.workspaceId}/${image.mcpServerId}: ${probe.source.error}`,
           );
         }
         successes.push(probe);
@@ -1609,7 +1446,7 @@ export class PlexusGateway {
     }
     if (matches.length > 1) {
       throw new GatewayInputError(
-        `Multiple routable MCP servers named ${mcpServerId} provided Pharo MCP schemas; provide targetId or workspaceId`,
+        `Multiple routable MCP servers named ${mcpServerId} provided Pharo MCP schemas; provide projectId with workspaceId`,
       );
     }
 
@@ -1627,14 +1464,14 @@ export class PlexusGateway {
       return image;
     }
 
-    const otherWorkspace = this.routingTable.findMcpServerOutsideTarget(
+    const otherWorkspace = this.routingTable.findMcpServerOutsideWorkspace(
       project.projectId,
-      project.targetId,
+      project.workspaceId,
       mcpServerId,
     );
     if (otherWorkspace) {
       throw new GatewayInputError(
-        `MCP server ${mcpServerId} is registered outside workspace ${project.workspaceId}; requested target ${project.targetId}, found target ${otherWorkspace.targetId}`,
+        `MCP server ${mcpServerId} is registered in workspace ${otherWorkspace.workspaceId}, not ${project.workspaceId}`,
       );
     }
 
@@ -1647,7 +1484,8 @@ export class PlexusGateway {
     for (const image of route.images) {
       if (image.status !== "running") {
         this.routingTable.updateImageHealth(
-          route.targetId,
+          route.projectId,
+          route.workspaceId,
           image.mcpServerId,
           "unknown",
         );
@@ -1656,7 +1494,8 @@ export class PlexusGateway {
 
       if (image.port === undefined) {
         this.routingTable.updateImageHealth(
-          route.targetId,
+          route.projectId,
+          route.workspaceId,
           image.mcpServerId,
           image.routable.code === "unsupported" ? "unknown" : "unhealthy",
         );
@@ -1665,7 +1504,8 @@ export class PlexusGateway {
 
       const healthy = await this.healthClient.check(image.port);
       this.routingTable.updateImageHealth(
-        route.targetId,
+        route.projectId,
+        route.workspaceId,
         image.mcpServerId,
         healthy ? "healthy" : "unhealthy",
       );
