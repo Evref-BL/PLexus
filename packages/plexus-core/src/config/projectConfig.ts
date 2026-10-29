@@ -71,7 +71,6 @@ export interface ProjectImagePreparedImageConfig {
 export interface ProjectImageConfig {
   id: string;
   imageName: string;
-  active: boolean;
   displayMode?: ProjectImageDisplayMode;
   mcp: ProjectImageMcpConfig;
   create?: ProjectImageCreateConfig;
@@ -998,7 +997,6 @@ function parseImages(
       return {
         id: "",
         imageName: "",
-        active: false,
         mcp: { loadScript: "" },
       };
     }
@@ -1006,7 +1004,6 @@ function parseImages(
     return {
       id: stringField(image, "id", issues, pathPrefix),
       imageName: stringField(image, "imageName", issues, pathPrefix),
-      active: booleanField(image, "active", issues, pathPrefix),
       displayMode: optionalImageDisplayModeField(
         image,
         "displayMode",

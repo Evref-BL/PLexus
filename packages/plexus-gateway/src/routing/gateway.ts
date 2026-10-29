@@ -9,6 +9,7 @@ import {
   buildPharoFacadeTools,
   parsePharoFacadeArguments,
 } from "./pharoFacade.js";
+import type { RouteDiscoverySource } from "./routeDiscovery.js";
 import {
   PlexusRoutingTable,
   type GatewayImageMcpEndpoint,
@@ -130,6 +131,8 @@ export class HttpGatewayImageHealthClient implements GatewayImageHealthClient {
 
 export interface PlexusGatewayOptions {
   routingTable?: PlexusRoutingTable;
+  /** Projects whose files this gateway resolves routes from. */
+  routeSources?: readonly RouteDiscoverySource[];
   imageRouter?: ImageMcpToolRouter;
   healthClient?: GatewayImageHealthClient;
   remoteGatewayFetch?: typeof fetch;
@@ -141,12 +144,6 @@ export interface PlexusGatewayOptions {
 export interface GatewayRouteReferenceInput {
   projectId?: string;
   workspaceId?: string;
-}
-
-export interface GatewayRegisterTargetInput {
-  projectRoot: string;
-  statePath: string;
-  state: GatewayProjectState;
 }
 
 export interface GatewayStatusToolInput extends GatewayRouteReferenceInput {
@@ -682,7 +679,8 @@ export class PlexusGateway {
   };
 
   constructor(options: PlexusGatewayOptions = {}) {
-    this.routingTable = options.routingTable ?? new PlexusRoutingTable();
+    this.routingTable =
+      options.routingTable ?? new PlexusRoutingTable(options.routeSources ?? []);
     this.imageRouter =
       options.imageRouter ?? new StreamableHttpImageMcpToolRouter();
     this.healthClient =
@@ -724,53 +722,9 @@ export class PlexusGateway {
     return this.pharoToolNames.has(name);
   }
 
-  async registerTarget(
-    input: GatewayRegisterTargetInput,
-  ): Promise<GatewayToolResult<GatewayProjectRoute>> {
-    try {
-      return result(
-        this.routingTable.upsertProject(
-          input.projectRoot,
-          input.statePath,
-          input.state,
-        ),
-      );
-    } catch (error) {
-      return failure(error);
-    }
-  }
-
-  async registerProjectRoute(
-    input: GatewayRegisterTargetInput,
-  ): Promise<GatewayToolResult<GatewayProjectRoute>> {
-    return this.registerTarget(input);
-  }
-
-  async unregisterTarget(
-    input: GatewayRouteReferenceInput,
-  ): Promise<GatewayToolResult<GatewayUnregisterTargetResult>> {
-    try {
-      const route = this.findRegisteredRoute(input);
-      const removed = route
-        ? this.routingTable.removeProjectWorkspace(
-            route.projectId,
-            route.workspaceId,
-          )
-        : undefined;
-
-      return result({
-        removed: Boolean(removed),
-        ...(removed ? { route: removed } : {}),
-      });
-    } catch (error) {
-      return failure(error);
-    }
-  }
-
-  async unregisterProjectRoute(
-    input: GatewayRouteReferenceInput,
-  ): Promise<GatewayToolResult<GatewayUnregisterTargetResult>> {
-    return this.unregisterTarget(input);
+  /** Serve another project's images; the directory is the route. */
+  addRouteSource(source: RouteDiscoverySource): void {
+    this.routingTable.addSource(source);
   }
 
   async status(
@@ -787,12 +741,15 @@ export class PlexusGateway {
         });
       }
 
-      const routes = await this.resolveProjectRoutes(input);
+      let routes = await this.resolveProjectRoutes(input);
 
       if (input.refreshHealth) {
         for (const route of routes) {
           await this.refreshProjectHealth(route);
         }
+        // Routes are built from disk each time, so the health just observed is
+        // only visible on a fresh resolve.
+        routes = await this.resolveProjectRoutes(input);
       }
 
       const routesWithSchema = routes.map((route) =>
@@ -810,18 +767,6 @@ export class PlexusGateway {
     input: GatewayStatusToolInput,
   ): Promise<GatewayToolResult<GatewayProjectRoute | GatewayProjectRoute[]>> {
     return this.status(input);
-  }
-
-  async cleanupStaleRoutes(): Promise<
-    GatewayToolResult<GatewayCleanupStaleRoutesResult>
-  > {
-    try {
-      return result({
-        removed: this.routingTable.removeRoutesWithMissingStatePaths(),
-      });
-    } catch (error) {
-      return failure(error);
-    }
   }
 
   async routeToImage(
@@ -898,19 +843,6 @@ export class PlexusGateway {
       const input = objectInput(inputValue);
 
       switch (name) {
-        case "plexus_gateway_register_target":
-          return this.registerTarget({
-            projectRoot: requireString(input, "projectRoot"),
-            statePath: requireString(input, "statePath"),
-            state: stateInput(input),
-          });
-
-        case "plexus_gateway_unregister_target":
-          return this.unregisterTarget({
-            projectId: optionalString(input, "projectId"),
-            workspaceId: optionalString(input, "workspaceId"),
-          });
-
         case "plexus_gateway_status":
           return this.status({
             projectId: optionalString(input, "projectId"),
@@ -922,9 +854,6 @@ export class PlexusGateway {
               "toolSchemaMcpServerId",
             ),
           });
-
-        case "plexus_gateway_cleanup_stale_routes":
-          return this.cleanupStaleRoutes();
 
         case "plexus_route_to_image":
           return this.routeToImage({

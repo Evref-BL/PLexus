@@ -1,4 +1,7 @@
+import fs from "node:fs";
 import http from "node:http";
+import os from "node:os";
+import path from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
@@ -229,13 +232,41 @@ afterEach(async () => {
   }
 });
 
+const tempDirs: string[] = [];
+
+function layOutProject(
+  state: GatewayProjectState = runningState,
+): { projectRoot: string; statePath: string } {
+  const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), "plexus-project-"));
+  tempDirs.push(projectRoot);
+  const statePath = path.join(projectRoot, "state.json");
+  fs.writeFileSync(statePath, JSON.stringify(state), "utf8");
+  const endpoints = path.join(projectRoot, "mcp-endpoints");
+  fs.mkdirSync(endpoints, { recursive: true });
+  for (const image of state.images) {
+    for (const server of image.mcpServers ?? []) {
+      fs.writeFileSync(
+        path.join(endpoints, `${server.id}.properties`),
+        `transport=${server.endpoint.transport}\nhost=${server.endpoint.host}\n` +
+          `port=${server.endpoint.port}\npath=${server.endpoint.path}\n`,
+        "utf8",
+      );
+    }
+  }
+
+  return { projectRoot, statePath };
+}
+
+afterEach(() => {
+  for (const tempDir of tempDirs.splice(0)) {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
 describe("gateway server", () => {
   it("keeps raw image routing out of the default gateway tool set", () => {
     expect(gatewayTools.map((tool) => tool.name)).toEqual([
-      "plexus_gateway_register_target",
-      "plexus_gateway_unregister_target",
       "plexus_gateway_status",
-      "plexus_gateway_cleanup_stale_routes",
     ]);
   });
 
@@ -315,11 +346,7 @@ describe("gateway server", () => {
         workspaceId: runningState.workspaceId,
       },
     });
-    await gateway.registerProjectRoute({
-      projectRoot: "C:/dev/code/project-123",
-      statePath: "state.json",
-      state: runningState,
-    });
+    gateway.addRouteSource(layOutProject());
     const server = createGatewayServerWithOptions(gateway, {
       fixedMcpServerId: "dev",
     });
@@ -384,13 +411,7 @@ describe("gateway server", () => {
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
 
-    await expect(
-      gateway.handleTool("plexus_gateway_register_target", {
-        projectRoot: "C:/dev/code/project-123",
-        statePath: "state.json",
-        state: runningState,
-      }),
-    ).resolves.toMatchObject({ ok: true });
+    gateway.addRouteSource(layOutProject());
     await server.connect(serverTransport);
     await client.connect(clientTransport);
 
@@ -471,11 +492,7 @@ describe("gateway server", () => {
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
 
-    await expect(
-      gateway.handleTool("plexus_gateway_register_target", {
-        projectRoot: "C:/dev/code/project-123",
-        statePath: "state.json",
-        state: {
+    gateway.addRouteSource(layOutProject({
           ...runningState,
           images: [
             runningState.images[0],
@@ -496,9 +513,7 @@ describe("gateway server", () => {
               status: "running",
             },
           ],
-        },
-      }),
-    ).resolves.toMatchObject({ ok: true });
+        }));
     await server.connect(serverTransport);
     await client.connect(clientTransport);
 
@@ -556,11 +571,7 @@ describe("gateway server", () => {
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
 
-    await expect(
-      gateway.handleTool("plexus_gateway_register_target", {
-        projectRoot: "C:/dev/code/project-123",
-        statePath: "state.json",
-        state: {
+    gateway.addRouteSource(layOutProject({
           ...runningState,
           images: [
             runningState.images[0],
@@ -581,9 +592,7 @@ describe("gateway server", () => {
               status: "running",
             },
           ],
-        },
-      }),
-    ).resolves.toMatchObject({ ok: true });
+        }));
     await server.connect(serverTransport);
     await client.connect(clientTransport);
 
@@ -814,6 +823,7 @@ describe("gateway server", () => {
         projectId: "project-123",
         workspaceId: "task-123",
       },
+      routeSources: [],
     });
   });
 
@@ -918,10 +928,32 @@ describe("gateway server", () => {
 
   it("serves route-control tools on a separate HTTP MCP path with shared routes", async () => {
     const port = await freePort();
+    const project = layOutProject({
+      ...runningState,
+      images: [
+        {
+          id: "dev",
+          imageName: "Project123-dev",
+          status: "running",
+          mcpServers: [
+            {
+              id: "dev",
+              endpoint: {
+                transport: "http",
+                host: "127.0.0.1",
+                port: 7123,
+                path: "/",
+              },
+            },
+          ],
+        },
+      ],
+    });
     const server = await startGatewayHttpServer({
       host: "127.0.0.1",
       port,
       gateway: new PlexusGateway({
+        routeSources: [project],
         pharoTools: [
           {
             name: "pharo_eval",
@@ -950,28 +982,8 @@ describe("gateway server", () => {
     ).resolves.toMatchObject({
       result: {
         tools: expect.arrayContaining([
-          expect.objectContaining({ name: "plexus_gateway_register_target" }),
           expect.objectContaining({ name: "plexus_gateway_status" }),
         ]),
-      },
-    });
-
-    const registerResult = await postMcpPath(port, "/control-mcp", "tools/call", {
-      name: "plexus_gateway_register_target",
-      arguments: {
-        projectRoot: "C:/dev/code/project-123",
-        statePath: "state.json",
-        state: runningState,
-      },
-    });
-    expect(registerResult).toMatchObject({
-      result: {
-        content: [
-          {
-            type: "text",
-            text: expect.stringContaining("\"workspaceId\": \"worktree-a\""),
-          },
-        ],
       },
     });
 

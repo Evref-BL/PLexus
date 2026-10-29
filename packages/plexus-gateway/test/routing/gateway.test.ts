@@ -161,18 +161,37 @@ function statePath(stateRoot: string, workspaceId = "worktree-a"): string {
   );
 }
 
+/**
+ * Lay a project out on disk the way PLexus does — the state file, and one
+ * endpoint handoff per MCP server the fixture gives an image — and point the
+ * gateway at the directory. Nothing is registered; the files are the route.
+ */
 async function registerTarget(
   gateway: PlexusGateway,
   state: GatewayProjectState = runningState,
-  stateFilePath = "state.json",
+  stateFilePath?: string,
 ): Promise<void> {
-  await expect(
-    gateway.handleTool("plexus_gateway_register_target", {
-      projectRoot: makeTempDir("plexus-project-"),
-      statePath: stateFilePath,
-      state,
-    }),
-  ).resolves.toMatchObject({ ok: true });
+  const projectRoot = makeTempDir("plexus-project-");
+  // resolve, not join: a caller laying several workspaces out under one state
+  // root passes an absolute path, and joining one onto projectRoot builds a
+  // path Windows rejects.
+  const statePath = path.resolve(projectRoot, stateFilePath ?? "state.json");
+  fs.mkdirSync(path.dirname(statePath), { recursive: true });
+  fs.writeFileSync(statePath, JSON.stringify(state), "utf8");
+  const endpoints = path.join(path.dirname(statePath), "mcp-endpoints");
+  fs.mkdirSync(endpoints, { recursive: true });
+  for (const image of state.images) {
+    for (const server of image.mcpServers ?? []) {
+      fs.writeFileSync(
+        path.join(endpoints, `${server.id}.properties`),
+        `transport=${server.endpoint.transport}\nhost=${server.endpoint.host}\n` +
+          `port=${server.endpoint.port}\npath=${server.endpoint.path}\n`,
+        "utf8",
+      );
+    }
+  }
+
+  gateway.addRouteSource({ projectRoot, statePath });
 }
 
 function data<T>(result: GatewayToolResult<T>): T {
@@ -213,49 +232,37 @@ describe("PlexusGateway", () => {
     expect(status.images.map((image) => image.mcpServerId)).toEqual(["dev"]);
   });
 
-  it("refuses a running image that has no mcpServers", async () => {
+  it("leaves a running image with no endpoint handoff out of the routes", async () => {
     const gateway = new PlexusGateway();
 
-    await expect(
-      gateway.handleTool("plexus_gateway_register_target", {
-        projectRoot: makeTempDir("plexus-project-"),
-        statePath: "state.json",
-        state: {
-          ...runningState,
-          images: [
-            { id: "dev", imageName: "MyProject-dev", status: "running" },
-          ],
-        },
-      }),
-    ).resolves.toMatchObject({
-      ok: false,
-      error: "state.images[0] is running but has no mcpServers",
+    await registerTarget(gateway, {
+      ...runningState,
+      images: [{ id: "dev", imageName: "MyProject-dev", status: "running" }],
     });
+
+    expect(
+      data(
+        await gateway.handleTool("plexus_gateway_status", {
+          projectId: "project-123",
+        }),
+      ),
+    ).toMatchObject({ images: [] });
   });
 
-  it("registers a target route from PLexus runtime state", async () => {
+  it("resolves a route from the project's own files", async () => {
     const gateway = new PlexusGateway();
-    const projectRoot = makeTempDir("plexus-project-");
-    const stateFilePath = statePath(makeTempDir("plexus-state-"));
 
-    const registerResult = data(
-      await gateway.handleTool("plexus_gateway_register_target", {
-        projectRoot,
-        statePath: stateFilePath,
-        state: runningState,
-      }),
-    );
+    await registerTarget(gateway);
+
     const status = data(
       await gateway.handleTool("plexus_gateway_status", {
         projectId: "project-123",
       }),
     );
 
-    expect(registerResult).toMatchObject({
+    expect(status).toMatchObject({
       projectId: "project-123",
       workspaceId: "worktree-a",
-      projectRoot: path.resolve(projectRoot),
-      statePath: stateFilePath,
       images: [
         {
           id: "dev",
@@ -273,7 +280,6 @@ describe("PlexusGateway", () => {
         },
       ],
     });
-    expect(status).toMatchObject(registerResult);
   });
 
   it("includes route metadata explaining how callers provide mcpServerId", async () => {
@@ -537,41 +543,45 @@ describe("PlexusGateway", () => {
     ]);
   });
 
-  it("rejects the removed mcpEndpoint state field", async () => {
+  it("ignores an endpoint recorded in the state file", async () => {
     const gateway = new PlexusGateway();
 
-    await expect(
-      gateway.handleTool("plexus_gateway_register_target", {
-        projectRoot: makeTempDir("plexus-project-"),
-        statePath: "state.json",
-        state: {
-          ...runningState,
-          images: [
-            {
-              ...runningState.images[0],
-              mcpEndpoint: {
-                transport: "http",
-                host: "127.0.0.1",
-                port: 7123,
-                path: "/",
-              },
-            },
-          ],
-        },
-      }),
-    ).resolves.toMatchObject({
-      ok: false,
-      error: "state.images[0].mcpEndpoint is not supported; use mcpServers",
+    // Only the handoff file names an endpoint. A record that claims one is
+    // the stale copy this design exists to stop trusting.
+    await registerTarget(gateway, {
+      ...runningState,
+      images: [
+        {
+          id: "dev",
+          imageName: "MyProject-dev",
+          status: "running",
+          mcpEndpoint: {
+            transport: "http",
+            host: "127.0.0.1",
+            port: 7123,
+            path: "/",
+          },
+        } as GatewayProjectState["images"][number],
+      ],
     });
+
+    expect(
+      data(
+        await gateway.handleTool("plexus_gateway_status", {
+          projectId: "project-123",
+        }),
+      ),
+    ).toMatchObject({ images: [] });
   });
 
-  it("routes distinct MCP servers on one image by mcpServerId", async () => {
+  it("routes to each image by its own mcpServerId", async () => {
     const imageRouter = new FakeImageRouter();
     const gateway = new PlexusGateway({
       imageRouter,
       pharoTools: [pharoEvalTool],
     });
-    const multiServerState: GatewayProjectState = {
+
+    await registerTarget(gateway, {
       ...runningState,
       images: [
         {
@@ -579,77 +589,7 @@ describe("PlexusGateway", () => {
           imageName: "MyProject-dev",
           mcpServers: [
             {
-              id: "dev-code",
-              endpoint: {
-                transport: "http",
-                host: "127.0.0.1",
-                port: 9123,
-                path: "/mcp",
-              },
-            },
-            {
-              id: "dev-tools",
-              endpoint: {
-                transport: "http",
-                host: "127.0.0.1",
-                port: 9124,
-                path: "/mcp",
-              },
-            },
-          ],
-          status: "running",
-        },
-      ],
-    };
-
-    await registerTarget(gateway, multiServerState);
-    await gateway.callPharoTool("pharo_eval", {
-      mcpServerId: "dev-code",
-      imageId: "tool-owned-image-id",
-      code: "1 + 1",
-    });
-    await gateway.callPharoTool("pharo_eval", {
-      mcpServerId: "dev-tools",
-      code: "2 + 2",
-    });
-
-    expect(imageRouter.calls).toMatchObject([
-      {
-        route: {
-          imageId: "dev",
-          port: 9123,
-        },
-        argumentsValue: {
-          imageId: "tool-owned-image-id",
-          code: "1 + 1",
-        },
-      },
-      {
-        route: {
-          imageId: "dev",
-          port: 9124,
-        },
-        argumentsValue: {
-          code: "2 + 2",
-        },
-      },
-    ]);
-  });
-
-  it("rejects duplicate MCP server ids within a target", async () => {
-    const gateway = new PlexusGateway();
-    const result = await gateway.handleTool("plexus_gateway_register_target", {
-      projectRoot: makeTempDir("plexus-project-"),
-      statePath: "state.json",
-      state: {
-        ...runningState,
-        images: [
-        {
-          id: "dev",
-          imageName: "MyProject-dev",
-          mcpServers: [
-            {
-              id: "shared",
+              id: "dev",
               endpoint: {
                 transport: "http",
                 host: "127.0.0.1",
@@ -665,7 +605,7 @@ describe("PlexusGateway", () => {
           imageName: "MyProject-tools",
           mcpServers: [
             {
-              id: "shared",
+              id: "tools",
               endpoint: {
                 transport: "http",
                 host: "127.0.0.1",
@@ -676,13 +616,47 @@ describe("PlexusGateway", () => {
           ],
           status: "running",
         },
-        ],
-      },
+      ],
+    });
+    await gateway.callPharoTool("pharo_eval", {
+      mcpServerId: "dev",
+      imageId: "tool-owned-image-id",
+      code: "1 + 1",
+    });
+    await gateway.callPharoTool("pharo_eval", {
+      mcpServerId: "tools",
+      code: "2 + 2",
     });
 
-    expect(result).toEqual({
-      ok: false,
-      error: "MCP server id shared is duplicated in workspace worktree-a",
+    expect(imageRouter.calls).toMatchObject([
+      {
+        route: { imageId: "dev", port: 9123 },
+        argumentsValue: { imageId: "tool-owned-image-id", code: "1 + 1" },
+      },
+      {
+        route: { imageId: "tools", port: 9124 },
+        argumentsValue: { code: "2 + 2" },
+      },
+    ]);
+  });
+
+  it("gives one image exactly one MCP server", async () => {
+    const gateway = new PlexusGateway();
+
+    // The handoff file is named after the image, so an image cannot offer two
+    // endpoints and two images cannot offer the same one.
+    await registerTarget(gateway);
+
+    expect(
+      data(
+        await gateway.handleTool("plexus_gateway_status", {
+          projectId: "project-123",
+        }),
+      ),
+    ).toMatchObject({
+      images: expect.arrayContaining([
+        expect.objectContaining({ id: "dev", mcpServerId: "dev" }),
+      ]),
     });
   });
 
@@ -1644,56 +1618,16 @@ describe("PlexusGateway", () => {
     });
   });
 
-  it("unregisters a target explicitly without touching project images", async () => {
+  it("stops listing a project whose state file is gone", async () => {
     const gateway = new PlexusGateway();
 
     await registerTarget(gateway);
-    const unregisterResult = data(
-      await gateway.handleTool("plexus_gateway_unregister_target", {
-        projectId: "project-123",
-        workspaceId: "worktree-a",
-      }),
-    );
+    const route = data(
+      await gateway.handleTool("plexus_gateway_status", { projectId: "project-123" }),
+    ) as { statePath: string };
+    fs.rmSync(route.statePath);
 
-    expect(unregisterResult).toMatchObject({
-      removed: true,
-      route: {
-        projectId: "project-123",
-        workspaceId: "worktree-a",
-      },
-    });
-    await expect(
-      gateway.handleTool("plexus_route_to_image", {
-        projectId: "project-123",
-        workspaceId: "worktree-a",
-        mcpServerId: "dev",
-        toolName: "pharo_eval",
-      }),
-    ).resolves.toMatchObject({
-      ok: false,
-      error: "No route is registered for: project-123/worktree-a",
-    });
-  });
-
-  it("prunes registered routes when their runtime state file disappears", async () => {
-    const stateRoot = makeTempDir("plexus-state-");
-    const stateFilePath = statePath(stateRoot);
-    fs.mkdirSync(path.dirname(stateFilePath), { recursive: true });
-    fs.writeFileSync(stateFilePath, JSON.stringify(runningState), "utf8");
-    const gateway = new PlexusGateway();
-
-    await registerTarget(gateway, runningState, stateFilePath);
-    fs.rmSync(stateFilePath);
-
-    expect(
-      data(await gateway.handleTool("plexus_gateway_cleanup_stale_routes", {})),
-    ).toMatchObject({
-      removed: [
-        {
-          projectId: "project-123",
-        },
-      ],
-    });
+    // Nothing to clean up: a route that is only ever read cannot go stale.
     expect(data(await gateway.handleTool("plexus_gateway_status", {}))).toEqual(
       [],
     );

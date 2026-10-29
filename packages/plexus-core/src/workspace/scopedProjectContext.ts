@@ -146,7 +146,6 @@ export interface ScopedImageGatewayRouteMetadata {
 
 export interface ScopedImageContext {
   imageId: string;
-  active: boolean;
   status: ScopedImageStatus;
   displayMode: ProjectImageDisplayMode;
   ownership: ScopedImageOwnership;
@@ -164,7 +163,6 @@ export interface ScopedProjectContext {
 export interface ScopedImageDiagnosticContext {
   imageId: string;
   launcherImageName: string;
-  active: boolean;
   status: ScopedImageStatus;
   displayMode: ProjectImageDisplayMode;
   mcpServers?: ProjectImageState["mcpServers"];
@@ -261,10 +259,6 @@ function startAffordance(
   imageConfig: ProjectImageConfig,
   status: ScopedImageStatus,
 ): ScopedImageAffordance {
-  if (!imageConfig.active) {
-    return denied("Image is inactive in project config");
-  }
-
   if (status === "running") {
     return denied("Image is already running");
   }
@@ -283,10 +277,6 @@ function openInteractiveAffordance(
   imageConfig: ProjectImageConfig,
   status: ScopedImageStatus,
 ): ScopedImageAffordance {
-  if (!imageConfig.active) {
-    return denied("Image is inactive in project config");
-  }
-
   if (status === "starting") {
     return denied("Image is already starting");
   }
@@ -301,10 +291,6 @@ function displayModeAffordance(
   status: ScopedImageStatus,
   toolName: "pharo_launcher_image_show" | "pharo_launcher_image_hide",
 ): ScopedImageAffordance {
-  if (!imageConfig.active) {
-    return denied("Image is inactive in project config");
-  }
-
   if (status === "starting") {
     return denied("Image is already starting");
   }
@@ -330,10 +316,6 @@ function resetAffordance(
   imageConfig: ProjectImageConfig,
   status: ScopedImageStatus,
 ): ScopedImageAffordance {
-  if (!imageConfig.active) {
-    return denied("Image is inactive in project config");
-  }
-
   if (status === "starting") {
     return denied("Image is already starting");
   }
@@ -494,7 +476,6 @@ function scopedImageContext(
 ): ScopedImageContext {
   return {
     imageId: imageConfig.id,
-    active: imageConfig.active,
     status: imageStatus(imageState),
     displayMode: imageState?.displayMode ?? projectImageDisplayMode(imageConfig),
     ownership: {
@@ -522,7 +503,6 @@ function scopedImageDiagnostics(
   return {
     imageId: imageConfig.id,
     launcherImageName,
-    active: imageConfig.active,
     status: imageStatus(imageState),
     displayMode: imageState?.displayMode ?? projectImageDisplayMode(imageConfig),
     ...(imageState?.mcpServers ? { mcpServers: imageState.mcpServers } : {}),

@@ -38,6 +38,11 @@ import {
   type HomeImageCacheMutationApproval,
 } from "../images/homeImageCache.js";
 import {
+  observeImageRuntime,
+  type ImageRuntimeObservation,
+  type ImageRuntimeStatus,
+} from "../images/imageRuntime.js";
+import {
   createStdioPharoLauncherMcpClient,
   PharoLauncherMcpToolError,
   type PharoLauncherMcpToolClient,
@@ -105,6 +110,9 @@ export interface ScopedPharoLauncherOptions {
   routeRegistry?: ProjectLifecycleRouteRegistry;
   fetch?: typeof fetch;
   now?: () => Date;
+  /** Liveness probes, injectable so a test does not depend on the host. */
+  isPidAlive?: (pid: number) => boolean;
+  isPortListening?: (host: string, port: number) => Promise<boolean>;
 }
 
 export interface ScopedImageLeaseOptions {
@@ -138,8 +146,9 @@ interface LauncherProfileSummary {
 
 interface WorkspaceImageSummary {
   imageId: string;
-  active: boolean;
-  status: ProjectImageState["status"] | "declared";
+  /** Observed when the row was built, never read from the state record. */
+  status: ImageRuntimeStatus;
+  runtime: ImageRuntimeObservation;
   displayMode: ProjectImageDisplayMode;
   displayModes: {
     default: ProjectImageDisplayMode;
@@ -493,13 +502,14 @@ function launcherProfileSummary(
 function imageSummary(
   imageConfig: ProjectImageConfig,
   imageState: ProjectImageState | undefined,
+  runtime: ImageRuntimeObservation,
 ): WorkspaceImageSummary {
   const defaultDisplayMode = projectImageDisplayMode(imageConfig);
   const displayMode = imageState?.displayMode ?? defaultDisplayMode;
   return {
     imageId: imageConfig.id,
-    active: imageConfig.active,
-    status: imageState?.status ?? "declared",
+    status: runtime.status,
+    runtime,
     displayMode,
     displayModes: {
       default: defaultDisplayMode,
@@ -1054,27 +1064,6 @@ export class ScopedPharoLauncher {
       : undefined;
   }
 
-  private async refreshRegisteredProjectRoute(
-    scope: ResolvedScope,
-    statePath: string,
-    state: ProjectState | undefined,
-  ): Promise<void> {
-    if (!state) {
-      return;
-    }
-
-    const routeRegistry = this.routeRegistryForState(state);
-    if (!routeRegistry) {
-      return;
-    }
-
-    await routeRegistry.registerProjectRoute({
-      projectRoot: scope.projectRoot,
-      statePath,
-      state,
-    });
-  }
-
   private async snapshotImageBeforeDisplayModeRestart(
     scope: ResolvedScope,
     imageState: ProjectImageState,
@@ -1155,11 +1144,11 @@ export class ScopedPharoLauncher {
     }
   }
 
-  listImages(): {
+  async listImages(): Promise<{
     scope: WorkspaceScopeSummary;
     launcherProfile: LauncherProfileSummary;
     images: WorkspaceImageSummary[];
-  } {
+  }> {
     const scope = resolveScope(this.options);
     const projectConfig = loadProjectConfig(scope.projectRoot);
     const state = loadProjectState(statePathForScope(scope, projectConfig));
@@ -1173,21 +1162,46 @@ export class ScopedPharoLauncher {
     return {
       scope: scopeSummary(scope),
       launcherProfile: launcherProfileSummary(launcherProfile),
-      images: projectConfig.images.map((imageConfig) =>
-        imageSummary(
-          imageConfig,
-          state?.images.find((image) => image.id === imageConfig.id),
-        ),
+      images: await Promise.all(
+        projectConfig.images.map(async (imageConfig) => {
+          const imageState = state?.images.find(
+            (image) => image.id === imageConfig.id,
+          );
+          return imageSummary(
+            imageConfig,
+            imageState,
+            await observeImageRuntime({
+              ...scope,
+              ...(this.options.isPidAlive === undefined
+                ? {}
+                : { isPidAlive: this.options.isPidAlive }),
+              ...(this.options.isPortListening === undefined
+                ? {}
+                : { isPortListening: this.options.isPortListening }),
+              imageId: imageConfig.id,
+              imageName: renderProjectImageName(imageConfig.imageName, {
+                projectId: scope.projectId,
+                projectName: scope.projectName,
+                workspaceId: scope.workspaceId,
+                imageId: imageConfig.id,
+              }),
+              ...(launcherProfile.imagesDir === undefined
+                ? {}
+                : { imagesDirectory: launcherProfile.imagesDir }),
+              ...(imageState?.pid === undefined ? {} : { pid: imageState.pid }),
+            }),
+          );
+        }),
       ),
     };
   }
 
-  imageInfo(imageId: string): {
+  async imageInfo(imageId: string): Promise<{
     scope: WorkspaceScopeSummary;
     launcherProfile: LauncherProfileSummary;
     image: WorkspaceImageSummary;
-  } {
-    const listed = this.listImages();
+  }> {
+    const listed = await this.listImages();
     const image = listed.images.find((candidate) => candidate.imageId === imageId);
     if (!image) {
       throw new ScopedPharoLauncherError(
@@ -1441,14 +1455,13 @@ export class ScopedPharoLauncher {
 
       const nextState = stateWithImageLease(state, imageId, lease, now);
       saveProjectState(statePath, nextState);
-      await this.refreshRegisteredProjectRoute(scope, statePath, nextState);
     } finally {
       if (ownsClient) {
         await client.close?.();
       }
     }
 
-    return this.imageInfo(imageId);
+    return await this.imageInfo(imageId);
   }
 
   async startImage(
@@ -1459,12 +1472,7 @@ export class ScopedPharoLauncher {
     launcherProfile: LauncherProfileSummary;
     image: WorkspaceImageSummary;
   }> {
-    const before = this.imageInfo(imageId);
-    if (!before.image.active) {
-      throw new ScopedPharoLauncherError(
-        `Image ${imageId} is not active in project config; scoped start is rejected`,
-      );
-    }
+    const before = await this.imageInfo(imageId);
     if (before.image.status === "running" || before.image.status === "starting") {
       throw new ScopedPharoLauncherError(
         `Image ${imageId} is already ${before.image.status}; scoped start is rejected`,
@@ -1496,13 +1504,8 @@ export class ScopedPharoLauncher {
       lease,
       now,
     );
-    await this.refreshRegisteredProjectRoute(
-      scope,
-      statePath,
-      leasedState ?? openResult.state,
-    );
 
-    return this.imageInfo(imageId);
+    return await this.imageInfo(imageId);
   }
 
   async setImageDisplayMode(
@@ -1521,15 +1524,10 @@ export class ScopedPharoLauncher {
     const scope = resolveScope(this.options);
     const projectConfig = loadProjectConfig(scope.projectRoot);
     const imageConfig = findImageConfig(projectConfig, imageId);
-    const before = this.imageInfo(imageId);
+    const before = await this.imageInfo(imageId);
     const imageState = this.currentImageState(scope, projectConfig, imageId);
     const previousDisplayMode =
       imageState?.displayMode ?? projectImageDisplayMode(imageConfig);
-    if (!before.image.active) {
-      throw new ScopedPharoLauncherError(
-        `Image ${imageId} is not active in project config; display mode change is rejected`,
-      );
-    }
     if (before.image.status === "starting") {
       throw new ScopedPharoLauncherError(
         `Image ${imageId} is starting; wait for startup to finish before changing display mode`,
@@ -1564,7 +1562,7 @@ export class ScopedPharoLauncher {
 
     await this.startImage(imageId, displayMode);
     return {
-      ...this.imageInfo(imageId),
+      ...(await this.imageInfo(imageId)),
       previousDisplayMode,
       displayMode,
       restarted: before.image.status === "running",
@@ -1596,7 +1594,7 @@ export class ScopedPharoLauncher {
     launcherProfile: LauncherProfileSummary;
     image: WorkspaceImageSummary;
   }> {
-    this.imageInfo(imageId);
+    await this.imageInfo(imageId);
     const scope = resolveScope(this.options);
     const projectConfig = loadProjectConfig(scope.projectRoot);
     const now = this.options.now?.() ?? new Date();
@@ -1615,13 +1613,8 @@ export class ScopedPharoLauncher {
       lease,
       now,
     );
-    await this.refreshRegisteredProjectRoute(
-      scope,
-      statePath,
-      leasedState ?? closeResult.state,
-    );
 
-    return this.imageInfo(imageId);
+    return await this.imageInfo(imageId);
   }
 
   private assertResetImageConfig(
@@ -1630,11 +1623,6 @@ export class ScopedPharoLauncher {
   ): asserts imageConfig is ProjectImageConfig & {
     create: NonNullable<ProjectImageConfig["create"]>;
   } {
-    if (!imageConfig.active) {
-      throw new ScopedPharoLauncherError(
-        `Image ${imageId} is not active in project config; scoped reset is rejected`,
-      );
-    }
     if (!imageConfig.create) {
       throw new ScopedPharoLauncherError(
         `Image ${imageId} has no approved create policy in project config; scoped reset is rejected`,
@@ -1757,7 +1745,7 @@ export class ScopedPharoLauncher {
       await this.startImage(imageId, options.displayMode);
     }
 
-    const finalInfo = this.imageInfo(imageId);
+    const finalInfo = await this.imageInfo(imageId);
     return {
       ...finalInfo,
       reset: resetSummary(
@@ -1897,11 +1885,11 @@ export function createScopedPharoLauncherServer(
     try {
       switch (request.params.name) {
         case "pharo_launcher_image_list":
-          return textResult(facade.listImages(), false, detail);
+          return textResult(await facade.listImages(), false, detail);
 
         case "pharo_launcher_image_info":
           return textResult(
-            facade.imageInfo(requireString(input, "imageId")),
+            await facade.imageInfo(requireString(input, "imageId")),
             false,
             detail,
           );

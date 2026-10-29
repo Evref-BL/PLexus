@@ -253,7 +253,6 @@ function writeProjectConfig(
           {
             id: "dev",
             imageName: "MyProject-dev",
-            active: true,
             mcp: {
               port: 7123,
               loadScript: "pharo/load-mcp.st",
@@ -432,7 +431,7 @@ afterEach(() => {
 
 
 describe("project lifecycle tools", () => {
-  it("opens a project through core and registers the gateway route", async () => {
+  it("opens a project through core and leaves its route to discovery", async () => {
     const projectRoot = makeTempDir("plexus-project-");
     const stateRoot = makeTempDir("plexus-state-");
     const routeRegistry = new FakeRouteRegistry();
@@ -456,16 +455,11 @@ describe("project lifecycle tools", () => {
     });
 
     expect(result).toMatchObject({ ok: true });
-    expect(routeRegistry.registrations).toEqual([
-      {
-        projectRoot: path.resolve(projectRoot),
-        statePath: statePath(stateRoot),
-        state: runningState,
-      },
-    ]);
+    // Routes are discovered from the project's files; nothing is registered.
+    expect(routeRegistry.registrations).toEqual([]);
   });
 
-  it("closes a project through core and unregisters the gateway route", async () => {
+  it("closes a project through core and stops its managed gateway", async () => {
     const projectRoot = makeTempDir("plexus-project-");
     const routeRegistry = new FakeRouteRegistry();
     const lifecycle = new PlexusProjectLifecycle({
@@ -488,12 +482,11 @@ describe("project lifecycle tools", () => {
     });
 
     expect(result).toMatchObject({ ok: true });
-    expect(routeRegistry.unregisters).toEqual([
-      { projectId: "project-123", workspaceId: "worktree-a" },
-    ]);
+    // Routes are discovered from the project's files; nothing is registered.
+    expect(routeRegistry.unregisters).toEqual([]);
   });
 
-  it("cleans a project scope and unregisters the gateway route when confirmed", async () => {
+  it("cleans a project scope without unregistering anything", async () => {
     const projectRoot = makeTempDir("plexus-project-");
     const stateRoot = makeTempDir("plexus-state-");
     writeProjectConfig(projectRoot);
@@ -530,14 +523,13 @@ describe("project lifecycle tools", () => {
           expect.objectContaining({
             kind: "route",
             id: "project-123/worktree-a",
-            status: "cleaned",
+            status: "skipped",
           }),
         ]),
       },
     });
-    expect(routeRegistry.unregisters).toEqual([
-      { projectId: "project-123", workspaceId: "worktree-a" },
-    ]);
+    // Routes are discovered from the project's files; nothing is registered.
+    expect(routeRegistry.unregisters).toEqual([]);
   });
 
   it("deletes stopped scoped images when route cleanup endpoint is gone", async () => {
@@ -599,14 +591,13 @@ describe("project lifecycle tools", () => {
             kind: "route",
             id: "project-123/worktree-a",
             status: "skipped",
-            reason: expect.stringContaining("fetch failed"),
+            reason: expect.stringContaining("resolved from project files"),
           }),
         ]),
       },
     });
-    expect(routeRegistry.unregisters).toEqual([
-      { projectId: "project-123", workspaceId: "worktree-a" },
-    ]);
+    // Routes are discovered from the project's files; nothing is registered.
+    expect(routeRegistry.unregisters).toEqual([]);
     expect(launcherClient.calls).toEqual([
       {
         name: "pharo_launcher_image_delete",
@@ -856,7 +847,7 @@ describe("project lifecycle tools", () => {
     ]);
   });
 
-  it("registers host gateway routes for remote PLexus opens", async () => {
+  it("leaves remote PLexus opens to gateway discovery", async () => {
     const projectRoot = makeTempDir("plexus-project-");
     const stateRoot = makeTempDir("plexus-state-");
     const routeRegistry = new FakeRouteRegistry();
@@ -950,24 +941,8 @@ describe("project lifecycle tools", () => {
         },
       },
     });
-    expect(routeRegistry.registrations).toHaveLength(1);
-    expect(routeRegistry.registrations[0]).toMatchObject({
-      projectRoot,
-      statePath: statePath(stateRoot),
-      state: {
-        projectId: "project-123",
-        workspaceId: "worktree-a",
-        remoteGateway: {
-          remoteNodeId: "remote-a",
-        },
-        images: [
-          {
-            id: "dev",
-            status: "running",
-          },
-        ],
-      },
-    });
+    // Routes are discovered from the project's files; nothing is registered.
+    expect(routeRegistry.registrations).toEqual([]);
     expect(loadProjectState(statePath(stateRoot))).toMatchObject({
       projectId: "project-123",
       workspaceId: "worktree-a",
@@ -977,7 +952,7 @@ describe("project lifecycle tools", () => {
     });
   });
 
-  it("unregisters host gateway routes after remote close and confirmed cleanup", async () => {
+  it("closes remote PLexus scopes without unregistering routes", async () => {
     const projectRoot = makeTempDir("plexus-project-");
     const stateRoot = makeTempDir("plexus-state-");
     const routeRegistry = new FakeRouteRegistry();
@@ -1093,16 +1068,8 @@ describe("project lifecycle tools", () => {
       deleteLauncherImages: false,
     });
 
-    expect(routeRegistry.unregisters).toEqual([
-      {
-        projectId: "project-123",
-        workspaceId: "worktree-a",
-      },
-      {
-        projectId: "project-123",
-        workspaceId: "worktree-a",
-      },
-    ]);
+    // Routes are discovered from the project's files; nothing is registered.
+    expect(routeRegistry.unregisters).toEqual([]);
     expect(loadProjectState(statePath(stateRoot))).toBeUndefined();
   });
 
@@ -1476,7 +1443,6 @@ describe("project lifecycle tools", () => {
         {
           id: "dev",
           imageName: "MyProject-{workspaceId}-dev",
-          active: true,
           mcp: {
             loadScript: "pharo/load-mcp.st",
           },
@@ -1825,7 +1791,7 @@ describe("project lifecycle tools", () => {
             },
           ],
           routeTable: {
-            status: "registered",
+            status: "resolved",
             routableImages: [
               {
                 imageId: "dev",
@@ -2026,7 +1992,6 @@ describe("project lifecycle tools", () => {
         {
           id: "dev",
           imageName: "MyProject-dev",
-          active: true,
           mcp: {
             port: 7123,
             loadScript: "pharo/load-mcp.st",
@@ -2035,7 +2000,6 @@ describe("project lifecycle tools", () => {
         {
           id: "stale-feature",
           imageName: "MyProject-stale-feature",
-          active: true,
           mcp: {
             port: 7124,
             loadScript: "pharo/load-mcp.st",
@@ -2108,83 +2072,6 @@ describe("project lifecycle tools", () => {
     expect(result.data?.gateway).not.toHaveProperty("endpoint");
     expect(result.data?.gateway).not.toHaveProperty("controlEndpoint");
     expect(loadProjectState(stateFilePath)?.gateway).toBeUndefined();
-  });
-
-  it("re-registers stale gateway routes that point at a different state path", async () => {
-    const projectRoot = makeTempDir("plexus-project-");
-    const stateRoot = makeTempDir("plexus-state-");
-    const stateFilePath = statePath(stateRoot);
-    const staleStatePath = path.join(makeTempDir("plexus-stale-state-"), "state.json");
-    const registrations: ProjectLifecycleRouteRegistration[] = [];
-    let route = {
-      projectId: runningState.projectId,
-      workspaceId: runningState.workspaceId,
-      targetId: runningState.targetId,
-      projectRoot,
-      statePath: staleStatePath,
-      images: [
-        {
-          id: "dev",
-          imageName: "MyProject-dev",
-          port: 7123,
-          status: "running",
-          routable: {
-            ok: true,
-            code: "ready",
-            message: "Image is routable",
-          },
-        },
-      ],
-    };
-    const lifecycle = new PlexusProjectLifecycle({
-      routeRegistry: {
-        async registerProjectRoute(input) {
-          registrations.push(input);
-          route = {
-            ...route,
-            projectRoot: input.projectRoot,
-            statePath: input.statePath,
-          };
-          return { ok: true, data: route };
-        },
-        async unregisterProjectRoute() {
-          return { ok: true, data: {} };
-        },
-        async getRouteStatus() {
-          return { ok: true, data: route };
-        },
-      },
-    });
-    writeProjectConfig(projectRoot);
-    saveProjectState(stateFilePath, runningState);
-
-    const result = await lifecycle.handleTool("plexus_project_status", {
-      projectPath: projectRoot,
-      stateRoot,
-      workspaceId: "worktree-a",
-      includeDiagnostics: true,
-    });
-
-    expect(registrations).toHaveLength(1);
-    expect(registrations[0]).toMatchObject({
-      projectRoot: path.resolve(projectRoot),
-      statePath: stateFilePath,
-      state: runningState,
-    });
-    expect(result).toMatchObject({
-      ok: true,
-      data: {
-        route: {
-          statePath: stateFilePath,
-        },
-        diagnostics: {
-          routeTable: {
-            status: "registered",
-            statePath: stateFilePath,
-          },
-        },
-      },
-    });
   });
 
   it("includes config schema and runtime identity diagnostics on config failures", async () => {
@@ -2281,7 +2168,7 @@ describe("project lifecycle tools", () => {
     });
   });
 
-  it("keeps gateway routes available for running images when another image fails to open", async () => {
+  it("keeps running images routable when another image fails to open", async () => {
     const projectRoot = makeTempDir("plexus-project-");
     const stateRoot = makeTempDir("plexus-state-");
     const claimsRoot = makeTempDir("plexus-claims-");
@@ -2317,7 +2204,6 @@ describe("project lifecycle tools", () => {
         {
           id: "dev",
           imageName: "MyProject-dev",
-          active: true,
           mcp: {
             port: 7123,
             loadScript: "pharo/load-mcp.st",
@@ -2326,7 +2212,6 @@ describe("project lifecycle tools", () => {
         {
           id: "stale-feature",
           imageName: "MyProject-stale-feature",
-          active: true,
           mcp: {
             port: 7124,
             loadScript: "pharo/load-mcp.st",
@@ -2379,9 +2264,7 @@ describe("project lifecycle tools", () => {
       port: 8137,
       pharoTools: [pharoEvalTool],
     });
-    expect(requests.map((request) => request.url)).toEqual([
-      "http://127.0.0.1:8137/control-mcp",
-    ]);
+    expect(requests.map((request) => request.url)).toEqual([]);
     expect(loadProjectState(statePath(stateRoot))?.gateway).toMatchObject({
       mode: "project-local",
       endpoint: "http://127.0.0.1:8137/mcp",
@@ -2499,7 +2382,6 @@ describe("project lifecycle tools", () => {
           },
           project: {
             declaredImageCount: 0,
-            activeImageCount: 0,
             runtimeImageCount: 0,
           },
           scope: {
@@ -2527,7 +2409,7 @@ describe("project lifecycle tools", () => {
           },
           imageMcpRoutes: [],
           routeTable: {
-            status: "registered",
+            status: "resolved",
           },
         },
       },
@@ -2775,7 +2657,6 @@ describe("project lifecycle tools", () => {
     });
     expect(requests.map((request) => request.url)).toEqual([
       "http://127.0.0.1:8134/gateway-control",
-      "http://127.0.0.1:8134/gateway-control",
     ]);
   });
 
@@ -2828,20 +2709,13 @@ describe("project lifecycle tools", () => {
     });
     expect(requests.map((request) => request.url)).toEqual([
       "http://127.0.0.1:7123/",
-      "http://127.0.0.1:8136/control-mcp",
     ]);
     expect(requests[0]?.body).toMatchObject({
       method: "tools/list",
     });
-    expect(requests[1]?.body).toMatchObject({
-      method: "tools/call",
-      params: {
-        name: "plexus_gateway_register_target",
-      },
-    });
   });
 
-  it("registers routes with a configured shared gateway without starting a process", async () => {
+  it("uses a configured shared gateway without starting a process", async () => {
     const projectRoot = makeTempDir("plexus-project-");
     const stateRoot = makeTempDir("plexus-state-");
     const requests: CapturedGatewayRequest[] = [];
@@ -2884,9 +2758,8 @@ describe("project lifecycle tools", () => {
       },
     });
     expect(processManager.starts).toEqual([]);
-    expect(requests.map((request) => request.url)).toEqual([
-      "http://shared.gateway:8133/control-mcp",
-    ]);
+    // A configured shared gateway is told nothing; it reads the project files.
+    expect(requests.map((request) => request.url)).toEqual([]);
   });
 
   it("reports an occupied project-local gateway port before launching", async () => {
@@ -2987,14 +2860,11 @@ describe("project lifecycle tools", () => {
         managedByProject: true,
       },
     });
-    expect(requests.map((request) => request.url)).toEqual([
-      "http://127.0.0.1:8136/control-mcp",
-      "http://127.0.0.1:8136/control-mcp",
-    ]);
+    expect(requests.map((request) => request.url)).toEqual([]);
     expect(loadProjectState(statePath(stateRoot))?.gateway).toBeUndefined();
   });
 
-  it("posts route registry calls to the route-control MCP path by default", async () => {
+  it("posts route status calls to the route-control MCP path by default", async () => {
     const requests: CapturedGatewayRequest[] = [];
     const registry = new HttpGatewayRouteRegistry({
       host: "gateway.local",
@@ -3002,10 +2872,9 @@ describe("project lifecycle tools", () => {
       fetch: makeGatewayFetch(requests),
     });
 
-    await registry.registerProjectRoute({
-      projectRoot: "project-root",
-      statePath: "state.json",
-      state: runningState,
+    await registry.getRouteStatus({
+      projectId: runningState.projectId,
+      workspaceId: runningState.workspaceId,
     });
 
     expect(requests).toHaveLength(1);
@@ -3013,7 +2882,7 @@ describe("project lifecycle tools", () => {
     expect(requests[0]?.body).toMatchObject({
       method: "tools/call",
       params: {
-        name: "plexus_gateway_register_target",
+        name: "plexus_gateway_status",
       },
     });
   });

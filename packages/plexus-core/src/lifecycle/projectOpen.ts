@@ -989,8 +989,25 @@ function imageStartupExitedBeforeHealthError(options: {
   );
 }
 
-function activeStateImages(state: ProjectState): ProjectImageState[] {
-  return state.images.filter((image) => image.status === "starting");
+/**
+ * The images this call was asked to open. Opening is an action, so it takes
+ * its subjects from the request; a declaration no longer decides it.
+ */
+function imagesToOpenFor(
+  state: ProjectState,
+  imageIds: string[] | undefined,
+): ProjectImageState[] {
+  if (!imageIds) {
+    return [];
+  }
+
+  const selected = new Set(imageIds);
+  const images = state.images.filter((image) => selected.has(image.id));
+  for (const image of images) {
+    image.status = "starting";
+  }
+
+  return images;
 }
 
 function imageRequiresPharoMcpHealth(
@@ -1490,7 +1507,7 @@ export async function openProject(
     sourcePath,
   });
   applyScopedImageSelection(state, previousState, options.imageIds);
-  const imagesToOpen = activeStateImages(state);
+  const imagesToOpen = imagesToOpenFor(state, options.imageIds);
   const failures: ProjectOpenFailure[] = [];
 
   if (imagesToOpen.length === 0) {
