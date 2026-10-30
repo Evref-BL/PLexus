@@ -49,13 +49,6 @@ function defaultRuntimePolicy() {
     stateRoot: {
       mode: "project-local",
     },
-    gateway: {
-      mode: "project-local",
-      host: "127.0.0.1",
-      port: 8_133,
-      mcpPath: "/mcp",
-      routeControlMcpPath: "/control-mcp",
-    },
     launcherProfile: {
       mode: "project-owned",
     },
@@ -238,11 +231,6 @@ describe("project config", () => {
         mode: "external",
         path: "C:\\dev\\plexus-state",
       },
-      gateway: {
-        mode: "shared",
-        mcpUrl: "http://gateway.local:8133/mcp",
-        routeControlMcpUrl: "http://gateway.local:8133/control-mcp",
-      },
       launcherProfile: {
         mode: "project-owned",
         name: "my-project-isolated",
@@ -402,51 +390,6 @@ describe("project config", () => {
         expect.arrayContaining([
           "home.imageCache.networkPolicy must be one of online, local-only",
           "home.dependencyRepositories.networkPolicy must be one of online, local-only",
-        ]),
-      );
-    }
-  });
-
-  it("records project-local gateway host, fixed port, route path, and control path", () => {
-    const config: ReturnType<typeof validProjectConfig> & { runtime?: unknown } =
-      validProjectConfig();
-    config.runtime = {
-      gateway: {
-        mode: "project-local",
-        host: "0.0.0.0",
-        port: 8_144,
-        mcpPath: "/agent-mcp",
-        routeControlMcpPath: "/route-control",
-      },
-    };
-
-    expect(parseProjectConfig(config).runtime?.gateway).toEqual({
-      mode: "project-local",
-      host: "0.0.0.0",
-      port: 8_144,
-      mcpPath: "/agent-mcp",
-      routeControlMcpPath: "/route-control",
-    });
-  });
-
-  it("rejects shared gateway runtime policy without endpoint details", () => {
-    const config: ReturnType<typeof validProjectConfig> & { runtime?: unknown } =
-      validProjectConfig();
-    config.runtime = {
-      gateway: {
-        mode: "shared",
-      },
-    };
-
-    expect(() => parseProjectConfig(config)).toThrow(ProjectConfigError);
-
-    try {
-      parseProjectConfig(config);
-    } catch (error) {
-      expect((error as ProjectConfigError).issues).toEqual(
-        expect.arrayContaining([
-          "runtime.gateway.mcpUrl must be a valid URL",
-          "runtime.gateway.routeControlMcpUrl must be a valid URL",
         ]),
       );
     }

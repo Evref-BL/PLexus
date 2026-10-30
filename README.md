@@ -66,10 +66,6 @@ Create `plexus.json` at the project root:
 PLexus loads a pinned MCP-Pharo release when it needs the standard Pharo MCP
 server.
 
-For a project-local gateway, configure paths under `runtime.gateway` with
-`mcpPath` and `routeControlMcpPath`. A shared gateway uses `mcpUrl` and
-`routeControlMcpUrl`.
-
 ## Images
 
 The image is the unit of work. Each command acts on one image the project

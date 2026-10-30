@@ -8,7 +8,6 @@ import {
   type ProjectImageConfig,
   type ProjectImageCreationCleanupPolicy,
   type ProjectPharoMcpLoadPolicy,
-  type ProjectGatewayMode,
 } from "../config/projectConfig.js";
 import {
   basenamePathLike,
@@ -194,19 +193,6 @@ export interface ProjectImageState {
   };
 }
 
-export interface ProjectGatewayState {
-  mode: ProjectGatewayMode;
-  endpoint?: string;
-  controlEndpoint?: string;
-  host?: string;
-  port?: number;
-  routePath?: string;
-  controlPath?: string;
-  owningProjectId?: string;
-  managedByProject: boolean;
-  pid?: number;
-}
-
 export interface ProjectRemoteGatewayState {
   remoteNodeId: string;
   endpoint: ProjectImageMcpEndpoint;
@@ -220,7 +206,6 @@ export interface ProjectState {
   workspaceId: string;
   sourcePath?: string;
   runtimeStatus?: ProjectRuntimeStatus;
-  gateway?: ProjectGatewayState;
   remoteGateway?: ProjectRemoteGatewayState;
   pharoMcpContract?: PharoMcpContractReference;
   images: ProjectImageState[];
@@ -525,9 +510,6 @@ export function createProjectState(
       ? { sourcePath: options.sourcePath ?? options.previousState?.sourcePath }
       : {}),
     runtimeStatus: runtimeStatusForImages(images),
-    ...(options.previousState?.gateway
-      ? { gateway: options.previousState.gateway }
-      : {}),
     updatedAt: options.updatedAt,
     images,
   };

@@ -124,26 +124,6 @@ export interface ProjectRuntimeStateRootPolicy {
   path?: string;
 }
 
-export type ProjectGatewayMode = "project-local" | "shared";
-
-export interface ProjectLocalGatewayPolicy {
-  mode: "project-local";
-  host: string;
-  port: number;
-  mcpPath: string;
-  routeControlMcpPath: string;
-}
-
-export interface ProjectSharedGatewayPolicy {
-  mode: "shared";
-  mcpUrl: string;
-  routeControlMcpUrl: string;
-}
-
-export type ProjectGatewayPolicy =
-  | ProjectLocalGatewayPolicy
-  | ProjectSharedGatewayPolicy;
-
 
 export const defaultPharoMcpMetadataKey = "io.github.evref-bl/pharo";
 export const defaultPharoMcpSupportedMajorVersions = [12, 13, 14, 15] as const;
@@ -194,7 +174,6 @@ export interface ProjectRuntimePolicy {
   scope: ProjectRuntimeScope;
   nodeId?: string;
   stateRoot: ProjectRuntimeStateRootPolicy;
-  gateway: ProjectGatewayPolicy;
   workspaceImages?: ProjectWorkspaceImagePolicy;
   remoteNodes?: ProjectRemoteNodeConfig[];
   launcherProfile: ProjectLauncherProfilePolicy;
@@ -235,13 +214,6 @@ export function defaultProjectRuntimePolicy(): ProjectRuntimePolicy {
     scope: "project",
     stateRoot: {
       mode: "project-local",
-    },
-    gateway: {
-      mode: "project-local",
-      host: "127.0.0.1",
-      port: 8_133,
-      mcpPath: "/mcp",
-      routeControlMcpPath: "/control-mcp",
     },
     launcherProfile: {
       mode: "project-owned",
@@ -1135,86 +1107,6 @@ function parseRuntimeStateRoot(
   return { mode };
 }
 
-function parseProjectLocalGateway(
-  value: Record<string, unknown>,
-  issues: string[],
-): ProjectLocalGatewayPolicy {
-  const defaultGateway = defaultProjectRuntimePolicy()
-    .gateway as ProjectLocalGatewayPolicy;
-  const port = optionalPortField(value, "port", issues, "runtime.gateway");
-
-  return {
-    mode: "project-local",
-    host: stringFieldWithDefault(
-      value,
-      "host",
-      issues,
-      "runtime.gateway",
-      defaultGateway.host,
-    ),
-    port: port ?? defaultGateway.port,
-    mcpPath: pathFieldWithDefault(
-      value,
-      "mcpPath",
-      issues,
-      "runtime.gateway",
-      defaultGateway.mcpPath,
-    ),
-    routeControlMcpPath: pathFieldWithDefault(
-      value,
-      "routeControlMcpPath",
-      issues,
-      "runtime.gateway",
-      defaultGateway.routeControlMcpPath,
-    ),
-  };
-}
-
-function parseSharedGateway(
-  value: Record<string, unknown>,
-  issues: string[],
-): ProjectSharedGatewayPolicy {
-  return {
-    mode: "shared",
-    mcpUrl: urlField(value, "mcpUrl", issues, "runtime.gateway"),
-    routeControlMcpUrl: urlField(
-      value,
-      "routeControlMcpUrl",
-      issues,
-      "runtime.gateway",
-    ),
-  };
-}
-
-function parseRuntimeGateway(
-  value: unknown,
-  issues: string[],
-): ProjectGatewayPolicy {
-  if (value === undefined) {
-    return {
-      ...(defaultProjectRuntimePolicy().gateway as ProjectLocalGatewayPolicy),
-    };
-  }
-
-  if (!isObject(value)) {
-    issues.push("runtime.gateway must be an object");
-    return {
-      ...(defaultProjectRuntimePolicy().gateway as ProjectLocalGatewayPolicy),
-    };
-  }
-
-  const modeValue = value.mode ?? "project-local";
-  if (modeValue === "shared") {
-    return parseSharedGateway(value, issues);
-  }
-
-  if (modeValue !== "project-local") {
-    issues.push("runtime.gateway.mode must be one of project-local, shared");
-  }
-
-  return parseProjectLocalGateway(value, issues);
-}
-
 
 function parseRemoteNodeWorkspaceMappings(
   value: unknown,
@@ -1498,7 +1390,6 @@ function parseRuntimePolicy(
     scope: "project",
     ...(nodeId ? { nodeId } : {}),
     stateRoot: parseRuntimeStateRoot(value.stateRoot, issues),
-    gateway: parseRuntimeGateway(value.gateway, issues),
     ...(workspaceImages ? { workspaceImages } : {}),
     ...(remoteNodes ? { remoteNodes } : {}),
     launcherProfile: parseLauncherProfilePolicy(
