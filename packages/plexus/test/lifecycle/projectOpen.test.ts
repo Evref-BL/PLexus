@@ -22,6 +22,7 @@ import {
 } from "../../src/workspace/projectState.js";
 import { ScopedPharoLauncher } from "../../src/launcher/scopedPharoLauncherServer.js";
 import { writeImageEndpointHandoffForScript } from "../support/imageEndpointHandoff.js";
+import { launcherHostRunning } from "../support/launcherHost.js";
 import { defaultPharoMcpMetacelloRepositoryLocation } from "../../src/workspace/projectStartupScript.js";
 
 const tempDirs: string[] = [];
@@ -1470,6 +1471,7 @@ describe("project open", () => {
       projectRoot,
       stateRoot,
       workspaceId: "worktree-a",
+      pharoLauncherMcpClient: launcherHostRunning(),
       isPidAlive: () => false,
       isPortListening: async () => false,
     });

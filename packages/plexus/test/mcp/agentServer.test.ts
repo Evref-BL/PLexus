@@ -11,7 +11,11 @@ import type {
   ImageMcpRoute,
   ImageMcpToolRouter,
 } from "../../src/gateway/server/routing/imageMcpRouter.js";
-import { createPlexusAgentServer } from "../../src/mcp/agentServer.js";
+import {
+  createPlexusAgentServer,
+  type PlexusAgentServerOptions,
+} from "../../src/mcp/agentServer.js";
+import { launcherHostRunning } from "../support/launcherHost.js";
 
 const tempDirs: string[] = [];
 
@@ -135,19 +139,29 @@ async function connect(server: ReturnType<typeof createPlexusAgentServer>) {
   return client;
 }
 
+/** The server an agent reaches, over a host that is running nothing. */
+async function connectAgentServer(
+  options: Omit<PlexusAgentServerOptions, "workspaceId">,
+) {
+  return await connect(
+    createPlexusAgentServer({
+      workspaceId,
+      pharoLauncherMcpClient: launcherHostRunning(),
+      ...options,
+    }),
+  );
+}
+
 describe("plexus agent server", () => {
   it("serves the launcher tools when no image is running", async () => {
     const { projectRoot, stateRoot } = writeProject({ running: false });
-    const client = await connect(
-      createPlexusAgentServer({
-        projectRoot,
-        stateRoot,
-        workspaceId,
-        gateway: new PlexusGateway({
-          imageRouter: new FakeImageRouter([pharoEval]),
-        }),
+    const client = await connectAgentServer({
+      projectRoot,
+      stateRoot,
+      gateway: new PlexusGateway({
+        imageRouter: new FakeImageRouter([pharoEval]),
       }),
-    );
+    });
 
     const names = (await client.listTools()).tools.map((tool) => tool.name);
 
@@ -159,16 +173,13 @@ describe("plexus agent server", () => {
 
   it("adds the running image's own tools to the same list", async () => {
     const { projectRoot, stateRoot } = writeProject({ running: true });
-    const client = await connect(
-      createPlexusAgentServer({
-        projectRoot,
-        stateRoot,
-        workspaceId,
-        gateway: new PlexusGateway({
-          imageRouter: new FakeImageRouter([pharoEval]),
-        }),
+    const client = await connectAgentServer({
+      projectRoot,
+      stateRoot,
+      gateway: new PlexusGateway({
+        imageRouter: new FakeImageRouter([pharoEval]),
       }),
-    );
+    });
 
     const names = (await client.listTools()).tools.map((tool) => tool.name);
 
@@ -179,14 +190,11 @@ describe("plexus agent server", () => {
   it("routes a Pharo call to the image and a launcher call to the launcher", async () => {
     const { projectRoot, stateRoot } = writeProject({ running: true });
     const imageRouter = new FakeImageRouter([pharoEval]);
-    const client = await connect(
-      createPlexusAgentServer({
-        projectRoot,
-        stateRoot,
-        workspaceId,
-        gateway: new PlexusGateway({ imageRouter }),
-      }),
-    );
+    const client = await connectAgentServer({
+      projectRoot,
+      stateRoot,
+      gateway: new PlexusGateway({ imageRouter }),
+    });
     await client.listTools();
 
     const routed = await client.callTool({
