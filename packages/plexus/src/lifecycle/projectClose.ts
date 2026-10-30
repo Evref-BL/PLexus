@@ -87,12 +87,25 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+/**
+ * Everything that might still be running. A start records the pid as soon as
+ * the VM appears and only becomes "running" once its MCP answers, so an image
+ * recorded "starting" or "failed" can have a live VM and a pid we wrote;
+ * stopping only the ones recorded "running" left those behind, reported ok,
+ * with nothing in PLexus able to stop them afterwards.
+ *
+ * What is stopped is still decided by the host: the kill goes by a pid
+ * confirmed against the process list, so a stranger on the image is left
+ * alone. An image recorded stopped with no pid is the one case nothing can be
+ * running under, and it is skipped so an ordinary stop still costs no launcher
+ * call.
+ */
 function imagesToClose(
   state: ProjectState,
   imageIds: string[] | undefined,
 ): ProjectImageState[] {
   return selectedImages(state, imageIds).filter(
-    (image) => image.status === "running",
+    (image) => image.status !== "stopped" || image.pid !== undefined,
   );
 }
 

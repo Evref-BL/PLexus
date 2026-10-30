@@ -172,6 +172,82 @@ afterEach(() => {
 });
 
 describe("project close", () => {
+  it("stops an image a failed start left running", async () => {
+    const projectRoot = makeTempDir("plexus-project-");
+    const stateRoot = makeTempDir("plexus-state-");
+    writeProjectConfig(projectRoot);
+    // A start records the pid as soon as the VM appears, and only reaches
+    // "running" once the MCP answers. This is what it leaves behind when
+    // something between those two points throws.
+    writeRuntimeState(stateRoot, {
+      projectId: "project-123",
+      projectName: "my-project",
+      workspaceId: "worktree-a",
+      updatedAt: "2026-04-25T10:00:00.000Z",
+      images: [
+        {
+          id: "dev",
+          imageName: "MyProject-dev",
+          pid: 1234,
+          status: "failed",
+        },
+      ],
+    });
+    const pharoLauncherMcpClient = new FakePharoLauncherMcpClient();
+
+    const result = await closeProject({
+      projectRoot,
+      stateRoot,
+      workspaceId: "worktree-a",
+      pharoLauncherMcpClient,
+      now: fixedNow,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.stoppedImages.map((image) => image.id)).toEqual(["dev"]);
+    expect(
+      pharoLauncherMcpClient.calls.map((call) => call.name),
+    ).toEqual(["pharo_launcher_process_list", "pharo_launcher_process_kill"]);
+    expect(loadProjectState(result.statePath)?.images).toEqual([
+      {
+        id: "dev",
+        imageName: "MyProject-dev",
+        status: "stopped",
+      },
+    ]);
+  });
+
+  it("asks no launcher anything when nothing could be running", async () => {
+    const projectRoot = makeTempDir("plexus-project-");
+    const stateRoot = makeTempDir("plexus-state-");
+    writeProjectConfig(projectRoot);
+    writeRuntimeState(stateRoot, {
+      projectId: "project-123",
+      projectName: "my-project",
+      workspaceId: "worktree-a",
+      updatedAt: "2026-04-25T10:00:00.000Z",
+      images: [
+        {
+          id: "dev",
+          imageName: "MyProject-dev",
+          status: "stopped",
+        },
+      ],
+    });
+    const pharoLauncherMcpClient = new FakePharoLauncherMcpClient();
+
+    const result = await closeProject({
+      projectRoot,
+      stateRoot,
+      workspaceId: "worktree-a",
+      pharoLauncherMcpClient,
+      now: fixedNow,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(pharoLauncherMcpClient.calls).toEqual([]);
+  });
+
   it("kills running images and marks them stopped", async () => {
     const projectRoot = makeTempDir("plexus-project-");
     const stateRoot = makeTempDir("plexus-state-");
