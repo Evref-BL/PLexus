@@ -5,8 +5,7 @@ import fs from "node:fs";
 
 export const versionedManifests = [
   "package.json",
-  "packages/plexus-core/package.json",
-  "packages/plexus-gateway/package.json",
+  "packages/plexus/package.json",
 ];
 
 export function setVersion(version, { cwd = process.cwd() } = {}) {

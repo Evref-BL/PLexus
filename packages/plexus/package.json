@@ -1,0 +1,52 @@
+{
+  "name": "@evref-bl/plexus",
+  "version": "0.7.0",
+  "private": false,
+  "description": "PLexus: project-scoped Pharo runtime orchestration and MCP gateway.",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Evref-BL/PLexus.git",
+    "directory": "packages/plexus"
+  },
+  "type": "module",
+  "main": "./dist/index.js",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./gateway": {
+      "types": "./dist/gateway/server/index.d.ts",
+      "import": "./dist/gateway/server/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "plexus": "dist/cli.js",
+    "plexus-gateway": "dist/gateway/server/index.js"
+  },
+  "files": [
+    "README.md",
+    "dist",
+    "package.json"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "coverage": "vitest run --coverage --coverage.reporter=text --coverage.reporter=lcov",
+    "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\""
+  },
+  "dependencies": {
+    "@evref-bl/pharo-launcher-mcp": "0.1.4",
+    "@modelcontextprotocol/sdk": "^1.29.0"
+  }
+}
