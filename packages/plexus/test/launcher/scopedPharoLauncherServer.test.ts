@@ -699,6 +699,35 @@ describe("scoped pharo launcher facade", () => {
     ).rejects.toThrow(/pharo_launcher_template_list returned ok: false/);
   });
 
+  it("creates an image the record claims but the launcher does not hold", async () => {
+    const projectRoot = makeTempDir("plexus-project-");
+    const stateRoot = makeTempDir("plexus-state-");
+    const homePath = temporaryPlexusHome();
+    const { client } = fakeLauncherClient({ projectRoot, stateRoot });
+    writeProjectConfig(projectRoot, {
+      home: {
+        path: homePath,
+        imageCache: { enabled: true, networkPolicy: "online" },
+      },
+    });
+    // A record with nothing behind it: an image deleted by hand, or a create
+    // that half-finished. Guarding on the record refused this one forever,
+    // while image_list reported it absent in the same breath.
+    saveProjectState(statePath(projectRoot, stateRoot), runningState());
+
+    const result = await new ScopedPharoLauncher({
+      projectRoot,
+      stateRoot,
+      workspaceId: "worktree-a",
+      pharoLauncherMcpClient: client,
+      isPidAlive: () => false,
+      isPortListening: async () => false,
+      now: () => new Date("2026-05-18T12:00:00.000Z"),
+    }).createImage("dev", "pharo-13-default");
+
+    expect(result.image.runtime?.materialized).toBe(true);
+  });
+
   it("creates only declared images from an approved project template policy", async () => {
     const projectRoot = makeTempDir("plexus-project-");
     const stateRoot = makeTempDir("plexus-state-");
@@ -1429,7 +1458,9 @@ describe("scoped pharo launcher facade", () => {
       launcherImageDirectory(projectRoot, stateRoot, "MyProject-worktree-a-dev"),
       { recursive: true },
     );
-    const { client, calls } = fakeLauncherClient();
+    // With the host, the fake deletes the image files the way the launcher
+    // does; create then sees an image that is really gone.
+    const { client, calls } = fakeLauncherClient({ projectRoot, stateRoot });
     const starts: unknown[] = [];
     const stops: unknown[] = [];
     const devImageState = runningState().images[0];

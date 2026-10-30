@@ -22,10 +22,6 @@ import {
   ProjectCloseError,
   type ProjectCloseResult,
 } from "../lifecycle/projectClose.js";
-import {
-  HttpGatewayRouteRegistry,
-  type ProjectLifecycleRouteRegistry,
-} from "../lifecycle/projectLifecycle.js";
 import { openProject, ProjectOpenError } from "../lifecycle/projectOpen.js";
 import {
   formatToolResultPayload,
@@ -108,7 +104,6 @@ export interface ScopedPharoLauncherOptions {
   homeImageCacheApproval?: HomeImageCacheMutationApproval;
   projectOpen?: typeof openProject;
   projectClose?: typeof closeProject;
-  routeRegistry?: ProjectLifecycleRouteRegistry;
   fetch?: typeof fetch;
   now?: () => Date;
   /** Liveness probes, injectable so a test does not depend on the host. */
@@ -1049,22 +1044,6 @@ export class ScopedPharoLauncher {
     return nextState;
   }
 
-  private routeRegistryForState(
-    state: ProjectState,
-  ): ProjectLifecycleRouteRegistry | undefined {
-    if (this.options.routeRegistry) {
-      return this.options.routeRegistry;
-    }
-
-    const controlEndpoint = state.gateway?.controlEndpoint;
-    return controlEndpoint
-      ? new HttpGatewayRouteRegistry({
-          url: controlEndpoint,
-          fetch: this.options.fetch,
-        })
-      : undefined;
-  }
-
   private async snapshotImageBeforeDisplayModeRestart(
     scope: ResolvedScope,
     imageState: ProjectImageState,
@@ -1381,9 +1360,17 @@ export class ScopedPharoLauncher {
     const statePath = statePathForScope(scope, projectConfig);
     const previousState = loadProjectState(statePath);
     assertPreviousStateBelongsToScope(previousState, scope);
-    if (previousState?.images.some((image) => image.id === imageId)) {
+    // Ask the profile, not the record. A record can name an image the launcher
+    // no longer holds, and refusing to create that one is refusing to fix it.
+    const imageName = renderProjectImageName(imageConfig.imageName, {
+      projectId: scope.projectId,
+      projectName: projectConfig.name,
+      workspaceId: scope.workspaceId,
+      imageId,
+    });
+    if (launcherHoldsImage(scope, projectConfig, imageName)) {
       throw new ScopedPharoLauncherError(
-        `Image ${imageId} already has runtime state`,
+        `Image ${imageId} already exists as ${imageName}`,
       );
     }
     assertWorkspaceImagePolicyAllowsCreate(projectConfig, previousState, imageId);
