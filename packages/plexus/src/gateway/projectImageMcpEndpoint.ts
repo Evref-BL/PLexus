@@ -131,7 +131,3 @@ export function readImageMcpEndpointHandoff(
     };
   }
 }
-
-export function ensureImageMcpEndpointHandoffDirectory(filePath: string): void {
-  fs.mkdirSync(dirnamePathLike(filePath), { recursive: true });
-}

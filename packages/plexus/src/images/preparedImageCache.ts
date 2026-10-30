@@ -206,14 +206,6 @@ export function findPreparedImageConfig(
   return preparedImage;
 }
 
-export function findPreparedImageForProjectImage(
-  config: ProjectConfig,
-  imageConfig: ProjectImageConfig,
-): ProjectPreparedImageConfig | undefined {
-  const cacheId = imageConfig.preparedImage?.cacheId;
-  return cacheId ? findPreparedImageConfig(config, cacheId) : undefined;
-}
-
 export function generatePreparedImageCacheScript(
   options: PreparedImageCacheScriptOptions,
 ): string {

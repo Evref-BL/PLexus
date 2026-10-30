@@ -116,7 +116,6 @@ export interface ProjectHomeConfig {
 }
 
 
-export type ProjectRuntimeScope = "project";
 export type ProjectRuntimeStateRootMode = "project-local" | "external";
 
 export interface ProjectRuntimeStateRootPolicy {
@@ -133,20 +132,6 @@ export interface ProjectPharoMcpPolicy {
   supportedMajorVersions: number[];
 }
 
-
-export interface ProjectRemoteNodeWorkspaceMappingConfig {
-  workspaceId: string;
-  remoteWorkspaceId?: string;
-  remoteProjectPath?: string;
-}
-
-export interface ProjectRemoteNodeConfig {
-  id: string;
-  parentNodeId?: string;
-  projectMcpUrl: string;
-  gatewayMcpUrl: string;
-  workspaces?: ProjectRemoteNodeWorkspaceMappingConfig[];
-}
 
 export type ProjectLauncherProfileMode = "project-owned" | "external";
 
@@ -171,11 +156,8 @@ export interface ProjectLauncherProfilePolicy {
 }
 
 export interface ProjectRuntimePolicy {
-  scope: ProjectRuntimeScope;
-  nodeId?: string;
   stateRoot: ProjectRuntimeStateRootPolicy;
   workspaceImages?: ProjectWorkspaceImagePolicy;
-  remoteNodes?: ProjectRemoteNodeConfig[];
   launcherProfile: ProjectLauncherProfilePolicy;
   pharoMcp: ProjectPharoMcpPolicy;
 }
@@ -211,7 +193,6 @@ function isObject(value: unknown): value is Record<string, unknown> {
 
 export function defaultProjectRuntimePolicy(): ProjectRuntimePolicy {
   return {
-    scope: "project",
     stateRoot: {
       mode: "project-local",
     },
@@ -1108,95 +1089,6 @@ function parseRuntimeStateRoot(
 }
 
 
-function parseRemoteNodeWorkspaceMappings(
-  value: unknown,
-  issues: string[],
-  pathPrefix: string,
-): ProjectRemoteNodeWorkspaceMappingConfig[] | undefined {
-  if (value === undefined) {
-    return undefined;
-  }
-
-  if (!Array.isArray(value)) {
-    issues.push(`${pathPrefix}.workspaces must be an array`);
-    return undefined;
-  }
-
-  return value.map((item, index) => {
-    const itemPath = `${pathPrefix}.workspaces[${index}]`;
-    if (!isObject(item)) {
-      issues.push(`${itemPath} must be an object`);
-      return {
-        workspaceId: "",
-      };
-    }
-
-    const remoteWorkspaceId = optionalStringField(
-      item,
-      "remoteWorkspaceId",
-      issues,
-      itemPath,
-    );
-    const remoteProjectPath = optionalStringField(
-      item,
-      "remoteProjectPath",
-      issues,
-      itemPath,
-    );
-    return {
-      workspaceId: stringField(item, "workspaceId", issues, itemPath),
-      ...(remoteWorkspaceId ? { remoteWorkspaceId } : {}),
-      ...(remoteProjectPath ? { remoteProjectPath } : {}),
-    };
-  });
-}
-
-function parseRemoteNodes(
-  value: unknown,
-  issues: string[],
-): ProjectRemoteNodeConfig[] | undefined {
-  if (value === undefined) {
-    return undefined;
-  }
-
-  if (!Array.isArray(value)) {
-    issues.push("runtime.remoteNodes must be an array");
-    return undefined;
-  }
-
-  return value.map((item, index) => {
-    const itemPath = `runtime.remoteNodes[${index}]`;
-    if (!isObject(item)) {
-      issues.push(`${itemPath} must be an object`);
-      return {
-        id: "",
-        projectMcpUrl: "",
-        gatewayMcpUrl: "",
-      };
-    }
-
-    const workspaces = parseRemoteNodeWorkspaceMappings(
-      item.workspaces,
-      issues,
-      itemPath,
-    );
-    const parentNodeId = optionalStringField(
-      item,
-      "parentNodeId",
-      issues,
-      itemPath,
-    );
-
-    return {
-      id: stringField(item, "id", issues, itemPath),
-      ...(parentNodeId ? { parentNodeId } : {}),
-      projectMcpUrl: urlField(item, "projectMcpUrl", issues, itemPath),
-      gatewayMcpUrl: urlField(item, "gatewayMcpUrl", issues, itemPath),
-      ...(workspaces ? { workspaces } : {}),
-    };
-  });
-}
-
 
 
 function parseLauncherProfilePolicy(
@@ -1383,15 +1275,12 @@ function parseRuntimePolicy(
     value.workspaceImages,
     issues,
   );
-  const remoteNodes = parseRemoteNodes(value.remoteNodes, issues);
   const nodeId = optionalStringField(value, "nodeId", issues, "runtime");
 
   return {
-    scope: "project",
     ...(nodeId ? { nodeId } : {}),
     stateRoot: parseRuntimeStateRoot(value.stateRoot, issues),
     ...(workspaceImages ? { workspaceImages } : {}),
-    ...(remoteNodes ? { remoteNodes } : {}),
     launcherProfile: parseLauncherProfilePolicy(
       value.launcherProfile,
       issues,
@@ -1458,45 +1347,6 @@ function validatePreparedImageReferences(
   });
 }
 
-function validateRemoteNodeConfig(config: ProjectConfig, issues: string[]): void {
-  const runtime = resolveProjectRuntimePolicy(config);
-  const localNodeId = runtime.nodeId ?? projectConfigId(config);
-  const remoteNodes = runtime.remoteNodes ?? [];
-  collectDuplicates(
-    remoteNodes.map((remoteNode) => remoteNode.id),
-    "remote node ids",
-    issues,
-  );
-
-  remoteNodes.forEach((remoteNode, remoteNodeIndex) => {
-    if (remoteNode.id === localNodeId) {
-      issues.push(
-        `runtime.remoteNodes[${remoteNodeIndex}].id must differ from runtime node id: ${localNodeId}`,
-      );
-    }
-
-    if (remoteNode.parentNodeId === remoteNode.id) {
-      issues.push(
-        `runtime.remoteNodes[${remoteNodeIndex}].parentNodeId must not equal its own id: ${remoteNode.id}`,
-      );
-    } else if (
-      remoteNode.parentNodeId !== undefined &&
-      remoteNode.parentNodeId !== localNodeId
-    ) {
-      issues.push(
-        `runtime.remoteNodes[${remoteNodeIndex}].parentNodeId must be omitted or match runtime node id ${localNodeId} for flat-tree topology`,
-      );
-    }
-
-    collectDuplicates(
-      remoteNode.workspaces?.map((workspace) => workspace.workspaceId) ?? [],
-      `runtime.remoteNodes[${remoteNodeIndex}].workspaces.workspaceId`,
-      issues,
-    );
-
-  });
-}
-
 export function parseProjectConfig(value: unknown): ProjectConfig {
   const issues: string[] = [];
 
@@ -1539,7 +1389,6 @@ export function parseProjectConfig(value: unknown): ProjectConfig {
   );
   collectDuplicatePorts(config.images, issues);
   validatePreparedImageReferences(config, issues);
-  validateRemoteNodeConfig(config, issues);
 
   if (issues.length > 0) {
     throw new ProjectConfigError("Invalid Plexus project config", issues);

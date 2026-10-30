@@ -45,7 +45,6 @@ function validProjectConfig() {
 
 function defaultRuntimePolicy() {
   return {
-    scope: "project",
     stateRoot: {
       mode: "project-local",
     },
@@ -226,8 +225,7 @@ describe("project config", () => {
     const config: ReturnType<typeof validProjectConfig> & { runtime?: unknown } =
       validProjectConfig();
     config.runtime = {
-      scope: "project",
-      stateRoot: {
+        stateRoot: {
         mode: "external",
         path: "C:\\dev\\plexus-state",
       },
@@ -390,120 +388,6 @@ describe("project config", () => {
         expect.arrayContaining([
           "home.imageCache.networkPolicy must be one of online, local-only",
           "home.dependencyRepositories.networkPolicy must be one of online, local-only",
-        ]),
-      );
-    }
-  });
-
-  it("parses remote PLexus node declarations", () => {
-    const config: ReturnType<typeof validProjectConfig> & { runtime?: unknown } =
-      validProjectConfig();
-    config.runtime = {
-      nodeId: "host-a",
-      remoteNodes: [
-        {
-          id: "remote-a",
-          parentNodeId: "host-a",
-          projectMcpUrl: "http://remote-a.local:7332/mcp",
-          gatewayMcpUrl: "http://remote-a.local:7331/mcp",
-          workspaces: [
-            {
-              workspaceId: "task-a",
-              remoteWorkspaceId: "remote-task-a",
-              remoteProjectPath: "/workspaces/project-a",
-            },
-          ],
-        },
-      ],
-    };
-
-    const parsed = parseProjectConfig(config);
-
-    expect(parsed.runtime?.nodeId).toBe("host-a");
-    expect(parsed.runtime?.remoteNodes).toEqual([
-      {
-        id: "remote-a",
-        parentNodeId: "host-a",
-        projectMcpUrl: "http://remote-a.local:7332/mcp",
-        gatewayMcpUrl: "http://remote-a.local:7331/mcp",
-        workspaces: [
-          {
-            workspaceId: "task-a",
-            remoteWorkspaceId: "remote-task-a",
-            remoteProjectPath: "/workspaces/project-a",
-          },
-        ],
-      },
-    ]);
-  });
-
-  it("rejects invalid remote PLexus node declarations", () => {
-    const config: ReturnType<typeof validProjectConfig> & { runtime?: unknown } =
-      validProjectConfig();
-    config.runtime = {
-      nodeId: "host-a",
-      remoteNodes: [
-        {
-          id: "",
-          projectMcpUrl: "not-a-url",
-          gatewayMcpUrl: "",
-          workspaces: [
-            {
-              remoteWorkspaceId: "remote-task-a",
-            },
-            "not-a-workspace",
-          ],
-        },
-        {
-          id: "host-a",
-          projectMcpUrl: "http://local-cycle.local:7332/mcp",
-          gatewayMcpUrl: "http://local-cycle.local:7331/mcp",
-        },
-        {
-          id: "remote-b",
-          parentNodeId: "remote-b",
-          projectMcpUrl: "http://remote-b.local:7332/mcp",
-          gatewayMcpUrl: "http://remote-b.local:7331/mcp",
-          workspaces: [
-            {
-              workspaceId: "task-b",
-            },
-          ],
-        },
-        {
-          id: "remote-b",
-          parentNodeId: "another-host",
-          projectMcpUrl: "http://remote-b2.local:7332/mcp",
-          gatewayMcpUrl: "http://remote-b2.local:7331/mcp",
-          workspaces: [
-            {
-              workspaceId: "task-b",
-            },
-            {
-              workspaceId: "task-b",
-            },
-          ],
-        },
-      ],
-    };
-
-    expect(() => parseProjectConfig(config)).toThrow(ProjectConfigError);
-
-    try {
-      parseProjectConfig(config);
-    } catch (error) {
-      expect((error as ProjectConfigError).issues).toEqual(
-        expect.arrayContaining([
-          "runtime.remoteNodes[0].id must be a non-empty string",
-          "runtime.remoteNodes[0].projectMcpUrl must be a valid URL",
-          "runtime.remoteNodes[0].gatewayMcpUrl must be a valid URL",
-          "runtime.remoteNodes[0].workspaces[0].workspaceId must be a non-empty string",
-          "runtime.remoteNodes[0].workspaces[1] must be an object",
-          "runtime.remoteNodes[1].id must differ from runtime node id: host-a",
-          "runtime.remoteNodes[2].parentNodeId must not equal its own id: remote-b",
-          "runtime.remoteNodes[3].parentNodeId must be omitted or match runtime node id host-a for flat-tree topology",
-          "remote node ids must be unique: remote-b",
-          "runtime.remoteNodes[3].workspaces.workspaceId must be unique: task-b",
         ]),
       );
     }

@@ -265,10 +265,6 @@ function directToolResult(
   return withToolMeta(jsonResult(value, false, detail), meta);
 }
 
-export function createGatewayServer(gateway = new PlexusGateway()): Server {
-  return createGatewayServerWithOptions(gateway);
-}
-
 export function createGatewayServerWithOptions(
   gateway = new PlexusGateway(),
   options: GatewayServerOptions = {},
