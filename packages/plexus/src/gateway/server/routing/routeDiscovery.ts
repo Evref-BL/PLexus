@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 
+import { parseEndpointHandoff } from "./endpointHandoffFormat.js";
 import type {
   GatewayImageMcpEndpoint,
   GatewayProjectImageMcpServer,
@@ -79,47 +80,12 @@ function readEndpointHandoff(
     return undefined;
   }
 
-  let properties: Record<string, string>;
+  // A handoff this cannot read is a handoff with no route. Refusing to route
+  // is the safe half of that: the alternative was reading a port out of
+  // something malformed and sending tool calls to it.
   try {
-    properties = parseProperties(readFile(filePath));
+    return parseEndpointHandoff(readFile(filePath));
   } catch {
     return undefined;
   }
-
-  const port = Number.parseInt(properties.port ?? "", 10);
-  if (
-    properties.transport !== "http" ||
-    !properties.host ||
-    !Number.isInteger(port) ||
-    port < 1 ||
-    port > 65_535 ||
-    !properties.path?.startsWith("/")
-  ) {
-    return undefined;
-  }
-
-  return {
-    transport: "http",
-    host: properties.host,
-    port,
-    path: properties.path,
-  };
-}
-
-function parseProperties(source: string): Record<string, string> {
-  const parsed: Record<string, string> = {};
-  // Image-side writers use Pharo's cr, so a bare CR separates the lines.
-  for (const rawLine of source.split(/\r\n|\n|\r/)) {
-    const line = rawLine.trim();
-    if (!line || line.startsWith("#")) {
-      continue;
-    }
-
-    const separator = line.indexOf("=");
-    if (separator > 0) {
-      parsed[line.slice(0, separator).trim()] = line.slice(separator + 1).trim();
-    }
-  }
-
-  return parsed;
 }

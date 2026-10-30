@@ -3,6 +3,7 @@ import {
   dirnamePathLike,
   joinPathLike,
 } from "../support/pathStyle.js";
+import { parseEndpointHandoff } from "./server/routing/endpointHandoffFormat.js";
 import {
   projectStateDirectoryPath,
   type ProjectImageMcpEndpoint,
@@ -53,61 +54,6 @@ export function removeImageMcpEndpointHandoff(filePath: string): void {
   fs.rmSync(filePath, { force: true });
 }
 
-function parseProperties(source: string): Record<string, string> {
-  const parsed: Record<string, string> = {};
-  // Image-side writers use Pharo's cr, so a bare CR separates the lines.
-  for (const rawLine of source.split(/\r\n|\n|\r/)) {
-    const line = rawLine.trim();
-    if (!line || line.startsWith("#")) {
-      continue;
-    }
-
-    const separator = line.indexOf("=");
-    if (separator <= 0) {
-      throw new Error(`Invalid endpoint handoff line: ${rawLine}`);
-    }
-
-    parsed[line.slice(0, separator).trim()] = line.slice(separator + 1).trim();
-  }
-
-  return parsed;
-}
-
-function validatedEndpoint(
-  properties: Record<string, string>,
-): ProjectImageMcpEndpoint {
-  const transport = properties.transport;
-  if (transport !== "http") {
-    throw new Error(
-      `MCP endpoint transport must be http, got ${transport || "<missing>"}`,
-    );
-  }
-
-  const host = properties.host;
-  if (!host) {
-    throw new Error("MCP endpoint host is missing");
-  }
-
-  const port = Number.parseInt(properties.port ?? "", 10);
-  if (
-    !Number.isInteger(port) ||
-    String(port) !== properties.port ||
-    port < 1 ||
-    port > 65_535
-  ) {
-    throw new Error(
-      `MCP endpoint port must be an integer between 1 and 65535, got ${properties.port ?? "<missing>"}`,
-    );
-  }
-
-  const path = properties.path;
-  if (!path || !path.startsWith("/")) {
-    throw new Error("MCP endpoint path must start with /");
-  }
-
-  return { transport, host, port, path };
-}
-
 export function readImageMcpEndpointHandoff(
   filePath: string,
 ): ProjectImageMcpEndpointHandoffReadResult {
@@ -119,9 +65,7 @@ export function readImageMcpEndpointHandoff(
     return {
       status: "valid",
       path: filePath,
-      endpoint: validatedEndpoint(
-        parseProperties(fs.readFileSync(filePath, "utf8")),
-      ),
+      endpoint: parseEndpointHandoff(fs.readFileSync(filePath, "utf8")),
     };
   } catch (error) {
     return {
