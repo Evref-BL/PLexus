@@ -18,11 +18,14 @@ import {
   type ProjectImageConfig,
 } from "../config/projectConfig.js";
 import {
-  closeProject,
   ProjectCloseError,
+  stopProjectImage,
   type ProjectCloseResult,
 } from "../lifecycle/projectClose.js";
-import { openProject, ProjectOpenError } from "../lifecycle/projectOpen.js";
+import {
+  ProjectOpenError,
+  startProjectImage,
+} from "../lifecycle/projectOpen.js";
 import {
   formatToolResultPayload,
   toolResultDetailFromArguments,
@@ -102,8 +105,8 @@ export interface ScopedPharoLauncherOptions {
   pharoLauncherMcpClient?: PharoLauncherMcpToolClient;
   homeImageCacheClient?: PharoLauncherMcpToolClient;
   homeImageCacheApproval?: HomeImageCacheMutationApproval;
-  projectOpen?: typeof openProject;
-  projectClose?: typeof closeProject;
+  startImage?: typeof startProjectImage;
+  stopImage?: typeof stopProjectImage;
   fetch?: typeof fetch;
   now?: () => Date;
   /** Liveness probes, injectable so a test does not depend on the host. */
@@ -1472,11 +1475,11 @@ export class ScopedPharoLauncher {
     const now = this.options.now?.() ?? new Date();
     const lease = this.imageLeaseForMutation(scope, projectConfig, imageId, now);
     const openResult = await this.startingImage(imageId, () =>
-      (this.options.projectOpen ?? openProject)({
+      (this.options.startImage ?? startProjectImage)({
       projectRoot: scope.projectRoot,
       workspaceId: scope.workspaceId,
       stateRoot: scope.stateRoot,
-      imageIds: [imageId],
+      imageId,
       ...(displayMode ? { displayMode } : {}),
       homeImageCacheApproval: scopedMutationApproval(
         this.options.homeImageCacheApproval,
@@ -1615,11 +1618,11 @@ export class ScopedPharoLauncher {
     const projectConfig = loadProjectConfig(scope.projectRoot);
     const now = this.options.now?.() ?? new Date();
     const lease = this.imageLeaseForMutation(scope, projectConfig, imageId, now);
-    const closeResult = await (this.options.projectClose ?? closeProject)({
+    const closeResult = await (this.options.stopImage ?? stopProjectImage)({
       projectRoot: scope.projectRoot,
       workspaceId: scope.workspaceId,
       stateRoot: scope.stateRoot,
-      imageIds: [imageId],
+      imageId,
     });
     const statePath = statePathForScope(scope, projectConfig);
     const leasedState = this.recordImageLease(
@@ -1712,11 +1715,11 @@ export class ScopedPharoLauncher {
     let closeResult: ProjectCloseResult | undefined;
     if (previousImage) {
       try {
-        closeResult = await (this.options.projectClose ?? closeProject)({
+        closeResult = await (this.options.stopImage ?? stopProjectImage)({
           projectRoot: scope.projectRoot,
           workspaceId: scope.workspaceId,
           stateRoot: scope.stateRoot,
-          imageIds: [imageId],
+          imageId,
           pharoLauncherMcpClient: this.options.pharoLauncherMcpClient,
         });
       } catch (error) {

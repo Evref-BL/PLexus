@@ -239,6 +239,23 @@ async function stopProjectImages(options: {
   }
 }
 
+export interface StopProjectImageOptions
+  extends Omit<ProjectCloseOptions, "imageIds"> {
+  imageId: string;
+}
+
+/** Stop one image: the counterpart of `startProjectImage`. */
+export async function stopProjectImage(
+  options: StopProjectImageOptions,
+): Promise<ProjectCloseResult> {
+  const { imageId, ...rest } = options;
+  return await closeProject({ ...rest, imageIds: [imageId] });
+}
+
+/**
+ * @deprecated Use `stopProjectImage`; kept while `pharo-agent-plugin` imports
+ * the plural form.
+ */
 export async function closeProject(
   options: ProjectCloseOptions,
 ): Promise<ProjectCloseResult> {

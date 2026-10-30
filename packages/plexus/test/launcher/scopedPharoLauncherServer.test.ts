@@ -1237,7 +1237,7 @@ describe("scoped pharo launcher facade", () => {
       projectRoot,
       stateRoot,
       workspaceId: "worktree-a",
-      projectOpen: async (options) => {
+      startImage: async (options) => {
         starts.push(options);
         return {
           ok: true,
@@ -1247,7 +1247,7 @@ describe("scoped pharo launcher facade", () => {
           failures: [],
         };
       },
-      projectClose: async (options) => {
+      stopImage: async (options) => {
         stops.push(options);
         const state = stoppedState();
         return {
@@ -1270,7 +1270,7 @@ describe("scoped pharo launcher facade", () => {
         projectRoot,
         workspaceId: "worktree-a",
         stateRoot,
-        imageIds: ["dev"],
+        imageId: "dev",
         displayMode: "interactive",
       }),
     ]);
@@ -1279,7 +1279,7 @@ describe("scoped pharo launcher facade", () => {
         projectRoot,
         workspaceId: "worktree-a",
         stateRoot,
-        imageIds: ["dev"],
+        imageId: "dev",
       }),
     ]);
     // Starting and stopping an image registers nothing: the gateway reads
@@ -1315,7 +1315,7 @@ describe("scoped pharo launcher facade", () => {
           purpose: "Work on a different issue",
         },
         now: () => new Date("2026-05-18T12:00:00.000Z"),
-        projectClose: async (options) => {
+        stopImage: async (options) => {
           stops.push(options);
           return {
             ok: true,
@@ -1359,7 +1359,7 @@ describe("scoped pharo launcher facade", () => {
         purpose: "Continue issue 24",
       },
       now: () => new Date("2026-05-18T12:00:00.000Z"),
-      projectClose: async () => {
+      stopImage: async () => {
         const state: ProjectState = {
           ...runningState(),
           runtimeStatus: "idle",
@@ -1425,7 +1425,7 @@ describe("scoped pharo launcher facade", () => {
       workspaceId: "worktree-a",
       pharoLauncherMcpClient: client,
       now: () => new Date("2026-05-18T12:00:00.000Z"),
-      projectClose: async () => {
+      stopImage: async () => {
         saveProjectState(statePath(projectRoot, stateRoot), failedState);
         return {
           ok: true,
@@ -1517,7 +1517,7 @@ describe("scoped pharo launcher facade", () => {
       isPidAlive: () => true,
       isPortListening: async () => true,
       now: () => new Date("2026-05-18T12:00:00.000Z"),
-      projectClose: async (options) => {
+      stopImage: async (options) => {
         removeEndpointHandoff(projectRoot, stateRoot);
         stops.push(options);
         const state = {
@@ -1543,7 +1543,7 @@ describe("scoped pharo launcher facade", () => {
           failures: [],
         };
       },
-      projectOpen: async (options) => {
+      startImage: async (options) => {
         writeEndpointHandoff(projectRoot, stateRoot);
         starts.push(options);
         const state = {
@@ -1587,7 +1587,7 @@ describe("scoped pharo launcher facade", () => {
         projectRoot,
         workspaceId: "worktree-a",
         stateRoot,
-        imageIds: ["dev"],
+        imageId: "dev",
         pharoLauncherMcpClient: client,
       }),
     ]);
@@ -1615,7 +1615,7 @@ describe("scoped pharo launcher facade", () => {
         projectRoot,
         workspaceId: "worktree-a",
         stateRoot,
-        imageIds: ["dev"],
+        imageId: "dev",
         displayMode: "interactive",
       }),
     ]);
@@ -1673,7 +1673,7 @@ describe("scoped pharo launcher facade", () => {
       workspaceId: "worktree-a",
       isPidAlive: () => true,
       isPortListening: async () => true,
-      projectOpen: async (options) => {
+      startImage: async (options) => {
         starts.push(options);
         materializeLauncherImage(projectRoot, stateRoot);
         writeEndpointHandoff(projectRoot, stateRoot);
@@ -1698,7 +1698,7 @@ describe("scoped pharo launcher facade", () => {
         projectRoot,
         workspaceId: "worktree-a",
         stateRoot,
-        imageIds: ["dev"],
+        imageId: "dev",
         displayMode: "interactive",
       }),
     ]);
@@ -1799,11 +1799,11 @@ describe("scoped pharo launcher facade", () => {
           { status: 200 },
         );
       },
-      projectClose: async (options) => {
+      stopImage: async (options) => {
         calls.push("close");
         removeEndpointHandoff(projectRoot, stateRoot);
         expect(options).toMatchObject({
-          imageIds: ["dev"],
+          imageId: "dev",
         });
         const state = {
           ...runningState(),
@@ -1827,11 +1827,11 @@ describe("scoped pharo launcher facade", () => {
           failures: [],
         };
       },
-      projectOpen: async (options) => {
+      startImage: async (options) => {
         calls.push("open");
         writeEndpointHandoff(projectRoot, stateRoot);
         expect(options).toMatchObject({
-          imageIds: ["dev"],
+          imageId: "dev",
           displayMode: "interactive",
         });
         const state = {

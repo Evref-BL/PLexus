@@ -1515,6 +1515,27 @@ async function openActiveProjectImages(
   }
 }
 
+export interface StartProjectImageOptions
+  extends Omit<ProjectOpenOptions, "imageIds"> {
+  imageId: string;
+}
+
+/**
+ * Start one image the project declares. This is the operation: PLexus acts on
+ * an image, named by the caller, and reports what happened to that image.
+ */
+export async function startProjectImage(
+  options: StartProjectImageOptions,
+): Promise<ProjectOpenResult> {
+  const { imageId, ...rest } = options;
+  return await openProject({ ...rest, imageIds: [imageId] });
+}
+
+/**
+ * @deprecated Use `startProjectImage`. The plural form only survives because
+ * `pharo-agent-plugin` still imports it, always with a single id; it goes when
+ * the plugin moves.
+ */
 export async function openProject(
   options: ProjectOpenOptions,
 ): Promise<ProjectOpenResult> {
