@@ -25,6 +25,7 @@ import { describePharoLauncherMcpProfile } from "../../src/launcher/pharoLaunche
 import { loadProjectConfig } from "../../src/config/projectConfig.js";
 import {
   ScopedPharoLauncher,
+  callScopedPharoLauncherTool,
   createScopedPharoLauncherServer,
   scopedImageLeaseOptionsFromEnvironment,
   scopedPharoLauncherTools,
@@ -1475,6 +1476,77 @@ describe("scoped pharo launcher facade", () => {
       createdAt: "2026-05-18T12:00:00.000Z",
       heartbeatAt: "2026-05-18T12:00:00.000Z",
     });
+  });
+
+  it("opens one launcher client for a tool call, whatever it takes", async () => {
+    temporaryPlexusHome();
+    const projectRoot = makeTempDir("plexus-project-");
+    const stateRoot = makeTempDir("plexus-state-");
+    writeProjectConfig(projectRoot, {
+      home: { imageCache: { enabled: false, networkPolicy: "online" } },
+      runtime: { launcherProfile: { templateCatalog: { source: "none" } } },
+    });
+    const { client, calls } = fakeLauncherClient({ projectRoot, stateRoot });
+    const failedState: ProjectState = {
+      ...runningState(),
+      runtimeStatus: "idle",
+      images: [
+        {
+          id: "dev",
+          imageName: "MyProject-worktree-a-dev",
+          status: "failed",
+        },
+      ],
+    };
+    saveProjectState(statePath(projectRoot, stateRoot), failedState);
+
+    const opened: PharoLauncherMcpToolClient[] = [];
+    const closed: PharoLauncherMcpToolClient[] = [];
+    const facade = new ScopedPharoLauncher({
+      projectRoot,
+      stateRoot,
+      workspaceId: "worktree-a",
+      now: () => new Date("2026-05-18T12:00:00.000Z"),
+      createPharoLauncherMcpClient: async () => {
+        const opening: PharoLauncherMcpToolClient = {
+          callTool: (name, argumentsValue) =>
+            client.callTool(name, argumentsValue),
+          close: async () => {
+            closed.push(opening);
+          },
+        };
+        opened.push(opening);
+        return opening;
+      },
+      stopImage: async () => {
+        saveProjectState(statePath(projectRoot, stateRoot), failedState);
+        return {
+          ok: true,
+          projectRoot,
+          statePath: statePath(projectRoot, stateRoot),
+          state: failedState,
+          stoppedImages: failedState.images,
+          failures: [],
+        };
+      },
+    });
+
+    const result = await callScopedPharoLauncherTool(
+      facade,
+      "pharo_launcher_image_reset",
+      { imageId: "dev", confirm: true, start: false },
+    );
+
+    expect(result.isError).toBeFalsy();
+    // Three turns at the launcher — the create and the listing each step
+    // reports — and one client to take them.
+    expect(calls.map((call) => call.name)).toEqual([
+      "pharo_launcher_image_create",
+      "pharo_launcher_process_list",
+      "pharo_launcher_process_list",
+    ]);
+    expect(opened).toHaveLength(1);
+    expect(closed).toEqual(opened);
   });
 
   it("resets a record whose launcher image was never created", async () => {

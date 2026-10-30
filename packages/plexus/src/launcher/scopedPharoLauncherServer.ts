@@ -100,12 +100,35 @@ function objectSchema(
   } as const;
 }
 
+/**
+ * A held client whose opening failed has nothing to close, and a close that
+ * fails must not become the operation's error: the work it was holding the
+ * client for is already done.
+ */
+async function closeHeldClient(
+  held: Promise<PharoLauncherMcpToolClient> | undefined,
+): Promise<void> {
+  if (!held) {
+    return;
+  }
+
+  try {
+    await (await held).close?.();
+  } catch {
+    // Nothing left to do with it.
+  }
+}
+
 export interface ScopedPharoLauncherOptions {
   projectRoot: string;
   workspaceId?: string;
   stateRoot?: string;
   imageLease?: ScopedImageLeaseOptions;
   pharoLauncherMcpClient?: PharoLauncherMcpToolClient;
+  /** How a launcher client is opened when none is injected. */
+  createPharoLauncherMcpClient?: (
+    profileEnvironment: Record<string, string> | undefined,
+  ) => Promise<PharoLauncherMcpToolClient>;
   homeImageCacheClient?: PharoLauncherMcpToolClient;
   homeImageCacheApproval?: HomeImageCacheMutationApproval;
   startImage?: typeof startProjectImage;
@@ -1017,6 +1040,10 @@ async function listTemplatesInCategory(
 export class ScopedPharoLauncher {
   constructor(private readonly options: ScopedPharoLauncherOptions) {}
 
+  /** The client held for the operations in flight, and how many hold it. */
+  private heldClient?: Promise<PharoLauncherMcpToolClient>;
+  private holdCount = 0;
+
   private currentImageState(
     scope: ResolvedScope,
     projectConfig: ProjectConfig,
@@ -1260,29 +1287,71 @@ export class ScopedPharoLauncher {
     };
   }
 
+  /**
+   * One launcher client for one operation.
+   *
+   * Every step that reaches the launcher used to open its own
+   * pharo-launcher-mcp subprocess: a reset closes, deletes, creates and
+   * reopens, reporting a listing after each step, which was four. The caller
+   * says where an operation begins and ends — a tool call, a CLI command —
+   * because this facade cannot tell one from a sequence of them.
+   *
+   * Operations that overlap share the client, and the last one out closes it.
+   * They can: the facade is bound to one project root and workspace, so every
+   * client it would open is opened with the same profile environment.
+   */
+  async runOperation<T>(action: () => Promise<T>): Promise<T> {
+    this.holdCount += 1;
+    try {
+      return await action();
+    } finally {
+      this.holdCount -= 1;
+      if (this.holdCount === 0) {
+        const held = this.heldClient;
+        this.heldClient = undefined;
+        await closeHeldClient(held);
+      }
+    }
+  }
+
+  private async openLauncherClient(
+    scope: ResolvedScope,
+    projectConfig: ProjectConfig,
+  ): Promise<PharoLauncherMcpToolClient> {
+    const profileEnvironment = pharoLauncherMcpProfileEnvironment({
+      projectRoot: scope.projectRoot,
+      config: projectConfig,
+      workspaceId: scope.workspaceId,
+      stateRoot: scope.stateRoot,
+    });
+
+    return this.options.createPharoLauncherMcpClient
+      ? await this.options.createPharoLauncherMcpClient(profileEnvironment)
+      : await createStdioPharoLauncherMcpClient(undefined, {
+          ...(profileEnvironment === undefined ? {} : { profileEnvironment }),
+        });
+  }
+
   private async withLauncherClient<T>(
     scope: ResolvedScope,
     projectConfig: ProjectConfig,
     action: (client: PharoLauncherMcpToolClient) => Promise<T>,
   ): Promise<T> {
-    const client =
-      this.options.pharoLauncherMcpClient ??
-      (await createStdioPharoLauncherMcpClient(undefined, {
-        profileEnvironment: pharoLauncherMcpProfileEnvironment({
-          projectRoot: scope.projectRoot,
-          config: projectConfig,
-          workspaceId: scope.workspaceId,
-          stateRoot: scope.stateRoot,
-        }),
-      }));
-    const ownsClient = !this.options.pharoLauncherMcpClient;
+    const injected = this.options.pharoLauncherMcpClient;
+    if (injected) {
+      return await action(injected);
+    }
 
+    if (this.holdCount > 0) {
+      this.heldClient ??= this.openLauncherClient(scope, projectConfig);
+      return await action(await this.heldClient);
+    }
+
+    const client = await this.openLauncherClient(scope, projectConfig);
     try {
       return await action(client);
     } finally {
-      if (ownsClient) {
-        await client.close?.();
-      }
+      await client.close?.();
     }
   }
 
@@ -1410,12 +1479,13 @@ export class ScopedPharoLauncher {
     const scope = resolveScope(this.options);
     const projectConfig = loadProjectConfig(scope.projectRoot);
     const imageConfig = findImageConfig(projectConfig, imageId);
-    if (!imageConfig.create) {
+    const createPolicy = imageConfig.create;
+    if (!createPolicy) {
       throw new ScopedPharoLauncherError(
         `Image ${imageId} has no approved create policy in project config`,
       );
     }
-    if (profileId && profileId !== imageConfig.create.profileId) {
+    if (profileId && profileId !== createPolicy.profileId) {
       throw new ScopedPharoLauncherError(
         `Profile ${profileId} is not approved for image ${imageId}`,
       );
@@ -1454,19 +1524,7 @@ export class ScopedPharoLauncher {
       );
     }
 
-    const client =
-      this.options.pharoLauncherMcpClient ??
-      (await createStdioPharoLauncherMcpClient(undefined, {
-        profileEnvironment: pharoLauncherMcpProfileEnvironment({
-          projectRoot: scope.projectRoot,
-          config: projectConfig,
-          workspaceId: scope.workspaceId,
-          stateRoot: scope.stateRoot,
-        }),
-      }));
-    const ownsClient = !this.options.pharoLauncherMcpClient;
-
-    try {
+    await this.withLauncherClient(scope, projectConfig, async (client) => {
       const homeMaterialization = await materializeProjectImageFromHomeCache({
         runtimeClient: client,
         homeClient: this.options.homeImageCacheClient ??
@@ -1495,9 +1553,9 @@ export class ScopedPharoLauncher {
           "pharo_launcher_image_create",
           {
             newImageName: renderedImageName(scope, imageConfig),
-            templateName: imageConfig.create.templateName,
-            ...(imageConfig.create.templateCategory
-              ? { templateCategory: imageConfig.create.templateCategory }
+            templateName: createPolicy.templateName,
+            ...(createPolicy.templateCategory
+              ? { templateCategory: createPolicy.templateCategory }
               : {}),
             noLaunch: true,
           },
@@ -1507,11 +1565,7 @@ export class ScopedPharoLauncher {
 
       const nextState = stateWithImageLease(state, imageId, lease, now);
       saveProjectState(statePath, nextState);
-    } finally {
-      if (ownsClient) {
-        await client.close?.();
-      }
-    }
+    });
 
     return await this.imageInfo(imageId);
   }
@@ -1715,29 +1769,13 @@ export class ScopedPharoLauncher {
     projectConfig: ProjectConfig,
     imageName: string,
   ): Promise<void> {
-    const client =
-      this.options.pharoLauncherMcpClient ??
-      (await createStdioPharoLauncherMcpClient(undefined, {
-        profileEnvironment: pharoLauncherMcpProfileEnvironment({
-          projectRoot: scope.projectRoot,
-          config: projectConfig,
-          workspaceId: scope.workspaceId,
-          stateRoot: scope.stateRoot,
-        }),
-      }));
-    const ownsClient = !this.options.pharoLauncherMcpClient;
-
-    try {
+    await this.withLauncherClient(scope, projectConfig, async (client) => {
       const deleteResult = await client.callTool<LauncherCommandResult>(
         "pharo_launcher_image_delete",
         { imageName, force: true, confirm: true },
       );
       assertLauncherOk(deleteResult, "pharo_launcher_image_delete");
-    } finally {
-      if (ownsClient) {
-        await client.close?.();
-      }
-    }
+    });
   }
 
   async resetImage(
@@ -2046,12 +2084,17 @@ export function createScopedPharoLauncherServer(
 }
 
 /** Shared so the composed `plexus mcp` server dispatches identically. */
+/**
+ * One tool call is one operation, which is where a launcher client is opened
+ * and closed. A call that reaches the launcher several times — a reset reports
+ * a listing after each of its four steps — opens one, not four.
+ */
 export async function callScopedPharoLauncherTool(
   facade: ScopedPharoLauncher,
   name: string,
   argumentsValue: Record<string, unknown> | undefined,
 ): Promise<CallToolResult> {
-  {
+  return await facade.runOperation(async () => {
     const input = argumentsValue ?? {};
     const detail = toolResultDetailFromArguments(input);
     const request = { params: { name } };
@@ -2154,7 +2197,7 @@ export async function callScopedPharoLauncherTool(
     } catch (error) {
       return textResult(scopedErrorPayload(error), true, detail);
     }
-  }
+  });
 }
 
 export async function startScopedPharoLauncherServer(

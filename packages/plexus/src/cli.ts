@@ -32,23 +32,27 @@ async function runImageCommand(
   };
 
   try {
-    switch (parsed.command) {
-      case "list":
-        return print(await launcher.listImages());
-      case "create":
-        return print(await launcher.createImage(needsImageId()));
-      case "start":
-        return print(
-          await launcher.startImage(needsImageId(), parsed.displayMode),
-        );
-      case "stop":
-        return print(await launcher.stopImage(needsImageId()));
-      case "delete":
-        return print(await launcher.deleteImage(needsImageId()));
-      default:
-        console.error(usage());
-        return 2;
-    }
+    // One command is one operation, so it opens one launcher client however
+    // many steps it takes.
+    return await launcher.runOperation(async () => {
+      switch (parsed.command) {
+        case "list":
+          return print(await launcher.listImages());
+        case "create":
+          return print(await launcher.createImage(needsImageId()));
+        case "start":
+          return print(
+            await launcher.startImage(needsImageId(), parsed.displayMode),
+          );
+        case "stop":
+          return print(await launcher.stopImage(needsImageId()));
+        case "delete":
+          return print(await launcher.deleteImage(needsImageId()));
+        default:
+          console.error(usage());
+          return 2;
+      }
+    });
   } catch (error) {
     console.error(
       JSON.stringify(
