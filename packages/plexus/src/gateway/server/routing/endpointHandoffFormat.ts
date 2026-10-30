@@ -14,6 +14,13 @@ export interface EndpointHandoff {
   host: string;
   port: number;
   path: string;
+  /**
+   * The process that bound the port, when the image could tell. A port
+   * outlives the process that bound it, so this is what separates an endpoint
+   * from the memory of one. Images that cannot tell their own pid write no
+   * pid line, and a reader without one has only the port to go on.
+   */
+  pid?: number;
 }
 
 export function parseEndpointHandoff(source: string): EndpointHandoff {
@@ -38,6 +45,19 @@ function parseProperties(source: string): Record<string, string> {
   }
 
   return parsed;
+}
+
+function pidProperty(value: string | undefined): { pid?: number } {
+  if (value === undefined) {
+    return {};
+  }
+
+  const pid = Number.parseInt(value, 10);
+  if (!Number.isInteger(pid) || String(pid) !== value || pid < 1) {
+    throw new Error(`MCP endpoint pid must be a positive integer, got ${value}`);
+  }
+
+  return { pid };
 }
 
 function validatedEndpoint(
@@ -72,5 +92,5 @@ function validatedEndpoint(
     throw new Error("MCP endpoint path must start with /");
   }
 
-  return { transport, host, port, path };
+  return { transport, host, port, path, ...pidProperty(properties.pid) };
 }

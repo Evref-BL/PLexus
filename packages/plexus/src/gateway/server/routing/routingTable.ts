@@ -1,5 +1,6 @@
 import path from "node:path";
 
+import { isPidAlive } from "../support/processLiveness.js";
 import {
   discoverImageMcpServers,
   readProjectState,
@@ -24,6 +25,8 @@ export interface GatewayImageMcpEndpoint {
   host: string;
   port: number;
   path: string;
+  /** The process that bound the port, when the image could tell. */
+  pid?: number;
 }
 
 export interface GatewayProjectImageMcpServer {
@@ -222,6 +225,7 @@ function imageRoutability(
     health?: GatewayImageHealth;
     remoteGateway?: GatewayRemoteGatewayUpstream;
   },
+  processIsAlive: (pid: number) => boolean = isPidAlive,
 ): GatewayImageRoutability {
   if (image.pharoMcpContract?.status === "unsupported") {
     return contractRoutability(
@@ -247,6 +251,21 @@ function imageRoutability(
       ok: false,
       code: "image_unavailable",
       message: `Image ${image.id} is not running; current status is ${image.status}`,
+    };
+  }
+
+  // The endpoint names the process that bound the port. That process is gone,
+  // so whatever holds the port now is not this image, and routing a tool call
+  // to it would be routing it to a stranger. An image binds port 0, so the
+  // port it wrote down is free to be reused the moment it dies.
+  if (
+    image.endpoint?.pid !== undefined &&
+    !processIsAlive(image.endpoint.pid)
+  ) {
+    return {
+      ok: false,
+      code: "image_unavailable",
+      message: `Image ${image.id} left an endpoint behind: the process that bound its port has exited`,
     };
   }
 
@@ -389,12 +408,16 @@ export class PlexusRoutingTable {
           endpoint: server.endpoint,
           status: image.status,
           health,
-          routable: imageRoutability(state.pharoMcpContract, {
-            ...image,
-            endpoint: server.endpoint,
-            health,
-            remoteGateway: state.remoteGateway,
-          }),
+          routable: imageRoutability(
+            state.pharoMcpContract,
+            {
+              ...image,
+              endpoint: server.endpoint,
+              health,
+              remoteGateway: state.remoteGateway,
+            },
+            this.dependencies.isPidAlive ?? isPidAlive,
+          ),
           routeMetadata: imageRouteMetadata(state, server.id),
           ...(image.pharoMcpContract
             ? { pharoMcpContract: image.pharoMcpContract }

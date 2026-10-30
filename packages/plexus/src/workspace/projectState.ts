@@ -36,6 +36,8 @@ export interface ProjectImageMcpEndpoint {
   host: string;
   port: number;
   path: string;
+  /** The process that bound the port, when the image could tell. */
+  pid?: number;
 }
 
 export interface ProjectImageMcpServer {

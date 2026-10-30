@@ -13,7 +13,10 @@ import type {
   ImageMcpRoute,
   ImageMcpToolRouter,
 } from "../../../../src/gateway/server/routing/imageMcpRouter.js";
-import type { GatewayProjectState } from "../../../../src/gateway/server/routing/routingTable.js";
+import {
+  PlexusRoutingTable,
+  type GatewayProjectState,
+} from "../../../../src/gateway/server/routing/routingTable.js";
 
 const tempDirs: string[] = [];
 
@@ -185,7 +188,10 @@ async function registerTarget(
       fs.writeFileSync(
         path.join(endpoints, `${server.id}.properties`),
         `transport=${server.endpoint.transport}\nhost=${server.endpoint.host}\n` +
-          `port=${server.endpoint.port}\npath=${server.endpoint.path}\n`,
+          `port=${server.endpoint.port}\npath=${server.endpoint.path}\n` +
+          ("pid" in server.endpoint && server.endpoint.pid !== undefined
+            ? `pid=${server.endpoint.pid}\n`
+            : ""),
         "utf8",
       );
     }
@@ -345,6 +351,71 @@ describe("PlexusGateway", () => {
         },
       ],
     });
+  });
+
+  it("does not route to an endpoint whose process has exited", async () => {
+    const leftBehind: GatewayProjectState = {
+      ...runningState,
+      images: [
+        {
+          id: "dev",
+          imageName: "MyProject-dev",
+          mcpServers: [
+            {
+              id: "dev",
+              endpoint: {
+                transport: "http" as const,
+                host: "127.0.0.1",
+                port: 7125,
+                path: "/",
+                pid: 4711,
+              },
+            },
+          ],
+          pid: 4711,
+          status: "running",
+        },
+      ],
+    };
+
+    // The record says running and the handoff file is still there, which is
+    // what an image that died outside PLexus leaves behind.
+    const gone = new PlexusGateway({
+      routingTable: new PlexusRoutingTable([], { isPidAlive: () => false }),
+      imageRouter: new FakeImageRouter(),
+    });
+    await registerTarget(gone, leftBehind);
+
+    await expect(
+      gone.handleTool("plexus_route_to_image", {
+        projectId: "project-123",
+        workspaceId: "worktree-a",
+        mcpServerId: "dev",
+        toolName: "pharo_eval",
+      }),
+    ).resolves.toMatchObject({
+      ok: false,
+      error:
+        "Image dev left an endpoint behind: the process that bound its port has exited",
+    });
+
+    // The same files, with that process still running.
+    const imageRouter = new FakeImageRouter();
+    const alive = new PlexusGateway({
+      routingTable: new PlexusRoutingTable([], { isPidAlive: () => true }),
+      imageRouter,
+    });
+    await registerTarget(alive, leftBehind);
+
+    await expect(
+      alive.handleTool("plexus_route_to_image", {
+        projectId: "project-123",
+        workspaceId: "worktree-a",
+        mcpServerId: "dev",
+        toolName: "pharo_eval",
+      }),
+    ).resolves.toMatchObject({ ok: true });
+    expect(imageRouter.calls).toHaveLength(1);
   });
 
   it("marks unhealthy refreshed routes as unroutable", async () => {

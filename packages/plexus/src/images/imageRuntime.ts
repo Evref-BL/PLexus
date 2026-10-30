@@ -4,6 +4,7 @@ import {
   imageMcpEndpointHandoffPath,
   readImageMcpEndpointHandoff,
 } from "../gateway/projectImageMcpEndpoint.js";
+import { isPidAlive } from "../gateway/server/support/processLiveness.js";
 import { joinPathLike } from "../support/pathStyle.js";
 import type { ProjectStatePathOptions } from "../workspace/projectState.js";
 
@@ -28,7 +29,11 @@ export interface ImageProcessObservation {
 }
 
 export interface ImageEndpointObservation {
-  handoff: "missing" | "valid" | "invalid";
+  /**
+   * "stale" is a handoff whose process has exited: the file is readable and
+   * the port may well be taken, but not by this image.
+   */
+  handoff: "missing" | "valid" | "invalid" | "stale";
   listening: boolean;
   url?: string;
   error?: string;
@@ -78,22 +83,6 @@ export async function isPortInUse(host: string, port: number): Promise<boolean> 
   });
 }
 
-export function isPidAlive(pid: number): boolean {
-  try {
-    globalThis.process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    // EPERM means a process exists that we may not signal.
-    return errorCode(error) === "ESRCH" ? false : true;
-  }
-}
-
-function errorCode(error: unknown): string | undefined {
-  return typeof error === "object" && error !== null && "code" in error
-    ? String((error as { code: unknown }).code)
-    : undefined;
-}
-
 export function imageFileExists(
   imagesDirectory: string,
   imageName: string,
@@ -119,7 +108,7 @@ export async function observeImageRuntime(
       : { onHost: options.runningOnHost }),
   };
 
-  const endpoint = await observeEndpoint(options, portListening);
+  const endpoint = await observeEndpoint(options, portListening, pidAlive);
 
   return {
     status: runtimeStatus(materialized, process, endpoint),
@@ -132,6 +121,7 @@ export async function observeImageRuntime(
 async function observeEndpoint(
   options: ObserveImageRuntimeOptions,
   portListening: (host: string, port: number) => Promise<boolean>,
+  pidAlive: (pid: number) => boolean,
 ): Promise<ImageEndpointObservation> {
   const handoff = readImageMcpEndpointHandoff(
     imageMcpEndpointHandoffPath({
@@ -155,11 +145,16 @@ async function observeEndpoint(
     return { handoff: "invalid", listening: false, error: handoff.error };
   }
 
-  const { host, port, transport, path } = handoff.endpoint;
+  const { host, port, transport, path, pid } = handoff.endpoint;
+  const url = `${transport === "http" ? "http" : transport}://${host}:${port}${path}`;
+  if (pid !== undefined && !pidAlive(pid)) {
+    return { handoff: "stale", listening: false, url };
+  }
+
   return {
     handoff: "valid",
     listening: await portListening(host, port),
-    url: `${transport === "http" ? "http" : transport}://${host}:${port}${path}`,
+    url,
   };
 }
 

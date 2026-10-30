@@ -23,6 +23,7 @@ import {
   projectImageCanUseHomeImageCache,
   type HomeImageCacheMutationApproval,
 } from "../images/homeImageCache.js";
+import { isPidAlive } from "../gateway/server/support/processLiveness.js";
 import { pharoLauncherMcpProfileEnvironment } from "../launcher/pharoLauncherProfile.js";
 import {
   HttpPharoMcpHealthClient,
@@ -379,15 +380,6 @@ function launcherProcessFromResult(
     imageName,
     commandLine: `pharo_launcher_image_launch ${imageName}`,
   };
-}
-
-function isPidAlive(pid: number): boolean {
-  try {
-    globalThis.process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return isObject(error) && error.code === "ESRCH" ? false : true;
-  }
 }
 
 function collectLauncherLogPaths(

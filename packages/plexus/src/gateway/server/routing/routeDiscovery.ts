@@ -21,6 +21,8 @@ export interface RouteDiscoverySource {
 export interface RouteDiscoveryDependencies {
   readFile?: (filePath: string) => string;
   exists?: (filePath: string) => boolean;
+  /** Whether the process that wrote an endpoint is still running. */
+  isPidAlive?: (pid: number) => boolean;
 }
 
 export const mcpEndpointDirectoryName = "mcp-endpoints";
