@@ -6,7 +6,7 @@ export * from "./mcp/pharoMcpHealth.js";
 export * from "./images/preparedImageCache.js";
 export * from "./lifecycle/projectClose.js";
 export * from "./config/projectConfig.js";
-export * from "./gateway/projectGateway.js";
+export * from "./images/imageRuntime.js";
 export * from "./lifecycle/projectOpen.js";
 export * from "./workspace/projectStartupScript.js";
 export * from "./workspace/projectState.js";

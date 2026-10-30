@@ -1,18 +1,7 @@
-import fs from "node:fs";
 import { createRequire } from "node:module";
-import { fileURLToPath } from "node:url";
 import { dirnamePathLike, joinPathLike } from "../support/pathStyle.js";
 
 export interface PharoLauncherMcpConfig {
-  source: "env" | "package" | "command";
-  command: string;
-  args: string[];
-  entry?: string;
-  packageDir?: string;
-  repoDir?: string;
-}
-
-export interface PlexusGatewayConfig {
   source: "env" | "package" | "command";
   command: string;
   args: string[];
@@ -25,18 +14,11 @@ export interface LoadPharoLauncherMcpConfigOptions {
   resolveInstalledEntry?: () => string | undefined;
 }
 
-export interface LoadPlexusGatewayConfigOptions {
-  resolveInstalledEntry?: () => string | undefined;
-}
-
 const require = createRequire(import.meta.url);
 
 export const pharoLauncherMcpPackageName =
   "@evref-bl/pharo-launcher-mcp" as const;
 export const pharoLauncherMcpCommandName = "pharo-launcher-mcp" as const;
-// The gateway ships in this package now, on its own subpath and bin.
-export const plexusGatewayPackageName = "@evref-bl/plexus/gateway" as const;
-export const plexusGatewayCommandName = "plexus-gateway" as const;
 
 function packageDirFromEntry(entry: string): string {
   return dirnamePathLike(dirnamePathLike(entry));
@@ -50,38 +32,12 @@ function resolveInstalledPharoLauncherMcpEntry(): string | undefined {
   }
 }
 
-function resolveInstalledPlexusGatewayEntry(): string | undefined {
-  // The gateway ships in this package, so its entry is a sibling under dist/
-  // rather than something to resolve by name.
-  const entry = fileURLToPath(
-    new URL("../gateway/server/index.js", import.meta.url),
-  );
-
-  return fs.existsSync(entry) ? entry : undefined;
-}
-
-/** `<pkg>/dist/gateway/server/index.js` -> `<pkg>`. */
-function packageDirFromGatewayEntry(entry: string): string {
-  return dirnamePathLike(
-    dirnamePathLike(dirnamePathLike(dirnamePathLike(entry))),
-  );
-}
-
 function hasExplicitPharoLauncherMcpEnv(env: NodeJS.ProcessEnv): boolean {
   return Boolean(
     env.PHARO_LAUNCHER_MCP_COMMAND ??
       env.PHARO_LAUNCHER_MCP_ARGS ??
       env.PHARO_LAUNCHER_MCP_ENTRY ??
       env.PHARO_LAUNCHER_MCP_REPO_DIR,
-  );
-}
-
-function hasExplicitPlexusGatewayEnv(env: NodeJS.ProcessEnv): boolean {
-  return Boolean(
-    env.PLEXUS_GATEWAY_COMMAND ??
-      env.PLEXUS_GATEWAY_ARGS ??
-      env.PLEXUS_GATEWAY_ENTRY ??
-      env.PLEXUS_GATEWAY_REPO_DIR,
   );
 }
 
@@ -94,10 +50,6 @@ function parseCommandArgs(value: string | undefined): string[] | undefined {
 }
 
 function defaultPharoLauncherMcpEntryForRepo(repoDir: string): string {
-  return joinPathLike(repoDir, "dist", "index.js");
-}
-
-function defaultPlexusGatewayEntryForRepo(repoDir: string): string {
   return joinPathLike(repoDir, "dist", "index.js");
 }
 
@@ -141,42 +93,3 @@ export function loadPharoLauncherMcpConfig(
   };
 }
 
-export function loadPlexusGatewayConfig(
-  env: NodeJS.ProcessEnv = process.env,
-  options: LoadPlexusGatewayConfigOptions = {},
-): PlexusGatewayConfig {
-  if (!hasExplicitPlexusGatewayEnv(env)) {
-    const installedEntry = (
-      options.resolveInstalledEntry ?? resolveInstalledPlexusGatewayEntry
-    )();
-    if (installedEntry) {
-      return {
-        source: "package",
-        command: process.execPath,
-        args: [installedEntry],
-        entry: installedEntry,
-        packageDir: packageDirFromGatewayEntry(installedEntry),
-      };
-    }
-
-    return {
-      source: "command",
-      command: plexusGatewayCommandName,
-      args: [],
-    };
-  }
-
-  const explicitArgs = parseCommandArgs(env.PLEXUS_GATEWAY_ARGS);
-  const repoDir = env.PLEXUS_GATEWAY_REPO_DIR;
-  const entry =
-    env.PLEXUS_GATEWAY_ENTRY ??
-    (repoDir ? defaultPlexusGatewayEntryForRepo(repoDir) : undefined);
-
-  return {
-    source: "env",
-    ...(repoDir ? { repoDir } : {}),
-    ...(entry ? { entry } : {}),
-    command: env.PLEXUS_GATEWAY_COMMAND ?? process.execPath,
-    args: explicitArgs ?? (entry ? [entry] : []),
-  };
-}

@@ -1,6 +1,5 @@
 import fs from "node:fs";
-
-import { isPortInUse } from "../gateway/projectGateway.js";
+import net from "node:net";
 import {
   imageMcpEndpointHandoffPath,
   readImageMcpEndpointHandoff,
@@ -47,6 +46,25 @@ export interface ObserveImageRuntimeOptions extends ProjectStatePathOptions {
   pid?: number;
   isPidAlive?: (pid: number) => boolean;
   isPortListening?: (host: string, port: number) => Promise<boolean>;
+}
+
+/**
+ * Something is listening there. Binding the port ourselves is the cheapest
+ * honest answer: if the bind fails, the port is taken.
+ */
+export async function isPortInUse(host: string, port: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const server = net.createServer();
+    const finish = (unavailable: boolean): void => {
+      server.removeAllListeners();
+      resolve(unavailable);
+    };
+
+    server.once("error", () => finish(true));
+    server.listen(port, host, () => {
+      server.close(() => finish(false));
+    });
+  });
 }
 
 export function isPidAlive(pid: number): boolean {
