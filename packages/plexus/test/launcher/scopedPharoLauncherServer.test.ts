@@ -201,15 +201,35 @@ function imageLease(
   };
 }
 
-function fakeLauncherClient(host?: {
-  projectRoot: string;
-  stateRoot: string;
-}) {
+function fakeLauncherClient(
+  host?: {
+    projectRoot: string;
+    stateRoot: string;
+  },
+  /**
+   * What the host is running. A listing is built from this, not the record;
+   * a function lets a test change what the host runs partway through.
+   */
+  processes:
+    | { pid: number; imageName: string }[]
+    | (() => { pid: number; imageName: string }[]) = [],
+) {
   const calls: Array<{ name: string; argumentsValue: Record<string, unknown> }> =
     [];
   const client: PharoLauncherMcpToolClient = {
     async callTool(name, argumentsValue) {
       calls.push({ name, argumentsValue });
+      if (name === "pharo_launcher_process_list") {
+        const running =
+          typeof processes === "function" ? processes() : processes;
+        return {
+          ok: true,
+          data: running.map((process) => ({
+            ...process,
+            commandLine: `pharo ${process.imageName}.image`,
+          })),
+        };
+      }
       if (host && (name.includes("create") || name.includes("copy"))) {
         materializeLauncherImage(host.projectRoot, host.stateRoot);
       }
@@ -228,6 +248,28 @@ function fakeLauncherClient(host?: {
   };
 
   return { client, calls };
+}
+
+/** A host that is running the workspace's dev image. */
+function hostRunningDevImage(): PharoLauncherMcpToolClient {
+  return fakeLauncherClient(undefined, [
+    { pid: 1234, imageName: "MyProject-worktree-a-dev" },
+  ]).client;
+}
+
+/**
+ * A scoped launcher whose host answers. Every listing asks the host which VMs
+ * it is running, so a test that does not say gets one running nothing; a test
+ * that passes its own client keeps it.
+ */
+function scopedLauncher(
+  options: ConstructorParameters<typeof ScopedPharoLauncher>[0],
+  processes: { pid: number; imageName: string }[] = [],
+): ScopedPharoLauncher {
+  return new ScopedPharoLauncher({
+    pharoLauncherMcpClient: fakeLauncherClient(undefined, processes).client,
+    ...options,
+  });
 }
 
 function recordingRouteRegistry(
@@ -305,13 +347,16 @@ describe("scoped pharo launcher facade", () => {
     saveProjectState(statePath(projectRoot, stateRoot), runningState());
 
     await expect(
-      new ScopedPharoLauncher({
-        projectRoot,
-        stateRoot,
-        workspaceId: "worktree-a",
-        isPidAlive: () => true,
-        isPortListening: async () => true,
-      }).deleteImage("dev"),
+      scopedLauncher(
+        {
+          projectRoot,
+          stateRoot,
+          workspaceId: "worktree-a",
+          isPidAlive: () => true,
+          isPortListening: async () => true,
+        },
+        [{ pid: 1234, imageName: "MyProject-worktree-a-dev" }],
+      ).deleteImage("dev"),
     ).rejects.toThrow(/stop it with pharo_launcher_image_stop/);
   });
 
@@ -323,7 +368,7 @@ describe("scoped pharo launcher facade", () => {
     // reach, because it enumerated from the record it had already deleted.
     saveProjectState(statePath(projectRoot, stateRoot), runningState());
 
-    const result = await new ScopedPharoLauncher({
+    const result = await scopedLauncher({
       projectRoot,
       stateRoot,
       workspaceId: "worktree-a",
@@ -347,7 +392,7 @@ describe("scoped pharo launcher facade", () => {
     writeProjectConfig(projectRoot);
     saveProjectState(statePath(projectRoot, stateRoot), runningState());
 
-    const result = await new ScopedPharoLauncher({
+    const result = await scopedLauncher({
       projectRoot,
       stateRoot,
       workspaceId: "worktree-a",
@@ -389,41 +434,66 @@ describe("scoped pharo launcher facade", () => {
     saveProjectState(statePath(projectRoot, stateRoot), runningState());
 
     const observe = async (
-      options: Partial<ConstructorParameters<typeof ScopedPharoLauncher>[0]>,
+      options: Partial<ConstructorParameters<typeof ScopedPharoLauncher>[0]> = {},
+      processes: { pid: number; imageName: string }[] = [],
     ) =>
       (
-        await new ScopedPharoLauncher({
-          projectRoot,
-          stateRoot,
-          workspaceId: "worktree-a",
-          isPidAlive: () => false,
-          isPortListening: async () => false,
-          ...options,
-        }).listImages()
+        await scopedLauncher(
+          {
+            projectRoot,
+            stateRoot,
+            workspaceId: "worktree-a",
+            isPidAlive: () => false,
+            isPortListening: async () => false,
+            ...options,
+          },
+          processes,
+        ).listImages()
       ).images[0];
 
-    expect(await observe({})).toMatchObject({
+    const hostRunsIt = [{ pid: 1234, imageName: "MyProject-worktree-a-dev" }];
+
+    expect(await observe()).toMatchObject({
       status: "absent",
       runtime: {
         materialized: false,
-        process: { alive: false },
+        process: { alive: false, onHost: false },
         endpoint: { handoff: "missing", listening: false },
       },
     });
 
     materializeLauncherImage(projectRoot, stateRoot);
-    expect(await observe({})).toMatchObject({
+    expect(await observe()).toMatchObject({
       status: "stopped",
       runtime: { materialized: true },
     });
 
+    // A recorded pid that is still alive while the host runs no VM on this
+    // image is a pid that belongs to something else by now.
     expect(await observe({ isPidAlive: () => true })).toMatchObject({
-      status: "starting",
-      runtime: { process: { alive: true } },
+      status: "stopped",
+      runtime: { process: { alive: true, onHost: false } },
     });
 
+    // And a port that refuses to bind proves the port is taken, not that this
+    // image is the one holding it: an image binds port 0, so the port it wrote
+    // down is free to be reused the moment it dies.
     writeEndpointHandoff(projectRoot, stateRoot);
     expect(await observe({ isPortListening: async () => true })).toMatchObject({
+      status: "stopped",
+      runtime: { endpoint: { handoff: "valid", listening: true } },
+    });
+
+    // A VM on the image whose MCP has not bound yet is starting, whoever
+    // started it.
+    expect(await observe({}, hostRunsIt)).toMatchObject({
+      status: "starting",
+      runtime: { process: { alive: false, onHost: true } },
+    });
+
+    expect(
+      await observe({ isPortListening: async () => true }, hostRunsIt),
+    ).toMatchObject({
       status: "running",
       runtime: {
         endpoint: {
@@ -453,7 +523,7 @@ describe("scoped pharo launcher facade", () => {
       ],
     });
 
-    const result = await new ScopedPharoLauncher({
+    const result = await scopedLauncher({
       projectRoot,
       stateRoot,
       workspaceId: "worktree-a",
@@ -568,7 +638,7 @@ describe("scoped pharo launcher facade", () => {
     };
     writeProjectConfig(projectRoot);
 
-    const result = await new ScopedPharoLauncher({
+    const result = await scopedLauncher({
       projectRoot,
       stateRoot,
       workspaceId: "worktree-a",
@@ -598,7 +668,7 @@ describe("scoped pharo launcher facade", () => {
     const { client, calls } = fakeLauncherClient();
     writeProjectConfig(projectRoot);
 
-    await new ScopedPharoLauncher({
+    await scopedLauncher({
       projectRoot,
       stateRoot,
       workspaceId: "worktree-a",
@@ -653,7 +723,7 @@ describe("scoped pharo launcher facade", () => {
     };
     writeProjectConfig(projectRoot);
 
-    const result = await new ScopedPharoLauncher({
+    const result = await scopedLauncher({
       projectRoot,
       stateRoot,
       workspaceId: "worktree-a",
@@ -686,7 +756,7 @@ describe("scoped pharo launcher facade", () => {
     writeProjectConfig(projectRoot);
 
     await expect(
-      new ScopedPharoLauncher({
+      scopedLauncher({
         projectRoot,
         stateRoot,
         workspaceId: "worktree-a",
@@ -715,7 +785,7 @@ describe("scoped pharo launcher facade", () => {
     // while image_list reported it absent in the same breath.
     saveProjectState(statePath(projectRoot, stateRoot), runningState());
 
-    const result = await new ScopedPharoLauncher({
+    const result = await scopedLauncher({
       projectRoot,
       stateRoot,
       workspaceId: "worktree-a",
@@ -740,7 +810,7 @@ describe("scoped pharo launcher facade", () => {
       },
     });
 
-    const result = await new ScopedPharoLauncher({
+    const result = await scopedLauncher({
       projectRoot,
       stateRoot,
       workspaceId: "worktree-a",
@@ -792,6 +862,11 @@ describe("scoped pharo launcher facade", () => {
           sourceImageName: expect.stringMatching(/^PlexusHomeCache-/),
           destinationImageName: "MyProject-worktree-a-dev",
         },
+      },
+      // The listing that reports the created image asks the host what it runs.
+      {
+        name: "pharo_launcher_process_list",
+        argumentsValue: {},
       },
     ]);
     expect(result).toMatchObject({
@@ -868,7 +943,7 @@ describe("scoped pharo launcher facade", () => {
     saveProjectState(statePath(projectRoot, stateRoot), runningState());
 
     await expect(
-      new ScopedPharoLauncher({
+      scopedLauncher({
         projectRoot,
         stateRoot,
         workspaceId: "worktree-a",
@@ -903,7 +978,7 @@ describe("scoped pharo launcher facade", () => {
     });
 
     await expect(
-      new ScopedPharoLauncher({
+      scopedLauncher({
         projectRoot,
         stateRoot,
         workspaceId: "worktree-a",
@@ -928,7 +1003,7 @@ describe("scoped pharo launcher facade", () => {
     });
 
     await expect(
-      new ScopedPharoLauncher({
+      scopedLauncher({
         projectRoot,
         stateRoot,
         workspaceId: "worktree-a",
@@ -962,7 +1037,7 @@ describe("scoped pharo launcher facade", () => {
       },
     });
 
-    await new ScopedPharoLauncher({
+    await scopedLauncher({
       projectRoot,
       stateRoot,
       workspaceId: "worktree-a",
@@ -999,6 +1074,10 @@ describe("scoped pharo launcher facade", () => {
           noLaunch: true,
         },
       },
+      {
+        name: "pharo_launcher_process_list",
+        argumentsValue: {},
+      },
     ]);
   });
 
@@ -1032,7 +1111,7 @@ describe("scoped pharo launcher facade", () => {
       },
     });
 
-    await new ScopedPharoLauncher({
+    await scopedLauncher({
       projectRoot,
       stateRoot,
       workspaceId: "worktree-a",
@@ -1051,6 +1130,7 @@ describe("scoped pharo launcher facade", () => {
     ).toBe(true);
     expect(calls.map((call) => call.name)).toEqual([
       "pharo_launcher_image_create",
+      "pharo_launcher_process_list",
     ]);
   });
 
@@ -1073,7 +1153,7 @@ describe("scoped pharo launcher facade", () => {
     });
 
     await expect(
-      new ScopedPharoLauncher({
+      scopedLauncher({
         projectRoot,
         stateRoot,
         workspaceId: "worktree-a",
@@ -1092,7 +1172,7 @@ describe("scoped pharo launcher facade", () => {
     writeProjectConfig(projectRoot);
 
     await expect(
-      new ScopedPharoLauncher({
+      scopedLauncher({
         projectRoot,
         stateRoot,
         workspaceId: "worktree-a",
@@ -1120,7 +1200,7 @@ describe("scoped pharo launcher facade", () => {
     });
 
     await expect(
-      new ScopedPharoLauncher({
+      scopedLauncher({
         projectRoot,
         stateRoot,
         workspaceId: "worktree-a",
@@ -1129,7 +1209,7 @@ describe("scoped pharo launcher facade", () => {
     ).rejects.toThrow("Image dev has no approved create policy");
 
     await expect(
-      new ScopedPharoLauncher({
+      scopedLauncher({
         projectRoot,
         stateRoot,
         workspaceId: "worktree-a",
@@ -1233,7 +1313,7 @@ describe("scoped pharo launcher facade", () => {
     const routeRegistrations: ProjectLifecycleRouteRegistration[] = [];
     writeProjectConfig(projectRoot);
 
-    const launcher = new ScopedPharoLauncher({
+    const launcher = scopedLauncher({
       projectRoot,
       stateRoot,
       workspaceId: "worktree-a",
@@ -1305,7 +1385,7 @@ describe("scoped pharo launcher facade", () => {
     });
 
     await expect(
-      new ScopedPharoLauncher({
+      scopedLauncher({
         projectRoot,
         stateRoot,
         workspaceId: "worktree-a",
@@ -1349,7 +1429,7 @@ describe("scoped pharo launcher facade", () => {
       ],
     });
 
-    await new ScopedPharoLauncher({
+    await scopedLauncher({
       projectRoot,
       stateRoot,
       workspaceId: "worktree-a",
@@ -1419,7 +1499,7 @@ describe("scoped pharo launcher facade", () => {
     };
     saveProjectState(statePath(projectRoot, stateRoot), failedState);
 
-    const result = await new ScopedPharoLauncher({
+    const result = await scopedLauncher({
       projectRoot,
       stateRoot,
       workspaceId: "worktree-a",
@@ -1438,8 +1518,11 @@ describe("scoped pharo launcher facade", () => {
       },
     }).resetImage("dev", { start: false });
 
+    // Reset reports a listing twice, and each listing asks the host once.
     expect(calls.map((call) => call.name)).toEqual([
       "pharo_launcher_image_create",
+      "pharo_launcher_process_list",
+      "pharo_launcher_process_list",
     ]);
     expect(result.reset).toMatchObject({
       imageId: "dev",
@@ -1460,7 +1543,14 @@ describe("scoped pharo launcher facade", () => {
     );
     // With the host, the fake deletes the image files the way the launcher
     // does; create then sees an image that is really gone.
-    const { client, calls } = fakeLauncherClient({ projectRoot, stateRoot });
+    // The host follows the reset: it runs the image until the close, and again
+    // once the reopen starts it.
+    let hostRuns = true;
+    const { client, calls } = fakeLauncherClient(
+      { projectRoot, stateRoot },
+      () =>
+        hostRuns ? [{ pid: 1234, imageName: "MyProject-worktree-a-dev" }] : [],
+    );
     const starts: unknown[] = [];
     const stops: unknown[] = [];
     const devImageState = runningState().images[0];
@@ -1509,7 +1599,7 @@ describe("scoped pharo launcher facade", () => {
       images: [devImageState, previewImageState],
     });
 
-    const result = await new ScopedPharoLauncher({
+    const result = await scopedLauncher({
       projectRoot,
       stateRoot,
       workspaceId: "worktree-a",
@@ -1518,6 +1608,7 @@ describe("scoped pharo launcher facade", () => {
       isPortListening: async () => true,
       now: () => new Date("2026-05-18T12:00:00.000Z"),
       stopImage: async (options) => {
+        hostRuns = false;
         removeEndpointHandoff(projectRoot, stateRoot);
         stops.push(options);
         const state = {
@@ -1544,6 +1635,7 @@ describe("scoped pharo launcher facade", () => {
         };
       },
       startImage: async (options) => {
+        hostRuns = true;
         writeEndpointHandoff(projectRoot, stateRoot);
         starts.push(options);
         const state = {
@@ -1609,6 +1701,12 @@ describe("scoped pharo launcher facade", () => {
           noLaunch: true,
         },
       },
+      // A reset reports a listing after each step it takes, and every listing
+      // asks the host what it is running. Four steps, four questions.
+      { name: "pharo_launcher_process_list", argumentsValue: {} },
+      { name: "pharo_launcher_process_list", argumentsValue: {} },
+      { name: "pharo_launcher_process_list", argumentsValue: {} },
+      { name: "pharo_launcher_process_list", argumentsValue: {} },
     ]);
     expect(starts).toEqual([
       expect.objectContaining({
@@ -1665,16 +1763,22 @@ describe("scoped pharo launcher facade", () => {
     const projectRoot = makeTempDir("plexus-project-");
     const stateRoot = makeTempDir("plexus-state-");
     const starts: unknown[] = [];
+    // The host runs nothing until the start happens.
+    let started = false;
     writeProjectConfig(projectRoot);
 
-    const result = await new ScopedPharoLauncher({
+    const result = await scopedLauncher({
       projectRoot,
       stateRoot,
       workspaceId: "worktree-a",
+      pharoLauncherMcpClient: fakeLauncherClient(undefined, () =>
+        started ? [{ pid: 1234, imageName: "MyProject-worktree-a-dev" }] : [],
+      ).client,
       isPidAlive: () => true,
       isPortListening: async () => true,
       startImage: async (options) => {
         starts.push(options);
+        started = true;
         materializeLauncherImage(projectRoot, stateRoot);
         writeEndpointHandoff(projectRoot, stateRoot);
         const state = runningState();
@@ -1722,6 +1826,9 @@ describe("scoped pharo launcher facade", () => {
     const projectRoot = makeTempDir("plexus-project-");
     const stateRoot = makeTempDir("plexus-state-");
     const calls: string[] = [];
+    // The host follows the image: it runs it until the close, again after the
+    // open. Every listing in between asks it.
+    let hostRuns = true;
     writeProjectConfig(projectRoot);
     saveProjectState(statePath(projectRoot, stateRoot), {
       ...runningState(),
@@ -1750,10 +1857,13 @@ describe("scoped pharo launcher facade", () => {
     materializeLauncherImage(projectRoot, stateRoot);
     writeEndpointHandoff(projectRoot, stateRoot);
 
-    const launcher = new ScopedPharoLauncher({
+    const launcher = scopedLauncher({
       projectRoot,
       stateRoot,
       workspaceId: "worktree-a",
+      pharoLauncherMcpClient: fakeLauncherClient(undefined, () =>
+        hostRuns ? [{ pid: 1234, imageName: "MyProject-worktree-a-dev" }] : [],
+      ).client,
       isPidAlive: () => true,
       isPortListening: async () => true,
       now: () => new Date("2026-05-23T12:00:00.000Z"),
@@ -1801,6 +1911,7 @@ describe("scoped pharo launcher facade", () => {
       },
       stopImage: async (options) => {
         calls.push("close");
+        hostRuns = false;
         removeEndpointHandoff(projectRoot, stateRoot);
         expect(options).toMatchObject({
           imageId: "dev",
@@ -1829,6 +1940,7 @@ describe("scoped pharo launcher facade", () => {
       },
       startImage: async (options) => {
         calls.push("open");
+        hostRuns = true;
         writeEndpointHandoff(projectRoot, stateRoot);
         expect(options).toMatchObject({
           imageId: "dev",

@@ -18,7 +18,13 @@ import type { ProjectStatePathOptions } from "../workspace/projectState.js";
 export type ImageRuntimeStatus = "absent" | "stopped" | "starting" | "running";
 
 export interface ImageProcessObservation {
+  /** The pid PLexus recorded, still running. */
   alive: boolean;
+  /**
+   * Whether the host reports a VM on this image, when the host was asked.
+   * A fact, not a handle: the pids themselves stay out of a scoped listing.
+   */
+  onHost?: boolean;
 }
 
 export interface ImageEndpointObservation {
@@ -44,6 +50,11 @@ export interface ObserveImageRuntimeOptions extends ProjectStatePathOptions {
   imagesDirectory?: string;
   /** The pid PLexus recorded when it launched the image, if any. */
   pid?: number;
+  /**
+   * Whether the host reports a VM on this image. Undefined means the host was
+   * not asked, and the observation falls back to the pid and the port.
+   */
+  runningOnHost?: boolean;
   isPidAlive?: (pid: number) => boolean;
   isPortListening?: (host: string, port: number) => Promise<boolean>;
 }
@@ -103,6 +114,9 @@ export async function observeImageRuntime(
 
   const process: ImageProcessObservation = {
     alive: options.pid === undefined ? false : pidAlive(options.pid),
+    ...(options.runningOnHost === undefined
+      ? {}
+      : { onHost: options.runningOnHost }),
   };
 
   const endpoint = await observeEndpoint(options, portListening);
@@ -154,12 +168,21 @@ function runtimeStatus(
   process: ImageProcessObservation,
   endpoint: ImageEndpointObservation,
 ): ImageRuntimeStatus {
-  // Something answering outranks every other signal, including a missing file:
-  // the host is the authority, not our idea of where the image should be.
+  // The host is the authority when it was asked, whoever started the VM: no VM
+  // on the image means the port the handoff names belongs to something else,
+  // because an image that binds port 0 leaves that port to be reused the
+  // moment it dies.
+  const onHost = process.onHost;
+  if (onHost === false) {
+    return materialized === false ? "absent" : "stopped";
+  }
+
+  // A port that refuses to bind is not the same as something answering, so it
+  // only decides when nothing better was asked.
   if (endpoint.listening) {
     return "running";
   }
-  if (process.alive) {
+  if (onHost === true || process.alive) {
     return "starting";
   }
 

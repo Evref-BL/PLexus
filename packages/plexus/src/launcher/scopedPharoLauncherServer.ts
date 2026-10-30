@@ -23,8 +23,11 @@ import {
   type ProjectCloseResult,
 } from "../lifecycle/projectClose.js";
 import {
+  hostPharoProcesses,
+  processesOnImage,
   ProjectOpenError,
   startProjectImage,
+  type LauncherProcess,
 } from "../lifecycle/projectOpen.js";
 import {
   formatToolResultPayload,
@@ -141,6 +144,17 @@ interface WorkspaceScopeSummary {
 interface LauncherProfileSummary {
   ownership: PharoLauncherMcpProfileDiagnostic["ownership"];
   mode: PharoLauncherMcpProfileDiagnostic["mode"];
+}
+
+/**
+ * Whether the host was asked which Pharo VMs it is running, and what it said.
+ * A listing that could not reach the launcher still answers, and says so here
+ * rather than letting the rows imply the host agreed with them.
+ */
+interface WorkspaceHostSummary {
+  asked: boolean;
+  pharoProcesses?: number;
+  error?: string;
 }
 
 interface WorkspaceImageSummary {
@@ -1127,9 +1141,39 @@ export class ScopedPharoLauncher {
     }
   }
 
+  /**
+   * What the host is running, asked once for the whole listing. image_start
+   * refuses a launch on this same answer, so a listing that did not ask it
+   * disagreed with the guard that acts on it: an image someone else started
+   * read as stopped, and a dead image whose port had been reused read as
+   * running.
+   *
+   * A listing still answers when the launcher cannot be reached. It says so
+   * rather than passing off the record as the host's answer.
+   */
+  private async hostProcessesForListing(
+    scope: ResolvedScope,
+    projectConfig: ProjectConfig,
+  ): Promise<{ processes?: LauncherProcess[]; error?: string }> {
+    try {
+      return {
+        processes: await this.withLauncherClient(
+          scope,
+          projectConfig,
+          async (client) => hostPharoProcesses(client),
+        ),
+      };
+    } catch (error) {
+      return {
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }
+
   async listImages(): Promise<{
     scope: WorkspaceScopeSummary;
     launcherProfile: LauncherProfileSummary;
+    host: WorkspaceHostSummary;
     images: WorkspaceImageSummary[];
   }> {
     const scope = resolveScope(this.options);
@@ -1141,15 +1185,29 @@ export class ScopedPharoLauncher {
       workspaceId: scope.workspaceId,
       stateRoot: scope.stateRoot,
     });
+    const host = await this.hostProcessesForListing(scope, projectConfig);
 
     return {
       scope: scopeSummary(scope),
       launcherProfile: launcherProfileSummary(launcherProfile),
+      host:
+        host.processes === undefined
+          ? {
+              asked: false,
+              ...(host.error === undefined ? {} : { error: host.error }),
+            }
+          : { asked: true, pharoProcesses: host.processes.length },
       images: await Promise.all(
         projectConfig.images.map(async (imageConfig) => {
           const imageState = state?.images.find(
             (image) => image.id === imageConfig.id,
           );
+          const imageName = renderProjectImageName(imageConfig.imageName, {
+            projectId: scope.projectId,
+            projectName: scope.projectName,
+            workspaceId: scope.workspaceId,
+            imageId: imageConfig.id,
+          });
           return imageSummary(
             imageConfig,
             imageState,
@@ -1162,16 +1220,17 @@ export class ScopedPharoLauncher {
                 ? {}
                 : { isPortListening: this.options.isPortListening }),
               imageId: imageConfig.id,
-              imageName: renderProjectImageName(imageConfig.imageName, {
-                projectId: scope.projectId,
-                projectName: scope.projectName,
-                workspaceId: scope.workspaceId,
-                imageId: imageConfig.id,
-              }),
+              imageName,
               ...(launcherProfile.imagesDir === undefined
                 ? {}
                 : { imagesDirectory: launcherProfile.imagesDir }),
               ...(imageState?.pid === undefined ? {} : { pid: imageState.pid }),
+              ...(host.processes === undefined
+                ? {}
+                : {
+                    runningOnHost:
+                      processesOnImage(host.processes, imageName).length > 0,
+                  }),
             }),
           );
         }),
@@ -1182,6 +1241,7 @@ export class ScopedPharoLauncher {
   async imageInfo(imageId: string): Promise<{
     scope: WorkspaceScopeSummary;
     launcherProfile: LauncherProfileSummary;
+    host: WorkspaceHostSummary;
     image: WorkspaceImageSummary;
   }> {
     const listed = await this.listImages();
@@ -1195,6 +1255,7 @@ export class ScopedPharoLauncher {
     return {
       scope: listed.scope,
       launcherProfile: listed.launcherProfile,
+      host: listed.host,
       image,
     };
   }

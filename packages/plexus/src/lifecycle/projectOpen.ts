@@ -696,13 +696,32 @@ export async function processesForImage(
   client: PharoLauncherMcpToolClient,
   imageName: string,
 ): Promise<LauncherProcess[]> {
+  return processesOnImage(await hostPharoProcesses(client), imageName);
+}
+
+/**
+ * Every Pharo VM the host is running, asked once. A caller with several images
+ * to answer for asks this and matches locally, rather than asking the host per
+ * image.
+ */
+export async function hostPharoProcesses(
+  client: PharoLauncherMcpToolClient,
+): Promise<LauncherProcess[]> {
   const result = await client.callTool<LauncherCommandResult<LauncherProcess[]>>(
     "pharo_launcher_process_list",
     {},
   );
   assertLauncherOk(result, "pharo_launcher_process_list");
 
-  return (launcherResultData(result) ?? []).filter((process) =>
+  return launcherResultData(result) ?? [];
+}
+
+/** Which of those VMs are on this image. One rule, used wherever it is asked. */
+export function processesOnImage(
+  processes: readonly LauncherProcess[],
+  imageName: string,
+): LauncherProcess[] {
+  return processes.filter((process) =>
     processDirectlyMatchesImage(process, imageName),
   );
 }
