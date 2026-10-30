@@ -1787,6 +1787,78 @@ export class ScopedPharoLauncher {
       ),
     };
   }
+
+  /**
+   * Delete the image this project declares. No confirm flag: a destructive call
+   * is guarded by refusing a state that conflicts with it, not by a boolean the
+   * caller fills in anyway. Deleting a running image is that conflict.
+   */
+  async deleteImage(imageId: string): Promise<{
+    scope: WorkspaceScopeSummary;
+    launcherProfile: LauncherProfileSummary;
+    deleted: {
+      imageId: string;
+      launcherImage: boolean;
+      runtimeRecord: boolean;
+    };
+  }> {
+    const before = await this.imageInfo(imageId);
+    if (
+      before.image.runtime?.status === "running" ||
+      before.image.runtime?.status === "starting"
+    ) {
+      throw new ScopedPharoLauncherError(
+        `Image ${imageId} is ${before.image.runtime.status}; stop it with ` +
+          `pharo_launcher_image_stop before deleting it.`,
+      );
+    }
+
+    const scope = resolveScope(this.options);
+    const projectConfig = loadProjectConfig(scope.projectRoot);
+    const imageConfig = findImageConfig(projectConfig, imageId);
+    if (!imageConfig) {
+      throw new ScopedPharoLauncherError(
+        `Image ${imageId} is not declared in this project`,
+      );
+    }
+
+    const statePath = statePathForScope(scope, projectConfig);
+    const now = this.options.now?.() ?? new Date();
+    this.imageLeaseForMutation(scope, projectConfig, imageId, now);
+
+    // Ask the profile what it holds rather than believing the record: a record
+    // can name an image the launcher never made, and deleting that fails.
+    const launcherImage = launcherHoldsImage(
+      scope,
+      projectConfig,
+      imageConfig.imageName,
+    );
+    if (launcherImage) {
+      await this.deleteLauncherImage(
+        scope,
+        projectConfig,
+        imageConfig.imageName,
+      );
+    }
+
+    const currentState = loadProjectState(statePath);
+    const runtimeRecord = Boolean(
+      currentState?.images.some((image) => image.id === imageId),
+    );
+    if (currentState && runtimeRecord) {
+      saveProjectState(
+        statePath,
+        projectStateWithoutImage(currentState, imageId, now),
+      );
+    }
+
+    const after = await this.imageInfo(imageId);
+    return {
+      scope: after.scope,
+      launcherProfile: after.launcherProfile,
+      deleted: { imageId, launcherImage, runtimeRecord },
+    };
+  }
 }
 
 export const scopedPharoLauncherTools = [
@@ -1866,6 +1938,15 @@ export const scopedPharoLauncherTools = [
         imageId: stringSchema,
         detail: toolResultDetailSchema,
       },
+      ["imageId"],
+    ),
+  },
+  {
+    name: "pharo_launcher_image_delete",
+    description:
+      "Delete one workspace-scoped image and its runtime record. Refused while the image is running.",
+    inputSchema: objectSchema(
+      { imageId: stringSchema, detail: toolResultDetailSchema },
       ["imageId"],
     ),
   },
@@ -1990,6 +2071,13 @@ export async function callScopedPharoLauncherTool(
         case "pharo_launcher_image_stop":
           return textResult(
             await facade.stopImage(requireString(input, "imageId")),
+            false,
+            detail,
+          );
+
+        case "pharo_launcher_image_delete":
+          return textResult(
+            await facade.deleteImage(requireString(input, "imageId")),
             false,
             detail,
           );

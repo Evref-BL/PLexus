@@ -14,6 +14,7 @@ import type {
 } from "../../src/lifecycle/projectLifecycle.js";
 import { imageMcpEndpointHandoffPath } from "../../src/gateway/projectImageMcpEndpoint.js";
 import {
+  loadProjectState,
   projectStatePathForConfig,
   saveProjectState,
   type ProjectImageLeaseState,
@@ -297,6 +298,49 @@ describe("scoped pharo launcher facade", () => {
     });
   });
 
+  it("refuses to delete an image that is running", async () => {
+    const projectRoot = makeTempDir("plexus-project-");
+    const stateRoot = makeTempDir("plexus-state-");
+    writeProjectConfig(projectRoot);
+    saveProjectState(statePath(projectRoot, stateRoot), runningState());
+
+    await expect(
+      new ScopedPharoLauncher({
+        projectRoot,
+        stateRoot,
+        workspaceId: "worktree-a",
+        isPidAlive: () => true,
+        isPortListening: async () => true,
+      }).deleteImage("dev"),
+    ).rejects.toThrow(/stop it with pharo_launcher_image_stop/);
+  });
+
+  it("drops the runtime record of an image the launcher never made", async () => {
+    const projectRoot = makeTempDir("plexus-project-");
+    const stateRoot = makeTempDir("plexus-state-");
+    writeProjectConfig(projectRoot);
+    // A record with nothing behind it: the case project cleanup could not
+    // reach, because it enumerated from the record it had already deleted.
+    saveProjectState(statePath(projectRoot, stateRoot), runningState());
+
+    const result = await new ScopedPharoLauncher({
+      projectRoot,
+      stateRoot,
+      workspaceId: "worktree-a",
+      isPidAlive: () => false,
+      isPortListening: async () => false,
+    }).deleteImage("dev");
+
+    expect(result.deleted).toEqual({
+      imageId: "dev",
+      launcherImage: false,
+      runtimeRecord: true,
+    });
+    expect(
+      loadProjectState(statePath(projectRoot, stateRoot))?.images,
+    ).toEqual([]);
+  });
+
   it("reports scoped image listings without raw launcher mutation handles", async () => {
     const projectRoot = makeTempDir("plexus-project-");
     const stateRoot = makeTempDir("plexus-state-");
@@ -448,6 +492,7 @@ describe("scoped pharo launcher facade", () => {
       "pharo_launcher_image_show",
       "pharo_launcher_image_hide",
       "pharo_launcher_image_stop",
+      "pharo_launcher_image_delete",
       "pharo_launcher_image_reset",
     ]);
     expect(

@@ -70,18 +70,41 @@ For a project-local gateway, configure paths under `runtime.gateway` with
 `mcpPath` and `routeControlMcpPath`. A shared gateway uses `mcpUrl` and
 `routeControlMcpUrl`.
 
-## Lifecycle
+## Images
+
+The image is the unit of work. Each command acts on one image the project
+declares, taking the project from `--project-path`, `PLEXUS_PROJECT_ROOT` or
+the working directory:
 
 ```sh
-plexus project open <project-root> --workspace-id <workspace-id> --state-root <state-root>
-plexus project status <project-root> --workspace-id <workspace-id> --state-root <state-root>
-plexus project close <project-root> --workspace-id <workspace-id> --state-root <state-root>
+plexus image list
+plexus image create <image-id>
+plexus image start <image-id>
+plexus image stop <image-id>
+plexus image delete <image-id>
 ```
 
-PLexus also exposes those operations over its `plexus_project` MCP surface:
+Starting is refused while anything already runs that image, and deleting is
+refused while it is running: two VMs saving one image file overwrite each
+other.
+
+For an agent, the same operations arrive over MCP, alongside the tools of
+whichever image is running:
 
 ```sh
-plexus mcp project
+plexus mcp
+```
+
+That is the front door. The agent host starts it, the project comes from the
+working directory, and nothing has to be running first:
+
+```json
+{ "mcpServers": { "plexus": { "command": "plexus", "args": ["mcp"] } } }
+```
+
+The scoped launcher surface is also available on its own:
+
+```sh
 plexus mcp pharo-launcher --project-path <project-root> --workspace-id <workspace-id> --state-root <state-root>
 ```
 

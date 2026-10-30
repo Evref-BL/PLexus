@@ -1,17 +1,10 @@
 #!/usr/bin/env node
-import { ProjectCloseError } from "./lifecycle/projectClose.js";
-import { PlexusProjectLifecycle } from "./lifecycle/projectLifecycle.js";
-import { ProjectOpenError } from "./lifecycle/projectOpen.js";
 import { startPlexusAgentServer } from "./mcp/agentServer.js";
 import {
   ScopedPharoLauncher,
   scopedImageLeaseOptionsFromEnvironment,
   startScopedPharoLauncherServer,
 } from "./launcher/scopedPharoLauncherServer.js";
-import {
-  parseProjectLifecycleServerCliOptions,
-  startProjectLifecycleServerFromCli,
-} from "./mcp/server.js";
 
 /**
  * The image is the unit of work, so it is the unit of the CLI. `start` rather
@@ -50,6 +43,8 @@ async function runImageCommand(
         );
       case "stop":
         return print(await launcher.stopImage(needsImageId()));
+      case "delete":
+        return print(await launcher.deleteImage(needsImageId()));
       default:
         console.error(usage());
         return 2;
@@ -74,23 +69,17 @@ function print(value: unknown): number {
 function usage(): string {
   return [
     "Usage:",
-    "  plexus project open <path> [--workspace-id <id>] [--state-root <path>] [--display-mode <headless|interactive>]",
-    "  plexus project close <path> [--workspace-id <id>] [--state-root <path>]",
-    "  plexus project cleanup <path> [--workspace-id <id>] [--state-root <path>] [--confirm] [--delete-state] [--keep-launcher-images]",
-    "  plexus project status <path> [--workspace-id <id>] [--state-root <path>]",
-    "  plexus image list|create|start|stop <imageId> [--project-path <path>] [--workspace-id <id>] [--state-root <path>] [--display-mode <headless|interactive>]",
+    "  plexus image list|create|start|stop|delete <imageId> [--project-path <path>] [--workspace-id <id>] [--state-root <path>] [--display-mode <headless|interactive>]",
     "  plexus mcp   (agent front door: images and the running image's Pharo tools, over stdio)",
-    "  plexus mcp project [serve|http|--http] [--host <host>] [--port <port>] [--mcp-path <path>]",
     "  plexus mcp pharo-launcher [--project-path <path>] [--workspace-id <id>] [--state-root <path>]",
     "",
     "Environment:",
+    "  PLEXUS_PROJECT_ROOT     Project root; defaults to the working directory.",
     "  PLEXUS_STATE_ROOT       Optional runtime state root.",
     "  PLEXUS_WORKSPACE_ID     Optional runtime workspace id.",
     "  PLEXUS_IMAGE_LEASE_OWNER_ID Optional scoped image lease owner id.",
     "  PLEXUS_IMAGE_LEASE_OWNER_KIND Optional lease owner kind.",
     "  PLEXUS_IMAGE_LEASE_PURPOSE Optional lease purpose.",
-    "  PLEXUS_PROJECT_MCP_PORT Optional project MCP HTTP service port.",
-    "  PLEXUS_PROJECT_MCP_PATH Optional project MCP HTTP service path.",
   ].join("\n");
 }
 
@@ -192,177 +181,6 @@ function parseCommand(argv: string[]): ParsedCommand {
   return parsed;
 }
 
-type ProjectLifecycleCommandName = "open" | "close" | "cleanup" | "status";
-
-interface ProjectLifecycleCliCommand extends ParsedCommand {
-  scope: "project";
-  command: ProjectLifecycleCommandName;
-  projectPath: string;
-}
-
-function projectLifecycleCommand(
-  parsed: ParsedCommand,
-): ProjectLifecycleCliCommand | undefined {
-  if (parsed.scope !== "project" || !parsed.projectPath) {
-    return undefined;
-  }
-
-  switch (parsed.command) {
-    case "open":
-    case "close":
-    case "cleanup":
-    case "status":
-      return parsed as ProjectLifecycleCliCommand;
-    default:
-      return undefined;
-  }
-}
-
-function printJson(value: unknown, error = false): void {
-  const output = JSON.stringify(value, null, 2);
-  if (error) {
-    console.error(output);
-    return;
-  }
-
-  console.log(output);
-}
-
-async function runOpenCommand(
-  parsed: ProjectLifecycleCliCommand,
-  stateRoot: string | undefined,
-  workspaceId: string | undefined,
-): Promise<number> {
-  const lifecycle = new PlexusProjectLifecycle();
-  const lifecycleResult = await lifecycle.open({
-    projectPath: parsed.projectPath,
-    stateRoot,
-    workspaceId,
-    displayMode: parsed.displayMode,
-  });
-  if (!lifecycleResult.ok || !lifecycleResult.data) {
-    printJson(lifecycleResult, true);
-    return 1;
-  }
-
-  const result = lifecycleResult.data;
-  printJson({
-    ok: result.ok,
-    statePath: result.statePath,
-    gateway: result.state.gateway,
-    images: result.state.images,
-  });
-  return 0;
-}
-
-async function runStatusCommand(
-  parsed: ProjectLifecycleCliCommand,
-  stateRoot: string | undefined,
-  workspaceId: string | undefined,
-): Promise<number> {
-  const lifecycle = new PlexusProjectLifecycle();
-  const status = await lifecycle.status({
-    projectPath: parsed.projectPath,
-    stateRoot,
-    workspaceId,
-  });
-  printJson(status);
-  return status.ok ? 0 : 1;
-}
-
-async function runCleanupCommand(
-  parsed: ProjectLifecycleCliCommand,
-  stateRoot: string | undefined,
-  workspaceId: string | undefined,
-): Promise<number> {
-  const lifecycle = new PlexusProjectLifecycle();
-  const cleanup = await lifecycle.cleanup({
-    projectPath: parsed.projectPath,
-    stateRoot,
-    workspaceId,
-    confirm: parsed.confirm,
-    deleteStateFile: parsed.deleteStateFile,
-    deleteLauncherImages: parsed.deleteLauncherImages,
-  });
-  printJson(cleanup);
-  return cleanup.ok ? 0 : 1;
-}
-
-async function runCloseCommand(
-  parsed: ProjectLifecycleCliCommand,
-  stateRoot: string | undefined,
-  workspaceId: string | undefined,
-): Promise<number> {
-  const lifecycle = new PlexusProjectLifecycle();
-  const lifecycleResult = await lifecycle.close({
-    projectPath: parsed.projectPath,
-    stateRoot,
-    workspaceId,
-  });
-  if (!lifecycleResult.ok || !lifecycleResult.data) {
-    printJson(lifecycleResult, true);
-    return 1;
-  }
-
-  const result = lifecycleResult.data;
-  printJson({
-    ok: result.ok,
-    statePath: result.statePath,
-    gateway: result.state?.gateway,
-    images: result.state?.images ?? [],
-    stoppedImages: result.stoppedImages,
-  });
-  return 0;
-}
-
-async function runProjectLifecycleCommand(
-  parsed: ProjectLifecycleCliCommand,
-  stateRoot: string | undefined,
-  workspaceId: string | undefined,
-): Promise<number> {
-  switch (parsed.command) {
-    case "open":
-      return runOpenCommand(parsed, stateRoot, workspaceId);
-    case "status":
-      return runStatusCommand(parsed, stateRoot, workspaceId);
-    case "cleanup":
-      return runCleanupCommand(parsed, stateRoot, workspaceId);
-    case "close":
-      return runCloseCommand(parsed, stateRoot, workspaceId);
-  }
-}
-
-function handleProjectLifecycleError(error: unknown): number {
-  if (error instanceof ProjectOpenError) {
-    printJson(
-      {
-        ok: false,
-        statePath: error.result.statePath,
-        failures: error.result.failures,
-        images: error.result.state.images,
-      },
-      true,
-    );
-    return 1;
-  }
-
-  if (error instanceof ProjectCloseError) {
-    printJson(
-      {
-        ok: false,
-        statePath: error.result.statePath,
-        failures: error.result.failures,
-        images: error.result.state?.images ?? [],
-        stoppedImages: error.result.stoppedImages,
-      },
-      true,
-    );
-    return 1;
-  }
-
-  console.error(error instanceof Error ? error.message : String(error));
-  return 1;
-}
 
 async function main(argv: string[]): Promise<number> {
   if (argv.includes("--help") || argv.includes("-h")) {
@@ -383,13 +201,6 @@ async function main(argv: string[]): Promise<number> {
         : { stateRoot: process.env.PLEXUS_STATE_ROOT }),
       imageLease: scopedImageLeaseOptionsFromEnvironment(process.env),
     });
-    return 0;
-  }
-
-  if (argv[0] === "mcp" && argv[1] === "project") {
-    await startProjectLifecycleServerFromCli(
-      parseProjectLifecycleServerCliOptions(argv.slice(2)),
-    );
     return 0;
   }
 
@@ -419,21 +230,8 @@ async function main(argv: string[]): Promise<number> {
     return 0;
   }
 
-  const lifecycleCommand = projectLifecycleCommand(parsed);
-  if (!lifecycleCommand) {
-    console.error(usage());
-    return 2;
-  }
-
-  try {
-    return await runProjectLifecycleCommand(
-      lifecycleCommand,
-      stateRoot,
-      workspaceId,
-    );
-  } catch (error) {
-    return handleProjectLifecycleError(error);
-  }
+  console.error(usage());
+  return 2;
 }
 
 main(process.argv.slice(2))

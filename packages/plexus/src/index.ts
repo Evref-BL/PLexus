@@ -10,7 +10,6 @@ export * from "./config/projectConfig.js";
 export * from "./gateway/projectGateway.js";
 export * from "./lifecycle/projectLifecycle.js";
 export * from "./lifecycle/projectOpen.js";
-export * from "./mcp/server.js";
 export * from "./workspace/projectStartupScript.js";
 export * from "./workspace/projectState.js";
 export * from "./workspace/scopedProjectContext.js";
