@@ -228,44 +228,7 @@ export async function repositoryIsRegistered(
   return !toolResultIsError(result);
 }
 
-// The tools a rescued repository action may replay through, and the one it
-// takes by default. A caller names one of these, so they are values here rather
-// than spellings scattered through a schema and a validator.
-export const repositoryActionToolNames = [
-  "repository_attach",
-  "repository_create",
-  "repository_update",
-  "repository_reload",
-] as const;
-
 export const repositoryRegistrationToolName = "repository_attach";
-
-export async function registerRepository(
-  client: ImageMcpClient,
-  image: ProjectImageState,
-  repository: ImageRepository,
-  options: { alreadyRegistered: boolean },
-): Promise<void> {
-  await callImageToolOrThrow(
-    client,
-    image,
-    options.alreadyRegistered ? "repository_update" : "repository_attach",
-    repositoryArguments(repository),
-  );
-}
-
-export async function assertRepositoryIdentity(
-  client: ImageMcpClient,
-  image: ProjectImageState,
-  repository: ImageRepository,
-): Promise<void> {
-  await callImageToolOrThrow(
-    client,
-    image,
-    "repository_identity_verify",
-    repositoryArguments(repository),
-  );
-}
 
 export function repositoryArguments(
   repository: ImageRepository,
