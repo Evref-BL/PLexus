@@ -289,10 +289,7 @@ describe("project close", () => {
       },
       {
         name: "pharo_launcher_process_kill",
-        argumentsValue: {
-          pid: 1234,
-          confirm: true,
-        },
+        argumentsValue: { pid: 1234 },
       },
     ]);
     expect(loadProjectState(result.statePath)?.images).toEqual([
@@ -426,10 +423,7 @@ describe("project close", () => {
       },
       {
         name: "pharo_launcher_process_kill",
-        argumentsValue: {
-          pid: 5678,
-          confirm: true,
-        },
+        argumentsValue: { pid: 5678 },
       },
     ]);
     expect(loadProjectState(result.statePath)?.images).toEqual([

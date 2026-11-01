@@ -92,7 +92,7 @@ class FakePharoLauncherMcpClient implements PharoLauncherMcpToolClient {
   ): Promise<T> {
     this.calls.push({ name, argumentsValue });
 
-    if (name === "pharo_launcher_image_launch") {
+    if (name === "pharo_launcher_image_start") {
       if (this.launchError) {
         throw this.launchError;
       }
@@ -430,7 +430,7 @@ describe("project open", () => {
         argumentsValue: {},
       },
       {
-        name: "pharo_launcher_image_launch",
+        name: "pharo_launcher_image_start",
         argumentsValue: {
           imageName: "MyProject-dev",
           detached: true,
@@ -562,7 +562,7 @@ describe("project open", () => {
     });
 
     expect(pharoLauncherMcpClient.calls[1]).toMatchObject({
-      name: "pharo_launcher_image_launch",
+      name: "pharo_launcher_image_start",
       argumentsValue: {
         imageName: "MyProject-dev",
         displayMode: "interactive",
@@ -603,7 +603,7 @@ describe("project open", () => {
     });
 
     expect(pharoLauncherMcpClient.calls[1]).toMatchObject({
-      name: "pharo_launcher_image_launch",
+      name: "pharo_launcher_image_start",
       argumentsValue: {
         displayMode: "interactive",
       },
@@ -1127,7 +1127,7 @@ describe("project open", () => {
         },
       },
       {
-        name: "pharo_launcher_image_launch",
+        name: "pharo_launcher_image_start",
         argumentsValue: {
           imageName: expect.stringMatching(/^PlexusHomeCache-/),
           detached: false,
@@ -1160,7 +1160,7 @@ describe("project open", () => {
         argumentsValue: {},
       },
       {
-        name: "pharo_launcher_image_launch",
+        name: "pharo_launcher_image_start",
         argumentsValue: {
           imageName: "MyProject-worktree-a-dev",
           detached: true,
@@ -1393,7 +1393,7 @@ describe("project open", () => {
         argumentsValue: {},
       },
       {
-        name: "pharo_launcher_image_launch",
+        name: "pharo_launcher_image_start",
         argumentsValue: {
           imageName: "MyProject-baseline",
           detached: true,
@@ -1642,7 +1642,7 @@ describe("project open", () => {
         argumentsValue: {},
       },
       {
-        name: "pharo_launcher_image_launch",
+        name: "pharo_launcher_image_start",
         argumentsValue: {
           imageName: "MyProject-worktree-a-dev",
           detached: true,
@@ -1719,7 +1719,7 @@ describe("project open", () => {
         argumentsValue: {},
       },
       {
-        name: "pharo_launcher_image_launch",
+        name: "pharo_launcher_image_start",
         argumentsValue: {
           imageName: "MyProject-legacy",
           detached: true,
@@ -1964,8 +1964,8 @@ describe("project open", () => {
     });
 
     const launchError = new PharoLauncherMcpToolError(
-      "pharo-launcher-mcp tool failed: pharo_launcher_image_launch",
-      "pharo_launcher_image_launch",
+      "pharo-launcher-mcp tool failed: pharo_launcher_image_start",
+      "pharo_launcher_image_start",
       {
         ok: false,
         diagnostic:
@@ -1993,8 +1993,8 @@ describe("project open", () => {
             imageId: "dev",
             imageName: "MyProject-dev",
             message:
-              "pharo-launcher-mcp tool failed: pharo_launcher_image_launch",
-            launcherToolName: "pharo_launcher_image_launch",
+              "pharo-launcher-mcp tool failed: pharo_launcher_image_start",
+            launcherToolName: "pharo_launcher_image_start",
             diagnostic:
               "Profile-scoped image launch was refused because Pharo Launcher can use the default VM store.",
             action:
@@ -2097,12 +2097,12 @@ describe("project open", () => {
             imageName: "MyProject-dev",
             message:
               "Image MyProject-dev process 987654321 exited before PLexus observed the launcher process. Launcher logs: /tmp/myproject-dev.out.log, /tmp/myproject-dev.err.log",
-            launcherToolName: "pharo_launcher_image_launch",
+            launcherToolName: "pharo_launcher_image_start",
             launcherResult: launchResult,
             process: {
               pid: 987654321,
               imageName: "MyProject-dev",
-              commandLine: "pharo_launcher_image_launch MyProject-dev",
+              commandLine: "pharo_launcher_image_start MyProject-dev",
             },
           },
         ],
@@ -2225,7 +2225,7 @@ describe("project open", () => {
             message: expect.stringContaining(
               "Image MyProject-dev process 987654321 exited before Pharo MCP became healthy or wrote its endpoint to ",
             ),
-            launcherToolName: "pharo_launcher_image_launch",
+            launcherToolName: "pharo_launcher_image_start",
             launcherResult: launchResult,
             process: launchedProcess,
           },
@@ -2333,7 +2333,7 @@ describe("project open", () => {
     // Refused before launching, so the stranger is left running and alone.
     expect(
       pharoLauncherMcpClient.calls.some(
-        (call) => call.name === "pharo_launcher_image_launch",
+        (call) => call.name === "pharo_launcher_image_start",
       ),
     ).toBe(false);
     expect(

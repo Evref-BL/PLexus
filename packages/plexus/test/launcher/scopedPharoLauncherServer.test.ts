@@ -834,7 +834,7 @@ describe("scoped pharo launcher facade", () => {
         },
       },
       {
-        name: "pharo_launcher_image_launch",
+        name: "pharo_launcher_image_start",
         argumentsValue: {
           imageName: expect.stringMatching(/^PlexusHomeCache-/),
           detached: false,
@@ -1761,7 +1761,6 @@ describe("scoped pharo launcher facade", () => {
         argumentsValue: {
           imageName: "MyProject-worktree-a-dev",
           force: true,
-          confirm: true,
         },
       },
       {

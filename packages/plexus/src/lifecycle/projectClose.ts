@@ -227,10 +227,7 @@ async function stopProjectImages(options: {
       if (pid !== undefined) {
         const killResult = await options.client.callTool<LauncherCommandResult>(
           "pharo_launcher_process_kill",
-          {
-            pid,
-            confirm: true,
-          },
+          { pid },
         );
 
         assertLauncherOk(killResult, "pharo_launcher_process_kill");
