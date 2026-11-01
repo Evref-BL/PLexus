@@ -378,7 +378,7 @@ function launcherProcessFromResult(
   return {
     pid,
     imageName,
-    commandLine: `pharo_launcher_image_launch ${imageName}`,
+    commandLine: `pharo_launcher_image_start ${imageName}`,
   };
 }
 
@@ -424,7 +424,7 @@ function startupFailureDetails(
   }
 
   return {
-    launcherToolName: "pharo_launcher_image_launch",
+    launcherToolName: "pharo_launcher_image_start",
     launcherResult: error.launcherResult,
     process: error.process,
   };
@@ -916,7 +916,7 @@ async function launchImageAndPollProcess(
   }
 
   const launchOutcome = launchClient
-    .callTool<LauncherCommandResult>("pharo_launcher_image_launch", {
+    .callTool<LauncherCommandResult>("pharo_launcher_image_start", {
       imageName,
       detached: true,
       displayMode,
@@ -940,7 +940,7 @@ async function launchImageAndPollProcess(
   if (immediateLaunch?.kind === "launch") {
     assertLauncherOk(
       immediateLaunch.result,
-      "pharo_launcher_image_launch",
+      "pharo_launcher_image_start",
     );
 
     return {
@@ -976,7 +976,7 @@ async function launchImageAndPollProcess(
   }
 
   if (first.kind === "launch") {
-    assertLauncherOk(first.result, "pharo_launcher_image_launch");
+    assertLauncherOk(first.result, "pharo_launcher_image_start");
     launchedProcess = launcherProcessFromResult(first.result, imageName);
 
     const outcome = await processOutcome;

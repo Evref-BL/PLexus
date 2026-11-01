@@ -324,7 +324,7 @@ async function launchImage(
   sleep: (durationMs: number) => Promise<void>,
 ): Promise<number> {
   const launchResult = await client.callTool<LauncherCommandResult>(
-    "pharo_launcher_image_launch",
+    "pharo_launcher_image_start",
     {
       imageName: imageState.imageName,
       detached: true,
@@ -332,7 +332,7 @@ async function launchImage(
       script: startupScriptPath,
     },
   );
-  assertLauncherOk(launchResult, "pharo_launcher_image_launch");
+  assertLauncherOk(launchResult, "pharo_launcher_image_start");
 
   const process = await pollProcessForImage(
     client,

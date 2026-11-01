@@ -1125,7 +1125,6 @@ function buildHomeImageCachePlanOperations(options: {
           argumentsValue: {
             imageName: options.cacheImageName,
             force: true,
-            confirm: true,
           },
           requiresApproval: true as const,
           reason:
@@ -1154,7 +1153,7 @@ function buildHomeImageCachePlanOperations(options: {
     options.keyMaterial.pharoMcp.support.status === "supported" &&
     projectMcpStartupMode(options.mcp) !== "disabled"
       ? {
-          toolName: "pharo_launcher_image_launch",
+          toolName: "pharo_launcher_image_start",
           profileEnvironment: profileEnvironmentFromPaths(options.homeProfile),
           argumentsValue: {
             imageName: options.cacheImageName,

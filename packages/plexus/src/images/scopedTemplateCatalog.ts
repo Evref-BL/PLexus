@@ -1,8 +1,8 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import { loadPharoLauncherConfig } from "@evref-bl/pharo-launcher-mcp/dist/config.js";
-import { defaultLauncherDir } from "@evref-bl/pharo-launcher-mcp/dist/platform.js";
+import { loadPharoLauncherConfig } from "@evref-bl/pharo-launcher-mcp/config";
+import { defaultLauncherDir } from "@evref-bl/pharo-launcher-mcp/platform";
 
 import type {
   ProjectHomeImageCacheNetworkPolicy,

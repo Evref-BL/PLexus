@@ -64,7 +64,7 @@ class FakeLauncherClient implements PharoLauncherMcpToolClient {
       return { ok: true } as T;
     }
 
-    if (name === "pharo_launcher_image_launch") {
+    if (name === "pharo_launcher_image_start") {
       writeImageEndpointHandoffForScript(argumentsValue.script);
       return { ok: true } as T;
     }

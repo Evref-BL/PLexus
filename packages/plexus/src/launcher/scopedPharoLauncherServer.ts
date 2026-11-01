@@ -1772,7 +1772,7 @@ export class ScopedPharoLauncher {
     await this.withLauncherClient(scope, projectConfig, async (client) => {
       const deleteResult = await client.callTool<LauncherCommandResult>(
         "pharo_launcher_image_delete",
-        { imageName, force: true, confirm: true },
+        { imageName, force: true },
       );
       assertLauncherOk(deleteResult, "pharo_launcher_image_delete");
     });

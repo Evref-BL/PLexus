@@ -298,7 +298,6 @@ describe("home image cache", () => {
       argumentsValue: {
         imageName: plan.cacheImageName,
         force: true,
-        confirm: true,
       },
       requiresApproval: true,
     });
@@ -341,7 +340,7 @@ describe("home image cache", () => {
       requiresApproval: true,
     });
     expect(plan.prepareCacheImage).toMatchObject({
-      toolName: "pharo_launcher_image_launch",
+      toolName: "pharo_launcher_image_start",
       argumentsValue: {
         imageName: plan.cacheImageName,
         detached: false,
@@ -708,7 +707,7 @@ describe("home image cache", () => {
       toolName: "pharo_launcher_image_create",
     });
     expect(plan.prepareCacheImage).toMatchObject({
-      toolName: "pharo_launcher_image_launch",
+      toolName: "pharo_launcher_image_start",
     });
     expect(plan.runtimeCopy).toMatchObject({
       toolName: "pharo_launcher_image_copy_between_profiles",
@@ -796,13 +795,13 @@ describe("home image cache", () => {
     expect(result?.operations.map((operation) => operation.toolName)).toEqual([
       "pharo_launcher_template_update",
       "pharo_launcher_image_create",
-      "pharo_launcher_image_launch",
+      "pharo_launcher_image_start",
       "pharo_launcher_image_copy_between_profiles",
     ]);
     expect(home.calls.map((call) => call.name)).toEqual([
       "pharo_launcher_template_update",
       "pharo_launcher_image_create",
-      "pharo_launcher_image_launch",
+      "pharo_launcher_image_start",
     ]);
     expect(runtime.calls).toEqual([
       {
@@ -907,12 +906,12 @@ describe("home image cache", () => {
 
     expect(result?.operations.map((operation) => operation.toolName)).toEqual([
       "pharo_launcher_image_create",
-      "pharo_launcher_image_launch",
+      "pharo_launcher_image_start",
       "pharo_launcher_image_copy_between_profiles",
     ]);
     expect(home.calls.map((call) => call.name)).toEqual([
       "pharo_launcher_image_create",
-      "pharo_launcher_image_launch",
+      "pharo_launcher_image_start",
     ]);
     expect(runtime.calls.map((call) => call.name)).toEqual([
       "pharo_launcher_image_copy_between_profiles",
@@ -931,7 +930,7 @@ describe("home image cache", () => {
     const homeClient: PharoLauncherMcpToolClient = {
       async callTool(name, argumentsValue = {}) {
         homeCalls.push({ name, argumentsValue });
-        if (name === "pharo_launcher_image_launch") {
+        if (name === "pharo_launcher_image_start") {
           const scriptPath = argumentsValue.script as string;
           fs.writeFileSync(
             path.join(path.dirname(scriptPath), "preparation-status.properties"),
@@ -971,12 +970,12 @@ describe("home image cache", () => {
         },
         now: () => new Date("2026-05-19T10:00:00.000Z"),
       }),
-    ).rejects.toThrow("pharo_launcher_image_launch returned ok: false");
+    ).rejects.toThrow("pharo_launcher_image_start returned ok: false");
 
     expect(homeCalls.map((call) => call.name)).toEqual([
       "pharo_launcher_template_update",
       "pharo_launcher_image_create",
-      "pharo_launcher_image_launch",
+      "pharo_launcher_image_start",
     ]);
     expect(runtime.calls).toEqual([]);
     const plan = buildHomeImageCachePlan({
