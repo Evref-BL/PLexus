@@ -46,7 +46,7 @@ import {
   type ImageRuntimeStatus,
 } from "../images/imageRuntime.js";
 import {
-  createStdioPharoLauncherMcpClient,
+  openPharoLauncherClient,
   PharoLauncherMcpToolError,
   type PharoLauncherMcpToolClient,
 } from "./pharoLauncherMcpClient.js";
@@ -1290,15 +1290,15 @@ export class ScopedPharoLauncher {
   /**
    * One launcher client for one operation.
    *
-   * Every step that reaches the launcher used to open its own
-   * pharo-launcher-mcp subprocess: a reset closes, deletes, creates and
-   * reopens, reporting a listing after each step, which was four. The caller
-   * says where an operation begins and ends — a tool call, a CLI command —
-   * because this facade cannot tell one from a sequence of them.
+   * This was worth a great deal when a client was a pharo-launcher-mcp
+   * subprocess and a reset opened four of them. The client is in process now,
+   * so what the hold saves is resolving the installation and the profile once
+   * per operation instead of once per step — a smaller reason, kept because
+   * the boundary it needs is already drawn and costs the caller one wrapper.
    *
-   * Operations that overlap share the client, and the last one out closes it.
-   * They can: the facade is bound to one project root and workspace, so every
-   * client it would open is opened with the same profile environment.
+   * The caller says where an operation begins and ends — a tool call, a CLI
+   * command — because this facade cannot tell one from a sequence of them.
+   * Operations that overlap share the client, and the last one out drops it.
    */
   async runOperation<T>(action: () => Promise<T>): Promise<T> {
     this.holdCount += 1;
@@ -1327,7 +1327,7 @@ export class ScopedPharoLauncher {
 
     return this.options.createPharoLauncherMcpClient
       ? await this.options.createPharoLauncherMcpClient(profileEnvironment)
-      : await createStdioPharoLauncherMcpClient(undefined, {
+      : openPharoLauncherClient({
           ...(profileEnvironment === undefined ? {} : { profileEnvironment }),
         });
   }

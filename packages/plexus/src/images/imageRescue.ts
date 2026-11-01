@@ -8,7 +8,7 @@ import {
   type ProjectImageConfig,
 } from "../config/projectConfig.js";
 import {
-  createStdioPharoLauncherMcpClient,
+  openPharoLauncherClient,
   type PharoLauncherMcpToolClient,
 } from "../launcher/pharoLauncherMcpClient.js";
 import { pharoLauncherMcpProfileEnvironment } from "../launcher/pharoLauncherProfile.js";
@@ -1006,7 +1006,7 @@ async function createImageRescueContext(
   const sourceConfig = findImageConfig(config.images, options.sourceImageId);
   const launcherClient =
     options.pharoLauncherMcpClient ??
-    (await createStdioPharoLauncherMcpClient(undefined, {
+    (openPharoLauncherClient({
       profileEnvironment: pharoLauncherMcpProfileEnvironment({
         projectRoot,
         config,

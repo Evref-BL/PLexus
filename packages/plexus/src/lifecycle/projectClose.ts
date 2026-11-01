@@ -1,7 +1,7 @@
 import path from "node:path";
 import { loadProjectConfig } from "../config/projectConfig.js";
 import {
-  createStdioPharoLauncherMcpClient,
+  openPharoLauncherClient,
   type PharoLauncherMcpToolClient,
 } from "../launcher/pharoLauncherMcpClient.js";
 import {
@@ -318,14 +318,14 @@ export async function closeProject(
 
   const client =
     options.pharoLauncherMcpClient ??
-    (await createStdioPharoLauncherMcpClient(undefined, {
+    openPharoLauncherClient({
       profileEnvironment: pharoLauncherMcpProfileEnvironment({
         projectRoot,
         config,
         workspaceId,
         stateRoot: resolvedStateRoot,
       }),
-    }));
+    });
   const ownsClient = !options.pharoLauncherMcpClient;
 
   try {
