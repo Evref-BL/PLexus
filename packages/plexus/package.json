@@ -46,7 +46,7 @@
     "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\""
   },
   "dependencies": {
-    "@evref-bl/pharo-launcher-mcp": "0.2.0",
+    "@evref-bl/pharo-launcher-mcp": "0.3.0",
     "@modelcontextprotocol/sdk": "^1.29.0"
   }
 }
