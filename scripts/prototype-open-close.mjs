@@ -7,7 +7,7 @@ import {
   createStdioPharoLauncherMcpClient,
   loadProjectState,
   openProject,
-} from "../packages/plexus-core/dist/index.js";
+} from "../packages/plexus/dist/index.js";
 
 function parseArgs(argv) {
   const options = {

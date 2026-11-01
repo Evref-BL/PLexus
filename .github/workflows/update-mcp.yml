@@ -48,7 +48,7 @@ jobs:
         env:
           MCP_VERSION: ${{ steps.release.outputs.version }}
         run: |
-          pin_file="packages/plexus-core/src/workspace/projectStartupScript.ts"
+          pin_file="packages/plexus/src/workspace/projectStartupScript.ts"
           current_version="$(sed -nE 's/export const defaultPharoMcpVersion = "([0-9]+\.[0-9]+\.[0-9]+)";/\1/p' "$pin_file")"
           test -n "$current_version"
           if [[ "$current_version" == "$MCP_VERSION" ]]; then

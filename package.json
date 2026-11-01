@@ -10,19 +10,18 @@
   },
   "type": "module",
   "bin": {
-    "plexus": "./packages/plexus-core/dist/cli.js",
-    "plexus-gateway": "./packages/plexus-gateway/dist/index.js"
+    "plexus": "./packages/plexus/dist/cli.js",
+    "plexus-gateway": "./packages/plexus/dist/gateway/server/index.js"
   },
   "workspaces": [
-    "packages/plexus-core",
-    "packages/plexus-gateway"
+    "packages/plexus"
   ],
   "engines": {
     "node": ">=22.12.0"
   },
   "scripts": {
     "check": "npm run typecheck && npm run build && npm test",
-    "build": "npm run build -w @evref-bl/plexus && npm run build -w @evref-bl/plexus-gateway",
+    "build": "npm run build -w @evref-bl/plexus",
     "test": "npm run test --workspaces && npm run test:smoke-policy",
     "coverage": "npm run coverage --workspaces",
     "coverage:all": "npm run coverage",

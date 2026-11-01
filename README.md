@@ -11,7 +11,7 @@ is reserved before the image is running.
 ## Packages
 
 - `@evref-bl/plexus` manages project images and their lifecycle.
-- `@evref-bl/plexus-gateway` forwards MCP calls to registered image MCP servers.
+- `@evref-bl/plexus/gateway` forwards MCP calls to the image MCP servers it discovers.
 
 The gateway is independent of project configuration. PLexus resolves image
 state and registers server endpoints; the gateway stores those routes in memory
@@ -66,22 +66,41 @@ Create `plexus.json` at the project root:
 PLexus loads a pinned MCP-Pharo release when it needs the standard Pharo MCP
 server.
 
-For a project-local gateway, configure paths under `runtime.gateway` with
-`mcpPath` and `routeControlMcpPath`. A shared gateway uses `mcpUrl` and
-`routeControlMcpUrl`.
+## Images
 
-## Lifecycle
+The image is the unit of work. Each command acts on one image the project
+declares, taking the project from `--project-path`, `PLEXUS_PROJECT_ROOT` or
+the working directory:
 
 ```sh
-plexus project open <project-root> --workspace-id <workspace-id> --state-root <state-root>
-plexus project status <project-root> --workspace-id <workspace-id> --state-root <state-root>
-plexus project close <project-root> --workspace-id <workspace-id> --state-root <state-root>
+plexus image list
+plexus image create <image-id>
+plexus image start <image-id>
+plexus image stop <image-id>
+plexus image delete <image-id>
 ```
 
-PLexus also exposes those operations over its `plexus_project` MCP surface:
+Starting is refused while anything already runs that image, and deleting is
+refused while it is running: two VMs saving one image file overwrite each
+other.
+
+For an agent, the same operations arrive over MCP, alongside the tools of
+whichever image is running:
 
 ```sh
-plexus mcp project
+plexus mcp
+```
+
+That is the front door. The agent host starts it, the project comes from the
+working directory, and nothing has to be running first:
+
+```json
+{ "mcpServers": { "plexus": { "command": "plexus", "args": ["mcp"] } } }
+```
+
+The scoped launcher surface is also available on its own:
+
+```sh
 plexus mcp pharo-launcher --project-path <project-root> --workspace-id <workspace-id> --state-root <state-root>
 ```
 
@@ -107,13 +126,11 @@ plexus-gateway
 Its HTTP mode has two MCP paths backed by one route table:
 
 - `/mcp` forwards typed Pharo MCP calls by `mcpServerId`.
-- `/control-mcp` registers, inspects, and removes routes for PLexus lifecycle
-  operations.
+- `/control-mcp` reports what the gateway currently resolves, for PLexus
+  lifecycle diagnostics.
 
-`mcpServerId` is required for routed calls. It names a server endpoint, not an
-image: `dev-code` and `dev-tools` can both belong to image `dev` while using
-different ports.
+`mcpServerId` is required for routed calls and names the image's MCP server.
+Nothing registers a route: the gateway reads the project state file and the
+endpoint handoff each image writes, when the call arrives.
 
-Image MCP routes are lifecycle diagnostics. Route registration belongs to
-PLexus and gateway control; normal forwarding clients only call the `/mcp`
-surface.
+Normal forwarding clients only call the `/mcp` surface.

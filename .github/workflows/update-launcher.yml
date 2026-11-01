@@ -52,7 +52,7 @@ jobs:
         env:
           LAUNCHER_VERSION: ${{ steps.release.outputs.version }}
         run: |
-          pin_file="packages/plexus-core/package.json"
+          pin_file="packages/plexus/package.json"
           current_version="$(node -p "require('./${pin_file}').dependencies['@evref-bl/pharo-launcher-mcp']")"
           test -n "$current_version"
           if [[ "$current_version" == "$LAUNCHER_VERSION" ]]; then
