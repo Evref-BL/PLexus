@@ -10,7 +10,7 @@ import {
   type ProjectImageConfig,
 } from "../config/projectConfig.js";
 import {
-  createStdioPharoLauncherMcpClient,
+  openPharoLauncherClient,
   PharoLauncherMcpToolError,
   type PharoLauncherMcpToolClient,
 } from "../launcher/pharoLauncherMcpClient.js";
@@ -1293,7 +1293,7 @@ async function setupProjectImageForOpen(
 
   const launchClient = context.options.pharoLauncherMcpClient
     ? context.client
-    : await createStdioPharoLauncherMcpClient(undefined, {
+    : openPharoLauncherClient({
         profileEnvironment: context.launcherProfileEnvironment,
       });
 
@@ -1603,9 +1603,9 @@ export async function openProject(
   });
   const client =
     options.pharoLauncherMcpClient ??
-    (await createStdioPharoLauncherMcpClient(undefined, {
+    openPharoLauncherClient({
       profileEnvironment: launcherProfileEnvironment,
-    }));
+    });
   const ownsClient = !options.pharoLauncherMcpClient;
   const healthClient =
     options.healthClient ?? new HttpPharoMcpHealthClient();

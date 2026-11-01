@@ -43,7 +43,7 @@ import {
   type PharoLauncherMcpProfilePaths,
 } from "../launcher/pharoLauncherProfile.js";
 import {
-  createStdioPharoLauncherMcpClient,
+  openPharoLauncherClient,
   type PharoLauncherMcpToolClient,
 } from "../launcher/pharoLauncherMcpClient.js";
 import type { ProjectImageState } from "../workspace/projectState.js";
@@ -1639,7 +1639,7 @@ export async function materializeProjectImageFromHomeCache(
 
   try {
     if (materializationNeedsHomeClient(plan) && !homeClient) {
-      homeClient = await createStdioPharoLauncherMcpClient(undefined, {
+      homeClient = openPharoLauncherClient({
         profileEnvironment: profileEnvironmentFromPaths(plan.homeProfile),
       });
       ownsHomeClient = true;
