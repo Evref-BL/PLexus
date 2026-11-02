@@ -8,10 +8,6 @@ import {
   PharoLauncherMcpToolError,
   type PharoLauncherMcpToolClient,
 } from "../../src/launcher/pharoLauncherMcpClient.js";
-import type {
-  ProjectLifecycleRouteRegistration,
-  ProjectLifecycleRouteRegistry,
-} from "../../src/lifecycle/projectLifecycle.js";
 import { imageMcpEndpointHandoffPath } from "../../src/gateway/projectImageMcpEndpoint.js";
 import {
   loadProjectState,
@@ -22,7 +18,7 @@ import {
 } from "../../src/workspace/projectState.js";
 import { resolvePlexusHomePath } from "../../src/config/plexusHome.js";
 import { describePharoLauncherMcpProfile } from "../../src/launcher/pharoLauncherProfile.js";
-import { loadProjectConfig } from "../../src/config/projectConfig.js";
+import { loadProjectConfig, type ProjectConfig } from "../../src/config/projectConfig.js";
 import {
   ScopedPharoLauncher,
   callScopedPharoLauncherTool,
@@ -30,6 +26,7 @@ import {
   scopedImageLeaseOptionsFromEnvironment,
   scopedPharoLauncherTools,
 } from "../../src/launcher/scopedPharoLauncherServer.js";
+import { launcherClientAnswering } from "../support/launcherHost.js";
 
 const tempDirs: string[] = [];
 
@@ -39,7 +36,7 @@ function makeTempDir(prefix: string): string {
   return tempDir;
 }
 
-function projectConfig(overrides: Record<string, unknown> = {}) {
+function projectConfig(overrides: Record<string, unknown> = {}): ProjectConfig {
   return {
     id: "project-123",
     name: "my-project",
@@ -98,15 +95,17 @@ function launcherImageDirectory(
   stateRoot: string,
   imageName: string,
 ): string {
-  return path.join(
-    describePharoLauncherMcpProfile({
-      projectRoot,
-      config: configOnDisk(projectRoot),
-      workspaceId: "worktree-a",
-      stateRoot,
-    }).imagesDir,
-    imageName,
-  );
+  const { imagesDir } = describePharoLauncherMcpProfile({
+    projectRoot,
+    config: configOnDisk(projectRoot),
+    workspaceId: "worktree-a",
+    stateRoot,
+  });
+  if (imagesDir === undefined) {
+    throw new Error("The launcher profile given a state root has an images directory.");
+  }
+
+  return path.join(imagesDir, imageName);
 }
 
 function materializeLauncherImage(
@@ -217,8 +216,7 @@ function fakeLauncherClient(
 ) {
   const calls: Array<{ name: string; argumentsValue: Record<string, unknown> }> =
     [];
-  const client: PharoLauncherMcpToolClient = {
-    async callTool(name, argumentsValue) {
+  const client = launcherClientAnswering((name, argumentsValue) => {
       calls.push({ name, argumentsValue });
       if (name === "pharo_launcher_process_list") {
         const running =
@@ -245,8 +243,7 @@ function fakeLauncherClient(
         );
       }
       return { ok: true };
-    },
-  };
+  });;
 
   return { client, calls };
 }
@@ -271,17 +268,6 @@ function scopedLauncher(
     pharoLauncherMcpClient: fakeLauncherClient(undefined, processes).client,
     ...options,
   });
-}
-
-function recordingRouteRegistry(
-  registrations: ProjectLifecycleRouteRegistration[],
-): ProjectLifecycleRouteRegistry {
-  return {
-    registerProjectRoute(input) {
-      registrations.push(input);
-    },
-    unregisterProjectRoute() {},
-  };
 }
 
 beforeEach(() => {
@@ -629,14 +615,12 @@ describe("scoped pharo launcher facade", () => {
     const stateRoot = makeTempDir("plexus-state-");
     const calls: Array<{ name: string; argumentsValue: Record<string, unknown> }> =
       [];
-    const client: PharoLauncherMcpToolClient = {
-      async callTool(name, argumentsValue) {
+    const client = launcherClientAnswering((name, argumentsValue) => {
         calls.push({ name, argumentsValue: argumentsValue ?? {} });
         return name === "pharo_launcher_template_list"
           ? { ok: true, data: [{ name: "Pharo 13.0 - 64bit", category: "Official" }] }
           : { ok: true };
-      },
-    };
+    });;
     writeProjectConfig(projectRoot);
 
     const result = await scopedLauncher({
@@ -706,8 +690,7 @@ describe("scoped pharo launcher facade", () => {
 	}
 ]
 `;
-    const client: PharoLauncherMcpToolClient = {
-      async callTool(name, argumentsValue) {
+    const client = launcherClientAnswering((name, argumentsValue) => {
         if (name === "pharo_launcher_template_list") {
           const category = String((argumentsValue ?? {}).templateCategory);
           asked.push(category);
@@ -720,8 +703,7 @@ describe("scoped pharo launcher facade", () => {
           };
         }
         return { ok: true };
-      },
-    };
+    });;
     writeProjectConfig(projectRoot);
 
     const result = await scopedLauncher({
@@ -746,14 +728,12 @@ describe("scoped pharo launcher facade", () => {
     const plexusHome = temporaryPlexusHome();
     const projectRoot = makeTempDir("plexus-project-");
     const stateRoot = makeTempDir("plexus-state-");
-    const client: PharoLauncherMcpToolClient = {
-      async callTool(name) {
+    const client = launcherClientAnswering((name) => {
         if (name === "pharo_launcher_template_category_list") {
           return { ok: true, data: ["Official distributions"] };
         }
         return name === "pharo_launcher_template_list" ? { ok: false } : { ok: true };
-      },
-    };
+    });;
     writeProjectConfig(projectRoot);
 
     await expect(
@@ -1250,15 +1230,13 @@ describe("scoped pharo launcher facade", () => {
         status: "missing",
       },
     };
-    const pharoLauncherMcpClient: PharoLauncherMcpToolClient = {
-      async callTool(name) {
+    const pharoLauncherMcpClient = launcherClientAnswering((name) => {
         throw new PharoLauncherMcpToolError(
           `pharo-launcher-mcp tool failed: ${name}`,
           name,
           launcherFailure,
         );
-      },
-    };
+    });;
     const server = createScopedPharoLauncherServer({
       projectRoot,
       stateRoot,
@@ -1285,10 +1263,8 @@ describe("scoped pharo launcher facade", () => {
         name: "pharo_launcher_image_create",
         arguments: { imageId: "dev" },
       });
-      const text = result.content.find(
-        (item): item is { type: "text"; text: string } =>
-          item.type === "text",
-      )?.text;
+      const content = result.content as { type: string; text?: string }[];
+      const text = content.find((item) => item.type === "text")?.text;
 
       expect(result.isError).toBe(true);
       expect(text ? JSON.parse(text) : undefined).toMatchObject({
@@ -1311,7 +1287,6 @@ describe("scoped pharo launcher facade", () => {
     const stateRoot = makeTempDir("plexus-state-");
     const starts: unknown[] = [];
     const stops: unknown[] = [];
-    const routeRegistrations: ProjectLifecycleRouteRegistration[] = [];
     writeProjectConfig(projectRoot);
 
     const launcher = scopedLauncher({
@@ -1340,7 +1315,6 @@ describe("scoped pharo launcher facade", () => {
           failures: [],
         };
       },
-      routeRegistry: recordingRouteRegistry(routeRegistrations),
     });
 
     await launcher.startImage("dev", "interactive");
@@ -1363,9 +1337,6 @@ describe("scoped pharo launcher facade", () => {
         imageId: "dev",
       }),
     ]);
-    // Starting and stopping an image registers nothing: the gateway reads
-    // the state file and the endpoint handoffs when a call arrives.
-    expect(routeRegistrations).toEqual([]);
   });
 
   it("blocks scoped mutations when an active image lease belongs to another owner", async () => {

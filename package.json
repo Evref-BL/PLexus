@@ -26,7 +26,7 @@
     "coverage": "npm run coverage --workspaces",
     "coverage:all": "npm run coverage",
     "test:smoke-policy": "node --test test/scripts/*.test.mjs",
-    "typecheck": "npm run typecheck --workspaces",
+    "typecheck": "tsc -p tsconfig.check.json && tsc -p tsconfig.scripts.json",
     "clean": "npm run clean --workspaces",
     "prototype:open-close": "node scripts/prototype-open-close.mjs",
     "smoke:open-route-close": "npm run build && node scripts/smoke-open-route-close.mjs",

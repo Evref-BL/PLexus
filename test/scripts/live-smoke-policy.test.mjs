@@ -427,7 +427,7 @@ test("renders local-only home cache network policy for smoke images", () => {
     ],
   });
 
-  assert.equal(config.home.imageCache.networkPolicy, "local-only");
+  assert.equal(config.home?.imageCache.networkPolicy, "local-only");
 });
 
 test("resolves stale explicit source template selectors against current inventory", () => {

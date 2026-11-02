@@ -1,6 +1,24 @@
 import type { PharoLauncherMcpToolClient } from "../../src/launcher/pharoLauncherMcpClient.js";
 
 /**
+ * `callTool` answers whatever its caller asks for, which no mock can honour: a
+ * mock answers one shape per tool name. This is where that is said, once, so a
+ * test writes the answer and not the cast.
+ */
+export function launcherClientAnswering(
+  answer: (name: string, argumentsValue: Record<string, unknown>) => unknown,
+): PharoLauncherMcpToolClient {
+  return {
+    async callTool<T = unknown>(
+      name: string,
+      argumentsValue: Record<string, unknown> = {},
+    ) {
+      return (await answer(name, argumentsValue)) as T;
+    },
+  };
+}
+
+/**
  * A launcher client whose host is running exactly these VMs.
  *
  * Every listing asks the host what it is running, and a facade given no client
@@ -13,21 +31,17 @@ import type { PharoLauncherMcpToolClient } from "../../src/launcher/pharoLaunche
 export function launcherHostRunning(
   processes: { pid: number; imageName: string }[] = [],
 ): PharoLauncherMcpToolClient {
-  const client: PharoLauncherMcpToolClient = {
-    async callTool(name) {
-      if (name === "pharo_launcher_process_list") {
-        return {
-          ok: true,
-          data: processes.map((process) => ({
-            ...process,
-            commandLine: `pharo ${process.imageName}.image`,
-          })),
-        };
-      }
+  return launcherClientAnswering((name) => {
+    if (name === "pharo_launcher_process_list") {
+      return {
+        ok: true,
+        data: processes.map((process) => ({
+          ...process,
+          commandLine: `pharo ${process.imageName}.image`,
+        })),
+      };
+    }
 
-      return { ok: true };
-    },
-  };
-
-  return client;
+    return { ok: true };
+  });
 }

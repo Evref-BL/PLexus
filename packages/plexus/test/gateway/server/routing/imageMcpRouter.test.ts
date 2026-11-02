@@ -1,6 +1,7 @@
 import http from "node:http";
 import { afterEach, describe, expect, it } from "vitest";
 import { StreamableHttpImageMcpToolRouter } from "../../../../src/gateway/server/routing/imageMcpRouter.js";
+import type { ImageMcpRoute } from "../../../../src/gateway/server/routing/imageMcpRouter.js";
 
 const servers: http.Server[] = [];
 
@@ -148,7 +149,7 @@ describe("StreamableHttpImageMcpToolRouter", () => {
     servers.push(httpServer);
 
     const router = new StreamableHttpImageMcpToolRouter();
-    const route = {
+    const route: ImageMcpRoute = {
       projectId: "project-123",
       workspaceId: "worktree-a",
       imageId: "dev",
@@ -251,7 +252,7 @@ describe("StreamableHttpImageMcpToolRouter", () => {
     servers.push(httpServer);
 
     const router = new StreamableHttpImageMcpToolRouter();
-    const route = {
+    const route: ImageMcpRoute = {
       projectId: "project-123",
       workspaceId: "worktree-a",
       imageId: "dev",

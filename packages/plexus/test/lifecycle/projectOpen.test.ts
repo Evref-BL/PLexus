@@ -27,10 +27,6 @@ import { defaultPharoMcpMetacelloRepositoryLocation } from "../../src/workspace/
 
 const tempDirs: string[] = [];
 const fixedNow = () => new Date("2026-04-25T10:00:00.000Z");
-const fakeLivePortClaimChecks = {
-  isProcessAlive: async () => true,
-  isPortListening: async () => false,
-};
 const gitEnv = {
   GIT_AUTHOR_NAME: "PLexus Test",
   GIT_AUTHOR_EMAIL: "plexus-test@example.invalid",
@@ -898,7 +894,6 @@ describe("project open", () => {
       poll: {
         intervalMs: 0,
       },
-      portClaimChecks: fakeLivePortClaimChecks,
       imageIds: ["dev"],
     });
 

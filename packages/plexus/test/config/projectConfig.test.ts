@@ -8,11 +8,12 @@ import {
   projectConfigPath,
   ProjectConfigError,
   plexusProjectConfigFileName,
+  type ProjectConfig,
 } from "../../src/config/projectConfig.js";
 
 const tempDirs: string[] = [];
 
-function validProjectConfig() {
+function validProjectConfig(): ProjectConfig {
   return {
     id: "project-123",
     name: "my-project",
@@ -124,7 +125,7 @@ describe("project config", () => {
   });
 
   it("parses workspace image creation limits", () => {
-    const config: ReturnType<typeof validProjectConfig> & { runtime?: unknown } =
+    const config: Omit<ReturnType<typeof validProjectConfig>, "runtime"> & { runtime?: unknown } =
       validProjectConfig();
     config.runtime = {
       workspaceImages: {
@@ -222,7 +223,7 @@ describe("project config", () => {
   });
 
   it("parses the explicit project runtime policy shape", () => {
-    const config: ReturnType<typeof validProjectConfig> & { runtime?: unknown } =
+    const config: Omit<ReturnType<typeof validProjectConfig>, "runtime"> & { runtime?: unknown } =
       validProjectConfig();
     config.runtime = {
         stateRoot: {
@@ -245,7 +246,7 @@ describe("project config", () => {
 
 
   it("allows external launcher profile policy as an explicit opt-out", () => {
-    const config: ReturnType<typeof validProjectConfig> & { runtime?: unknown } =
+    const config: Omit<ReturnType<typeof validProjectConfig>, "runtime"> & { runtime?: unknown } =
       validProjectConfig();
     config.runtime = {
       launcherProfile: {
@@ -259,7 +260,7 @@ describe("project config", () => {
   });
 
   it("parses launcher template catalogue source policy", () => {
-    const config: ReturnType<typeof validProjectConfig> & { runtime?: unknown } =
+    const config: Omit<ReturnType<typeof validProjectConfig>, "runtime"> & { runtime?: unknown } =
       validProjectConfig();
     config.runtime = {
       launcherProfile: {
@@ -283,7 +284,7 @@ describe("project config", () => {
   });
 
   it("rejects invalid launcher template catalogue policy", () => {
-    const config: ReturnType<typeof validProjectConfig> & { runtime?: unknown } =
+    const config: Omit<ReturnType<typeof validProjectConfig>, "runtime"> & { runtime?: unknown } =
       validProjectConfig();
     config.runtime = {
       launcherProfile: {
@@ -309,7 +310,7 @@ describe("project config", () => {
   });
 
   it("parses Pharo MCP supported version policy overrides", () => {
-    const config: ReturnType<typeof validProjectConfig> & { runtime?: unknown } =
+    const config: Omit<ReturnType<typeof validProjectConfig>, "runtime"> & { runtime?: unknown } =
       validProjectConfig();
     config.runtime = {
       pharoMcp: {
@@ -325,7 +326,7 @@ describe("project config", () => {
   });
 
   it("parses optional PLexus home and image-cache policy", () => {
-    const config: ReturnType<typeof validProjectConfig> & { home?: unknown } =
+    const config: Omit<ReturnType<typeof validProjectConfig>, "home"> & { home?: unknown } =
       validProjectConfig();
     config.home = {
       path: "/Users/ada/.plexus-custom",
@@ -351,7 +352,7 @@ describe("project config", () => {
   });
 
   it("defaults PLexus home dependency repository policy", () => {
-    const config: ReturnType<typeof validProjectConfig> & { home?: unknown } =
+    const config: Omit<ReturnType<typeof validProjectConfig>, "home"> & { home?: unknown } =
       validProjectConfig();
     config.home = {};
 
@@ -367,7 +368,7 @@ describe("project config", () => {
   });
 
   it("rejects invalid PLexus home network policy values", () => {
-    const config: ReturnType<typeof validProjectConfig> & { home?: unknown } =
+    const config: Omit<ReturnType<typeof validProjectConfig>, "home"> & { home?: unknown } =
       validProjectConfig();
     config.home = {
       imageCache: {
@@ -471,7 +472,7 @@ describe("project config", () => {
   });
 
   it("rejects invalid workspace image creation limits", () => {
-    const config: ReturnType<typeof validProjectConfig> & { runtime?: unknown } =
+    const config: Omit<ReturnType<typeof validProjectConfig>, "runtime"> & { runtime?: unknown } =
       validProjectConfig();
     config.runtime = {
       workspaceImages: {
