@@ -13,9 +13,28 @@ is reserved before the image is running.
 - `@evref-bl/plexus` manages project images and their lifecycle.
 - `@evref-bl/plexus/gateway` forwards MCP calls to the image MCP servers it discovers.
 
-The gateway is independent of project configuration. PLexus resolves image
-state and registers server endpoints; the gateway stores those routes in memory
-and forwards requests by `mcpServerId`.
+The gateway is independent of project configuration. It is given the places to
+look — a project root and the state file under it — and resolves a route from
+what it finds there when the call arrives. Nothing registers a route, so none
+can go stale between the call that opened an image and the call that uses it.
+
+## Use it as a library
+
+A caller inside Node does not have to speak MCP to PLexus. The lifecycle is
+functions:
+
+```ts
+import { closeProject, loadProjectState, openProject } from "@evref-bl/plexus";
+```
+
+Everything reachable from the package root is API and moves under semver.
+`@evref-bl/plexus/internal` reaches the working parts and promises nothing:
+names, shapes and whole modules there may change in any release, including a
+patch. A consumer that needs something from it should ask for that name to be
+promoted to the root rather than import it from there.
+
+`@evref-bl/plexus/gateway` is the forwarding surface, for a host that embeds
+the gateway instead of spawning `plexus-gateway`.
 
 ## Concepts
 
