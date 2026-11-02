@@ -1,5 +1,5 @@
 {
-  "description": "Open/route/close smoke on Pharo 13. Kept beside the Pharo 14 profile because the 14 VM PharoLauncher fetches does not start on every machine: on arm64 macOS its bundled libgit2 fails to resolve git_libgit2_init at image startup, which is a VM packaging problem rather than a PLexus one. Use this one to exercise the suite while that is true.",
+  "description": "Open/route/close smoke on Pharo 13. Kept beside the Pharo 14 profile for deep checkout paths: Pharo's VM loads a module by absolute path through a 256-byte buffer, and Pharo 13's libgit2.dylib is ten characters shorter than Pharo 14's libgit2-1.9.1.9.0.dylib, which is enough to decide it. Prefer the Pharo 14 profile and a short --launcherProfileRoot.",
   "createSourceFromTemplate": true,
   "sourceTemplateName": "Pharo 13.0 - 64bit",
   "requiredWorkspacePrefix": "smoke-e2e",

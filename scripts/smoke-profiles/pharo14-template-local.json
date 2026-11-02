@@ -1,5 +1,5 @@
 {
-  "description": "Open/route/close smoke on Pharo 14, the version this stack targets. The template name carries no lifecycle suffix on purpose: the launcher calls it \"(next stable)\" today and will call it something else later, and the resolver matches a name followed by \" (\".",
+  "description": "Open/route/close smoke on Pharo 14, the version this stack targets. The template name carries no lifecycle suffix on purpose: the launcher calls it \"(next stable)\" today and will call it something else later, and the resolver matches a name followed by \" (\". Pass --launcherProfileRoot when the state root is deep: a VM module path may be at most 255 characters.",
   "createSourceFromTemplate": true,
   "sourceTemplateName": "Pharo 14.0 - 64bit",
   "requiredWorkspacePrefix": "smoke-e2e",
