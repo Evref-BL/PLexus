@@ -170,7 +170,6 @@ export function defaultProjectOwnedLauncherProfileRoot({ stateRoot, projectId })
   return path.join(
     path.resolve(requiredString(stateRoot, "stateRoot")),
     "profiles",
-    "pharo-launcher-mcp",
     sanitizeRuntimeId(requiredString(projectId, "projectId")),
   );
 }
@@ -370,10 +369,14 @@ export function mcpPharoTonelLoadScriptSource(repoDir) {
   const sourceDirectory = path.join(path.resolve(repoDir), "src");
   return [
     '"Load MCP-Pharo from an explicit local Tonel checkout for this PLexus smoke run."',
+    '"Bare load, which is the default group, because that is what the startup',
+    'PLexus writes for the released package does. Core alone leaves out MCP-IDE,',
+    'so the image comes up with tool_call, tool_get and tool_search and nothing',
+    'a project actually asks for."',
     "Metacello new",
     "  baseline: 'MCP';",
     `  repository: ${smalltalkString(`tonel://${sourceDirectory.replaceAll("\\", "/")}`)};`,
-    "  load: 'Core'.",
+    "  load.",
     "",
   ].join("\n");
 }
@@ -532,7 +535,6 @@ export function defaultSmokeImageSpec(options) {
     copyFromImageName: options.copyFromImageName,
     port: options.port,
     ...(options.loadScriptExplicit ? { loadScript: options.loadScript } : {}),
-    active: true,
   };
 }
 
@@ -554,10 +556,10 @@ export function assertMcpPharoRepoDir(repoDir) {
 }
 
 export function resolveSmokeLoadScriptPath(image, options, context = {}) {
-  const loadScript = requiredString(
-    image.loadScript,
-    `image ${image.id ?? "(unknown)"} loadScript`,
-  );
+  const loadScript = image.loadScript;
+  if (typeof loadScript !== "string" || loadScript.trim().length === 0) {
+    return undefined;
+  }
   if (path.isAbsolute(loadScript)) {
     return path.resolve(loadScript);
   }
@@ -575,7 +577,7 @@ export function assertSmokeLoadScriptsReady(options, context = {}) {
   const checked = [];
   for (const image of options.images ?? []) {
     const resolvedPath = resolveSmokeLoadScriptPath(image, options, context);
-    const exists = fs.existsSync(resolvedPath);
+    const exists = resolvedPath !== undefined && fs.existsSync(resolvedPath);
     checked.push({
       imageId: image.id,
       loadScript: image.loadScript,
@@ -587,7 +589,9 @@ export function assertSmokeLoadScriptsReady(options, context = {}) {
     if (!exists && !options.allowRemoteMcpFallback) {
       throw new Error(
         [
-          `Image ${image.id} MCP load script does not exist before image startup: ${resolvedPath}`,
+          resolvedPath === undefined
+            ? `Image ${image.id} has no MCP load script, and loading one from the network is not implicit.`
+            : `Image ${image.id} MCP load script does not exist before image startup: ${resolvedPath}`,
           "Pass --loadScript pointing at a real script, use --mcpPharoRepoDir to generate a local Tonel load script, or pass --allowRemoteMcpFallback to explicitly use the configured remote Metacello fallback.",
         ].join("\n"),
       );
@@ -615,10 +619,9 @@ export function smokeProjectConfig(options) {
     images: (options.images ?? []).map((image) => ({
       id: image.id,
       imageName: image.imageName,
-      active: image.active,
       ...(image.create ? { create: image.create } : {}),
       mcp: {
-        loadScript: image.loadScript,
+        ...(image.loadScript ? { loadScript: image.loadScript } : {}),
         ...(image.port ? { port: image.port } : {}),
       },
       ...(image.git ? { git: image.git } : {}),
@@ -677,43 +680,34 @@ export function buildKeepOpenCleanupContext({
     ...(options?.createdSourceImageName ? [options.createdSourceImageName] : []),
   ];
 
-  const closeCommand = [
-    "plexus",
-    "project",
-    "close",
+  // One runtime per image, so cleanup is per image: the project verbs this
+  // used to name went when routes became discovered, and a command that no
+  // longer exists is worse advice than none.
+  const scopeArguments = [
+    "--project-path",
     projectRoot,
     "--workspace-id",
     workspaceId,
     "--state-root",
     stateRoot,
   ];
-  const statusCommand = [
+  const closeCommands = copiedImages.map((image) => [
     "plexus",
-    "project",
-    "status",
-    projectRoot,
-    "--workspace-id",
-    workspaceId,
-    "--state-root",
-    stateRoot,
-  ];
+    "image",
+    "stop",
+    image.id,
+    ...scopeArguments,
+  ]);
+  const statusCommand = ["plexus", "image", "list", ...scopeArguments];
 
   return {
     mode: "keep-open",
     reason:
       "The smoke operation retained the scoped disposable project and images after successful validation.",
-    closeCommand,
-    closeCommandString: shellCommand(closeCommand),
+    closeCommands,
+    closeCommandStrings: closeCommands.map(shellCommand),
     statusCommand,
     statusCommandString: shellCommand(statusCommand),
-    mcpCloseCall: {
-      tool: "plexus_project_close",
-      arguments: {
-        projectPath: projectRoot,
-        stateRoot,
-        workspaceId,
-      },
-    },
     launcherCleanup: {
       profile: options?.launcherProfile,
       profileRoot: options?.launcherProfileRoot,
@@ -723,14 +717,14 @@ export function buildKeepOpenCleanupContext({
         arguments: {
           imageName,
           force: true,
-          confirm: true,
         },
       })),
     },
     routeControl: {
       projectId: openData?.state?.projectId,
       workspaceId,
-      controlEndpoint: openData?.state?.gateway?.controlEndpoint,
+      // No endpoint to name: a gateway pointed at this project directory
+      // discovers the route, so the status call is all there is to record.
       routeStatusTool: "plexus_gateway_status",
       routeStatusArguments: {
         projectId: openData?.state?.projectId,

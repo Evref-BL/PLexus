@@ -4,10 +4,10 @@ import os from "node:os";
 import path from "node:path";
 import {
   closeProject,
-  createStdioPharoLauncherMcpClient,
   loadProjectState,
   openProject,
 } from "../packages/plexus/dist/index.js";
+import { openPharoLauncherClient } from "../packages/plexus/dist/internal.js";
 
 function parseArgs(argv) {
   const options = {
@@ -82,7 +82,7 @@ function parseArgs(argv) {
     process.env.PLEXUS_TEST_WORKSPACE_ID ??
     process.env.PLEXUS_WORKSPACE_ID;
   options.loadScript ??=
-    process.env.PLEXUS_TEST_LOAD_SCRIPT ?? "pharo/load-mcp.st";
+    process.env.PLEXUS_TEST_LOAD_SCRIPT;
 
   return options;
 }
@@ -102,7 +102,8 @@ function usage() {
     "  --projectId <id>            Defaults to prototype-open-close",
     "  --imageId <id>              Defaults to dev",
     "  --port <number>             Defaults to PLexus allocation",
-    "  --loadScript <path>         Defaults to pharo/load-mcp.st",
+    "  --loadScript <path>         MCP load script. Without one, PLexus loads",
+    "                              the release it pins.",
     "  --processTimeoutMs <ms>     Defaults to 30000",
     "  --healthTimeoutMs <ms>      Defaults to 90000",
   ].join("\n");
@@ -128,7 +129,7 @@ function writePrototypeProjectConfig(options) {
   fs.mkdirSync(stateRoot, { recursive: true });
 
   const mcp = {
-    loadScript: options.loadScript,
+    ...(options.loadScript ? { loadScript: options.loadScript } : {}),
     ...(options.port ? { port: options.port } : {}),
   };
   const config = {
@@ -138,7 +139,6 @@ function writePrototypeProjectConfig(options) {
       {
         id: options.imageId,
         imageName: options.imageName,
-        active: true,
         mcp,
       },
     ],
@@ -202,7 +202,7 @@ async function main() {
 
   assertValidOptions(options);
   const { projectRoot, stateRoot } = writePrototypeProjectConfig(options);
-  const client = await createStdioPharoLauncherMcpClient();
+  const client = openPharoLauncherClient();
   let openedByThisScript = false;
   let attemptedOpen = false;
 
@@ -230,6 +230,8 @@ async function main() {
       projectRoot,
       stateRoot,
       workspaceId: options.workspaceId,
+      // Without ids openProject opens nothing and still answers ok.
+      imageIds: [options.imageId],
       poll: {
         intervalMs: options.pollIntervalMs,
         processTimeoutMs: options.processTimeoutMs,
@@ -282,7 +284,6 @@ async function main() {
         try {
           await client.callTool("pharo_launcher_process_kill", {
             imageName: options.imageName,
-            confirm: true,
           });
         } catch (error) {
           console.error(

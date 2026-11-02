@@ -6,12 +6,14 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
-  createStdioPharoLauncherMcpClient,
-  HttpGatewayRouteRegistry,
-  loadPharoLauncherMcpConfig,
+  closeProject,
   loadProjectState,
-  PlexusProjectLifecycle,
+  openProject,
 } from "../packages/plexus/dist/index.js";
+import {
+  loadPharoLauncherMcpConfig,
+  openPharoLauncherClient,
+} from "../packages/plexus/dist/internal.js";
 import { PlexusGateway } from "../packages/plexus/dist/gateway/server/index.js";
 import {
   applySmokeProfileDefaults,
@@ -305,9 +307,6 @@ function parseArgs(argv) {
     options.loadScript = process.env.PLEXUS_SMOKE_LOAD_SCRIPT;
     options.loadScriptExplicit = true;
   }
-  options.loadScript ??=
-    path.join(repoRoot, "pharo", "load-mcp.st");
-
   appendJsonArrayEnv(
     options.imageSpecs,
     process.env.PLEXUS_SMOKE_IMAGE_SPECS_JSON,
@@ -353,12 +352,14 @@ function usage() {
     "  --projectId <id>              Defaults to smoke-open-route-close",
     "  --imageId <id>                Defaults to dev for the one-image path",
     "  --port <number>               Defaults to PLexus allocation",
-    "  --loadScript <path>           Defaults to pharo/load-mcp.st in this repo",
+    "  --loadScript <path>           MCP load script. Without one, and without",
+    "                                --mcpPharoRepoDir, the run needs",
+    "                                --allowRemoteMcpFallback.",
     "  --allowRemoteMcpFallback      Explicitly allow missing load scripts to fall back to remote Metacello",
     "  --toolName <name>             Defaults to class_search",
     "  --toolArgumentsJson <json>    Defaults to {\"name\":\"MCPToolRegistry\"}",
     "  --expectedText <text>         Defaults to class=MCPToolRegistry for the read-only probe",
-    "  --keepOpen, --showcase        Leave scoped disposable images open and retain route-control registration",
+    "  --keepOpen, --showcase        Leave scoped disposable images open for a gateway to discover",
     "  --stepJson <json>             Adds a routed tool step; use forEachImage=true to fan out",
     "  --scenario <name>             basic or project-edit-export",
     "  --createSourceFromTemplate    Create and prepare a temporary source image, then copy smoke images from it",
@@ -368,7 +369,7 @@ function usage() {
     "  --keepTemp                   Keep generated temp project/state/fixture dirs",
     "",
     "Image spec JSON fields:",
-    "  id, imageName, copyFromImageName, create, port, loadScript, active, git",
+    "  id, imageName, copyFromImageName, create, port, loadScript, git",
     "",
     "Step JSON fields:",
     "  imageId, forEachImage, toolName, arguments, expectedText",
@@ -934,7 +935,6 @@ function stageHomeLauncherProfileImage(options, healthResult) {
   const profileRoot = path.join(
     path.resolve(options.homePath),
     "profiles",
-    "pharo-launcher-mcp",
     "image-cache",
   );
   const targetImage = path.join(profileRoot, "launcher", "PharoLauncher.image");
@@ -1120,7 +1120,20 @@ function launcherErrorDetails(error) {
   return error instanceof Error ? error.message : String(error);
 }
 
-async function callLauncherTool(client, toolName, argumentsValue = {}) {
+/**
+ * The launcher tools this script calls, checked by name.
+ *
+ * A wrapper that took a plain string let `pharo_launcher_inventory` survive
+ * here long after the package stopped answering for it, because nothing
+ * compared the name against what exists.
+ *
+ * @template {import("../packages/plexus/dist/internal.js").LauncherToolName} K
+ * @param {import("../packages/plexus/dist/internal.js").PharoLauncherMcpToolClient} client
+ * @param {K} toolName
+ * @param {import("../packages/plexus/dist/internal.js").LauncherToolInput<K>} [argumentsValue]
+ * @returns {Promise<import("../packages/plexus/dist/internal.js").LauncherToolResult<K>>}
+ */
+async function callLauncherTool(client, toolName, argumentsValue) {
   try {
     return await client.callTool(toolName, argumentsValue);
   } catch (error) {
@@ -1201,40 +1214,27 @@ function requireGatewayOk(result, label) {
   return result.data;
 }
 
-async function registerProbeRoute(gateway, openData, projectPaths) {
-  return gateway.handleTool("plexus_gateway_register_target", {
+// A route source is a directory, not a registration: the gateway re-reads the
+// state file and the endpoint handoffs every time it resolves one. Nothing is
+// claimed, so nothing has to be retained for keep-open, and the question a
+// persistent gateway used to be asked over its control endpoint is the same
+// question this one answers.
+function addProbeRouteSource(gateway, openData, projectPaths) {
+  gateway.addRouteSource({
     projectRoot: projectPaths.projectRoot,
     statePath: openData.statePath,
-    state: openData.state,
   });
 }
 
-async function persistentRouteStatus(openData, refreshHealth) {
-  const controlEndpoint = openData?.state?.gateway?.controlEndpoint;
-  if (typeof controlEndpoint !== "string" || controlEndpoint.length === 0) {
-    return {
-      ok: false,
-      error:
-        "Project-local gateway did not report a route-control endpoint for keep-open status",
-    };
+/** openProject and closeProject answer directly rather than through a tool. */
+function requireLifecycleOk(result, label) {
+  if (!result?.ok) {
+    throw new Error(
+      `${label} failed: ${JSON.stringify(result?.failures ?? result)}`,
+    );
   }
 
-  const registry = new HttpGatewayRouteRegistry({ url: controlEndpoint });
-  try {
-    return {
-      ok: true,
-      data: await registry.getRouteStatus({
-        projectId: openData.state.projectId,
-        workspaceId: openData.state.workspaceId,
-        refreshHealth,
-      }),
-    };
-  } catch (error) {
-    return {
-      ok: false,
-      error: error instanceof Error ? error.message : String(error),
-    };
-  }
+  return result;
 }
 
 function routeOutputText(value) {
@@ -1283,7 +1283,10 @@ function routeOf(openData) {
 async function routeStep(gateway, route, step) {
   const routeResult = await gateway.handleTool("plexus_route_to_image", {
     ...route,
-    imageId: step.imageId,
+    // Routing is keyed by the MCP server since one runtime serves one image,
+    // and discovery names that server after the image it found it under —
+    // `[{ id: imageId, endpoint }]` is the whole of it.
+    mcpServerId: step.imageId,
     toolName: step.toolName,
     arguments: step.arguments,
   });
@@ -1403,13 +1406,21 @@ async function assertImageMcpToolsReady(stateAfterOpen, options) {
       )
       .filter(Boolean);
 
-    if (!toolNames.includes(options.toolName)) {
+    // tools/list is the advertised surface, not the catalogue: the Pharo MCP
+    // advertises a handful and holds the rest, which tool_search finds and
+    // which answer when called by name. So this checks that the image's MCP
+    // is up and answering, and the routed call that follows is what proves
+    // the probe tool itself works.
+    if (toolNames.length === 0) {
       throw new Error(
-        `Image ${image.id} MCP tools/list did not include ${options.toolName}; returned ${toolNames.join(", ")}`,
+        `Image ${image.id} MCP tools/list advertised nothing, so its MCP is not ready`,
       );
     }
 
-    textResult("mcp tools/list", `${image.id}=${toolNames.length} tools`);
+    textResult(
+      "mcp tools/list",
+      `${image.id}=${toolNames.length} advertised (${toolNames.join(", ")})`,
+    );
   }
 }
 
@@ -1720,29 +1731,14 @@ async function chooseSourceTemplate(client, options) {
     );
   }
 
-  const vms = dataArray(
-    launcherData(
-      await callLauncherTool(client, "pharo_launcher_vm_list", {
-        format: "ston",
-      }),
-    ),
+  // This used to prefer a template whose Pharo version already had a VM, from
+  // pharo_launcher_vm_list. The package no longer answers for that, and a
+  // disposable profile has no VMs anyway — PharoLauncher fetches the one an
+  // image needs when it starts it. So the first named template it is, which
+  // was already the fallback. Pass --sourceTemplateName to choose.
+  const template = templates.find(
+    (candidate) => typeof candidate.name === "string",
   );
-  const availableVersions = vms
-    .map((vm) =>
-      typeof vm.id === "string" ? vm.id.match(/^(\d+)-/)?.[1] : undefined,
-    )
-    .filter(Boolean);
-  const template =
-    templates.find((candidate) => {
-      const name = typeof candidate.name === "string" ? candidate.name : "";
-      const url = typeof candidate.url === "string" ? candidate.url : "";
-
-      return availableVersions.some(
-        (version) =>
-          name.includes(`Pharo ${Number(version)}.`) ||
-          url.includes(`/${version}/`),
-      );
-    }) ?? templates.find((candidate) => typeof candidate.name === "string");
 
   if (!template) {
     throw new Error("No PharoLauncher template with a name was returned");
@@ -1768,17 +1764,17 @@ async function bootstrapTemplateSources(client, options) {
   textResult("template update", "ok");
 
   try {
-    const inventoryResult = await callLauncherTool(
+    const templatesResult = await callLauncherTool(
       client,
-      "pharo_launcher_inventory",
+      "pharo_launcher_template_list",
       {},
     );
     snapshotJsonArtifact(
       options,
-      "launcher-inventory-after-template-update.json",
-      inventoryResult,
+      "launcher-templates-after-template-update.json",
+      templatesResult,
     );
-    return launcherData(inventoryResult);
+    return launcherData(templatesResult);
   } catch (error) {
     const result =
       error && typeof error === "object" && "result" in error
@@ -1861,7 +1857,7 @@ async function prepareCreatedSourceImageDependencyCache(client, options) {
 
   const launchResult = await callLauncherTool(
     client,
-    "pharo_launcher_image_launch",
+    "pharo_launcher_image_start",
     {
       imageName: options.createdSourceImageName,
       detached: false,
@@ -2007,13 +2003,14 @@ function validateOpenedState(stateAfterOpen, options) {
   }
 }
 
-async function assertClosed(client, lifecycle, gateway, openData, projectPaths, options) {
-  const closeResult = await lifecycle.handleTool("plexus_project_close", {
-    projectPath: projectPaths.projectRoot,
+async function assertClosed(client, gateway, openData, projectPaths, options) {
+  const closeResult = await closeProject({
+    projectRoot: projectPaths.projectRoot,
     stateRoot: projectPaths.stateRoot,
     workspaceId: options.workspaceId,
+    pharoLauncherMcpClient: client,
   });
-  requireGatewayOk(closeResult, "plexus_project_close");
+  requireLifecycleOk(closeResult, "closeProject");
   textResult("close ok", closeResult.ok);
 
   for (const image of options.images) {
@@ -2026,20 +2023,26 @@ async function assertClosed(client, lifecycle, gateway, openData, projectPaths, 
     textResult("process after close", `${image.id}=gone`);
   }
 
-  const statusAfterClose = await gateway.handleTool("plexus_gateway_status", {
-    ...routeOf(openData),
-    refreshHealth: true,
-  });
-  if (statusAfterClose.ok) {
+  // Nothing is registered, so nothing is unregistered by closing. The project
+  // directory is still a route source and still resolves; what close removes
+  // is each image's endpoint handoff, and with it every routable image.
+  const statusAfterClose = requireGatewayOk(
+    await gateway.handleTool("plexus_gateway_status", {
+      ...routeOf(openData),
+      refreshHealth: true,
+    }),
+    "plexus_gateway_status after close",
+  );
+  if ((statusAfterClose.images ?? []).length > 0) {
     throw new Error(
-      `Closed target is still registered: ${JSON.stringify(
-        statusAfterClose.data,
+      `Closed project still offers routable images: ${JSON.stringify(
+        statusAfterClose.images,
       )}`,
     );
   }
   textResult(
     "route after close",
-    `${openData.state.projectId}/${openData.state.workspaceId}=unregistered`,
+    `${openData.state.projectId}/${openData.state.workspaceId}=no routable image`,
   );
 
   const allStatusAfterClose = requireGatewayOk(
@@ -2051,18 +2054,26 @@ async function assertClosed(client, lifecycle, gateway, openData, projectPaths, 
   const allRoutes = Array.isArray(allStatusAfterClose)
     ? allStatusAfterClose
     : [allStatusAfterClose];
-  if (
-    allRoutes.some(
-      (route) =>
-        route?.projectId === openData.state.projectId &&
-        route?.workspaceId === openData.state.workspaceId,
-    )
-  ) {
+  // A closed workspace does not leave the listing: its directory is still a
+  // place the gateway reads, and reading it is how anything is ever found
+  // again. What closing takes away is the endpoint handoffs, so the workspace
+  // is still named and offers nothing.
+  const closedRoute = allRoutes.find(
+    (route) =>
+      route?.projectId === openData.state.projectId &&
+      route?.workspaceId === openData.state.workspaceId,
+  );
+  if ((closedRoute?.images ?? []).length > 0) {
     throw new Error(
-      `Closed workspace ${openData.state.projectId}/${openData.state.workspaceId} remains in status`,
+      `Closed workspace ${openData.state.projectId}/${openData.state.workspaceId} still offers ${
+        closedRoute.images.length
+      } routable image(s)`,
     );
   }
-  textResult("status after close", "closed target absent");
+  textResult(
+    "status after close",
+    closedRoute ? "closed target offers no image" : "closed target absent",
+  );
 }
 
 async function cleanupStep(label, action) {
@@ -2100,15 +2111,11 @@ async function main() {
   });
   stageLauncherProfileImage(options, discoveryPreflight.health);
   stageHomeLauncherProfileImage(options, discoveryPreflight.health);
-  const launcherMcpPreflight = preflightPharoLauncherMcpRuntime(options);
-  const client = await createStdioPharoLauncherMcpClient(
-    launcherMcpPreflight.config,
-  );
+  preflightPharoLauncherMcpRuntime(options);
+  // applyLauncherProfileEnvironment put PHARO_LAUNCHER_* in process.env above,
+  // which is where the launcher reads its profile from.
+  const client = openPharoLauncherClient();
   const gateway = new PlexusGateway();
-  const lifecycle = new PlexusProjectLifecycle({
-    ...(options.keepOpen ? {} : { routeRegistry: gateway }),
-    imageToolCaller: gateway,
-  });
   let opened = false;
   let keepOpenRetained = false;
   let projectPaths;
@@ -2150,10 +2157,15 @@ async function main() {
 
     const openResult = await withPhaseTimeout(options, "open", async () => {
       recordEvent(options, "open-started");
-      return lifecycle.handleTool("plexus_project_open", {
-        projectPath: projectPaths.projectRoot,
+      return openProject({
+        projectRoot: projectPaths.projectRoot,
         stateRoot: projectPaths.stateRoot,
         workspaceId: options.workspaceId,
+        // Opening is an action and takes its subjects from the request: with
+        // no ids, openProject opens nothing and says ok. The `active` flag in
+        // the config used to decide this and no longer does.
+        imageIds: options.images.map((image) => image.id),
+        pharoLauncherMcpClient: client,
       });
     });
     snapshotJsonArtifact(options, "project-open-result.json", openResult);
@@ -2165,34 +2177,27 @@ async function main() {
         launcherLogFiles,
       });
       throw new Error(
-        formatToolFailure("plexus_project_open", openResult, {
+        formatToolFailure("openProject", openResult, {
           launcherLogFiles,
         }),
       );
     }
-    openData = requireGatewayOk(openResult, "plexus_project_open");
+    openData = requireLifecycleOk(openResult, "openProject");
     opened = true;
     textResult("open ok", openResult.ok);
     textResult("statePath", openData.statePath);
-    if (options.keepOpen) {
-      requireGatewayOk(
-        await registerProbeRoute(gateway, openData, projectPaths),
-        "in-process probe route registration",
-      );
-      recordEvent(options, "probe-route-registered", routeOf(openData));
-    }
+    addProbeRouteSource(gateway, openData, projectPaths);
+    recordEvent(options, "probe-route-source-added", routeOf(openData));
 
     const stateAfterOpen = loadProjectState(openData.statePath);
     snapshotJsonArtifact(options, "state-after-open.json", stateAfterOpen);
     snapshotJsonArtifact(
       options,
       "gateway-status-after-open.json",
-      options.keepOpen
-        ? await persistentRouteStatus(openData, false)
-        : await gateway.handleTool("plexus_gateway_status", {
-            ...routeOf(openData),
-            refreshHealth: false,
-          }),
+      await gateway.handleTool("plexus_gateway_status", {
+        ...routeOf(openData),
+        refreshHealth: false,
+      }),
     );
     validateOpenedState(stateAfterOpen, options);
     await withPhaseTimeout(options, "routing", async () => {
@@ -2214,7 +2219,12 @@ async function main() {
     }
 
     if (options.keepOpen) {
-      const keepOpenRouteStatus = await persistentRouteStatus(openData, true);
+      // The route a keep-open run leaves behind is the project directory
+      // itself, so any gateway pointed at it answers — including this one.
+      const keepOpenRouteStatus = await gateway.handleTool(
+        "plexus_gateway_status",
+        { ...routeOf(openData), refreshHealth: true },
+      );
       snapshotJsonArtifact(
         options,
         "gateway-status-keep-open.json",
@@ -2234,18 +2244,20 @@ async function main() {
       recordEvent(options, "keep-open-retained", {
         projectId: cleanupContext.routeControl.projectId,
         workspaceId: cleanupContext.routeControl.workspaceId,
-        closeCommand: cleanupContext.closeCommand,
+        closeCommands: cleanupContext.closeCommands,
         artifactDirectory: cleanupContext.retained.artifactDirectory,
       });
       keepOpenRetained = true;
       textResult("keep open", "retaining scoped project and images");
-      textResult("cleanup command", cleanupContext.closeCommandString);
+      for (const command of cleanupContext.closeCommandStrings) {
+        textResult("cleanup command", command);
+      }
       recordEvent(options, "run-completed");
       return 0;
     }
 
     await withPhaseTimeout(options, "close", async () => {
-      await assertClosed(client, lifecycle, gateway, openData, projectPaths, options);
+      await assertClosed(client, gateway, openData, projectPaths, options);
     });
     snapshotJsonArtifact(
       options,
@@ -2280,10 +2292,11 @@ async function main() {
 
       if (opened && projectPaths) {
         await cleanupStep("project close", async () => {
-          await lifecycle.handleTool("plexus_project_close", {
-            projectPath: projectPaths.projectRoot,
+          await closeProject({
+            projectRoot: projectPaths.projectRoot,
             stateRoot: projectPaths.stateRoot,
             workspaceId: options.workspaceId,
+            pharoLauncherMcpClient: client,
           });
         });
       }
@@ -2303,7 +2316,6 @@ async function main() {
               });
               await callLauncherTool(client, "pharo_launcher_process_kill", {
                 imageName: image.imageName,
-                confirm: true,
               });
             }
           });
@@ -2326,7 +2338,6 @@ async function main() {
             });
             await callLauncherTool(client, "pharo_launcher_process_kill", {
               imageName: options.createdSourceImageName,
-              confirm: true,
             });
           }
         }
@@ -2343,7 +2354,6 @@ async function main() {
             await callLauncherTool(client, "pharo_launcher_image_delete", {
               imageName: image.imageName,
               force: true,
-              confirm: true,
             });
           } else if (image.create) {
             console.error(`cleanup: deleting created runtime image ${image.imageName}`);
@@ -2354,7 +2364,6 @@ async function main() {
             await callLauncherTool(client, "pharo_launcher_image_delete", {
               imageName: image.imageName,
               force: true,
-              confirm: true,
             });
           }
         });
@@ -2371,7 +2380,6 @@ async function main() {
           await callLauncherTool(client, "pharo_launcher_image_delete", {
             imageName: options.createdSourceImageName,
             force: true,
-            confirm: true,
           });
         }
       });

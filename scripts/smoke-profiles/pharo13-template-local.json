@@ -1,7 +1,7 @@
 {
-  "description": "Open/route/close smoke using a locally available Pharo 13 launcher template as a prepared source image.",
+  "description": "Open/route/close smoke on Pharo 13. Kept beside the Pharo 14 profile for deep checkout paths: Pharo's VM loads a module by absolute path through a 256-byte buffer, and Pharo 13's libgit2.dylib is ten characters shorter than Pharo 14's libgit2-1.9.1.9.0.dylib, which is enough to decide it. Prefer the Pharo 14 profile and a short --launcherProfileRoot.",
   "createSourceFromTemplate": true,
-  "sourceTemplateName": "Pharo 13.0 - 64bit (stable)",
+  "sourceTemplateName": "Pharo 13.0 - 64bit",
   "requiredWorkspacePrefix": "smoke-e2e",
   "projectId": "smoke-open-route-close",
   "timeoutBudget": {

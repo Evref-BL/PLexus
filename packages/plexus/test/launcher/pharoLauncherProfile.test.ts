@@ -32,7 +32,7 @@ describe("pharo-launcher-mcp profile derivation", () => {
       env: { PLEXUS_HOME: plexusHome },
     });
 
-    const profileRoot = path.join(plexusHome, "profiles", "pharo-launcher-mcp");
+    const profileRoot = path.join(plexusHome, "profiles");
     expect(env).toEqual({
       PHARO_LAUNCHER_MCP_PROFILE: "plexus-project-123",
       PHARO_LAUNCHER_MCP_STATE_ROOT: profileRoot,

@@ -26,7 +26,25 @@ function packageDirFromEntry(entry: string): string {
 
 function resolveInstalledPharoLauncherMcpEntry(): string | undefined {
   try {
-    return require.resolve(pharoLauncherMcpPackageName);
+    // Resolving the package name gives its export, which is the library the
+    // functions live in. What runs as a command — and what answers --health —
+    // is the bin, and since the two were split those are different files. The
+    // export loaded as a CLI prints nothing and exits 0, which reads as a
+    // health check that returned no JSON.
+    const manifestPath = require.resolve(
+      `${pharoLauncherMcpPackageName}/package.json`,
+    );
+    const manifest = require(manifestPath) as {
+      bin?: Record<string, string> | string;
+    };
+    const bin =
+      typeof manifest.bin === "string"
+        ? manifest.bin
+        : manifest.bin?.[pharoLauncherMcpCommandName];
+
+    return bin === undefined
+      ? undefined
+      : joinPathLike(dirnamePathLike(manifestPath), bin);
   } catch {
     return undefined;
   }

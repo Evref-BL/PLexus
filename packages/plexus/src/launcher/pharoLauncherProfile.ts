@@ -80,11 +80,7 @@ function defaultProfileRoot(
   env: NodeJS.ProcessEnv | undefined,
 ): string {
   // Shared across projects: the launcher image, VMs and templates are large and identical.
-  return joinPathLike(
-    resolvePlexusHomePath({ config, env }),
-    "profiles",
-    "pharo-launcher-mcp",
-  );
+  return joinPathLike(resolvePlexusHomePath({ config, env }), "profiles");
 }
 
 function projectOwnedPaths(

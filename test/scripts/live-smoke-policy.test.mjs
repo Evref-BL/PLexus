@@ -118,7 +118,6 @@ test("defaults launcher profile to the project-owned root used by project-open",
   const profileRoot = path.join(
     path.resolve("C:/work/state"),
     "profiles",
-    "pharo-launcher-mcp",
     "Project-A",
   );
 
@@ -173,6 +172,23 @@ test("rejects a target image that aliases the copy source", () => {
         { repoRoot },
       ),
     /must differ from copyFromImageName/,
+  );
+});
+
+test("rejects a smoke image with no MCP load script at all", () => {
+  // Loading from the network is a choice the run has to make out loud. There
+  // is no default script in this repository to fall back to, and naming one
+  // that has never existed made the refusal read as a deleted file.
+  assert.throws(
+    () => assertSmokeLoadScriptsReady({ images: [{ id: "dev" }] }),
+    /has no MCP load script, and loading one from the network is not implicit/,
+  );
+  assert.deepEqual(
+    assertSmokeLoadScriptsReady({
+      images: [{ id: "dev" }],
+      allowRemoteMcpFallback: true,
+    }).map((entry) => entry.exists),
+    [false],
   );
 });
 
@@ -477,7 +493,10 @@ test("renders local MCP-Pharo Tonel load script source", () => {
     .replaceAll("\\", "/")}`;
 
   assert.match(source, new RegExp(`repository: '${expectedRepository}'`));
-  assert.match(source, /load: 'Core'\./);
+  // Bare load is the default group; Core alone leaves MCP-IDE out, which is
+  // every tool a project asks for.
+  assert.match(source, /\n  load\.$/m);
+  assert.doesNotMatch(source, /load: 'Core'/);
 });
 
 test("renders source image dependency-cache preparation script", () => {
@@ -548,11 +567,11 @@ test("resolves pharo-launcher-mcp component source from the general launcher env
   );
 });
 
-test("default one-image smoke spec preserves implicit load script defaults", () => {
+test("default one-image smoke spec carries no load script it was not given", () => {
   assert.deepEqual(
     defaultSmokeImageSpec({
       imageId: "dev",
-      loadScript: "/repo/pharo/load-mcp.st",
+      loadScript: "/somewhere/load-mcp.st",
       loadScriptExplicit: false,
     }),
     {
@@ -560,7 +579,6 @@ test("default one-image smoke spec preserves implicit load script defaults", () 
       imageName: undefined,
       copyFromImageName: undefined,
       port: undefined,
-      active: true,
     },
   );
 
@@ -576,7 +594,6 @@ test("default one-image smoke spec preserves implicit load script defaults", () 
       copyFromImageName: undefined,
       port: undefined,
       loadScript: "/tmp/custom-load.st",
-      active: true,
     },
   );
 });
@@ -586,7 +603,7 @@ test("keep-open showcase mode requires project-owned disposable image state", ()
     assertKeepOpenShowcaseBoundary({
       keepOpen: true,
       stateRoot: "C:/work/state",
-      launcherProfileRoot: "C:/work/state/profiles/pharo-launcher-mcp/showcase",
+      launcherProfileRoot: "C:/work/state/profiles/showcase",
       images: [
         {
           id: "dev",
@@ -618,7 +635,7 @@ test("keep-open showcase mode requires project-owned disposable image state", ()
         keepOpen: true,
         createSourceFromTemplate: false,
         stateRoot: "C:/work/state",
-        launcherProfileRoot: "C:/work/state/profiles/pharo-launcher-mcp/showcase",
+        launcherProfileRoot: "C:/work/state/profiles/showcase",
         images: [
           {
             id: "dev",
@@ -640,7 +657,7 @@ test("keep-open cleanup context records scoped close and status commands", () =>
     options: {
       artifactDirectory: "C:/work/showcase/artifacts/smoke-1",
       artifactEventsPath: "C:/work/showcase/artifacts/smoke-1/events.jsonl",
-      launcherProfileRoot: "C:/work/showcase/state/profiles/pharo-launcher-mcp/showcase",
+      launcherProfileRoot: "C:/work/showcase/state/profiles/showcase",
       launcherProfile: "plexus-showcase",
       launcherProfileEnvironment: {
         PHARO_LAUNCHER_MCP_PROFILE: "plexus-showcase",
@@ -676,31 +693,19 @@ test("keep-open cleanup context records scoped close and status commands", () =>
     },
   });
 
-  assert.deepEqual(context.closeCommand, [
-    "plexus",
-    "project",
-    "close",
+  const scope = [
+    "--project-path",
     "C:/work/showcase/project",
     "--workspace-id",
     "showcase-1",
     "--state-root",
     "C:/work/showcase/state",
+  ];
+  assert.deepEqual(context.closeCommands, [
+    ["plexus", "image", "stop", "dev", ...scope],
   ]);
-  assert.deepEqual(context.statusCommand, [
-    "plexus",
-    "project",
-    "status",
-    "C:/work/showcase/project",
-    "--workspace-id",
-    "showcase-1",
-    "--state-root",
-    "C:/work/showcase/state",
-  ]);
-  assert.deepEqual(context.mcpCloseCall.arguments, {
-    projectPath: "C:/work/showcase/project",
-    stateRoot: "C:/work/showcase/state",
-    workspaceId: "showcase-1",
-  });
+  assert.deepEqual(context.statusCommand, ["plexus", "image", "list", ...scope]);
+  assert.equal(context.mcpCloseCall, undefined);
   assert.equal(context.routeControl.projectId, "showcase");
   assert.equal(context.routeControl.workspaceId, "showcase-1");
   assert.deepEqual(context.launcherCleanup.deleteImageToolCalls, [
@@ -709,7 +714,6 @@ test("keep-open cleanup context records scoped close and status commands", () =>
       arguments: {
         imageName: "PlexusSmokedev",
         force: true,
-        confirm: true,
       },
     },
     {
@@ -717,7 +721,6 @@ test("keep-open cleanup context records scoped close and status commands", () =>
       arguments: {
         imageName: "PlexusSmokeSource",
         force: true,
-        confirm: true,
       },
     },
   ]);
@@ -824,7 +827,7 @@ test("accepts discovery metadata before profile launcher image staging", () => {
             source: "macos-system-app",
           },
           launcherImage: {
-            path: "C:/work/state/profiles/pharo-launcher-mcp/project/launcher/PharoLauncher.image",
+            path: "C:/work/state/profiles/project/launcher/PharoLauncher.image",
             exists: false,
           },
         },
