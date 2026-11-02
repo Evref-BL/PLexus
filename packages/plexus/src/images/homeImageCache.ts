@@ -51,20 +51,6 @@ import type { ProjectImageState } from "../workspace/projectState.js";
 
 export const homeImageCacheSchemaVersion = 1;
 
-export {
-  defaultPlexusHomePath,
-  defaultPlexusHomeDirectoryName,
-  homeDependencyIcebergDirectoryName,
-  homeDependencyRepositoriesDirectoryName,
-  homeDependencyRepositoryCachePath,
-  homeDependencyRepositoryNetworkPolicy,
-  homeImageCacheDirectoryName,
-  homeImageCacheEnabled,
-  homeImageCacheNetworkPolicy,
-  plexusHomeEnvironmentKey,
-  resolvePlexusHomePath,
-} from "../config/plexusHome.js";
-
 export type HomeImageCachePlanStatus =
   | "disabled"
   | "hit"

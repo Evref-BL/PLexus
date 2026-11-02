@@ -35,8 +35,8 @@ import {
   toolResultDetailSchema,
   type ToolResultDetail,
 } from "../support/toolResultFormatting.js";
+import { homeImageCacheNetworkPolicy } from "../config/plexusHome.js";
 import {
-  homeImageCacheNetworkPolicy,
   materializeProjectImageFromHomeCache,
   type HomeImageCacheMutationApproval,
 } from "../images/homeImageCache.js";

@@ -28,10 +28,9 @@ import {
   type ProjectStatePathOptions,
 } from "./projectState.js";
 import { imageMcpEndpointHandoffPath } from "../gateway/projectImageMcpEndpoint.js";
+import { defaultPharoMcpVersion } from "../config/pharoMcpVersion.js";
 
 export const projectScriptsDirectoryName = "scripts";
-
-export const defaultPharoMcpVersion = "3.3.0";
 
 export const defaultPharoMcpMetacelloRepository = {
   githubUser: "Evref-BL",
