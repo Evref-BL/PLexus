@@ -307,9 +307,6 @@ function parseArgs(argv) {
     options.loadScript = process.env.PLEXUS_SMOKE_LOAD_SCRIPT;
     options.loadScriptExplicit = true;
   }
-  options.loadScript ??=
-    path.join(repoRoot, "pharo", "load-mcp.st");
-
   appendJsonArrayEnv(
     options.imageSpecs,
     process.env.PLEXUS_SMOKE_IMAGE_SPECS_JSON,
@@ -355,7 +352,9 @@ function usage() {
     "  --projectId <id>              Defaults to smoke-open-route-close",
     "  --imageId <id>                Defaults to dev for the one-image path",
     "  --port <number>               Defaults to PLexus allocation",
-    "  --loadScript <path>           Defaults to pharo/load-mcp.st in this repo",
+    "  --loadScript <path>           MCP load script. Without one, and without",
+    "                                --mcpPharoRepoDir, the run needs",
+    "                                --allowRemoteMcpFallback.",
     "  --allowRemoteMcpFallback      Explicitly allow missing load scripts to fall back to remote Metacello",
     "  --toolName <name>             Defaults to class_search",
     "  --toolArgumentsJson <json>    Defaults to {\"name\":\"MCPToolRegistry\"}",
@@ -370,7 +369,7 @@ function usage() {
     "  --keepTemp                   Keep generated temp project/state/fixture dirs",
     "",
     "Image spec JSON fields:",
-    "  id, imageName, copyFromImageName, create, port, loadScript, active, git",
+    "  id, imageName, copyFromImageName, create, port, loadScript, git",
     "",
     "Step JSON fields:",
     "  imageId, forEachImage, toolName, arguments, expectedText",

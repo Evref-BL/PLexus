@@ -536,7 +536,6 @@ export function defaultSmokeImageSpec(options) {
     copyFromImageName: options.copyFromImageName,
     port: options.port,
     ...(options.loadScriptExplicit ? { loadScript: options.loadScript } : {}),
-    active: true,
   };
 }
 
@@ -558,10 +557,10 @@ export function assertMcpPharoRepoDir(repoDir) {
 }
 
 export function resolveSmokeLoadScriptPath(image, options, context = {}) {
-  const loadScript = requiredString(
-    image.loadScript,
-    `image ${image.id ?? "(unknown)"} loadScript`,
-  );
+  const loadScript = image.loadScript;
+  if (typeof loadScript !== "string" || loadScript.trim().length === 0) {
+    return undefined;
+  }
   if (path.isAbsolute(loadScript)) {
     return path.resolve(loadScript);
   }
@@ -579,7 +578,7 @@ export function assertSmokeLoadScriptsReady(options, context = {}) {
   const checked = [];
   for (const image of options.images ?? []) {
     const resolvedPath = resolveSmokeLoadScriptPath(image, options, context);
-    const exists = fs.existsSync(resolvedPath);
+    const exists = resolvedPath !== undefined && fs.existsSync(resolvedPath);
     checked.push({
       imageId: image.id,
       loadScript: image.loadScript,
@@ -591,7 +590,9 @@ export function assertSmokeLoadScriptsReady(options, context = {}) {
     if (!exists && !options.allowRemoteMcpFallback) {
       throw new Error(
         [
-          `Image ${image.id} MCP load script does not exist before image startup: ${resolvedPath}`,
+          resolvedPath === undefined
+            ? `Image ${image.id} has no MCP load script, and loading one from the network is not implicit.`
+            : `Image ${image.id} MCP load script does not exist before image startup: ${resolvedPath}`,
           "Pass --loadScript pointing at a real script, use --mcpPharoRepoDir to generate a local Tonel load script, or pass --allowRemoteMcpFallback to explicitly use the configured remote Metacello fallback.",
         ].join("\n"),
       );
@@ -619,10 +620,9 @@ export function smokeProjectConfig(options) {
     images: (options.images ?? []).map((image) => ({
       id: image.id,
       imageName: image.imageName,
-      active: image.active,
       ...(image.create ? { create: image.create } : {}),
       mcp: {
-        loadScript: image.loadScript,
+        ...(image.loadScript ? { loadScript: image.loadScript } : {}),
         ...(image.port ? { port: image.port } : {}),
       },
       ...(image.git ? { git: image.git } : {}),

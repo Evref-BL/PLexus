@@ -176,6 +176,23 @@ test("rejects a target image that aliases the copy source", () => {
   );
 });
 
+test("rejects a smoke image with no MCP load script at all", () => {
+  // Loading from the network is a choice the run has to make out loud. There
+  // is no default script in this repository to fall back to, and naming one
+  // that has never existed made the refusal read as a deleted file.
+  assert.throws(
+    () => assertSmokeLoadScriptsReady({ images: [{ id: "dev" }] }),
+    /has no MCP load script, and loading one from the network is not implicit/,
+  );
+  assert.deepEqual(
+    assertSmokeLoadScriptsReady({
+      images: [{ id: "dev" }],
+      allowRemoteMcpFallback: true,
+    }).map((entry) => entry.exists),
+    [false],
+  );
+});
+
 test("rejects missing smoke MCP load scripts before image startup", () => {
   const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), "plexus-smoke-project-"));
   try {
@@ -551,11 +568,11 @@ test("resolves pharo-launcher-mcp component source from the general launcher env
   );
 });
 
-test("default one-image smoke spec preserves implicit load script defaults", () => {
+test("default one-image smoke spec carries no load script it was not given", () => {
   assert.deepEqual(
     defaultSmokeImageSpec({
       imageId: "dev",
-      loadScript: "/repo/pharo/load-mcp.st",
+      loadScript: "/somewhere/load-mcp.st",
       loadScriptExplicit: false,
     }),
     {
@@ -563,7 +580,6 @@ test("default one-image smoke spec preserves implicit load script defaults", () 
       imageName: undefined,
       copyFromImageName: undefined,
       port: undefined,
-      active: true,
     },
   );
 
@@ -579,7 +595,6 @@ test("default one-image smoke spec preserves implicit load script defaults", () 
       copyFromImageName: undefined,
       port: undefined,
       loadScript: "/tmp/custom-load.st",
-      active: true,
     },
   );
 });

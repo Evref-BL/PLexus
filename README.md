@@ -52,19 +52,20 @@ Create `plexus.json` at the project root:
     {
       "id": "dev",
       "imageName": "SampleProject-{workspaceId}-dev",
-      "active": true,
       "git": { "transport": "ssh" },
-      "mcp": {
-        "loadScript": "pharo/load-mcp.st",
-        "loadPolicy": "ifMissing"
-      }
+      "mcp": { "loadPolicy": "ifMissing" }
     }
   ]
 }
 ```
 
 PLexus loads a pinned MCP-Pharo release when it needs the standard Pharo MCP
-server.
+server, so most projects name no load script at all. A project that wants to
+control the load points `mcp.loadScript` at a Smalltalk file of its own,
+relative to the project root.
+
+Which images an open starts comes from the request, not from the file: a
+command names the image it acts on.
 
 ## Images
 
