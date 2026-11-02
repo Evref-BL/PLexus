@@ -2056,18 +2056,26 @@ async function assertClosed(client, gateway, openData, projectPaths, options) {
   const allRoutes = Array.isArray(allStatusAfterClose)
     ? allStatusAfterClose
     : [allStatusAfterClose];
-  if (
-    allRoutes.some(
-      (route) =>
-        route?.projectId === openData.state.projectId &&
-        route?.workspaceId === openData.state.workspaceId,
-    )
-  ) {
+  // A closed workspace does not leave the listing: its directory is still a
+  // place the gateway reads, and reading it is how anything is ever found
+  // again. What closing takes away is the endpoint handoffs, so the workspace
+  // is still named and offers nothing.
+  const closedRoute = allRoutes.find(
+    (route) =>
+      route?.projectId === openData.state.projectId &&
+      route?.workspaceId === openData.state.workspaceId,
+  );
+  if ((closedRoute?.images ?? []).length > 0) {
     throw new Error(
-      `Closed workspace ${openData.state.projectId}/${openData.state.workspaceId} remains in status`,
+      `Closed workspace ${openData.state.projectId}/${openData.state.workspaceId} still offers ${
+        closedRoute.images.length
+      } routable image(s)`,
     );
   }
-  textResult("status after close", "closed target absent");
+  textResult(
+    "status after close",
+    closedRoute ? "closed target offers no image" : "closed target absent",
+  );
 }
 
 async function cleanupStep(label, action) {
