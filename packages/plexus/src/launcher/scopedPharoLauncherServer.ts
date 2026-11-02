@@ -1,3 +1,4 @@
+import type { LauncherTemplate } from "@evref-bl/pharo-launcher-mcp/launcher";
 import fs from "node:fs";
 
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
@@ -1033,11 +1034,13 @@ function stateWithCreatedImage(
  * The fields are optional because nothing here validates what the launcher
  * sent; they are what it documents.
  */
-export interface ScopedLauncherTemplate {
-  name?: string;
-  /** The group the launcher itself reported the template in. */
-  category?: string;
-  url?: string;
+/**
+ * A launcher template row, plus where this listing found it.
+ *
+ * `name`, `category` and `url` are the launcher's and come from its type;
+ * `category` is the group the launcher itself reported the template in.
+ */
+export interface ScopedLauncherTemplate extends LauncherTemplate {
   /**
    * Which group this row was listed from, added here rather than by the
    * launcher: listing without a category walks the groups, and this says where
