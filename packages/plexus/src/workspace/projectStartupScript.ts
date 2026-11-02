@@ -31,7 +31,7 @@ import { imageMcpEndpointHandoffPath } from "../gateway/projectImageMcpEndpoint.
 
 export const projectScriptsDirectoryName = "scripts";
 
-export const defaultPharoMcpVersion = "3.2.0";
+export const defaultPharoMcpVersion = "3.3.0";
 
 export const defaultPharoMcpMetacelloRepository = {
   githubUser: "Evref-BL",
