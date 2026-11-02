@@ -1405,13 +1405,21 @@ async function assertImageMcpToolsReady(stateAfterOpen, options) {
       )
       .filter(Boolean);
 
-    if (!toolNames.includes(options.toolName)) {
+    // tools/list is the advertised surface, not the catalogue: the Pharo MCP
+    // advertises a handful and holds the rest, which tool_search finds and
+    // which answer when called by name. So this checks that the image's MCP
+    // is up and answering, and the routed call that follows is what proves
+    // the probe tool itself works.
+    if (toolNames.length === 0) {
       throw new Error(
-        `Image ${image.id} MCP tools/list did not include ${options.toolName}; returned ${toolNames.join(", ")}`,
+        `Image ${image.id} MCP tools/list advertised nothing, so its MCP is not ready`,
       );
     }
 
-    textResult("mcp tools/list", `${image.id}=${toolNames.length} tools`);
+    textResult(
+      "mcp tools/list",
+      `${image.id}=${toolNames.length} advertised (${toolNames.join(", ")})`,
+    );
   }
 }
 
