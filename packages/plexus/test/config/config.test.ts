@@ -52,6 +52,19 @@ describe("loadPharoLauncherMcpConfig", () => {
     });
   });
 
+  // The injected resolver below says what the entry should look like. This one
+  // runs the resolver there is: when the package split its library from its
+  // executable, resolving the package name started answering the library, and
+  // a library loaded as a command prints nothing and exits 0.
+  it("resolves the installed package's bin, not its library export", () => {
+    const config = loadPharoLauncherMcpConfig({});
+
+    expect(config.source).toBe("package");
+    expect(config.entry).toMatch(/[\\/]dist[\\/]index\.js$/);
+    expect(config.entry).not.toMatch(/server\.js$/);
+    expect(fs.existsSync(config.entry as string)).toBe(true);
+  });
+
   it("resolves the installed pharo-launcher-mcp package by default", () => {
     const installedEntry =
       "C:\\dev\\code\\app\\node_modules\\@evref-bl\\pharo-launcher-mcp\\dist\\index.js";
