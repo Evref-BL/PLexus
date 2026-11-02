@@ -2144,6 +2144,10 @@ async function main() {
         projectRoot: projectPaths.projectRoot,
         stateRoot: projectPaths.stateRoot,
         workspaceId: options.workspaceId,
+        // Opening is an action and takes its subjects from the request: with
+        // no ids, openProject opens nothing and says ok. The `active` flag in
+        // the config used to decide this and no longer does.
+        imageIds: options.images.map((image) => image.id),
         pharoLauncherMcpClient: client,
       });
     });

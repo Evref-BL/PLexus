@@ -230,6 +230,8 @@ async function main() {
       projectRoot,
       stateRoot,
       workspaceId: options.workspaceId,
+      // Without ids openProject opens nothing and still answers ok.
+      imageIds: [options.imageId],
       poll: {
         intervalMs: options.pollIntervalMs,
         processTimeoutMs: options.processTimeoutMs,
