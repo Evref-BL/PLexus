@@ -6,12 +6,14 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
-  createStdioPharoLauncherMcpClient,
-  HttpGatewayRouteRegistry,
-  loadPharoLauncherMcpConfig,
+  closeProject,
   loadProjectState,
-  PlexusProjectLifecycle,
+  openProject,
 } from "../packages/plexus/dist/index.js";
+import {
+  loadPharoLauncherMcpConfig,
+  openPharoLauncherClient,
+} from "../packages/plexus/dist/internal.js";
 import { PlexusGateway } from "../packages/plexus/dist/gateway/server/index.js";
 import {
   applySmokeProfileDefaults,
@@ -358,7 +360,7 @@ function usage() {
     "  --toolName <name>             Defaults to class_search",
     "  --toolArgumentsJson <json>    Defaults to {\"name\":\"MCPToolRegistry\"}",
     "  --expectedText <text>         Defaults to class=MCPToolRegistry for the read-only probe",
-    "  --keepOpen, --showcase        Leave scoped disposable images open and retain route-control registration",
+    "  --keepOpen, --showcase        Leave scoped disposable images open for a gateway to discover",
     "  --stepJson <json>             Adds a routed tool step; use forEachImage=true to fan out",
     "  --scenario <name>             basic or project-edit-export",
     "  --createSourceFromTemplate    Create and prepare a temporary source image, then copy smoke images from it",
@@ -1201,40 +1203,27 @@ function requireGatewayOk(result, label) {
   return result.data;
 }
 
-async function registerProbeRoute(gateway, openData, projectPaths) {
-  return gateway.handleTool("plexus_gateway_register_target", {
+// A route source is a directory, not a registration: the gateway re-reads the
+// state file and the endpoint handoffs every time it resolves one. Nothing is
+// claimed, so nothing has to be retained for keep-open, and the question a
+// persistent gateway used to be asked over its control endpoint is the same
+// question this one answers.
+function addProbeRouteSource(gateway, openData, projectPaths) {
+  gateway.addRouteSource({
     projectRoot: projectPaths.projectRoot,
     statePath: openData.statePath,
-    state: openData.state,
   });
 }
 
-async function persistentRouteStatus(openData, refreshHealth) {
-  const controlEndpoint = openData?.state?.gateway?.controlEndpoint;
-  if (typeof controlEndpoint !== "string" || controlEndpoint.length === 0) {
-    return {
-      ok: false,
-      error:
-        "Project-local gateway did not report a route-control endpoint for keep-open status",
-    };
+/** openProject and closeProject answer directly rather than through a tool. */
+function requireLifecycleOk(result, label) {
+  if (!result?.ok) {
+    throw new Error(
+      `${label} failed: ${JSON.stringify(result?.failures ?? result)}`,
+    );
   }
 
-  const registry = new HttpGatewayRouteRegistry({ url: controlEndpoint });
-  try {
-    return {
-      ok: true,
-      data: await registry.getRouteStatus({
-        projectId: openData.state.projectId,
-        workspaceId: openData.state.workspaceId,
-        refreshHealth,
-      }),
-    };
-  } catch (error) {
-    return {
-      ok: false,
-      error: error instanceof Error ? error.message : String(error),
-    };
-  }
+  return result;
 }
 
 function routeOutputText(value) {
@@ -2007,13 +1996,14 @@ function validateOpenedState(stateAfterOpen, options) {
   }
 }
 
-async function assertClosed(client, lifecycle, gateway, openData, projectPaths, options) {
-  const closeResult = await lifecycle.handleTool("plexus_project_close", {
-    projectPath: projectPaths.projectRoot,
+async function assertClosed(client, gateway, openData, projectPaths, options) {
+  const closeResult = await closeProject({
+    projectRoot: projectPaths.projectRoot,
     stateRoot: projectPaths.stateRoot,
     workspaceId: options.workspaceId,
+    pharoLauncherMcpClient: client,
   });
-  requireGatewayOk(closeResult, "plexus_project_close");
+  requireLifecycleOk(closeResult, "closeProject");
   textResult("close ok", closeResult.ok);
 
   for (const image of options.images) {
@@ -2026,20 +2016,26 @@ async function assertClosed(client, lifecycle, gateway, openData, projectPaths, 
     textResult("process after close", `${image.id}=gone`);
   }
 
-  const statusAfterClose = await gateway.handleTool("plexus_gateway_status", {
-    ...routeOf(openData),
-    refreshHealth: true,
-  });
-  if (statusAfterClose.ok) {
+  // Nothing is registered, so nothing is unregistered by closing. The project
+  // directory is still a route source and still resolves; what close removes
+  // is each image's endpoint handoff, and with it every routable image.
+  const statusAfterClose = requireGatewayOk(
+    await gateway.handleTool("plexus_gateway_status", {
+      ...routeOf(openData),
+      refreshHealth: true,
+    }),
+    "plexus_gateway_status after close",
+  );
+  if ((statusAfterClose.images ?? []).length > 0) {
     throw new Error(
-      `Closed target is still registered: ${JSON.stringify(
-        statusAfterClose.data,
+      `Closed project still offers routable images: ${JSON.stringify(
+        statusAfterClose.images,
       )}`,
     );
   }
   textResult(
     "route after close",
-    `${openData.state.projectId}/${openData.state.workspaceId}=unregistered`,
+    `${openData.state.projectId}/${openData.state.workspaceId}=no routable image`,
   );
 
   const allStatusAfterClose = requireGatewayOk(
@@ -2100,15 +2096,11 @@ async function main() {
   });
   stageLauncherProfileImage(options, discoveryPreflight.health);
   stageHomeLauncherProfileImage(options, discoveryPreflight.health);
-  const launcherMcpPreflight = preflightPharoLauncherMcpRuntime(options);
-  const client = await createStdioPharoLauncherMcpClient(
-    launcherMcpPreflight.config,
-  );
+  preflightPharoLauncherMcpRuntime(options);
+  // applyLauncherProfileEnvironment put PHARO_LAUNCHER_* in process.env above,
+  // which is where the launcher reads its profile from.
+  const client = openPharoLauncherClient();
   const gateway = new PlexusGateway();
-  const lifecycle = new PlexusProjectLifecycle({
-    ...(options.keepOpen ? {} : { routeRegistry: gateway }),
-    imageToolCaller: gateway,
-  });
   let opened = false;
   let keepOpenRetained = false;
   let projectPaths;
@@ -2150,10 +2142,11 @@ async function main() {
 
     const openResult = await withPhaseTimeout(options, "open", async () => {
       recordEvent(options, "open-started");
-      return lifecycle.handleTool("plexus_project_open", {
-        projectPath: projectPaths.projectRoot,
+      return openProject({
+        projectRoot: projectPaths.projectRoot,
         stateRoot: projectPaths.stateRoot,
         workspaceId: options.workspaceId,
+        pharoLauncherMcpClient: client,
       });
     });
     snapshotJsonArtifact(options, "project-open-result.json", openResult);
@@ -2165,34 +2158,27 @@ async function main() {
         launcherLogFiles,
       });
       throw new Error(
-        formatToolFailure("plexus_project_open", openResult, {
+        formatToolFailure("openProject", openResult, {
           launcherLogFiles,
         }),
       );
     }
-    openData = requireGatewayOk(openResult, "plexus_project_open");
+    openData = requireLifecycleOk(openResult, "openProject");
     opened = true;
     textResult("open ok", openResult.ok);
     textResult("statePath", openData.statePath);
-    if (options.keepOpen) {
-      requireGatewayOk(
-        await registerProbeRoute(gateway, openData, projectPaths),
-        "in-process probe route registration",
-      );
-      recordEvent(options, "probe-route-registered", routeOf(openData));
-    }
+    addProbeRouteSource(gateway, openData, projectPaths);
+    recordEvent(options, "probe-route-source-added", routeOf(openData));
 
     const stateAfterOpen = loadProjectState(openData.statePath);
     snapshotJsonArtifact(options, "state-after-open.json", stateAfterOpen);
     snapshotJsonArtifact(
       options,
       "gateway-status-after-open.json",
-      options.keepOpen
-        ? await persistentRouteStatus(openData, false)
-        : await gateway.handleTool("plexus_gateway_status", {
-            ...routeOf(openData),
-            refreshHealth: false,
-          }),
+      await gateway.handleTool("plexus_gateway_status", {
+        ...routeOf(openData),
+        refreshHealth: false,
+      }),
     );
     validateOpenedState(stateAfterOpen, options);
     await withPhaseTimeout(options, "routing", async () => {
@@ -2214,7 +2200,12 @@ async function main() {
     }
 
     if (options.keepOpen) {
-      const keepOpenRouteStatus = await persistentRouteStatus(openData, true);
+      // The route a keep-open run leaves behind is the project directory
+      // itself, so any gateway pointed at it answers — including this one.
+      const keepOpenRouteStatus = await gateway.handleTool(
+        "plexus_gateway_status",
+        { ...routeOf(openData), refreshHealth: true },
+      );
       snapshotJsonArtifact(
         options,
         "gateway-status-keep-open.json",
@@ -2234,18 +2225,20 @@ async function main() {
       recordEvent(options, "keep-open-retained", {
         projectId: cleanupContext.routeControl.projectId,
         workspaceId: cleanupContext.routeControl.workspaceId,
-        closeCommand: cleanupContext.closeCommand,
+        closeCommands: cleanupContext.closeCommands,
         artifactDirectory: cleanupContext.retained.artifactDirectory,
       });
       keepOpenRetained = true;
       textResult("keep open", "retaining scoped project and images");
-      textResult("cleanup command", cleanupContext.closeCommandString);
+      for (const command of cleanupContext.closeCommandStrings) {
+        textResult("cleanup command", command);
+      }
       recordEvent(options, "run-completed");
       return 0;
     }
 
     await withPhaseTimeout(options, "close", async () => {
-      await assertClosed(client, lifecycle, gateway, openData, projectPaths, options);
+      await assertClosed(client, gateway, openData, projectPaths, options);
     });
     snapshotJsonArtifact(
       options,
@@ -2280,10 +2273,11 @@ async function main() {
 
       if (opened && projectPaths) {
         await cleanupStep("project close", async () => {
-          await lifecycle.handleTool("plexus_project_close", {
-            projectPath: projectPaths.projectRoot,
+          await closeProject({
+            projectRoot: projectPaths.projectRoot,
             stateRoot: projectPaths.stateRoot,
             workspaceId: options.workspaceId,
+            pharoLauncherMcpClient: client,
           });
         });
       }

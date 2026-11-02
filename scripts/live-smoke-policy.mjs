@@ -677,43 +677,34 @@ export function buildKeepOpenCleanupContext({
     ...(options?.createdSourceImageName ? [options.createdSourceImageName] : []),
   ];
 
-  const closeCommand = [
-    "plexus",
-    "project",
-    "close",
+  // One runtime per image, so cleanup is per image: the project verbs this
+  // used to name went when routes became discovered, and a command that no
+  // longer exists is worse advice than none.
+  const scopeArguments = [
+    "--project-path",
     projectRoot,
     "--workspace-id",
     workspaceId,
     "--state-root",
     stateRoot,
   ];
-  const statusCommand = [
+  const closeCommands = copiedImages.map((image) => [
     "plexus",
-    "project",
-    "status",
-    projectRoot,
-    "--workspace-id",
-    workspaceId,
-    "--state-root",
-    stateRoot,
-  ];
+    "image",
+    "stop",
+    image.id,
+    ...scopeArguments,
+  ]);
+  const statusCommand = ["plexus", "image", "list", ...scopeArguments];
 
   return {
     mode: "keep-open",
     reason:
       "The smoke operation retained the scoped disposable project and images after successful validation.",
-    closeCommand,
-    closeCommandString: shellCommand(closeCommand),
+    closeCommands,
+    closeCommandStrings: closeCommands.map(shellCommand),
     statusCommand,
     statusCommandString: shellCommand(statusCommand),
-    mcpCloseCall: {
-      tool: "plexus_project_close",
-      arguments: {
-        projectPath: projectRoot,
-        stateRoot,
-        workspaceId,
-      },
-    },
     launcherCleanup: {
       profile: options?.launcherProfile,
       profileRoot: options?.launcherProfileRoot,
@@ -723,14 +714,14 @@ export function buildKeepOpenCleanupContext({
         arguments: {
           imageName,
           force: true,
-          confirm: true,
         },
       })),
     },
     routeControl: {
       projectId: openData?.state?.projectId,
       workspaceId,
-      controlEndpoint: openData?.state?.gateway?.controlEndpoint,
+      // No endpoint to name: a gateway pointed at this project directory
+      // discovers the route, so the status call is all there is to record.
       routeStatusTool: "plexus_gateway_status",
       routeStatusArguments: {
         projectId: openData?.state?.projectId,

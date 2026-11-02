@@ -4,10 +4,10 @@ import os from "node:os";
 import path from "node:path";
 import {
   closeProject,
-  createStdioPharoLauncherMcpClient,
   loadProjectState,
   openProject,
 } from "../packages/plexus/dist/index.js";
+import { openPharoLauncherClient } from "../packages/plexus/dist/internal.js";
 
 function parseArgs(argv) {
   const options = {
@@ -202,7 +202,7 @@ async function main() {
 
   assertValidOptions(options);
   const { projectRoot, stateRoot } = writePrototypeProjectConfig(options);
-  const client = await createStdioPharoLauncherMcpClient();
+  const client = openPharoLauncherClient();
   let openedByThisScript = false;
   let attemptedOpen = false;
 
@@ -282,7 +282,6 @@ async function main() {
         try {
           await client.callTool("pharo_launcher_process_kill", {
             imageName: options.imageName,
-            confirm: true,
           });
         } catch (error) {
           console.error(

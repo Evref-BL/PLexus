@@ -14,13 +14,5 @@
     "useUnknownInCatchVariables": false,
     "types": ["node"]
   },
-  "include": ["scripts/**/*.mjs", "test/**/*.mjs"],
-  // Both drive the project verbs and the route-control endpoint that #178 and
-  // #179 retired, so both fail to load today: a named import that the package
-  // does not export is a SyntaxError, not a missing feature. They are left out
-  // until they are rewritten against openProject/closeProject and discovery.
-  "exclude": [
-    "scripts/smoke-open-route-close.mjs",
-    "scripts/prototype-open-close.mjs"
-  ]
+  "include": ["scripts/**/*.mjs", "test/**/*.mjs"]
 }

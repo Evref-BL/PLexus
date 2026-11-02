@@ -676,31 +676,19 @@ test("keep-open cleanup context records scoped close and status commands", () =>
     },
   });
 
-  assert.deepEqual(context.closeCommand, [
-    "plexus",
-    "project",
-    "close",
+  const scope = [
+    "--project-path",
     "C:/work/showcase/project",
     "--workspace-id",
     "showcase-1",
     "--state-root",
     "C:/work/showcase/state",
+  ];
+  assert.deepEqual(context.closeCommands, [
+    ["plexus", "image", "stop", "dev", ...scope],
   ]);
-  assert.deepEqual(context.statusCommand, [
-    "plexus",
-    "project",
-    "status",
-    "C:/work/showcase/project",
-    "--workspace-id",
-    "showcase-1",
-    "--state-root",
-    "C:/work/showcase/state",
-  ]);
-  assert.deepEqual(context.mcpCloseCall.arguments, {
-    projectPath: "C:/work/showcase/project",
-    stateRoot: "C:/work/showcase/state",
-    workspaceId: "showcase-1",
-  });
+  assert.deepEqual(context.statusCommand, ["plexus", "image", "list", ...scope]);
+  assert.equal(context.mcpCloseCall, undefined);
   assert.equal(context.routeControl.projectId, "showcase");
   assert.equal(context.routeControl.workspaceId, "showcase-1");
   assert.deepEqual(context.launcherCleanup.deleteImageToolCalls, [
@@ -709,7 +697,6 @@ test("keep-open cleanup context records scoped close and status commands", () =>
       arguments: {
         imageName: "PlexusSmokedev",
         force: true,
-        confirm: true,
       },
     },
     {
@@ -717,7 +704,6 @@ test("keep-open cleanup context records scoped close and status commands", () =>
       arguments: {
         imageName: "PlexusSmokeSource",
         force: true,
-        confirm: true,
       },
     },
   ]);
