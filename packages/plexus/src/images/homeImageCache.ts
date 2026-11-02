@@ -44,6 +44,7 @@ import {
 } from "../launcher/pharoLauncherProfile.js";
 import {
   openPharoLauncherClient,
+  type LauncherMutationToolName,
   type PharoLauncherMcpToolClient,
 } from "../launcher/pharoLauncherMcpClient.js";
 import type { ProjectImageState } from "../workspace/projectState.js";
@@ -219,7 +220,7 @@ export type HomeImageCacheLockReadResult =
     };
 
 export interface HomeImageCacheLiveOperation {
-  toolName: string;
+  toolName: LauncherMutationToolName;
   argumentsValue: Record<string, unknown>;
   profileEnvironment?: Record<string, string>;
   requiresApproval: true;
@@ -1104,7 +1105,7 @@ function buildHomeImageCachePlanOperations(options: {
   const refreshTemplateCatalog =
     options.canPrepareCacheEntry && options.networkPolicy === "online"
       ? {
-          toolName: "pharo_launcher_template_update",
+          toolName: "pharo_launcher_template_update" as const,
           profileEnvironment: profileEnvironmentFromPaths(options.homeProfile),
           argumentsValue: {},
           requiresApproval: true as const,
@@ -1120,7 +1121,7 @@ function buildHomeImageCachePlanOperations(options: {
     options.canPrepareCacheEntry &&
     fs.existsSync(joinPathLike(options.homeProfile.imagesDir, options.cacheImageName))
       ? {
-          toolName: "pharo_launcher_image_delete",
+          toolName: "pharo_launcher_image_delete" as const,
           profileEnvironment: profileEnvironmentFromPaths(options.homeProfile),
           argumentsValue: {
             imageName: options.cacheImageName,
@@ -1133,7 +1134,7 @@ function buildHomeImageCachePlanOperations(options: {
       : undefined;
   const createCacheImage = options.canPrepareCacheEntry
     ? {
-        toolName: "pharo_launcher_image_create",
+        toolName: "pharo_launcher_image_create" as const,
         profileEnvironment: profileEnvironmentFromPaths(options.homeProfile),
         argumentsValue: {
           newImageName: options.cacheImageName,
@@ -1153,7 +1154,7 @@ function buildHomeImageCachePlanOperations(options: {
     options.keyMaterial.pharoMcp.support.status === "supported" &&
     projectMcpStartupMode(options.mcp) !== "disabled"
       ? {
-          toolName: "pharo_launcher_image_start",
+          toolName: "pharo_launcher_image_start" as const,
           profileEnvironment: profileEnvironmentFromPaths(options.homeProfile),
           argumentsValue: {
             imageName: options.cacheImageName,
@@ -1172,7 +1173,7 @@ function buildHomeImageCachePlanOperations(options: {
     options.destinationProfile &&
     (options.status === "hit" || options.canPrepareCacheEntry)
       ? {
-          toolName: "pharo_launcher_image_copy_between_profiles",
+          toolName: "pharo_launcher_image_copy_between_profiles" as const,
           argumentsValue: {
             sourceProfile: options.homeProfile,
             destinationProfile: options.destinationProfile,
@@ -1339,7 +1340,7 @@ export function writeHomeImageCachePreparationScript(plan: HomeImageCachePlan): 
 }
 
 function assertLauncherOk(
-  result: LauncherCommandResult | undefined,
+  result: { ok?: boolean } | undefined,
   toolName: string,
 ): void {
   if (result && result.ok === false) {
@@ -1364,7 +1365,7 @@ async function callLauncherOperation(
   client: PharoLauncherMcpToolClient,
   operation: HomeImageCacheLiveOperation,
 ): Promise<void> {
-  const result = await client.callTool<LauncherCommandResult>(
+  const result = await client.callTool(
     operation.toolName,
     operation.argumentsValue,
   );

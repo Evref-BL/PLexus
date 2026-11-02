@@ -1,5 +1,8 @@
 import fs from "node:fs";
-import type { PharoLauncherMcpToolClient } from "../launcher/pharoLauncherMcpClient.js";
+import type {
+  LauncherMutationToolName,
+  PharoLauncherMcpToolClient,
+} from "../launcher/pharoLauncherMcpClient.js";
 import type {
   ProjectConfig,
   ProjectImageConfig,
@@ -51,7 +54,7 @@ export interface PreparedImageCacheMutationApproval {
 }
 
 export interface PreparedImageLiveOperation {
-  toolName: string;
+  toolName: LauncherMutationToolName;
   argumentsValue: Record<string, unknown>;
   requiresApproval: true;
   reason: string;
@@ -98,7 +101,7 @@ function smalltalkPath(value: string): string {
 }
 
 function assertLauncherOk(
-  result: LauncherCommandResult | undefined,
+  result: { ok?: boolean } | undefined,
   toolName: string,
 ): void {
   if (result && result.ok === false) {
@@ -347,7 +350,7 @@ export function buildPreparedImageCachePlan(options: {
     options.imageConfig?.preparedImage?.copyMode === "copy-on-open" &&
     options.imageState
       ? {
-          toolName: "pharo_launcher_image_copy",
+          toolName: "pharo_launcher_image_copy" as const,
           argumentsValue: {
             imageName,
             newImageName: options.imageState.imageName,
@@ -363,7 +366,7 @@ export function buildPreparedImageCachePlan(options: {
     imageName,
     prepareScript,
     createCacheImage: {
-      toolName: "pharo_launcher_image_create",
+      toolName: "pharo_launcher_image_create" as const,
       argumentsValue: createArguments,
       requiresApproval: true,
       reason:
@@ -407,7 +410,7 @@ export async function copyProjectImageFromPreparedCache(
     options.approval,
     `Runtime copy for prepared image cache ${cacheId}`,
   );
-  const result = await options.client.callTool<LauncherCommandResult>(
+  const result = await options.client.callTool(
     plan.runtimeCopy.toolName,
     plan.runtimeCopy.argumentsValue,
   );

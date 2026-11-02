@@ -16,10 +16,10 @@ import {
 } from "@evref-bl/pharo-launcher-mcp/launcher";
 
 export interface PharoLauncherMcpToolClient {
-  callTool<T = unknown>(
-    name: string,
-    argumentsValue?: Record<string, unknown>,
-  ): Promise<T>;
+  callTool<K extends LauncherToolName>(
+    name: K,
+    argumentsValue?: LauncherToolInput<K>,
+  ): Promise<LauncherToolResult<K>>;
   close?(): Promise<void>;
 }
 
@@ -91,51 +91,53 @@ export function launcherToolFailureMessage(
  * than there because the names are PLexus's vocabulary: they appear in the
  * plans it shows for approval and in what it reports when one fails.
  */
-export const launcherToolNames: readonly string[] = [
-  "pharo_launcher_config",
-  "pharo_launcher_image_copy",
-  "pharo_launcher_image_copy_between_profiles",
-  "pharo_launcher_image_create",
-  "pharo_launcher_image_delete",
-  "pharo_launcher_image_info",
-  "pharo_launcher_image_list",
-  "pharo_launcher_image_start",
-  "pharo_launcher_process_kill",
-  "pharo_launcher_process_list",
-  "pharo_launcher_template_category_list",
-  "pharo_launcher_template_list",
-  "pharo_launcher_template_update",
-];
+export const launcherMethodForTool = {
+  pharo_launcher_config: "describeConfig",
+  pharo_launcher_image_copy: "copyImage",
+  pharo_launcher_image_copy_between_profiles: "copyImageBetweenProfiles",
+  pharo_launcher_image_create: "createImage",
+  pharo_launcher_image_delete: "deleteImage",
+  pharo_launcher_image_info: "imageInfo",
+  pharo_launcher_image_list: "listImages",
+  pharo_launcher_image_start: "startImage",
+  pharo_launcher_process_kill: "killProcess",
+  pharo_launcher_process_list: "listProcesses",
+  pharo_launcher_template_category_list: "listTemplateCategories",
+  pharo_launcher_template_list: "listTemplates",
+  pharo_launcher_template_update: "updateTemplates",
+} as const satisfies Record<string, keyof PharoLauncher>;
 
-const callForTool: Record<
-  string,
-  (launcher: PharoLauncher, input: Record<string, unknown>) => unknown
-> = {
-  pharo_launcher_config: (launcher) => launcher.describeConfig(),
-  pharo_launcher_image_copy: (launcher, input) =>
-    launcher.copyImage(input as never),
-  pharo_launcher_image_copy_between_profiles: (launcher, input) =>
-    launcher.copyImageBetweenProfiles(input),
-  pharo_launcher_image_create: (launcher, input) =>
-    launcher.createImage(input as never),
-  pharo_launcher_image_delete: (launcher, input) =>
-    launcher.deleteImage(input as never),
-  pharo_launcher_image_info: (launcher, input) =>
-    launcher.imageInfo(input as never),
-  pharo_launcher_image_list: (launcher, input) => launcher.listImages(input),
-  pharo_launcher_image_start: (launcher, input) =>
-    launcher.startImage(input as never),
-  pharo_launcher_process_kill: (launcher, input) =>
-    launcher.killProcess(input as never),
-  pharo_launcher_process_list: (launcher, input) =>
-    launcher.listProcesses(input),
-  pharo_launcher_template_category_list: (launcher, input) =>
-    launcher.listTemplateCategories(input),
-  pharo_launcher_template_list: (launcher, input) =>
-    launcher.listTemplates(input),
-  pharo_launcher_template_update: (launcher, input) =>
-    launcher.updateTemplates(input),
-};
+export type LauncherToolName = keyof typeof launcherMethodForTool;
+
+type LauncherMethodFor<K extends LauncherToolName> =
+  PharoLauncher[(typeof launcherMethodForTool)[K]];
+
+/** What that tool takes, read off the function it calls. */
+export type LauncherToolInput<K extends LauncherToolName> = Parameters<
+  LauncherMethodFor<K>
+>[0];
+
+/** What that tool answers, read off the function it calls. */
+export type LauncherToolResult<K extends LauncherToolName> = Awaited<
+  ReturnType<LauncherMethodFor<K>>
+>;
+
+/**
+ * The tools an operation plan may name: the ones that change something, and
+ * are therefore written down and approved before they run. Every one of them
+ * answers with an `ok`, which is what the caller checks afterwards.
+ */
+export type LauncherMutationToolName =
+  | "pharo_launcher_image_copy"
+  | "pharo_launcher_image_copy_between_profiles"
+  | "pharo_launcher_image_create"
+  | "pharo_launcher_image_delete"
+  | "pharo_launcher_image_start"
+  | "pharo_launcher_template_update";
+
+export const launcherToolNames = Object.keys(
+  launcherMethodForTool,
+) as LauncherToolName[];
 
 function failed(result: unknown): boolean {
   return (
@@ -155,12 +157,12 @@ export function openPharoLauncherClient(
   );
 
   return {
-    async callTool<T = unknown>(
-      name: string,
-      argumentsValue: Record<string, unknown> = {},
-    ): Promise<T> {
-      const call = callForTool[name];
-      if (!call) {
+    async callTool<K extends LauncherToolName>(
+      name: K,
+      argumentsValue?: LauncherToolInput<K>,
+    ): Promise<LauncherToolResult<K>> {
+      const method = launcherMethodForTool[name];
+      if (!method) {
         throw new PharoLauncherMcpToolError(
           `pharo-launcher-mcp has no tool named ${name}`,
           name,
@@ -168,7 +170,11 @@ export function openPharoLauncherClient(
         );
       }
 
-      const result = await call(launcher, argumentsValue);
+      // The one cast left: every method takes its own input, and the table
+      // above is what ties a name to the right one.
+      const call = launcher[method] as (input: unknown) => unknown;
+      const result = (await call.call(launcher, argumentsValue ?? {})) as
+        LauncherToolResult<K>;
       if (failed(result)) {
         throw new PharoLauncherMcpToolError(
           launcherToolFailureMessage(name, result),
@@ -177,7 +183,7 @@ export function openPharoLauncherClient(
         );
       }
 
-      return result as T;
+      return result;
     },
   };
 }

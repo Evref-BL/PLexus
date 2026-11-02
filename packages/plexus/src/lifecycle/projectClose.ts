@@ -225,7 +225,7 @@ async function stopProjectImages(options: {
       // that and leave any stranger on the image alone.
       const pid = await ownedProcessPid(options.client, imageState);
       if (pid !== undefined) {
-        const killResult = await options.client.callTool<LauncherCommandResult>(
+        const killResult = await options.client.callTool(
           "pharo_launcher_process_kill",
           { pid },
         );

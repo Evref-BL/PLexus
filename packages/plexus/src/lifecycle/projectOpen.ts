@@ -699,7 +699,7 @@ export async function processesForImage(
 export async function hostPharoProcesses(
   client: PharoLauncherMcpToolClient,
 ): Promise<LauncherProcess[]> {
-  const result = await client.callTool<LauncherCommandResult<LauncherProcess[]>>(
+  const result = await client.callTool(
     "pharo_launcher_process_list",
     {},
   );
@@ -916,7 +916,7 @@ async function launchImageAndPollProcess(
   }
 
   const launchOutcome = launchClient
-    .callTool<LauncherCommandResult>("pharo_launcher_image_start", {
+    .callTool("pharo_launcher_image_start", {
       imageName,
       detached: true,
       displayMode,
