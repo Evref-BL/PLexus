@@ -20,13 +20,14 @@
     "node": ">=22.12.0"
   },
   "scripts": {
-    "check": "npm run typecheck && npm run build && npm test",
+    "check": "npm run typecheck && npm run build && npm run typecheck:scripts && npm test",
     "build": "npm run clean -w @evref-bl/plexus && npm run build -w @evref-bl/plexus",
     "test": "npm run test --workspaces && npm run test:smoke-policy",
     "coverage": "npm run coverage --workspaces",
     "coverage:all": "npm run coverage",
     "test:smoke-policy": "node --test test/scripts/*.test.mjs",
-    "typecheck": "tsc -p tsconfig.check.json && tsc -p tsconfig.scripts.json",
+    "typecheck": "tsc -p tsconfig.check.json",
+    "typecheck:scripts": "tsc -p tsconfig.scripts.json",
     "clean": "npm run clean --workspaces",
     "prototype:open-close": "node scripts/prototype-open-close.mjs",
     "smoke:open-route-close": "npm run build && node scripts/smoke-open-route-close.mjs",

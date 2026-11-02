@@ -14,5 +14,8 @@
     "useUnknownInCatchVariables": false,
     "types": ["node"]
   },
+  // The scripts import the package as the built dist, the way node runs
+  // them, so this config reads declarations the build has to emit first.
+  // That is why "check" runs it after "build" and not with "typecheck".
   "include": ["scripts/**/*.mjs", "test/**/*.mjs"]
 }
