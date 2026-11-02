@@ -1285,7 +1285,10 @@ function routeOf(openData) {
 async function routeStep(gateway, route, step) {
   const routeResult = await gateway.handleTool("plexus_route_to_image", {
     ...route,
-    imageId: step.imageId,
+    // Routing is keyed by the MCP server since one runtime serves one image,
+    // and discovery names that server after the image it found it under —
+    // `[{ id: imageId, endpoint }]` is the whole of it.
+    mcpServerId: step.imageId,
     toolName: step.toolName,
     arguments: step.arguments,
   });
