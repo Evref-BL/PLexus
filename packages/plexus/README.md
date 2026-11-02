@@ -1,12 +1,24 @@
 # PLexus
 
-`@evref-bl/plexus` is the PLexus command-line application for project-scoped
-Pharo runtime orchestration.
+`@evref-bl/plexus` orchestrates project-scoped Pharo runtimes: opening and
+closing project images, and forwarding MCP calls to the servers they run.
+
+It is a command-line application and a library. The lifecycle is reachable as
+functions, so a caller inside Node does not have to round-trip through MCP to
+use it.
 
 ```sh
 npm install --global @evref-bl/plexus
 plexus --help
 ```
 
-For gateway embedding, import `@evref-bl/plexus/gateway`. Configuration and MCP
-usage are documented at https://github.com/Evref-BL/PLexus.
+```ts
+import { closeProject, loadProjectState, openProject } from "@evref-bl/plexus";
+```
+
+Everything reachable from the package root is API. `@evref-bl/plexus/internal`
+reaches the working parts and promises nothing. `@evref-bl/plexus/gateway` is
+the forwarding surface for a host that embeds the gateway.
+
+Configuration and MCP usage are documented at
+https://github.com/Evref-BL/PLexus.
