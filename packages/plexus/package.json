@@ -1,6 +1,6 @@
 {
   "name": "@evref-bl/plexus",
-  "version": "0.10.0",
+  "version": "0.10.1",
   "private": false,
   "description": "PLexus: project-scoped Pharo runtime orchestration and MCP gateway.",
   "license": "Apache-2.0",
