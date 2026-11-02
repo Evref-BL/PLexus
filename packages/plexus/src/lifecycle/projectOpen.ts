@@ -1,3 +1,4 @@
+import type { LauncherProcess } from "@evref-bl/pharo-launcher-mcp/launcher";
 import fs from "node:fs";
 import { joinPathLike } from "../support/pathStyle.js";
 import path from "node:path";
@@ -52,18 +53,19 @@ import {
 } from "../workspace/projectState.js";
 import { writeProjectImageStartupScript } from "../workspace/projectStartupScript.js";
 
+/**
+ * What PLexus reads from a launcher result, not the launcher's result.
+ *
+ * `@evref-bl/pharo-launcher-mcp` answers a richer shape, and a value of it
+ * satisfies this one. Asking only for what is read keeps a caller — a test
+ * double included — from having to build fields nobody here looks at.
+ */
 export interface LauncherCommandResult<T = unknown> {
   ok: boolean;
   data?: T;
 }
 
-
-export interface LauncherProcess {
-  pid: number;
-  imageName?: string;
-  imagePath?: string;
-  commandLine: string;
-}
+export type { LauncherProcess };
 
 export interface ProjectOpenPollOptions {
   intervalMs?: number;
