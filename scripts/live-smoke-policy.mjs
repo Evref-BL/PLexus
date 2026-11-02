@@ -170,7 +170,6 @@ export function defaultProjectOwnedLauncherProfileRoot({ stateRoot, projectId })
   return path.join(
     path.resolve(requiredString(stateRoot, "stateRoot")),
     "profiles",
-    "pharo-launcher-mcp",
     sanitizeRuntimeId(requiredString(projectId, "projectId")),
   );
 }

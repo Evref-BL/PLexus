@@ -935,7 +935,6 @@ function stageHomeLauncherProfileImage(options, healthResult) {
   const profileRoot = path.join(
     path.resolve(options.homePath),
     "profiles",
-    "pharo-launcher-mcp",
     "image-cache",
   );
   const targetImage = path.join(profileRoot, "launcher", "PharoLauncher.image");

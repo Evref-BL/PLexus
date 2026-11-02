@@ -471,12 +471,7 @@ export function homeImageCacheImageName(key: string): string {
 export function homeImageCacheProfile(
   homePath: string,
 ): Required<PharoLauncherMcpProfilePaths> {
-  const stateRoot = joinPathLike(
-    homePath,
-    "profiles",
-    "pharo-launcher-mcp",
-    "image-cache",
-  );
+  const stateRoot = joinPathLike(homePath, "profiles", "image-cache");
   return {
     profileName: "plexus-home-image-cache",
     stateRoot,

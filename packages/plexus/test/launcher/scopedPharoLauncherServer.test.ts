@@ -831,13 +831,12 @@ describe("scoped pharo launcher facade", () => {
             stateRoot: path.join(
               homePath,
               "profiles",
-              "pharo-launcher-mcp",
               "image-cache",
             ),
           }),
           destinationProfile: expect.objectContaining({
             stateRoot: path.join(
-              path.join(homePath, "profiles", "pharo-launcher-mcp"),
+              path.join(homePath, "profiles"),
             ),
           }),
           sourceImageName: expect.stringMatching(/^PlexusHomeCache-/),
@@ -1034,7 +1033,7 @@ describe("scoped pharo launcher facade", () => {
     expect(
       fs.readFileSync(
         path.join(
-          path.join(plexusHome, "profiles", "pharo-launcher-mcp"),
+          path.join(plexusHome, "profiles"),
           "templates",
           "sources.list",
         ),
@@ -1103,7 +1102,7 @@ describe("scoped pharo launcher facade", () => {
     expect(
       fs.existsSync(
         path.join(
-          path.join(plexusHome, "profiles", "pharo-launcher-mcp"),
+          path.join(plexusHome, "profiles"),
           "templates",
           "pharo-13.ston",
         ),

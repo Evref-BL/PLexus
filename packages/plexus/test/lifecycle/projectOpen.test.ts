@@ -1139,12 +1139,11 @@ describe("project open", () => {
             stateRoot: path.join(
               homePath,
               "profiles",
-              "pharo-launcher-mcp",
               "image-cache",
             ),
           }),
           destinationProfile: expect.objectContaining({
-            stateRoot: path.join(homePath, "profiles", "pharo-launcher-mcp"),
+            stateRoot: path.join(homePath, "profiles"),
           }),
           sourceImageName: expect.stringMatching(/^PlexusHomeCache-/),
           destinationImageName: "MyProject-worktree-a-dev",

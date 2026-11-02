@@ -118,7 +118,6 @@ test("defaults launcher profile to the project-owned root used by project-open",
   const profileRoot = path.join(
     path.resolve("C:/work/state"),
     "profiles",
-    "pharo-launcher-mcp",
     "Project-A",
   );
 
@@ -604,7 +603,7 @@ test("keep-open showcase mode requires project-owned disposable image state", ()
     assertKeepOpenShowcaseBoundary({
       keepOpen: true,
       stateRoot: "C:/work/state",
-      launcherProfileRoot: "C:/work/state/profiles/pharo-launcher-mcp/showcase",
+      launcherProfileRoot: "C:/work/state/profiles/showcase",
       images: [
         {
           id: "dev",
@@ -636,7 +635,7 @@ test("keep-open showcase mode requires project-owned disposable image state", ()
         keepOpen: true,
         createSourceFromTemplate: false,
         stateRoot: "C:/work/state",
-        launcherProfileRoot: "C:/work/state/profiles/pharo-launcher-mcp/showcase",
+        launcherProfileRoot: "C:/work/state/profiles/showcase",
         images: [
           {
             id: "dev",
@@ -658,7 +657,7 @@ test("keep-open cleanup context records scoped close and status commands", () =>
     options: {
       artifactDirectory: "C:/work/showcase/artifacts/smoke-1",
       artifactEventsPath: "C:/work/showcase/artifacts/smoke-1/events.jsonl",
-      launcherProfileRoot: "C:/work/showcase/state/profiles/pharo-launcher-mcp/showcase",
+      launcherProfileRoot: "C:/work/showcase/state/profiles/showcase",
       launcherProfile: "plexus-showcase",
       launcherProfileEnvironment: {
         PHARO_LAUNCHER_MCP_PROFILE: "plexus-showcase",
@@ -828,7 +827,7 @@ test("accepts discovery metadata before profile launcher image staging", () => {
             source: "macos-system-app",
           },
           launcherImage: {
-            path: "C:/work/state/profiles/pharo-launcher-mcp/project/launcher/PharoLauncher.image",
+            path: "C:/work/state/profiles/project/launcher/PharoLauncher.image",
             exists: false,
           },
         },
