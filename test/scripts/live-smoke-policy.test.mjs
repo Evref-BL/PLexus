@@ -477,7 +477,10 @@ test("renders local MCP-Pharo Tonel load script source", () => {
     .replaceAll("\\", "/")}`;
 
   assert.match(source, new RegExp(`repository: '${expectedRepository}'`));
-  assert.match(source, /load: 'Core'\./);
+  // Bare load is the default group; Core alone leaves MCP-IDE out, which is
+  // every tool a project asks for.
+  assert.match(source, /\n  load\.$/m);
+  assert.doesNotMatch(source, /load: 'Core'/);
 });
 
 test("renders source image dependency-cache preparation script", () => {

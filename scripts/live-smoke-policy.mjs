@@ -370,10 +370,14 @@ export function mcpPharoTonelLoadScriptSource(repoDir) {
   const sourceDirectory = path.join(path.resolve(repoDir), "src");
   return [
     '"Load MCP-Pharo from an explicit local Tonel checkout for this PLexus smoke run."',
+    '"Bare load, which is the default group, because that is what the startup',
+    'PLexus writes for the released package does. Core alone leaves out MCP-IDE,',
+    'so the image comes up with tool_call, tool_get and tool_search and nothing',
+    'a project actually asks for."',
     "Metacello new",
     "  baseline: 'MCP';",
     `  repository: ${smalltalkString(`tonel://${sourceDirectory.replaceAll("\\", "/")}`)};`,
-    "  load: 'Core'.",
+    "  load.",
     "",
   ].join("\n");
 }
