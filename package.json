@@ -21,7 +21,7 @@
   },
   "scripts": {
     "check": "npm run typecheck && npm run build && npm test",
-    "build": "npm run build -w @evref-bl/plexus",
+    "build": "npm run clean -w @evref-bl/plexus && npm run build -w @evref-bl/plexus",
     "test": "npm run test --workspaces && npm run test:smoke-policy",
     "coverage": "npm run coverage --workspaces",
     "coverage:all": "npm run coverage",

@@ -243,7 +243,7 @@ function fakeLauncherClient(
         );
       }
       return { ok: true };
-  });;
+  });
 
   return { client, calls };
 }
@@ -620,7 +620,7 @@ describe("scoped pharo launcher facade", () => {
         return name === "pharo_launcher_template_list"
           ? { ok: true, data: [{ name: "Pharo 13.0 - 64bit", category: "Official" }] }
           : { ok: true };
-    });;
+    });
     writeProjectConfig(projectRoot);
 
     const result = await scopedLauncher({
@@ -703,7 +703,7 @@ describe("scoped pharo launcher facade", () => {
           };
         }
         return { ok: true };
-    });;
+    });
     writeProjectConfig(projectRoot);
 
     const result = await scopedLauncher({
@@ -733,7 +733,7 @@ describe("scoped pharo launcher facade", () => {
           return { ok: true, data: ["Official distributions"] };
         }
         return name === "pharo_launcher_template_list" ? { ok: false } : { ok: true };
-    });;
+    });
     writeProjectConfig(projectRoot);
 
     await expect(
@@ -1236,7 +1236,7 @@ describe("scoped pharo launcher facade", () => {
           name,
           launcherFailure,
         );
-    });;
+    });
     const server = createScopedPharoLauncherServer({
       projectRoot,
       stateRoot,

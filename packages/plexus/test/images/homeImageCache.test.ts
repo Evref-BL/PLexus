@@ -78,7 +78,7 @@ function fakeLauncherClient() {
   const client = launcherClientAnswering((name, argumentsValue) => {
       calls.push({ name, argumentsValue });
       return { ok: true };
-  });;
+  });
 
   return { client, calls };
 }
@@ -948,7 +948,7 @@ describe("home image cache", () => {
         }
 
         return { ok: true };
-    });;
+    });
     const runtime = fakeLauncherClient();
 
     await expect(
