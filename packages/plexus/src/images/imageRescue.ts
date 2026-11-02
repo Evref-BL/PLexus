@@ -306,7 +306,7 @@ async function pollProcessForImage(
   sleep: (durationMs: number) => Promise<void>,
 ): Promise<LauncherProcess | undefined> {
   return pollUntil(timeoutMs, intervalMs, sleep, async () => {
-    const result = await client.callTool<LauncherCommandResult<LauncherProcess[]>>(
+    const result = await client.callTool(
       "pharo_launcher_process_list",
     );
     const processes = launcherResultData<LauncherProcess[]>(result) ?? [];
@@ -323,7 +323,7 @@ async function launchImage(
   poll: Required<ImageRescuePollOptions>,
   sleep: (durationMs: number) => Promise<void>,
 ): Promise<number> {
-  const launchResult = await client.callTool<LauncherCommandResult>(
+  const launchResult = await client.callTool(
     "pharo_launcher_image_start",
     {
       imageName: imageState.imageName,
@@ -463,7 +463,7 @@ async function launcherImageInfo(
   client: PharoLauncherMcpToolClient,
   imageName: string,
 ): Promise<LauncherImageInfo | undefined> {
-  const result = await client.callTool<LauncherCommandResult<LauncherImageInfo>>(
+  const result = await client.callTool(
     "pharo_launcher_image_info",
     {
       imageName,
@@ -477,7 +477,7 @@ async function launcherImageInfo(
 async function launcherConfigReport(
   client: PharoLauncherMcpToolClient,
 ): Promise<LauncherConfigReport> {
-  const result = await client.callTool<LauncherConfigReport>(
+  const result = await client.callTool(
     "pharo_launcher_config",
   );
 
@@ -877,7 +877,7 @@ async function createTargetImage(
   templateName: string,
   templateCategory: string | undefined,
 ): Promise<void> {
-  const result = await client.callTool<LauncherCommandResult>(
+  const result = await client.callTool(
     "pharo_launcher_image_create",
     {
       newImageName: targetImageName,

@@ -7,7 +7,6 @@ import type { ProjectConfig } from "../../src/config/projectConfig.js";
 import type { ProjectImageState } from "../../src/workspace/projectState.js";
 import {
   defaultPharoMcpMetacelloRepository,
-  defaultPharoMcpVersion,
   fetchDependencyRepositoryRelease,
   generateImageStartupScript,
   imageDependencyRepositoryDetachStatusPath,
@@ -18,6 +17,7 @@ import {
   projectScriptsDirectoryPath,
   writeProjectImageStartupScript,
 } from "../../src/workspace/projectStartupScript.js";
+import { defaultPharoMcpVersion } from "../../src/config/pharoMcpVersion.js";
 
 const config: ProjectConfig = {
   id: "project-123",

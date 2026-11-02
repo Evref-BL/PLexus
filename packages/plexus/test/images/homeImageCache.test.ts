@@ -5,10 +5,8 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   buildHomeImageCachePlan,
   classifyHomeImageCachePharoMcpSupport,
-  defaultPlexusHomePath,
   deriveHomeImageCacheKey,
   flushHomeImageCache,
-  homeDependencyRepositoryCachePath,
   homeImageCacheKeyMaterial,
   homeImageCacheProfile,
   inferPharoMajorVersionFromTemplateText,
@@ -17,11 +15,15 @@ import {
   planHomeImageCacheFlush,
   readHomeImageCacheManifest,
   releaseHomeImageCacheLock,
-  resolvePlexusHomePath,
   tryAcquireHomeImageCacheLock,
   writeHomeImageCacheManifest,
   writeHomeImageCachePreparationScript,
 } from "../../src/images/homeImageCache.js";
+import {
+  defaultPlexusHomePath,
+  homeDependencyRepositoryCachePath,
+  resolvePlexusHomePath,
+} from "../../src/config/plexusHome.js";
 import type { PharoLauncherMcpToolClient } from "../../src/launcher/pharoLauncherMcpClient.js";
 import { parseProjectConfig, type ProjectConfig } from "../../src/config/projectConfig.js";
 import type { ProjectImageState } from "../../src/workspace/projectState.js";

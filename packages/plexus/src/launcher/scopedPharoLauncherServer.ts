@@ -35,8 +35,8 @@ import {
   toolResultDetailSchema,
   type ToolResultDetail,
 } from "../support/toolResultFormatting.js";
+import { homeImageCacheNetworkPolicy } from "../config/plexusHome.js";
 import {
-  homeImageCacheNetworkPolicy,
   materializeProjectImageFromHomeCache,
   type HomeImageCacheMutationApproval,
 } from "../images/homeImageCache.js";
@@ -491,7 +491,7 @@ async function ensureScopedTemplateCatalogReady(options: {
     return;
   }
 
-  const result = await options.client.callTool<LauncherCommandResult>(
+  const result = await options.client.callTool(
     "pharo_launcher_template_update",
     {},
   );
@@ -1052,7 +1052,7 @@ async function listTemplatesInCategory(
   client: PharoLauncherMcpToolClient,
   templateCategory?: string,
 ): Promise<ScopedLauncherTemplate[]> {
-  const result = await client.callTool<LauncherCommandResult>(
+  const result = await client.callTool(
     "pharo_launcher_template_list",
     templateCategory ? { templateCategory } : {},
   );
@@ -1457,7 +1457,7 @@ export class ScopedPharoLauncher {
           projectConfig,
           fetch: this.options.fetch,
         });
-        const result = await client.callTool<LauncherCommandResult>(
+        const result = await client.callTool(
           "pharo_launcher_template_category_list",
           {},
         );
@@ -1574,7 +1574,7 @@ export class ScopedPharoLauncher {
           projectConfig,
           fetch: this.options.fetch,
         });
-        const result = await client.callTool<LauncherCommandResult>(
+        const result = await client.callTool(
           "pharo_launcher_image_create",
           {
             newImageName: renderedImageName(scope, imageConfig),
@@ -1795,7 +1795,7 @@ export class ScopedPharoLauncher {
     imageName: string,
   ): Promise<void> {
     await this.withLauncherClient(scope, projectConfig, async (client) => {
-      const deleteResult = await client.callTool<LauncherCommandResult>(
+      const deleteResult = await client.callTool(
         "pharo_launcher_image_delete",
         { imageName, force: true },
       );
