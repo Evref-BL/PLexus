@@ -1122,7 +1122,20 @@ function launcherErrorDetails(error) {
   return error instanceof Error ? error.message : String(error);
 }
 
-async function callLauncherTool(client, toolName, argumentsValue = {}) {
+/**
+ * The launcher tools this script calls, checked by name.
+ *
+ * A wrapper that took a plain string let `pharo_launcher_inventory` survive
+ * here long after the package stopped answering for it, because nothing
+ * compared the name against what exists.
+ *
+ * @template {import("../packages/plexus/dist/internal.js").LauncherToolName} K
+ * @param {import("../packages/plexus/dist/internal.js").PharoLauncherMcpToolClient} client
+ * @param {K} toolName
+ * @param {import("../packages/plexus/dist/internal.js").LauncherToolInput<K>} [argumentsValue]
+ * @returns {Promise<import("../packages/plexus/dist/internal.js").LauncherToolResult<K>>}
+ */
+async function callLauncherTool(client, toolName, argumentsValue) {
   try {
     return await client.callTool(toolName, argumentsValue);
   } catch (error) {
@@ -1709,29 +1722,14 @@ async function chooseSourceTemplate(client, options) {
     );
   }
 
-  const vms = dataArray(
-    launcherData(
-      await callLauncherTool(client, "pharo_launcher_vm_list", {
-        format: "ston",
-      }),
-    ),
+  // This used to prefer a template whose Pharo version already had a VM, from
+  // pharo_launcher_vm_list. The package no longer answers for that, and a
+  // disposable profile has no VMs anyway — PharoLauncher fetches the one an
+  // image needs when it starts it. So the first named template it is, which
+  // was already the fallback. Pass --sourceTemplateName to choose.
+  const template = templates.find(
+    (candidate) => typeof candidate.name === "string",
   );
-  const availableVersions = vms
-    .map((vm) =>
-      typeof vm.id === "string" ? vm.id.match(/^(\d+)-/)?.[1] : undefined,
-    )
-    .filter(Boolean);
-  const template =
-    templates.find((candidate) => {
-      const name = typeof candidate.name === "string" ? candidate.name : "";
-      const url = typeof candidate.url === "string" ? candidate.url : "";
-
-      return availableVersions.some(
-        (version) =>
-          name.includes(`Pharo ${Number(version)}.`) ||
-          url.includes(`/${version}/`),
-      );
-    }) ?? templates.find((candidate) => typeof candidate.name === "string");
 
   if (!template) {
     throw new Error("No PharoLauncher template with a name was returned");
@@ -1757,17 +1755,17 @@ async function bootstrapTemplateSources(client, options) {
   textResult("template update", "ok");
 
   try {
-    const inventoryResult = await callLauncherTool(
+    const templatesResult = await callLauncherTool(
       client,
-      "pharo_launcher_inventory",
+      "pharo_launcher_template_list",
       {},
     );
     snapshotJsonArtifact(
       options,
-      "launcher-inventory-after-template-update.json",
-      inventoryResult,
+      "launcher-templates-after-template-update.json",
+      templatesResult,
     );
-    return launcherData(inventoryResult);
+    return launcherData(templatesResult);
   } catch (error) {
     const result =
       error && typeof error === "object" && "result" in error
@@ -1850,7 +1848,7 @@ async function prepareCreatedSourceImageDependencyCache(client, options) {
 
   const launchResult = await callLauncherTool(
     client,
-    "pharo_launcher_image_launch",
+    "pharo_launcher_image_start",
     {
       imageName: options.createdSourceImageName,
       detached: false,
@@ -2297,7 +2295,6 @@ async function main() {
               });
               await callLauncherTool(client, "pharo_launcher_process_kill", {
                 imageName: image.imageName,
-                confirm: true,
               });
             }
           });
@@ -2320,7 +2317,6 @@ async function main() {
             });
             await callLauncherTool(client, "pharo_launcher_process_kill", {
               imageName: options.createdSourceImageName,
-              confirm: true,
             });
           }
         }
@@ -2337,7 +2333,6 @@ async function main() {
             await callLauncherTool(client, "pharo_launcher_image_delete", {
               imageName: image.imageName,
               force: true,
-              confirm: true,
             });
           } else if (image.create) {
             console.error(`cleanup: deleting created runtime image ${image.imageName}`);
@@ -2348,7 +2343,6 @@ async function main() {
             await callLauncherTool(client, "pharo_launcher_image_delete", {
               imageName: image.imageName,
               force: true,
-              confirm: true,
             });
           }
         });
@@ -2365,7 +2359,6 @@ async function main() {
           await callLauncherTool(client, "pharo_launcher_image_delete", {
             imageName: options.createdSourceImageName,
             force: true,
-            confirm: true,
           });
         }
       });
