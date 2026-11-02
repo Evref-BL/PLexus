@@ -64,6 +64,10 @@ export interface GatewayProjectImageState {
   id: string;
   imageName: string;
   mcpServers?: GatewayProjectImageMcpServer[];
+  /** Written by whoever launched the image. Routing reads liveness from the
+   * endpoint handoff instead, but the file carries this and a reader of it
+   * should not have to pretend otherwise. */
+  pid?: number;
   status: GatewayProjectImageStatus;
   pharoMcpContract?: GatewayProjectImagePharoMcpContractState;
 }

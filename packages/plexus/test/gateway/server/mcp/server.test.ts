@@ -11,6 +11,7 @@ import type {
   ImageMcpRoute,
   ImageMcpToolRouter,
 } from "../../../../src/gateway/server/routing/imageMcpRouter.js";
+import type { GatewayProjectState } from "../../../../src/gateway/server/routing/routingTable.js";
 import {
   createGatewayServerWithOptions,
   createGatewayFromEnvironment,
@@ -78,8 +79,15 @@ class DirectRouteGateway extends PlexusGateway {
         projectId: "project-123",
         workspaceId: "worktree-a",
         imageId: "dev",
+        mcpServerId: "dev",
         imageName: "MyProject-dev",
         port: 7123,
+        endpoint: {
+          transport: "http",
+          host: "127.0.0.1",
+          port: 7123,
+          path: "/mcp",
+        },
       },
     };
   }
@@ -201,7 +209,7 @@ async function postMcpPath(
   return response.json();
 }
 
-const runningState = {
+const runningState: GatewayProjectState = {
   projectId: "project-123",
   projectName: "Project 123",
   workspaceId: "worktree-a",

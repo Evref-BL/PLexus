@@ -42,8 +42,8 @@ function parseArgs(argv) {
   const options = {
     projectId: "smoke-open-route-close",
     imageId: "dev",
-    imageSpecs: [],
-    stepSpecs: [],
+    imageSpecs: /** @type {Record<string, unknown>[]} */ ([]),
+    stepSpecs: /** @type {Record<string, unknown>[]} */ ([]),
     scenario: "basic",
     createSourceFromTemplate: false,
     pollIntervalMs: 500,

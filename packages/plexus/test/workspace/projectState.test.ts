@@ -6,10 +6,8 @@ import type { ProjectConfig, ProjectRuntimePolicy } from "../../src/config/proje
 import {
   createProjectState,
   defaultPlexusStateRoot,
-  defaultTargetId,
   defaultWorkspaceId,
   loadProjectState,
-  PortAllocationError,
   renderProjectImageName,
   projectStateDirectoryPath,
   projectStatePath,
@@ -42,29 +40,8 @@ const config: ProjectConfig = {
 
 function defaultRuntimePolicy(): ProjectRuntimePolicy {
   return {
-    scope: "project",
     stateRoot: {
       mode: "project-local",
-    },
-    gateway: {
-      mode: "project-local",
-      host: "127.0.0.1",
-      portRange: {
-        start: 8_133,
-        end: 8_199,
-      },
-      mcpPath: "/mcp",
-      routeControlMcpPath: "/control-mcp",
-    },
-    imagePorts: {
-      allocation: "configured-or-dynamic",
-      range: {
-        start: 7_100,
-        end: 7_199,
-      },
-      coordination: {
-        mode: "host-local",
-      },
     },
     launcherProfile: {
       mode: "project-owned",
@@ -355,10 +332,6 @@ describe("project state", () => {
       },
       {
         updatedAt: "2026-04-25T10:00:00.000Z",
-        portRange: {
-          start: 7100,
-          end: 7100,
-        },
       },
     );
 
@@ -408,10 +381,6 @@ describe("project state", () => {
       },
       {
         updatedAt: "2026-04-25T10:00:00.000Z",
-        portRange: {
-          start: 7100,
-          end: 7100,
-        },
       },
     );
 

@@ -26,7 +26,6 @@ const config: ProjectConfig = {
     {
       id: "dev",
       imageName: "MyProject-dev",
-      active: true,
       mcp: {
         port: 7123,
         loadScript: "pharo/load-mcp.st",
@@ -407,6 +406,7 @@ describe("project startup scripts", () => {
     const source = generateImageStartupScript({
       projectRoot,
       imageConfig: config.images[0],
+      endpointHandoffPath,
       imageState: {
         id: "dev",
         imageName: "MyProject-dev",
@@ -776,7 +776,6 @@ describe("project startup scripts", () => {
         config,
         imageId: "dev",
         imageState,
-        endpointHandoffPath,
         workspaceId: "worktree-a",
         stateRoot,
       });
@@ -820,7 +819,6 @@ describe("project startup scripts", () => {
         config,
         imageId: "dev",
         imageState,
-        endpointHandoffPath,
         workspaceId: "worktree-a",
         stateRoot,
       });
@@ -872,7 +870,6 @@ describe("project startup scripts", () => {
         },
         imageId: "dev",
         imageState,
-        endpointHandoffPath,
       });
 
       expect(result.source).toContain(
@@ -897,7 +894,6 @@ describe("project startup scripts", () => {
         config,
         imageId: "missing",
         imageState,
-        endpointHandoffPath,
       }),
     ).toThrow(ProjectStartupScriptError);
   });

@@ -1024,10 +1024,34 @@ function stateWithCreatedImage(
   return state;
 }
 
+/**
+ * One row of what `pharo_launcher_template_list` answers.
+ *
+ * The launcher calls the group a template belongs to `category`.
+ * `templateCategory` is the name of the filter you pass in, and is not part of
+ * the answer — a caller that reads it back gets undefined for every template.
+ * The fields are optional because nothing here validates what the launcher
+ * sent; they are what it documents.
+ */
+export interface ScopedLauncherTemplate {
+  name?: string;
+  /** The group the launcher itself reported the template in. */
+  category?: string;
+  url?: string;
+  /**
+   * Which group this row was listed from, added here rather than by the
+   * launcher: listing without a category walks the groups, and this says where
+   * each row came from. A listing filtered to one category does not carry it,
+   * and neither does the fallback taken when the sources list names no group
+   * at all, so a caller must treat it as optional.
+   */
+  templateCategory?: string;
+}
+
 async function listTemplatesInCategory(
   client: PharoLauncherMcpToolClient,
   templateCategory?: string,
-): Promise<unknown[]> {
+): Promise<ScopedLauncherTemplate[]> {
   const result = await client.callTool<LauncherCommandResult>(
     "pharo_launcher_template_list",
     templateCategory ? { templateCategory } : {},
@@ -1358,7 +1382,7 @@ export class ScopedPharoLauncher {
   async listTemplates(templateCategory?: string): Promise<{
     scope: WorkspaceScopeSummary;
     launcherProfile: LauncherProfileSummary;
-    templates: unknown;
+    templates: ScopedLauncherTemplate[];
   }> {
     const scope = resolveScope(this.options);
     const projectConfig = loadProjectConfig(scope.projectRoot);
@@ -1391,9 +1415,9 @@ export class ScopedPharoLauncher {
           return await listTemplatesInCategory(client);
         }
 
-        const listed: unknown[] = [];
+        const listed: ScopedLauncherTemplate[] = [];
         for (const category of categories) {
-          let templates: unknown[];
+          let templates: ScopedLauncherTemplate[];
           try {
             templates = await listTemplatesInCategory(client, category);
           } catch {
@@ -1419,7 +1443,7 @@ export class ScopedPharoLauncher {
   async listTemplateCategories(): Promise<{
     scope: WorkspaceScopeSummary;
     launcherProfile: LauncherProfileSummary;
-    templateCategories: unknown;
+    templateCategories: string[];
   }> {
     const scope = resolveScope(this.options);
     const projectConfig = loadProjectConfig(scope.projectRoot);
@@ -1438,7 +1462,8 @@ export class ScopedPharoLauncher {
           {},
         );
         assertLauncherOk(result, "pharo_launcher_template_category_list");
-        return result?.data ?? result;
+        const data = result?.data ?? result;
+        return Array.isArray(data) ? (data as string[]) : [];
       },
     );
 

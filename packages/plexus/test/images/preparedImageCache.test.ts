@@ -47,7 +47,6 @@ const config: ProjectConfig = {
     {
       id: "dev",
       imageName: "MyProject-{workspaceId}-dev",
-      active: true,
       preparedImage: {
         cacheId: "pharo-13-mcp",
         copyMode: "copy-on-open",
@@ -221,10 +220,10 @@ describe("prepared image cache", () => {
 
     expect(planA.imageName).toBe("MyProject-project-123-pharo-13-mcp");
     expect(planB.imageName).toBe(planA.imageName);
-    expect(planA.runtimeCopy.argumentsValue.newImageName).toBe(
+    expect(planA.runtimeCopy?.argumentsValue.newImageName).toBe(
       "MyProject-worktree-a-dev",
     );
-    expect(planB.runtimeCopy.argumentsValue.newImageName).toBe(
+    expect(planB.runtimeCopy?.argumentsValue.newImageName).toBe(
       "MyProject-worktree-b-dev",
     );
   });

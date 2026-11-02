@@ -760,6 +760,7 @@ export function buildKeepOpenCleanupContext({
   };
 }
 
+/** @param {{ logsDir?: string, imageNames?: string[] }} options */
 export function collectLauncherLogFiles({ logsDir, imageNames = [] }) {
   if (!logsDir || !fs.existsSync(logsDir)) {
     return [];

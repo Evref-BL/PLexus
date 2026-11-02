@@ -26,6 +26,7 @@ import type { PharoLauncherMcpToolClient } from "../../src/launcher/pharoLaunche
 import { parseProjectConfig, type ProjectConfig } from "../../src/config/projectConfig.js";
 import type { ProjectImageState } from "../../src/workspace/projectState.js";
 import { defaultPharoMcpMetacelloRepositoryLocation } from "../../src/workspace/projectStartupScript.js";
+import { launcherClientAnswering } from "../support/launcherHost.js";
 
 const tempDirs: string[] = [];
 
@@ -74,12 +75,10 @@ const imageState: ProjectImageState = {
 function fakeLauncherClient() {
   const calls: Array<{ name: string; argumentsValue: Record<string, unknown> }> =
     [];
-  const client: PharoLauncherMcpToolClient = {
-    async callTool(name, argumentsValue = {}) {
+  const client = launcherClientAnswering((name, argumentsValue) => {
       calls.push({ name, argumentsValue });
       return { ok: true };
-    },
-  };
+  });
 
   return { client, calls };
 }
@@ -927,8 +926,7 @@ describe("home image cache", () => {
       name: string;
       argumentsValue: Record<string, unknown>;
     }> = [];
-    const homeClient: PharoLauncherMcpToolClient = {
-      async callTool(name, argumentsValue = {}) {
+    const homeClient = launcherClientAnswering((name, argumentsValue) => {
         homeCalls.push({ name, argumentsValue });
         if (name === "pharo_launcher_image_start") {
           const scriptPath = argumentsValue.script as string;
@@ -950,8 +948,7 @@ describe("home image cache", () => {
         }
 
         return { ok: true };
-      },
-    };
+    });
     const runtime = fakeLauncherClient();
 
     await expect(

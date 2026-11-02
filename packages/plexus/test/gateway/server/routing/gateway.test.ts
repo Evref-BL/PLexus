@@ -7,6 +7,7 @@ import {
   PlexusGateway,
   type GatewayImageHealthClient,
   type GatewayToolResult,
+  type GatewayProjectRouteWithSchema,
 } from "../../../../src/gateway/server/routing/gateway.js";
 import type {
   ImageMcpConnectionInfo,
@@ -200,7 +201,7 @@ async function registerTarget(
   gateway.addRouteSource({ projectRoot, statePath });
 }
 
-function data<T>(result: GatewayToolResult<T>): T {
+function data<T = unknown>(result: GatewayToolResult): T {
   expect(result.ok).toBe(true);
   expect(result.data).toBeDefined();
   return result.data as T;
@@ -229,7 +230,7 @@ describe("PlexusGateway", () => {
 
     await registerTarget(gateway, declaredState);
 
-    const status = data(
+    const status = data<GatewayProjectRouteWithSchema>(
       await gateway.handleTool("plexus_gateway_status", {
         projectId: "project-123",
         workspaceId: "worktree-a",
@@ -260,7 +261,7 @@ describe("PlexusGateway", () => {
 
     await registerTarget(gateway);
 
-    const status = data(
+    const status = data<GatewayProjectRouteWithSchema>(
       await gateway.handleTool("plexus_gateway_status", {
         projectId: "project-123",
       }),
@@ -293,7 +294,7 @@ describe("PlexusGateway", () => {
 
     await registerTarget(gateway);
 
-    const status = data(
+    const status = data<GatewayProjectRouteWithSchema>(
       await gateway.handleTool("plexus_gateway_status", {
         projectId: "project-123",
         workspaceId: "worktree-a",
@@ -330,7 +331,7 @@ describe("PlexusGateway", () => {
     const gateway = new PlexusGateway({ healthClient });
 
     await registerTarget(gateway);
-    const status = data(
+    const status = data<GatewayProjectRouteWithSchema>(
       await gateway.handleTool("plexus_gateway_status", {
         projectId: "project-123",
         workspaceId: "worktree-a",
@@ -438,7 +439,7 @@ describe("PlexusGateway", () => {
     };
 
     await registerTarget(gateway, unhealthyState);
-    const status = data(
+    const status = data<GatewayProjectRouteWithSchema>(
       await gateway.handleTool("plexus_gateway_status", {
         projectId: "project-123",
         workspaceId: "worktree-a",
@@ -545,7 +546,7 @@ describe("PlexusGateway", () => {
     const gateway = new PlexusGateway({ imageRouter });
 
     await registerTarget(gateway, endpointState);
-    const status = data(
+    const status = data<GatewayProjectRouteWithSchema>(
       await gateway.handleTool("plexus_gateway_status", {
         projectId: "project-123",
         workspaceId: "worktree-a",
@@ -796,7 +797,7 @@ describe("PlexusGateway", () => {
     });
 
     await registerTarget(gateway, remoteState);
-    const status = data(
+    const status = data<GatewayProjectRouteWithSchema>(
       await gateway.handleTool("plexus_gateway_status", {
         projectId: "project-123",
         workspaceId: "worktree-a",
@@ -1190,7 +1191,7 @@ describe("PlexusGateway", () => {
 
     await registerTarget(gateway, contractState);
 
-    const status = data(
+    const status = data<GatewayProjectRouteWithSchema>(
       await gateway.handleTool("plexus_gateway_status", {
         projectId: "project-123",
         workspaceId: "worktree-a",
@@ -1302,7 +1303,7 @@ describe("PlexusGateway", () => {
 
     await registerTarget(gateway, mixedSchemaState);
 
-    const status = data(
+    const status = data<GatewayProjectRouteWithSchema>(
       await gateway.handleTool("plexus_gateway_status", {
         projectId: "project-123",
         workspaceId: "worktree-a",
@@ -1457,7 +1458,7 @@ describe("PlexusGateway", () => {
 
     await registerTarget(gateway, mixedSchemaState);
 
-    const status = data(
+    const status = data<GatewayProjectRouteWithSchema>(
       await gateway.handleTool("plexus_gateway_status", {
         projectId: "project-123",
         workspaceId: "worktree-a",
@@ -1533,7 +1534,7 @@ describe("PlexusGateway", () => {
 
     await registerTarget(gateway, runningState);
 
-    const status = data(
+    const status = data<GatewayProjectRouteWithSchema>(
       await gateway.handleTool("plexus_gateway_status", {
         projectId: "project-123",
         workspaceId: "worktree-a",
@@ -1641,7 +1642,7 @@ describe("PlexusGateway", () => {
       ],
     });
 
-    const status = data(
+    const status = data<GatewayProjectRouteWithSchema>(
       await gateway.handleTool("plexus_gateway_status", {
         projectId: "project-123",
         workspaceId: "worktree-a",
