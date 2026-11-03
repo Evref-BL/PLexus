@@ -61,7 +61,7 @@ const publicNames = [
   "projectConfigId",
   "createProjectConfigFile",
   "declareProjectImage",
-  "defaultProjectImageNameTemplate",
+  "defaultProjectImageName",
   "projectConfigIdFromName",
   "removeProjectImage",
   "setProjectImageTemplateCategory",

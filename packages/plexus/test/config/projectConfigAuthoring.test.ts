@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   createProjectConfigFile,
   declareProjectImage,
-  defaultProjectImageNameTemplate,
+  defaultProjectImageName,
   projectConfigIdFromName,
   removeProjectImage,
   setProjectImageTemplateCategory,
@@ -66,7 +66,7 @@ describe("writing plexus.json", () => {
     const [image] = loadProjectConfig(projectRoot).images;
     expect(image).toMatchObject({
       id: "dev",
-      imageName: defaultProjectImageNameTemplate,
+      imageName: defaultProjectImageName("dev"),
       mcp: { loadScript: "pharo/load-mcp.st" },
       create: { kind: "template", templateName: "Pharo 14.0 - 64bit" },
     });
@@ -113,6 +113,30 @@ describe("writing plexus.json", () => {
     expect(rawConfig(projectRoot).teamNote).toBe("do not delete me");
   });
 
+  it("gives each image its own name, so a second declaration still loads", () => {
+    // parseProjectConfig rejects two images whose imageName are equal as
+    // written, so a constant default template would make every project
+    // single-image. Only {projectName} and {workspaceId} stay placeholders.
+    const projectRoot = makeProject();
+
+    declareProjectImage(projectRoot, {
+      id: "dev",
+      templateName: "Pharo 14.0 - 64bit",
+      loadScript: "pharo/load-mcp.st",
+    });
+    declareProjectImage(projectRoot, {
+      id: "ci",
+      templateName: "Pharo 13.0 - 64bit",
+      loadScript: "pharo/load-mcp.st",
+    });
+
+    expect(loadProjectConfig(projectRoot).images.map((image) => image.imageName))
+      .toEqual([
+        "{projectName}-{workspaceId}-dev",
+        "{projectName}-{workspaceId}-ci",
+      ]);
+  });
+
   it("refuses a duplicate id and a duplicate image name", () => {
     const projectRoot = makeProject();
     declareProjectImage(projectRoot, {
@@ -132,6 +156,7 @@ describe("writing plexus.json", () => {
     expect(() =>
       declareProjectImage(projectRoot, {
         id: "other",
+        imageName: defaultProjectImageName("dev"),
         templateName: "Pharo 13.0 - 64bit",
         loadScript: "pharo/load-mcp.st",
       }),
