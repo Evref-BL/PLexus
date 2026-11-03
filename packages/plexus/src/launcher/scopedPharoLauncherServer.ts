@@ -1970,7 +1970,11 @@ export const scopedPharoLauncherTools = [
     description:
       "Start one image this project declares, in the project's launcher profile.",
     inputSchema: objectSchema(
-      { imageId: stringSchema, displayMode: displayModeSchema },
+      {
+        imageId: stringSchema,
+        displayMode: displayModeSchema,
+        detail: toolResultDetailSchema,
+      },
       ["imageId"],
     ),
   },
