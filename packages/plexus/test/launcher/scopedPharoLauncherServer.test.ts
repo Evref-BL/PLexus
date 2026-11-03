@@ -694,6 +694,76 @@ describe("scoped pharo launcher facade", () => {
     ]);
   });
 
+  it("resolves the category of a template the declaration does not name", async () => {
+    // The launcher matches a bare template name against its default group
+    // only. Every consumer used to walk the groups itself and write the answer
+    // back into plexus.json; listTemplates already knew it.
+    const plexusHome = temporaryPlexusHome();
+    const projectRoot = makeTempDir("plexus-project-");
+    const stateRoot = makeTempDir("plexus-state-");
+    const sourcesList = `OrderedCollection [
+	PhLTemplateSource {
+		#type : #URLGroup,
+		#name : 'Official distributions',
+		#templates : [ ]
+	},
+	PhLTemplateSource {
+		#type : #URLGroup,
+		#name : 'Pharo Mooc',
+		#templates : [ ]
+	}
+]
+`;
+    const calls: { name: string; argumentsValue?: Record<string, unknown> }[] = [];
+    const client = launcherClientAnswering((name, argumentsValue) => {
+      calls.push({ name, argumentsValue });
+      if (name === "pharo_launcher_template_list") {
+        const category = String((argumentsValue ?? {}).templateCategory);
+        return {
+          ok: true,
+          data:
+            category === "Pharo Mooc"
+              ? [{ name: "Pharo 10.0 - 64bit" }]
+              : [{ name: "Pharo 13.0 - 64bit" }],
+        };
+      }
+      return { ok: true };
+    });
+    writeProjectConfig(projectRoot, {
+      home: { path: plexusHome, imageCache: { enabled: false, networkPolicy: "online" } },
+      images: [
+        {
+          id: "dev",
+          imageName: "MyProject-{workspaceId}-dev",
+          mcp: { port: 7123, loadScript: "pharo/load-mcp.st" },
+          // No templateCategory: the whole point.
+          create: { kind: "template", templateName: "Pharo 10.0 - 64bit" },
+        },
+      ],
+    });
+
+    await scopedLauncher({
+      projectRoot,
+      stateRoot,
+      workspaceId: "worktree-a",
+      fetch: (async () => new Response(sourcesList, { status: 200 })) as typeof fetch,
+      pharoLauncherMcpClient: client,
+      now: () => new Date("2026-05-18T12:00:00.000Z"),
+    }).createImage("dev");
+
+    expect(
+      calls.find((call) => call.name === "pharo_launcher_image_create")?.argumentsValue,
+    ).toMatchObject({
+      templateName: "Pharo 10.0 - 64bit",
+      templateCategory: "Pharo Mooc",
+    });
+
+    // The declaration is left as the user wrote it.
+    expect(loadProjectConfig(projectRoot).images[0].create).not.toHaveProperty(
+      "templateCategory",
+    );
+  });
+
   it("reports a failed template listing as a scoped launcher error", async () => {
     const plexusHome = temporaryPlexusHome();
     const projectRoot = makeTempDir("plexus-project-");
