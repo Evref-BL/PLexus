@@ -91,6 +91,19 @@ afterEach(() => {
   }
 });
 
+// A manifest is a claim about an image, and a hit copies the image. These
+// tests used to write the claim alone, which is the state an upgrade that
+// moves the cache profile leaves behind.
+function materializeCacheImage(plan: { homePath: string; cacheImageName: string }): string {
+  const directory = path.join(
+    homeImageCacheProfile(plan.homePath).imagesDir,
+    plan.cacheImageName,
+  );
+  fs.mkdirSync(directory, { recursive: true });
+  fs.writeFileSync(path.join(directory, `${plan.cacheImageName}.image`), "");
+  return directory;
+}
+
 describe("home image cache", () => {
   it("resolves the PLexus home path from environment, config, then user home", () => {
     const homeDirectory = rootPath("Users", "ada");
@@ -424,6 +437,7 @@ describe("home image cache", () => {
         preparationStatus: "prepared",
       },
     });
+    materializeCacheImage(initial);
 
     const hit = buildHomeImageCachePlan({
       projectRoot,
@@ -452,6 +466,36 @@ describe("home image cache", () => {
     expect(inProgress.status).toBe("in-progress");
     expect(inProgress.createCacheImage).toBeUndefined();
     releaseHomeImageCacheLock(initial.lockPath);
+  });
+
+  it("stops calling a manifest a hit once its cached image is gone", () => {
+    const projectRoot = makeTempDir("plexus-project-");
+    const homeDirectory = makeTempDir("plexus-user-home-");
+    const plan = () =>
+      buildHomeImageCachePlan({
+        projectRoot,
+        config: config(),
+        imageConfig: config().images[0]!,
+        homeDirectory,
+      });
+    const initial = plan();
+    writeHomeImageCacheManifest({
+      ...initial.expectedManifest,
+      pharoMcp: {
+        ...initial.expectedManifest.pharoMcp,
+        preparationStatus: "prepared",
+      },
+    });
+    const image = materializeCacheImage(initial);
+    expect(plan().status).toBe("hit");
+
+    // The entry lives under the cache root and the image under the cache
+    // profile, so moving the profile strands one and leaves the other saying
+    // the image is prepared. Copying from it then fails on a directory that
+    // is not there, which is not something a cache should do.
+    fs.rmSync(image, { recursive: true, force: true });
+
+    expect(plan().status).toBe("corrupt");
   });
 
   it("skips Pharo MCP preparation for unsupported Pharo versions", () => {
@@ -527,6 +571,7 @@ describe("home image cache", () => {
         preparationStatus: "prepared",
       },
     });
+    materializeCacheImage(initial);
 
     const hit = buildHomeImageCachePlan({
       projectRoot,
@@ -1018,6 +1063,7 @@ describe("home image cache", () => {
         preparationStatus: "prepared",
       },
     });
+    materializeCacheImage(initial);
     const home = fakeLauncherClient();
     const runtime = fakeLauncherClient();
 
