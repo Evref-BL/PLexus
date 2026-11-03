@@ -1050,8 +1050,8 @@ function preflightMcpLoadScripts(options) {
   recordEvent(options, "mcp-load-script-preflight-ok", { checked });
 }
 
-function launcherLogFilesForOpenFailure(options, openResult) {
-  const failures = openResult?.diagnostics?.projectOpen?.failures;
+function launcherLogFilesForStartFailure(options, startResult) {
+  const failures = startResult?.failures;
   const imageNames =
     Array.isArray(failures) && failures.length > 0
       ? failures.map((failure) => failure.imageName)
@@ -2175,11 +2175,11 @@ async function main() {
       }
       return result;
     });
-    snapshotJsonArtifact(options, "project-open-result.json", openResult);
+    snapshotJsonArtifact(options, "image-start-result.json", openResult);
     if (!openResult?.ok) {
-      const launcherLogFiles = launcherLogFilesForOpenFailure(options, openResult);
+      const launcherLogFiles = launcherLogFilesForStartFailure(options, openResult);
       snapshotLauncherLogs(options, launcherLogFiles);
-      snapshotJsonArtifact(options, "project-open-failure.json", {
+      snapshotJsonArtifact(options, "image-start-failure.json", {
         result: openResult,
         launcherLogFiles,
       });
