@@ -1850,8 +1850,7 @@ describe("scoped pharo launcher facade", () => {
         displayMode: "interactive",
         displayModes: {
           default: "headless",
-          show: "interactive",
-          hide: "headless",
+          current: "interactive",
         },
       },
       displayMode: "interactive",

@@ -187,12 +187,15 @@ interface WorkspaceImageSummary {
   status: ImageRuntimeStatus;
   runtime: ImageRuntimeObservation;
   displayMode: ProjectImageDisplayMode;
+  /**
+    * What this image's display mode is configured to be, and what it was last
+    * set to. `start`, `show` and `hide` used to be here too, reporting the
+    * mode each tool would produce — a constant per tool name, repeated on
+    * every row, that told a caller nothing the tool list does not.
+    */
   displayModes: {
     default: ProjectImageDisplayMode;
     current?: ProjectImageDisplayMode;
-    start: ProjectImageDisplayMode;
-    show: "interactive";
-    hide: "headless";
   };
   pharoMcpContract?: ProjectImageState["pharoMcpContract"];
   lease?: ProjectImageLeaseState;
@@ -544,9 +547,6 @@ function imageSummary(
     displayModes: {
       default: defaultDisplayMode,
       ...(imageState?.displayMode ? { current: imageState.displayMode } : {}),
-      start: defaultDisplayMode,
-      show: "interactive",
-      hide: "headless",
     },
     ...(imageState?.pharoMcpContract
       ? { pharoMcpContract: imageState.pharoMcpContract }
