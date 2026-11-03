@@ -63,6 +63,19 @@ describe("gateway server module boundary", () => {
     expect(offenders).toEqual([]);
   });
 
+  /**
+   * The boundary above is why the gateway carries its own copy of
+   * `toolResultFormatting`. A copy nothing compares is a copy that drifts, and
+   * the two had already been identical for long enough to look deliberate
+   * without being checked.
+   */
+  it("keeps its copy of the shared formatting module identical to the core one", () => {
+    const relative = path.join("support", "toolResultFormatting.ts");
+    expect(fs.readFileSync(path.join(serverRoot, relative), "utf8")).toBe(
+      fs.readFileSync(path.join(packageRoot, "src", relative), "utf8"),
+    );
+  });
+
   it("keeps default gateway-owned MCP tools to route management", () => {
     expect(gatewayTools.map((tool) => tool.name)).toEqual([
       "plexus_gateway_status",
