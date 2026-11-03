@@ -5,7 +5,6 @@ export const toolResultDetailSchema = {
   enum: ["summary", "full"],
 } as const;
 
-const maxArrayItems = 10;
 const maxObjectEntries = 24;
 const maxStringLength = 1_200;
 const textHeadLength = 700;
@@ -40,22 +39,14 @@ function compactString(value: string): unknown {
   };
 }
 
+/**
+ * A summary compacts what is inside a row; it never drops rows. The number of
+ * rows is the answer a list tool exists to give — dropping them turned
+ * `template_list` into ten of thirty templates with no hint that the one the
+ * caller wanted was among the twenty it withheld.
+ */
 function compactArray(value: unknown[], depth: number): unknown {
-  if (value.length <= maxArrayItems) {
-    return value.map((item) => compactValue(item, depth + 1));
-  }
-
-  const items = value
-    .slice(0, maxArrayItems)
-    .map((item) => compactValue(item, depth + 1));
-
-  return {
-    count: value.length,
-    items,
-    ...(value.length > items.length
-      ? { omittedCount: value.length - items.length }
-      : {}),
-  };
+  return value.map((item) => compactValue(item, depth + 1));
 }
 
 function compactObject(value: Record<string, unknown>, depth: number): unknown {

@@ -357,6 +357,18 @@ function optionalBoolean(
   return value;
 }
 
+function requireDisplayMode(
+  input: Record<string, unknown>,
+  key: string,
+): ProjectImageDisplayMode {
+  const value = optionalDisplayMode(input, key);
+  if (value === undefined) {
+    throw new ScopedPharoLauncherError(`${key} is required`);
+  }
+
+  return value;
+}
+
 function optionalDisplayMode(
   input: Record<string, unknown>,
   key: string,
@@ -1433,39 +1445,6 @@ export class ScopedPharoLauncher {
     };
   }
 
-  async listTemplateCategories(): Promise<{
-    scope: WorkspaceScopeSummary;
-    launcherProfile: LauncherProfileSummary;
-    templateCategories: string[];
-  }> {
-    const scope = resolveScope(this.options);
-    const projectConfig = loadProjectConfig(scope.projectRoot);
-    const templateCategories = await this.withLauncherClient(
-      scope,
-      projectConfig,
-      async (client) => {
-        await ensureScopedTemplateCatalogReady({
-          client,
-          scope,
-          projectConfig,
-          fetch: this.options.fetch,
-        });
-        const result = await client.callTool(
-          "pharo_launcher_template_category_list",
-          {},
-        );
-        assertLauncherOk(result, "pharo_launcher_template_category_list");
-        const data = result?.data ?? result;
-        return Array.isArray(data) ? (data as string[]) : [];
-      },
-    );
-
-    return {
-      ...this.templateScopeSummary(scope, projectConfig),
-      templateCategories,
-    };
-  }
-
   private templateScopeSummary(
     scope: ResolvedScope,
     projectConfig: ProjectConfig,
@@ -1723,18 +1702,6 @@ export class ScopedPharoLauncher {
     };
   }
 
-  async showImage(
-    imageId: string,
-  ): Promise<Awaited<ReturnType<ScopedPharoLauncher["setImageDisplayMode"]>>> {
-    return this.setImageDisplayMode(imageId, "interactive");
-  }
-
-  async hideImage(
-    imageId: string,
-  ): Promise<Awaited<ReturnType<ScopedPharoLauncher["setImageDisplayMode"]>>> {
-    return this.setImageDisplayMode(imageId, "headless");
-  }
-
   async stopImage(imageId: string): Promise<{
     scope: WorkspaceScopeSummary;
     launcherProfile: LauncherProfileSummary;
@@ -1978,17 +1945,12 @@ export const scopedPharoLauncherTools = [
   {
     name: "pharo_launcher_template_list",
     description:
-      "List the Pharo Launcher image templates available to the current PLexus project scope.",
+      "List the Pharo Launcher image templates this project can create from. "
+      + "Each row names its category, so there is no separate category list.",
     inputSchema: objectSchema({
       templateCategory: stringSchema,
       detail: toolResultDetailSchema,
     }),
-  },
-  {
-    name: "pharo_launcher_template_category_list",
-    description:
-      "List the Pharo Launcher template categories available to the current PLexus project scope.",
-    inputSchema: objectSchema({ detail: toolResultDetailSchema }),
   },
   {
     name: "pharo_launcher_image_create",
@@ -2008,21 +1970,27 @@ export const scopedPharoLauncherTools = [
     description:
       "Start one image this project declares, in the project's launcher profile.",
     inputSchema: objectSchema(
-      { imageId: stringSchema, displayMode: displayModeSchema },
+      {
+        imageId: stringSchema,
+        displayMode: displayModeSchema,
+        detail: toolResultDetailSchema,
+      },
       ["imageId"],
     ),
   },
   {
-    name: "pharo_launcher_image_show",
+    name: "pharo_launcher_image_display",
     description:
-      "Show one image's window, restarting it in interactive display mode when it is running.",
-    inputSchema: objectSchema({ imageId: stringSchema, detail: toolResultDetailSchema }, ["imageId"]),
-  },
-  {
-    name: "pharo_launcher_image_hide",
-    description:
-      "Hide one image's window, restarting it in headless display mode when it is running.",
-    inputSchema: objectSchema({ imageId: stringSchema, detail: toolResultDetailSchema }, ["imageId"]),
+      "Show or hide one image's window. A running image is restarted in the "
+      + "requested display mode; a stopped one starts in it next time.",
+    inputSchema: objectSchema(
+      {
+        imageId: stringSchema,
+        displayMode: displayModeSchema,
+        detail: toolResultDetailSchema,
+      },
+      ["imageId", "displayMode"],
+    ),
   },
   {
     name: "pharo_launcher_image_stop",
@@ -2123,9 +2091,6 @@ export async function callScopedPharoLauncherTool(
             detail,
           );
 
-        case "pharo_launcher_template_category_list":
-          return textResult(await facade.listTemplateCategories(), false, detail);
-
         case "pharo_launcher_image_create":
           return textResult(
             await facade.createImage(
@@ -2146,16 +2111,12 @@ export async function callScopedPharoLauncherTool(
             detail,
           );
 
-        case "pharo_launcher_image_show":
+        case "pharo_launcher_image_display":
           return textResult(
-            await facade.showImage(requireString(input, "imageId")),
-            false,
-            detail,
-          );
-
-        case "pharo_launcher_image_hide":
-          return textResult(
-            await facade.hideImage(requireString(input, "imageId")),
+            await facade.setImageDisplayMode(
+              requireString(input, "imageId"),
+              requireDisplayMode(input, "displayMode"),
+            ),
             false,
             detail,
           );

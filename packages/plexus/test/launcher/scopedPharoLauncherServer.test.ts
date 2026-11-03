@@ -542,11 +542,9 @@ describe("scoped pharo launcher facade", () => {
       "pharo_launcher_image_list",
       "pharo_launcher_image_info",
       "pharo_launcher_template_list",
-      "pharo_launcher_template_category_list",
       "pharo_launcher_image_create",
       "pharo_launcher_image_start",
-      "pharo_launcher_image_show",
-      "pharo_launcher_image_hide",
+      "pharo_launcher_image_display",
       "pharo_launcher_image_stop",
       "pharo_launcher_image_delete",
       "pharo_launcher_image_reset",
@@ -641,32 +639,6 @@ describe("scoped pharo launcher facade", () => {
     ).toEqual({
       name: "pharo_launcher_template_list",
       argumentsValue: { templateCategory: "Official" },
-    });
-  });
-
-  it("lists template categories without a category filter", async () => {
-    const plexusHome = temporaryPlexusHome();
-    const projectRoot = makeTempDir("plexus-project-");
-    const stateRoot = makeTempDir("plexus-state-");
-    const { client, calls } = fakeLauncherClient();
-    writeProjectConfig(projectRoot);
-
-    await scopedLauncher({
-      projectRoot,
-      stateRoot,
-      workspaceId: "worktree-a",
-      fetch: (async () =>
-        new Response("https://files.example.test/pharo/pharo-13.ston\n", {
-          status: 200,
-        })) as typeof fetch,
-      pharoLauncherMcpClient: client,
-    }).listTemplateCategories();
-
-    expect(
-      calls.find((call) => call.name === "pharo_launcher_template_category_list"),
-    ).toEqual({
-      name: "pharo_launcher_template_category_list",
-      argumentsValue: {},
     });
   });
 
@@ -1832,7 +1804,7 @@ describe("scoped pharo launcher facade", () => {
           failures: [],
         };
       },
-    }).showImage("dev");
+    }).setImageDisplayMode("dev", "interactive");
 
     expect(starts).toEqual([
       expect.objectContaining({
@@ -2005,7 +1977,7 @@ describe("scoped pharo launcher facade", () => {
       },
     });
 
-    const result = await launcher.showImage("dev");
+    const result = await launcher.setImageDisplayMode("dev", "interactive");
 
     expect(calls).toEqual(["snapshot", "close", "open"]);
     expect(result).toMatchObject({

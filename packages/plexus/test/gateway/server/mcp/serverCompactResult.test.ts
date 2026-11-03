@@ -69,11 +69,10 @@ describe("gateway server compact results", () => {
     };
 
     const compact = await callGatewayStatus(result);
+    // Every route, with the verbose part of the payload compacted. A status
+    // that lists ten of thirteen routes cannot be read as a status.
     expect(compact.data).toMatchObject({
-      routes: {
-        count: 13,
-        omittedCount: 3,
-      },
+      routes,
       probe: {
         stderr: {
           kind: "truncated-text",
