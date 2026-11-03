@@ -764,6 +764,67 @@ describe("scoped pharo launcher facade", () => {
     );
   });
 
+  it("refuses a template name no category offers, and one several offer", async () => {
+    const sourcesList = `OrderedCollection [
+	PhLTemplateSource {
+		#type : #URLGroup,
+		#name : 'Official distributions',
+		#templates : [ ]
+	},
+	PhLTemplateSource {
+		#type : #URLGroup,
+		#name : 'Pharo Mooc',
+		#templates : [ ]
+	}
+]
+`;
+    const launcherFor = (everywhere: string) =>
+      launcherClientAnswering((name) =>
+        name === "pharo_launcher_template_list"
+          ? { ok: true, data: [{ name: everywhere }] }
+          : { ok: true },
+      );
+    const projectFor = (templateName: string) => {
+      const projectRoot = makeTempDir("plexus-project-");
+      writeProjectConfig(projectRoot, {
+        home: {
+          path: temporaryPlexusHome(),
+          imageCache: { enabled: false, networkPolicy: "online" },
+        },
+        images: [
+          {
+            id: "dev",
+            imageName: "MyProject-{workspaceId}-dev",
+            mcp: { port: 7123, loadScript: "pharo/load-mcp.st" },
+            create: { kind: "template", templateName },
+          },
+        ],
+      });
+      return projectRoot;
+    };
+    const scoped = (projectRoot: string, client: PharoLauncherMcpToolClient) =>
+      scopedLauncher({
+        projectRoot,
+        stateRoot: makeTempDir("plexus-state-"),
+        workspaceId: "worktree-a",
+        fetch: (async () => new Response(sourcesList, { status: 200 })) as typeof fetch,
+        pharoLauncherMcpClient: client,
+        now: () => new Date("2026-05-18T12:00:00.000Z"),
+      });
+
+    // Every category offers it, so nothing here can choose.
+    await expect(
+      scoped(projectFor("Pharo 13.0 - 64bit"), launcherFor("Pharo 13.0 - 64bit"))
+        .createImage("dev"),
+    ).rejects.toThrow(/exists in several categories/);
+
+    // No category offers it.
+    await expect(
+      scoped(projectFor("Pharo 99.0 - 64bit"), launcherFor("Pharo 13.0 - 64bit"))
+        .createImage("dev"),
+    ).rejects.toThrow(/No template named Pharo 99\.0 - 64bit in any category/);
+  });
+
   it("reports a failed template listing as a scoped launcher error", async () => {
     const plexusHome = temporaryPlexusHome();
     const projectRoot = makeTempDir("plexus-project-");
