@@ -545,7 +545,6 @@ describe("scoped pharo launcher facade", () => {
       "pharo_launcher_template_category_list",
       "pharo_launcher_image_create",
       "pharo_launcher_image_start",
-      "pharo_launcher_image_open_interactive",
       "pharo_launcher_image_show",
       "pharo_launcher_image_hide",
       "pharo_launcher_image_stop",
@@ -596,14 +595,13 @@ describe("scoped pharo launcher facade", () => {
       inputSchema: {
         properties: {
           imageId: { type: "string" },
-          confirm: { type: "boolean" },
           start: { type: "boolean" },
           displayMode: {
             type: "string",
             enum: ["headless", "interactive"],
           },
         },
-        required: ["imageId", "confirm"],
+        required: ["imageId"],
         additionalProperties: false,
       },
     });
@@ -1310,7 +1308,6 @@ describe("scoped pharo launcher facade", () => {
           projectRoot,
           statePath: statePath(projectRoot, stateRoot),
           state,
-          stoppedImages: [],
           failures: [],
         };
       },
@@ -1373,8 +1370,7 @@ describe("scoped pharo launcher facade", () => {
             projectRoot,
             statePath: statePath(projectRoot, stateRoot),
             state: runningState(),
-            stoppedImages: [],
-            failures: [],
+              failures: [],
           };
         },
       }).stopImage("dev"),
@@ -1429,7 +1425,7 @@ describe("scoped pharo launcher facade", () => {
           projectRoot,
           statePath: statePath(projectRoot, stateRoot),
           state,
-          stoppedImages: state.images,
+          stoppedImage: state.images[0],
           failures: [],
         };
       },
@@ -1495,7 +1491,7 @@ describe("scoped pharo launcher facade", () => {
           projectRoot,
           statePath: statePath(projectRoot, stateRoot),
           state: failedState,
-          stoppedImages: failedState.images,
+          stoppedImage: failedState.images[0],
           failures: [],
         };
       },
@@ -1504,7 +1500,7 @@ describe("scoped pharo launcher facade", () => {
     const result = await callScopedPharoLauncherTool(
       facade,
       "pharo_launcher_image_reset",
-      { imageId: "dev", confirm: true, start: false },
+      { imageId: "dev", start: false },
     );
 
     expect(result.isError).toBeFalsy();
@@ -1554,7 +1550,7 @@ describe("scoped pharo launcher facade", () => {
           projectRoot,
           statePath: statePath(projectRoot, stateRoot),
           state: failedState,
-          stoppedImages: failedState.images,
+          stoppedImage: failedState.images[0],
           failures: [],
         };
       },
@@ -1672,7 +1668,7 @@ describe("scoped pharo launcher facade", () => {
           projectRoot,
           statePath: statePath(projectRoot, stateRoot),
           state,
-          stoppedImages: state.images,
+          stoppedImage: state.images[0],
           failures: [],
         };
       },
@@ -1800,7 +1796,7 @@ describe("scoped pharo launcher facade", () => {
     ]);
   });
 
-  it("opens declared images interactively through PLexus runtime state", async () => {
+  it("shows a declared image interactively through PLexus runtime state", async () => {
     const projectRoot = makeTempDir("plexus-project-");
     const stateRoot = makeTempDir("plexus-state-");
     const starts: unknown[] = [];
@@ -1836,7 +1832,7 @@ describe("scoped pharo launcher facade", () => {
           failures: [],
         };
       },
-    }).openImageInteractive("dev");
+    }).showImage("dev");
 
     expect(starts).toEqual([
       expect.objectContaining({
@@ -1975,7 +1971,7 @@ describe("scoped pharo launcher facade", () => {
           projectRoot,
           statePath: statePath(projectRoot, stateRoot),
           state,
-          stoppedImages: state.images,
+          stoppedImage: state.images[0],
           failures: [],
         };
       },

@@ -604,7 +604,7 @@ export function assertSmokeLoadScriptsReady(options, context = {}) {
 export function smokeProjectConfig(options) {
   return {
     id: requiredString(options.projectId, "projectId"),
-    name: "plexus-smoke-open-route-close",
+    name: "plexus-smoke-start-route-stop",
     ...(options.homePath
       ? {
           home: {

@@ -34,7 +34,7 @@ function baseOptions(overrides = {}) {
     launcherProfileRoot: "C:/work/launcher-profile",
     artifactRoot: "C:/work/artifacts",
     stateRoot: "C:/work/state",
-    projectId: "smoke-open-route-close",
+    projectId: "smoke-start-route-stop",
     images: [
       {
         id: "dev",

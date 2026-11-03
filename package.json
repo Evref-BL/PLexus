@@ -29,8 +29,7 @@
     "typecheck": "tsc -p tsconfig.check.json",
     "typecheck:scripts": "tsc -p tsconfig.scripts.json",
     "clean": "npm run clean --workspaces",
-    "prototype:open-close": "node scripts/prototype-open-close.mjs",
-    "smoke:open-route-close": "npm run build && node scripts/smoke-open-route-close.mjs",
+    "smoke:start-route-stop": "npm run build && node scripts/smoke-start-route-stop.mjs",
     "verify:env": "node scripts/verify-environment.mjs"
   },
   "devDependencies": {

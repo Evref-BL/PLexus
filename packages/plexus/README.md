@@ -13,7 +13,7 @@ plexus --help
 ```
 
 ```ts
-import { closeProject, loadProjectState, openProject } from "@evref-bl/plexus";
+import { loadProjectState, startProjectImage, stopProjectImage } from "@evref-bl/plexus";
 ```
 
 Everything reachable from the package root is API. `@evref-bl/plexus/internal`

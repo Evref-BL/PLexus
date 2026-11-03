@@ -3,7 +3,7 @@
   "createSourceFromTemplate": true,
   "sourceTemplateName": "Pharo 14.0 - 64bit",
   "requiredWorkspacePrefix": "smoke-e2e",
-  "projectId": "smoke-open-route-close",
+  "projectId": "smoke-start-route-stop",
   "timeoutBudget": {
     "setupMs": 120000,
     "imagePrepareMs": 420000,

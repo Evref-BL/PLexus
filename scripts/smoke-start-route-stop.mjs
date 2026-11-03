@@ -6,9 +6,9 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
-  closeProject,
   loadProjectState,
-  openProject,
+  startProjectImage,
+  stopProjectImage,
 } from "../packages/plexus/dist/index.js";
 import {
   loadPharoLauncherMcpConfig,
@@ -42,7 +42,7 @@ const repoRoot = path.dirname(path.dirname(scriptPath));
 
 function parseArgs(argv) {
   const options = {
-    projectId: "smoke-open-route-close",
+    projectId: "smoke-start-route-stop",
     imageId: "dev",
     imageSpecs: /** @type {Record<string, unknown>[]} */ ([]),
     stepSpecs: /** @type {Record<string, unknown>[]} */ ([]),
@@ -324,10 +324,10 @@ function parseArgs(argv) {
 function usage() {
   return [
     "Usage:",
-    "  npm run smoke:open-route-close -- --copyFromImageName <ExistingImage>",
-    "  npm run smoke:open-route-close -- --imageName <ExistingDisposableImage>",
-    "  npm run smoke:open-route-close -- --imageSpecJson '{\"id\":\"dev\",\"copyFromImageName\":\"MCP12-2\"}' --imageSpecJson '{\"id\":\"peer\",\"copyFromImageName\":\"MCP12-2\"}'",
-    "  npm run smoke:open-route-close -- --createSourceFromTemplate",
+    "  npm run smoke:start-route-stop -- --copyFromImageName <ExistingImage>",
+    "  npm run smoke:start-route-stop -- --imageName <ExistingDisposableImage>",
+    "  npm run smoke:start-route-stop -- --imageSpecJson '{\"id\":\"dev\",\"copyFromImageName\":\"MCP12-2\"}' --imageSpecJson '{\"id\":\"peer\",\"copyFromImageName\":\"MCP12-2\"}'",
+    "  npm run smoke:start-route-stop -- --createSourceFromTemplate",
     "",
     "Required:",
     "  One image source via --copyFromImageName, --imageName, --imageSpecJson, --createSourceFromTemplate, or matching PLEXUS_SMOKE_* env vars",
@@ -349,7 +349,7 @@ function usage() {
     "  --homePath <path>             PLexus home used for home image cache smoke runs",
     "  --homeImageCacheNetworkPolicy <online|local-only>  Home cache network policy",
     "  --workspaceId <id>            Defaults to a unique smoke id",
-    "  --projectId <id>              Defaults to smoke-open-route-close",
+    "  --projectId <id>              Defaults to smoke-start-route-stop",
     "  --imageId <id>                Defaults to dev for the one-image path",
     "  --port <number>               Defaults to PLexus allocation",
     "  --loadScript <path>           MCP load script. Without one, and without",
@@ -1226,7 +1226,7 @@ function addProbeRouteSource(gateway, openData, projectPaths) {
   });
 }
 
-/** openProject and closeProject answer directly rather than through a tool. */
+/** startProjectImage and stopProjectImage answer directly rather than through a tool. */
 function requireLifecycleOk(result, label) {
   if (!result?.ok) {
     throw new Error(
@@ -2004,20 +2004,23 @@ function validateOpenedState(stateAfterOpen, options) {
 }
 
 async function assertClosed(client, gateway, openData, projectPaths, options) {
-  const closeResult = await closeProject({
-    projectRoot: projectPaths.projectRoot,
-    stateRoot: projectPaths.stateRoot,
-    workspaceId: options.workspaceId,
-    pharoLauncherMcpClient: client,
-  });
-  requireLifecycleOk(closeResult, "closeProject");
-  textResult("close ok", closeResult.ok);
+  for (const image of options.images) {
+    const stopResult = await stopProjectImage({
+      projectRoot: projectPaths.projectRoot,
+      stateRoot: projectPaths.stateRoot,
+      workspaceId: options.workspaceId,
+      imageId: image.id,
+      pharoLauncherMcpClient: client,
+    });
+    requireLifecycleOk(stopResult, "stopProjectImage");
+    textResult("stop ok", `${image.id}=${stopResult.ok}`);
+  }
 
   for (const image of options.images) {
     const processAfterClose = await processForImage(client, image.imageName);
     if (processAfterClose) {
       throw new Error(
-        `Process is still running after project close for ${image.id}: pid ${processAfterClose.pid}`,
+        `Process is still running after stopping ${image.id}: pid ${processAfterClose.pid}`,
       );
     }
     textResult("process after close", `${image.id}=gone`);
@@ -2157,16 +2160,20 @@ async function main() {
 
     const openResult = await withPhaseTimeout(options, "open", async () => {
       recordEvent(options, "open-started");
-      return openProject({
-        projectRoot: projectPaths.projectRoot,
-        stateRoot: projectPaths.stateRoot,
-        workspaceId: options.workspaceId,
-        // Opening is an action and takes its subjects from the request: with
-        // no ids, openProject opens nothing and says ok. The `active` flag in
-        // the config used to decide this and no longer does.
-        imageIds: options.images.map((image) => image.id),
-        pharoLauncherMcpClient: client,
-      });
+      // Starting is an action on one image, so several images are several
+      // calls. Each answers the whole project state, so the last one carries
+      // every image this smoke started.
+      let result;
+      for (const image of options.images) {
+        result = await startProjectImage({
+          projectRoot: projectPaths.projectRoot,
+          stateRoot: projectPaths.stateRoot,
+          workspaceId: options.workspaceId,
+          imageId: image.id,
+          pharoLauncherMcpClient: client,
+        });
+      }
+      return result;
     });
     snapshotJsonArtifact(options, "project-open-result.json", openResult);
     if (!openResult?.ok) {
@@ -2177,12 +2184,12 @@ async function main() {
         launcherLogFiles,
       });
       throw new Error(
-        formatToolFailure("openProject", openResult, {
+        formatToolFailure("startProjectImage", openResult, {
           launcherLogFiles,
         }),
       );
     }
-    openData = requireLifecycleOk(openResult, "openProject");
+    openData = requireLifecycleOk(openResult, "startProjectImage");
     opened = true;
     textResult("open ok", openResult.ok);
     textResult("statePath", openData.statePath);
@@ -2291,13 +2298,16 @@ async function main() {
       }
 
       if (opened && projectPaths) {
-        await cleanupStep("project close", async () => {
-          await closeProject({
-            projectRoot: projectPaths.projectRoot,
-            stateRoot: projectPaths.stateRoot,
-            workspaceId: options.workspaceId,
-            pharoLauncherMcpClient: client,
-          });
+        await cleanupStep("image stop", async () => {
+          for (const image of options.images ?? []) {
+            await stopProjectImage({
+              projectRoot: projectPaths.projectRoot,
+              stateRoot: projectPaths.stateRoot,
+              workspaceId: options.workspaceId,
+              imageId: image.id,
+              pharoLauncherMcpClient: client,
+            });
+          }
         });
       }
 
