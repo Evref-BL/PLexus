@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type { PharoLauncherMcpToolClient } from "../../src/launcher/pharoLauncherMcpClient.js";
-import { closeProject, ProjectCloseError } from "../../src/lifecycle/projectClose.js";
+import { stopProjectImage, StopProjectImageError } from "../../src/lifecycle/stopProjectImage.js";
 import {
   loadProjectState,
   saveProjectState,
@@ -171,7 +171,7 @@ afterEach(() => {
   }
 });
 
-describe("project close", () => {
+describe("stop project image", () => {
   it("stops an image a failed start left running", async () => {
     const projectRoot = makeTempDir("plexus-project-");
     const stateRoot = makeTempDir("plexus-state-");
@@ -195,16 +195,17 @@ describe("project close", () => {
     });
     const pharoLauncherMcpClient = new FakePharoLauncherMcpClient();
 
-    const result = await closeProject({
+    const result = await stopProjectImage({
       projectRoot,
       stateRoot,
       workspaceId: "worktree-a",
+      imageId: "dev",
       pharoLauncherMcpClient,
       now: fixedNow,
     });
 
     expect(result.ok).toBe(true);
-    expect(result.stoppedImages.map((image) => image.id)).toEqual(["dev"]);
+    expect(result.stoppedImage?.id).toBe("dev");
     expect(
       pharoLauncherMcpClient.calls.map((call) => call.name),
     ).toEqual(["pharo_launcher_process_list", "pharo_launcher_process_kill"]);
@@ -236,10 +237,11 @@ describe("project close", () => {
     });
     const pharoLauncherMcpClient = new FakePharoLauncherMcpClient();
 
-    const result = await closeProject({
+    const result = await stopProjectImage({
       projectRoot,
       stateRoot,
       workspaceId: "worktree-a",
+      imageId: "dev",
       pharoLauncherMcpClient,
       now: fixedNow,
     });
@@ -248,7 +250,7 @@ describe("project close", () => {
     expect(pharoLauncherMcpClient.calls).toEqual([]);
   });
 
-  it("kills running images and marks them stopped", async () => {
+  it("kills the running image and marks it stopped", async () => {
     const projectRoot = makeTempDir("plexus-project-");
     const stateRoot = makeTempDir("plexus-state-");
     writeProjectConfig(projectRoot);
@@ -273,10 +275,11 @@ describe("project close", () => {
     });
     const pharoLauncherMcpClient = new FakePharoLauncherMcpClient();
 
-    const result = await closeProject({
+    const result = await stopProjectImage({
       projectRoot,
       stateRoot,
       workspaceId: "worktree-a",
+      imageId: "dev",
       pharoLauncherMcpClient,
       now: fixedNow,
     });
@@ -306,7 +309,7 @@ describe("project close", () => {
     ]);
   });
 
-  it("clears endpoint runtime state and handoff files when stopping images", async () => {
+  it("clears endpoint runtime state and handoff files when stopping an image", async () => {
     const projectRoot = makeTempDir("plexus-project-");
     const stateRoot = makeTempDir("plexus-state-");
     const endpointPath = path.join(
@@ -351,10 +354,11 @@ describe("project close", () => {
       ],
     });
 
-    const result = await closeProject({
+    const result = await stopProjectImage({
       projectRoot,
       stateRoot,
       workspaceId: "worktree-a",
+      imageId: "dev",
       pharoLauncherMcpClient: new FakePharoLauncherMcpClient(),
       now: fixedNow,
     });
@@ -370,7 +374,7 @@ describe("project close", () => {
     ]);
   });
 
-  it("can scope project close to selected running images", async () => {
+  it("stops the named image and leaves another running one alone", async () => {
     const projectRoot = makeTempDir("plexus-project-");
     const stateRoot = makeTempDir("plexus-state-");
     writeProjectConfig(projectRoot);
@@ -399,23 +403,21 @@ describe("project close", () => {
       { pid: 5678, imageName: "MyProject-baseline" },
     ]);
 
-    const result = await closeProject({
+    const result = await stopProjectImage({
       projectRoot,
       stateRoot,
       workspaceId: "worktree-a",
-      imageIds: ["baseline"],
+      imageId: "baseline",
       pharoLauncherMcpClient,
       now: fixedNow,
     });
 
     expect(result.ok).toBe(true);
-    expect(result.stoppedImages).toEqual([
-      {
-        id: "baseline",
-        imageName: "MyProject-baseline",
-        status: "stopped",
-      },
-    ]);
+    expect(result.stoppedImage).toEqual({
+      id: "baseline",
+      imageName: "MyProject-baseline",
+      status: "stopped",
+    });
     expect(pharoLauncherMcpClient.calls).toEqual([
       {
         name: "pharo_launcher_process_list",
@@ -454,17 +456,18 @@ describe("project close", () => {
     writeProjectConfig(projectRoot);
     const pharoLauncherMcpClient = new FakePharoLauncherMcpClient();
 
-    const result = await closeProject({
+    const result = await stopProjectImage({
       projectRoot,
       stateRoot,
       workspaceId: "worktree-a",
+      imageId: "dev",
       pharoLauncherMcpClient,
       now: fixedNow,
     });
 
     expect(result.ok).toBe(true);
     expect(result.state).toBeUndefined();
-    expect(result.stoppedImages).toEqual([]);
+    expect(result.stoppedImage).toBeUndefined();
     expect(pharoLauncherMcpClient.calls).toEqual([]);
     expect(fs.existsSync(result.statePath)).toBe(false);
   });
@@ -489,14 +492,15 @@ describe("project close", () => {
     });
 
     await expect(
-      closeProject({
+      stopProjectImage({
         projectRoot,
         stateRoot,
         workspaceId: "worktree-a",
+        imageId: "dev",
         pharoLauncherMcpClient: new FakePharoLauncherMcpClient(new Error("kill failed")),
         now: fixedNow,
       }),
-    ).rejects.toThrow(ProjectCloseError);
+    ).rejects.toThrow(StopProjectImageError);
 
     expect(loadProjectState(statePath(stateRoot))?.images).toEqual([
       {
@@ -531,10 +535,11 @@ describe("project close", () => {
       { pid: 9999, imageName: "MyProject-dev" },
     ]);
 
-    const result = await closeProject({
+    const result = await stopProjectImage({
       projectRoot,
       stateRoot,
       workspaceId: "worktree-a",
+      imageId: "dev",
       pharoLauncherMcpClient,
       now: fixedNow,
     });

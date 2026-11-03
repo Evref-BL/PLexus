@@ -67,33 +67,33 @@ export interface LauncherCommandResult<T = unknown> {
 
 export type { LauncherProcess };
 
-export interface ProjectOpenPollOptions {
+export interface StartProjectImagePollOptions {
   intervalMs?: number;
   processTimeoutMs?: number;
   healthTimeoutMs?: number;
 }
 
-export type ProjectOpenImageMcpClient = ImageMcpClient;
+export type StartProjectImageMcpClient = ImageMcpClient;
 
-export interface ProjectOpenOptions {
+export interface StartProjectImageOptions {
   projectRoot: string;
   sourcePath?: string;
   stateRoot?: string;
   workspaceId?: string;
-  imageIds?: string[];
+  imageId: string;
   displayMode?: ProjectImageDisplayMode;
   pharoLauncherMcpClient?: PharoLauncherMcpToolClient;
-  imageMcpClient?: ProjectOpenImageMcpClient;
+  imageMcpClient?: StartProjectImageMcpClient;
   healthClient?: PharoMcpHealthClient;
   now?: () => Date;
-  poll?: ProjectOpenPollOptions;
+  poll?: StartProjectImagePollOptions;
   sleep?: (durationMs: number) => Promise<void>;
   preparedImageCacheApproval?: PreparedImageCacheMutationApproval;
   homeImageCacheApproval?: HomeImageCacheMutationApproval;
   homeImageCacheClient?: PharoLauncherMcpToolClient;
 }
 
-export interface ProjectOpenFailure {
+export interface StartProjectImageFailure {
   imageId: string;
   imageName: string;
   message: string;
@@ -104,21 +104,21 @@ export interface ProjectOpenFailure {
   process?: LauncherProcess;
 }
 
-export interface ProjectOpenResult {
+export interface StartProjectImageResult {
   ok: boolean;
   projectRoot: string;
   statePath: string;
   state: ProjectState;
-  failures: ProjectOpenFailure[];
+  failures: StartProjectImageFailure[];
 }
 
-export class ProjectOpenError extends Error {
+export class StartProjectImageError extends Error {
   constructor(
     message: string,
-    public readonly result: ProjectOpenResult,
+    public readonly result: StartProjectImageResult,
   ) {
     super(message);
-    this.name = "ProjectOpenError";
+    this.name = "StartProjectImageError";
   }
 }
 
@@ -133,7 +133,7 @@ function errorMessage(error: unknown): string {
 function launcherFailureDetails(
   error: unknown,
 ): Pick<
-  ProjectOpenFailure,
+  StartProjectImageFailure,
   "launcherToolName" | "launcherResult" | "diagnostic" | "action"
 > {
   if (!(error instanceof PharoLauncherMcpToolError)) {
@@ -237,7 +237,7 @@ function jsonRpcErrorText(value: unknown): string {
   }
 }
 
-class HttpProjectOpenImageMcpClient implements ProjectOpenImageMcpClient {
+class HttpStartProjectImageMcpClient implements StartProjectImageMcpClient {
   constructor(
     private readonly fetchFn: typeof fetch = fetch,
     private readonly timeoutMs = 60_000,
@@ -420,7 +420,7 @@ function collectLauncherLogPaths(
 
 function startupFailureDetails(
   error: unknown,
-): Pick<ProjectOpenFailure, "launcherToolName" | "launcherResult" | "process"> {
+): Pick<StartProjectImageFailure, "launcherToolName" | "launcherResult" | "process"> {
   if (!(error instanceof ImageStartupExitedBeforeHealthError)) {
     return {};
   }
@@ -1042,24 +1042,19 @@ function imageStartupExitedBeforeHealthError(options: {
 }
 
 /**
- * The images this call was asked to open. Opening is an action, so it takes
- * its subjects from the request; a declaration no longer decides it.
+ * The image this call was asked to start. Starting is an action, so it takes
+ * its subject from the request; a declaration no longer decides it.
  */
-function imagesToOpenFor(
+function imageToStart(
   state: ProjectState,
-  imageIds: string[] | undefined,
-): ProjectImageState[] {
-  if (!imageIds) {
-    return [];
-  }
-
-  const selected = new Set(imageIds);
-  const images = state.images.filter((image) => selected.has(image.id));
-  for (const image of images) {
+  imageId: string,
+): ProjectImageState | undefined {
+  const image = state.images.find((candidate) => candidate.id === imageId);
+  if (image) {
     image.status = "starting";
   }
 
-  return images;
+  return image;
 }
 
 function imageRequiresPharoMcpHealth(
@@ -1085,15 +1080,10 @@ function imageCanRouteToPharoMcp(
 function applyScopedImageSelection(
   state: ProjectState,
   previousState: ProjectState | undefined,
-  imageIds: string[] | undefined,
+  imageId: string,
 ): void {
-  if (!imageIds) {
-    return;
-  }
-
-  const selectedIds = new Set(imageIds);
   state.images = state.images.filter((image) => {
-    if (selectedIds.has(image.id)) {
+    if (image.id === imageId) {
       return true;
     }
 
@@ -1153,8 +1143,8 @@ function shouldMaterializeImageFromHomeCache(options: {
   );
 }
 
-interface ProjectOpenContext {
-  options: ProjectOpenOptions;
+interface StartProjectImageContext {
+  options: StartProjectImageOptions;
   projectRoot: string;
   config: ProjectConfig;
   previousState: ProjectState | undefined;
@@ -1170,14 +1160,14 @@ interface ProjectOpenContext {
   client: PharoLauncherMcpToolClient;
   ownsClient: boolean;
   healthClient: PharoMcpHealthClient;
-  imageMcpClient: ProjectOpenImageMcpClient;
-  poll: Required<ProjectOpenPollOptions>;
+  imageMcpClient: StartProjectImageMcpClient;
+  poll: Required<StartProjectImagePollOptions>;
   sleep: (durationMs: number) => Promise<void>;
-  failures: ProjectOpenFailure[];
+  failures: StartProjectImageFailure[];
   now: () => Date;
 }
 
-interface ProjectImageOpenSetup {
+interface ProjectImageStartSetup {
   displayMode: ProjectImageDisplayMode;
   endpointHandoffPath: string;
   pharoMcpLoadStatusPath?: string;
@@ -1187,14 +1177,14 @@ interface ProjectImageOpenSetup {
   ownsLaunchClient: boolean;
 }
 
-function resolveProjectOpenWorkspace(
+function resolveStartWorkspace(
   projectRoot: string,
   workspaceId: string | undefined,
 ): string {
   return workspaceId ? sanitizeRuntimeId(workspaceId) : defaultWorkspaceId(projectRoot);
 }
 
-function resolveProjectOpenSourcePath(options: {
+function resolveStartSourcePath(options: {
   requestedSourcePath: string | undefined;
   projectRoot: string;
 }): string | undefined {
@@ -1218,8 +1208,8 @@ function applyProjectImageDisplayMode(
   }
 }
 
-async function materializeProjectImageForOpen(
-  context: ProjectOpenContext,
+async function materializeProjectImageForStart(
+  context: StartProjectImageContext,
   imageConfig: ProjectImageConfig,
   imageState: ProjectImageState,
 ): Promise<void> {
@@ -1260,13 +1250,13 @@ async function materializeProjectImageForOpen(
 
 }
 
-async function setupProjectImageForOpen(
-  context: ProjectOpenContext,
+async function setupProjectImageForStart(
+  context: StartProjectImageContext,
   imageConfig: ProjectImageConfig,
   imageState: ProjectImageState,
   displayMode: ProjectImageDisplayMode,
-): Promise<ProjectImageOpenSetup> {
-  await materializeProjectImageForOpen(context, imageConfig, imageState);
+): Promise<ProjectImageStartSetup> {
+  await materializeProjectImageForStart(context, imageConfig, imageState);
 
   const endpointHandoffPath = imageMcpEndpointHandoffPath({
     projectRoot: context.projectRoot,
@@ -1351,10 +1341,10 @@ function handlePharoMcpReadinessResult(options: {
 }
 
 async function routeProjectImageMcp(options: {
-  context: ProjectOpenContext;
+  context: StartProjectImageContext;
   imageConfig: ProjectImageConfig;
   imageState: ProjectImageState;
-  setup: ProjectImageOpenSetup;
+  setup: ProjectImageStartSetup;
   launchRuntime: ImageLaunchRuntime;
 }): Promise<void> {
   if (!imageCanRouteToPharoMcp(options.imageConfig, options.imageState)) {
@@ -1414,10 +1404,10 @@ function assertProjectImageLoadStatuses(options: {
 }
 
 async function launchProjectImage(options: {
-  context: ProjectOpenContext;
+  context: StartProjectImageContext;
   imageConfig: ProjectImageConfig;
   imageState: ProjectImageState;
-  setup: ProjectImageOpenSetup;
+  setup: ProjectImageStartSetup;
 }): Promise<void> {
   const { context, imageConfig, imageState, setup } = options;
   try {
@@ -1454,10 +1444,10 @@ async function launchProjectImage(options: {
   }
 }
 
-async function recordProjectImageOpenFailure(options: {
-  context: ProjectOpenContext;
+async function recordProjectImageStartFailure(options: {
+  context: StartProjectImageContext;
   imageState: ProjectImageState;
-  setup: ProjectImageOpenSetup | undefined;
+  setup: ProjectImageStartSetup | undefined;
   error: unknown;
 }): Promise<void> {
   options.imageState.status = "failed";
@@ -1484,8 +1474,8 @@ async function recordProjectImageOpenFailure(options: {
   });
 }
 
-async function openProjectImage(
-  context: ProjectOpenContext,
+async function startSelectedImage(
+  context: StartProjectImageContext,
   imageState: ProjectImageState,
 ): Promise<void> {
   const imageConfig = context.config.images.find(
@@ -1504,9 +1494,9 @@ async function openProjectImage(
     context.options.displayMode,
   );
 
-  let setup: ProjectImageOpenSetup | undefined;
+  let setup: ProjectImageStartSetup | undefined;
   try {
-    setup = await setupProjectImageForOpen(
+    setup = await setupProjectImageForStart(
       context,
       imageConfig,
       imageState,
@@ -1515,22 +1505,8 @@ async function openProjectImage(
     await launchProjectImage({ context, imageConfig, imageState, setup });
     imageState.status = "running";
   } catch (error) {
-    await recordProjectImageOpenFailure({ context, imageState, setup, error });
+    await recordProjectImageStartFailure({ context, imageState, setup, error });
   }
-}
-
-async function openActiveProjectImages(
-  context: ProjectOpenContext,
-  imagesToOpen: ProjectImageState[],
-): Promise<void> {
-  for (const imageState of imagesToOpen) {
-    await openProjectImage(context, imageState);
-  }
-}
-
-export interface StartProjectImageOptions
-  extends Omit<ProjectOpenOptions, "imageIds"> {
-  imageId: string;
 }
 
 /**
@@ -1539,22 +1515,10 @@ export interface StartProjectImageOptions
  */
 export async function startProjectImage(
   options: StartProjectImageOptions,
-): Promise<ProjectOpenResult> {
-  const { imageId, ...rest } = options;
-  return await openProject({ ...rest, imageIds: [imageId] });
-}
-
-/**
- * @deprecated Use `startProjectImage`. The plural form only survives because
- * `pharo-agent-plugin` still imports it, always with a single id; it goes when
- * the plugin moves.
- */
-export async function openProject(
-  options: ProjectOpenOptions,
-): Promise<ProjectOpenResult> {
+): Promise<StartProjectImageResult> {
   const projectRoot = path.resolve(options.projectRoot);
   const config = loadProjectConfig(projectRoot);
-  const workspaceId = resolveProjectOpenWorkspace(
+  const workspaceId = resolveStartWorkspace(
     projectRoot,
     options.workspaceId,
   );
@@ -1567,7 +1531,7 @@ export async function openProject(
   const resolvedStateRoot = projectStateRootForConfig(config, options.stateRoot);
   const previousState = loadProjectState(statePath);
   const requestedSourcePath = options.sourcePath ?? previousState?.sourcePath;
-  const sourcePath = resolveProjectOpenSourcePath({
+  const sourcePath = resolveStartSourcePath({
     requestedSourcePath,
     projectRoot,
   });
@@ -1579,11 +1543,13 @@ export async function openProject(
     workspaceId,
     sourcePath,
   });
-  applyScopedImageSelection(state, previousState, options.imageIds);
-  const imagesToOpen = imagesToOpenFor(state, options.imageIds);
-  const failures: ProjectOpenFailure[] = [];
+  applyScopedImageSelection(state, previousState, options.imageId);
+  const imageState = imageToStart(state, options.imageId);
+  const failures: StartProjectImageFailure[] = [];
 
-  if (imagesToOpen.length === 0) {
+  // The project does not declare this image, so there is nothing to start and
+  // nothing to report about it beyond the state as it stands.
+  if (!imageState) {
     state.runtimeStatus = runtimeStatusForImages(state.images);
     state.updatedAt = now().toISOString();
     saveProjectState(statePath, state);
@@ -1612,14 +1578,14 @@ export async function openProject(
   const healthClient =
     options.healthClient ?? new HttpPharoMcpHealthClient();
   const imageMcpClient =
-    options.imageMcpClient ?? new HttpProjectOpenImageMcpClient();
+    options.imageMcpClient ?? new HttpStartProjectImageMcpClient();
   const poll = {
     intervalMs: options.poll?.intervalMs ?? 500,
     processTimeoutMs: options.poll?.processTimeoutMs ?? 30_000,
     healthTimeoutMs: options.poll?.healthTimeoutMs ?? 5 * 60_000,
   };
   const sleep = options.sleep ?? defaultSleep;
-  const context: ProjectOpenContext = {
+  const context: StartProjectImageContext = {
     options,
     projectRoot,
     config,
@@ -1642,12 +1608,12 @@ export async function openProject(
   };
 
   try {
-    await openActiveProjectImages(context, imagesToOpen);
+    await startSelectedImage(context, imageState);
     state.runtimeStatus = runtimeStatusForImages(state.images);
     state.updatedAt = now().toISOString();
     saveProjectState(statePath, state);
 
-    const result: ProjectOpenResult = {
+    const result: StartProjectImageResult = {
       ok: failures.length === 0,
       projectRoot,
       statePath,
@@ -1655,7 +1621,9 @@ export async function openProject(
       failures,
     };
     if (!result.ok) {
-      throw new ProjectOpenError("One or more project images failed to open", result);
+      // One image, so one failure, and its message is the one a caller can
+      // act on. An aggregate sentence here said nothing and hid that.
+      throw new StartProjectImageError(failures[0].message, result);
     }
     return result;
   } finally {

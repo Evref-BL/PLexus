@@ -20,14 +20,14 @@ const manifest = JSON.parse(
  */
 const publicNames = [
   "ImageAlreadyRunningError",
-  "ProjectCloseError",
+  "StopProjectImageError",
   "ProjectConfigError",
-  "ProjectOpenError",
+  "StartProjectImageError",
   "ProjectStateError",
   "ScopedPharoLauncher",
   "ScopedPharoLauncherError",
   "callScopedPharoLauncherTool",
-  "closeProject",
+  "stopProjectImage",
   "createProjectState",
   "createScopedPharoLauncherServer",
   "defaultPharoMcpMetadataKey",
@@ -49,7 +49,7 @@ const publicNames = [
   "hostPharoProcesses",
   "loadProjectConfig",
   "loadProjectState",
-  "openProject",
+  "startProjectImage",
   "parseProjectConfig",
   "plexusHomeEnvironmentKey",
   "plexusProjectConfigFileName",
@@ -78,9 +78,7 @@ const publicNames = [
   "saveProjectState",
   "scopedImageLeaseOptionsFromEnvironment",
   "scopedPharoLauncherTools",
-  "startProjectImage",
   "startScopedPharoLauncherServer",
-  "stopProjectImage",
 ];
 
 describe("the published surface", () => {

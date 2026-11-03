@@ -19,6 +19,6 @@ export * from "./config/pharoMcpVersion.js";
 export * from "./config/plexusHome.js";
 export * from "./config/projectConfig.js";
 export * from "./launcher/scopedPharoLauncherServer.js";
-export * from "./lifecycle/projectClose.js";
-export * from "./lifecycle/projectOpen.js";
+export * from "./lifecycle/stopProjectImage.js";
+export * from "./lifecycle/startProjectImage.js";
 export * from "./workspace/projectState.js";

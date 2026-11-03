@@ -16,7 +16,7 @@ is reserved before the image is running.
 The gateway is independent of project configuration. It is given the places to
 look — a project root and the state file under it — and resolves a route from
 what it finds there when the call arrives. Nothing registers a route, so none
-can go stale between the call that opened an image and the call that uses it.
+can go stale between the call that started an image and the call that uses it.
 
 ## Use it as a library
 
@@ -24,7 +24,7 @@ A caller inside Node does not have to speak MCP to PLexus. The lifecycle is
 functions:
 
 ```ts
-import { closeProject, loadProjectState, openProject } from "@evref-bl/plexus";
+import { loadProjectState, startProjectImage, stopProjectImage } from "@evref-bl/plexus";
 ```
 
 Everything reachable from the package root is API and moves under semver.

@@ -46,7 +46,7 @@ import {
   removeImageMcpEndpointHandoff,
 } from "../gateway/projectImageMcpEndpoint.js";
 import { writeImageStartupScript } from "../workspace/projectStartupScript.js";
-import type { LauncherCommandResult, LauncherProcess } from "../lifecycle/projectOpen.js";
+import type { LauncherCommandResult, LauncherProcess } from "../lifecycle/startProjectImage.js";
 
 const defaultPoll = {
   intervalMs: 500,
