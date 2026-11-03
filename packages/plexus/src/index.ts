@@ -16,6 +16,7 @@
  */
 
 export * from "./config/pharoMcpVersion.js";
+export * from "./config/projectConfigAuthoring.js";
 export * from "./config/plexusHome.js";
 export * from "./config/projectConfig.js";
 export * from "./launcher/scopedPharoLauncherServer.js";

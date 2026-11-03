@@ -1465,6 +1465,41 @@ export class ScopedPharoLauncher {
     };
   }
 
+  /**
+   * The launcher resolves a bare template name against its default group only,
+   * so an image naming a template from any other group could not be created
+   * until something said which group that was. `listTemplates` already walks
+   * the groups and stamps each row, so the answer was here all along and every
+   * consumer was finding it for itself.
+   */
+  private async templateCategoryFor(
+    templateName: string,
+  ): Promise<string | undefined> {
+    const { templates } = await this.listTemplates();
+    const categories = [
+      ...new Set(
+        templates
+          .filter((template) => template.name === templateName)
+          .map((template) => template.templateCategory)
+          .filter((category): category is string => Boolean(category)),
+      ),
+    ];
+
+    if (categories.length === 0) {
+      throw new ScopedPharoLauncherError(
+        `No template named ${templateName} in any category`,
+      );
+    }
+    if (categories.length > 1) {
+      throw new ScopedPharoLauncherError(
+        `Template ${templateName} exists in several categories: ${categories.join(", ")}. `
+          + "Set create.templateCategory to choose one.",
+      );
+    }
+
+    return categories[0];
+  }
+
   async createImage(
     imageId: string,
     profileId?: string,
@@ -1546,14 +1581,15 @@ export class ScopedPharoLauncher {
           projectConfig,
           fetch: this.options.fetch,
         });
+        const templateCategory =
+          createPolicy.templateCategory ??
+          (await this.templateCategoryFor(createPolicy.templateName));
         const result = await client.callTool(
           "pharo_launcher_image_create",
           {
             newImageName: renderedImageName(scope, imageConfig),
             templateName: createPolicy.templateName,
-            ...(createPolicy.templateCategory
-              ? { templateCategory: createPolicy.templateCategory }
-              : {}),
+            ...(templateCategory ? { templateCategory } : {}),
             noLaunch: true,
           },
         );
