@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
+import { imageFileExists } from "./imageRuntime.js";
 import { prepareScopedTemplateCatalog } from "./scopedTemplateCatalog.js";
 import {
   defaultPharoMcpMetacelloRepository,
@@ -811,15 +812,23 @@ function planStatus(
   enabled: boolean,
   manifest: HomeImageCacheManifestReadResult,
   lock: HomeImageCacheLockReadResult,
+  cachedImageExists: boolean,
 ): HomeImageCachePlanStatus {
   if (!enabled) {
     return "disabled";
   }
 
   if (manifest.status === "ok") {
-    return manifest.manifest.pharoMcp.preparationStatus === "failed"
-      ? "corrupt"
-      : "hit";
+    if (manifest.manifest.pharoMcp.preparationStatus === "failed") {
+      return "corrupt";
+    }
+    // A manifest is a claim about an image, and the image is what gets copied.
+    // The two live in different roots: the entry stays under the cache root
+    // while the image sits in the cache profile, so moving the profile leaves
+    // every manifest written before the move pointing at nothing. Believing
+    // the claim turns a cache that should prepare again into a copy from a
+    // directory that is not there.
+    return cachedImageExists ? "hit" : "corrupt";
   }
 
   if (manifest.status === "corrupt") {
@@ -1201,7 +1210,12 @@ export function buildHomeImageCachePlan(
   const lock = readHomeImageCacheLock(lockPath);
   const enabled = homeImageCacheEnabled(options.config);
   const networkPolicy = homeImageCacheNetworkPolicy(options.config);
-  const status = planStatus(enabled, manifest, lock);
+  const status = planStatus(
+    enabled,
+    manifest,
+    lock,
+    imageFileExists(homeProfile.imagesDir, cacheImageName),
+  );
   const destinationProfile = profilePathsFromEnvironment(
     pharoLauncherMcpProfileEnvironment({
       projectRoot: options.projectRoot,
