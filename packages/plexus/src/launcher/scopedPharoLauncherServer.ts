@@ -924,21 +924,19 @@ function routeStatus(
   };
 }
 
-function resetCloseError(
+function resetStopError(
   imageId: string,
   error: StopProjectImageError,
 ): ScopedPharoLauncherError {
   const failure = error.result.failures.find(
     (record) => record.imageId === imageId,
   );
-  if (failure) {
-    return new ScopedPharoLauncherError(
-      `Image ${imageId} reset could not close the scoped image`,
-    );
-  }
-
+  // Say why, not only that: the reset stops the image first, so the stop's own
+  // message is what tells a caller which process is in the way.
   return new ScopedPharoLauncherError(
-    `Image ${imageId} reset could not close the scoped image cleanly`,
+    failure
+      ? `Image ${imageId} reset could not stop the image: ${failure.message}`
+      : `Image ${imageId} reset could not stop the image cleanly`,
   );
 }
 
@@ -1637,9 +1635,9 @@ export class ScopedPharoLauncher {
   }
 
   /**
-   * "One or more project images failed to open" tells the caller nothing it can
-   * act on. The per-image failure says what actually happened — which VM holds
-   * the image, which tool frees it — so raise that instead.
+   * Raise the failure as this surface's own error, so a tool call reports it
+   * the way it reports every other refusal. The message already names what
+   * happened — which VM holds the image, which tool frees it.
    */
   private async startingImage<T>(
     imageId: string,
@@ -1837,7 +1835,7 @@ export class ScopedPharoLauncher {
         });
       } catch (error) {
         if (error instanceof StopProjectImageError) {
-          throw resetCloseError(imageId, error);
+          throw resetStopError(imageId, error);
         }
         throw error;
       }
