@@ -21,7 +21,7 @@ import {
   type ProjectState,
 } from "../workspace/projectState.js";
 
-import { processesForImage } from "./projectOpen.js";
+import { processesForImage } from "./startProjectImage.js";
 
 interface LauncherCommandResult<T = unknown> {
   ok: boolean;
@@ -48,38 +48,38 @@ async function ownedProcessPid(
     : undefined;
 }
 
-export interface ProjectCloseOptions {
+export interface StopProjectImageOptions {
   projectRoot: string;
   stateRoot?: string;
   workspaceId?: string;
-  imageIds?: string[];
+  imageId: string;
   pharoLauncherMcpClient?: PharoLauncherMcpToolClient;
   now?: () => Date;
   env?: NodeJS.ProcessEnv;
 }
 
-export interface ProjectCloseFailure {
+export interface StopProjectImageFailure {
   imageId: string;
   imageName: string;
   message: string;
 }
 
-export interface ProjectCloseResult {
+export interface StopProjectImageResult {
   ok: boolean;
   projectRoot: string;
   statePath: string;
   state?: ProjectState;
-  stoppedImages: ProjectImageState[];
-  failures: ProjectCloseFailure[];
+  stoppedImage?: ProjectImageState;
+  failures: StopProjectImageFailure[];
 }
 
-export class ProjectCloseError extends Error {
+export class StopProjectImageError extends Error {
   constructor(
     message: string,
-    public readonly result: ProjectCloseResult,
+    public readonly result: StopProjectImageResult,
   ) {
     super(message);
-    this.name = "ProjectCloseError";
+    this.name = "StopProjectImageError";
   }
 }
 
@@ -100,21 +100,21 @@ function errorMessage(error: unknown): string {
  * running under, and it is skipped so an ordinary stop still costs no launcher
  * call.
  */
-function imagesToClose(
+function imageToStop(
   state: ProjectState,
-  imageIds: string[] | undefined,
-): ProjectImageState[] {
-  return selectedImages(state, imageIds).filter(
-    (image) => image.status !== "stopped" || image.pid !== undefined,
-  );
+  imageId: string,
+): ProjectImageState | undefined {
+  const image = selectedImage(state, imageId);
+  return image && (image.status !== "stopped" || image.pid !== undefined)
+    ? image
+    : undefined;
 }
 
-function selectedImages(
+function selectedImage(
   state: ProjectState,
-  imageIds: string[] | undefined,
-): ProjectImageState[] {
-  const selectedIds = imageIds ? new Set(imageIds) : undefined;
-  return state.images.filter((image) => !selectedIds || selectedIds.has(image.id));
+  imageId: string,
+): ProjectImageState | undefined {
+  return state.images.find((image) => image.id === imageId);
 }
 
 function assertLauncherOk(
@@ -145,10 +145,10 @@ function clearImageEndpointRuntimeState(options: {
   delete options.imageState.mcpServers;
 }
 
-type LoadedProjectCloseState = NonNullable<ProjectCloseResult["state"]>;
+type LoadedStopProjectImageState = NonNullable<StopProjectImageResult["state"]>;
 
-function addProjectCloseFailure(
-  failures: ProjectCloseFailure[],
+function addStopProjectImageFailure(
+  failures: StopProjectImageFailure[],
   imageState: ProjectImageState,
   error: unknown,
 ): void {
@@ -159,116 +159,79 @@ function addProjectCloseFailure(
   });
 }
 
-function clearImageEndpointRuntimeStates(options: {
-  projectRoot: string;
-  projectId: string;
-  workspaceId: string;
-  stateRoot: string | undefined;
-  imageStates: ProjectImageState[];
-}): void {
-  for (const imageState of options.imageStates) {
-    clearImageEndpointRuntimeState({
-      projectRoot: options.projectRoot,
-      projectId: options.projectId,
-      workspaceId: options.workspaceId,
-      stateRoot: options.stateRoot,
-      imageState,
-    });
-  }
-}
-
-function finalizeProjectCloseResult(options: {
+function finalizeStopProjectImageResult(options: {
   projectRoot: string;
   statePath: string;
-  state: LoadedProjectCloseState;
-  stoppedImages: ProjectImageState[];
-  failures: ProjectCloseFailure[];
+  state: LoadedStopProjectImageState;
+  stoppedImage?: ProjectImageState;
+  failures: StopProjectImageFailure[];
   now: () => Date;
-}): ProjectCloseResult {
+}): StopProjectImageResult {
   options.state.updatedAt = options.now().toISOString();
   options.state.runtimeStatus = runtimeStatusForImages(options.state.images);
   saveProjectState(options.statePath, options.state);
 
-  const result: ProjectCloseResult = {
+  const result: StopProjectImageResult = {
     ok: options.failures.length === 0,
     projectRoot: options.projectRoot,
     statePath: options.statePath,
     state: options.state,
-    stoppedImages: options.stoppedImages,
+    ...(options.stoppedImage ? { stoppedImage: options.stoppedImage } : {}),
     failures: options.failures,
   };
   if (!result.ok) {
-    throw new ProjectCloseError(
-      "One or more project images failed to close",
-      result,
-    );
+    // One image, so one failure: raise the message that says what went wrong.
+    throw new StopProjectImageError(options.failures[0].message, result);
   }
 
   return result;
 }
 
-async function stopProjectImages(options: {
+async function stopSelectedImage(options: {
   client: PharoLauncherMcpToolClient;
   projectRoot: string;
-  state: LoadedProjectCloseState;
+  state: LoadedStopProjectImageState;
   workspaceId: string;
   stateRoot: string | undefined;
-  images: ProjectImageState[];
-  stoppedImages: ProjectImageState[];
-  failures: ProjectCloseFailure[];
-}): Promise<void> {
-  for (const imageState of options.images) {
-    try {
-      // By pid, never by name: killing by name reaches every VM on the image,
-      // including ones PLexus never started. We stop what we started.
-      // Nothing of ours is running: the image is already stopped, so record
-      // that and leave any stranger on the image alone.
-      const pid = await ownedProcessPid(options.client, imageState);
-      if (pid !== undefined) {
-        const killResult = await options.client.callTool(
-          "pharo_launcher_process_kill",
-          { pid },
-        );
+  imageState: ProjectImageState;
+  failures: StopProjectImageFailure[];
+}): Promise<ProjectImageState | undefined> {
+  const { imageState } = options;
+  try {
+    // By pid, never by name: killing by name reaches every VM on the image,
+    // including ones PLexus never started. We stop what we started.
+    // Nothing of ours is running: the image is already stopped, so record
+    // that and leave any stranger on the image alone.
+    const pid = await ownedProcessPid(options.client, imageState);
+    if (pid !== undefined) {
+      const killResult = await options.client.callTool(
+        "pharo_launcher_process_kill",
+        { pid },
+      );
 
-        assertLauncherOk(killResult, "pharo_launcher_process_kill");
-      }
-
-      imageState.status = "stopped";
-      delete imageState.pid;
-      clearImageEndpointRuntimeState({
-        projectRoot: options.projectRoot,
-        projectId: options.state.projectId,
-        workspaceId: options.workspaceId,
-        stateRoot: options.stateRoot,
-        imageState,
-      });
-      options.stoppedImages.push({ ...imageState });
-    } catch (error) {
-      addProjectCloseFailure(options.failures, imageState, error);
+      assertLauncherOk(killResult, "pharo_launcher_process_kill");
     }
-  }
-}
 
-export interface StopProjectImageOptions
-  extends Omit<ProjectCloseOptions, "imageIds"> {
-  imageId: string;
+    imageState.status = "stopped";
+    delete imageState.pid;
+    clearImageEndpointRuntimeState({
+      projectRoot: options.projectRoot,
+      projectId: options.state.projectId,
+      workspaceId: options.workspaceId,
+      stateRoot: options.stateRoot,
+      imageState,
+    });
+    return { ...imageState };
+  } catch (error) {
+    addStopProjectImageFailure(options.failures, imageState, error);
+    return undefined;
+  }
 }
 
 /** Stop one image: the counterpart of `startProjectImage`. */
 export async function stopProjectImage(
   options: StopProjectImageOptions,
-): Promise<ProjectCloseResult> {
-  const { imageId, ...rest } = options;
-  return await closeProject({ ...rest, imageIds: [imageId] });
-}
-
-/**
- * @deprecated Use `stopProjectImage`; kept while `pharo-agent-plugin` imports
- * the plural form.
- */
-export async function closeProject(
-  options: ProjectCloseOptions,
-): Promise<ProjectCloseResult> {
+): Promise<StopProjectImageResult> {
   const projectRoot = path.resolve(options.projectRoot);
   const config = loadProjectConfig(projectRoot);
   const workspaceId = options.workspaceId
@@ -288,29 +251,30 @@ export async function closeProject(
       ok: true,
       projectRoot,
       statePath,
-      stoppedImages: [],
       failures: [],
     };
   }
 
-  const selected = selectedImages(state, options.imageIds);
-  const images = imagesToClose(state, options.imageIds);
-  const stoppedImages: ProjectImageState[] = [];
-  const failures: ProjectCloseFailure[] = [];
+  const selected = selectedImage(state, options.imageId);
+  const imageState = imageToStop(state, options.imageId);
+  const failures: StopProjectImageFailure[] = [];
 
-  if (images.length === 0) {
-    clearImageEndpointRuntimeStates({
-      projectRoot,
-      projectId: state.projectId,
-      workspaceId,
-      stateRoot: resolvedStateRoot,
-      imageStates: selected,
-    });
-    return finalizeProjectCloseResult({
+  // Nothing of ours can be running under it, so there is no process to stop.
+  // The endpoint record is still ours to clear.
+  if (!imageState) {
+    if (selected) {
+      clearImageEndpointRuntimeState({
+        projectRoot,
+        projectId: state.projectId,
+        workspaceId,
+        stateRoot: resolvedStateRoot,
+        imageState: selected,
+      });
+    }
+    return finalizeStopProjectImageResult({
       projectRoot,
       statePath,
       state,
-      stoppedImages: [],
       failures,
       now,
     });
@@ -329,22 +293,21 @@ export async function closeProject(
   const ownsClient = !options.pharoLauncherMcpClient;
 
   try {
-    await stopProjectImages({
+    const stoppedImage = await stopSelectedImage({
       client,
       projectRoot,
       state,
       workspaceId,
       stateRoot: resolvedStateRoot,
-      images,
-      stoppedImages,
+      imageState,
       failures,
     });
 
-    return finalizeProjectCloseResult({
+    return finalizeStopProjectImageResult({
       projectRoot,
       statePath,
       state,
-      stoppedImages,
+      stoppedImage,
       failures,
       now,
     });

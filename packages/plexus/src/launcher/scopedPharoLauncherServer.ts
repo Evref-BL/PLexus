@@ -19,17 +19,17 @@ import {
   type ProjectImageConfig,
 } from "../config/projectConfig.js";
 import {
-  ProjectCloseError,
+  StopProjectImageError,
   stopProjectImage,
-  type ProjectCloseResult,
-} from "../lifecycle/projectClose.js";
+  type StopProjectImageResult,
+} from "../lifecycle/stopProjectImage.js";
 import {
   hostPharoProcesses,
   processesOnImage,
-  ProjectOpenError,
+  StartProjectImageError,
   startProjectImage,
   type LauncherProcess,
-} from "../lifecycle/projectOpen.js";
+} from "../lifecycle/startProjectImage.js";
 import {
   formatToolResultPayload,
   toolResultDetailFromArguments,
@@ -934,7 +934,7 @@ function routeStatus(
 
 function resetCloseError(
   imageId: string,
-  error: ProjectCloseError,
+  error: StopProjectImageError,
 ): ScopedPharoLauncherError {
   const failure = error.result.failures.find(
     (record) => record.imageId === imageId,
@@ -952,7 +952,7 @@ function resetCloseError(
 
 function resetSummary(
   imageId: string,
-  closeResult: ProjectCloseResult | undefined,
+  closeResult: StopProjectImageResult | undefined,
   deleted: boolean,
   started: boolean,
   image: WorkspaceImageSummary,
@@ -1656,7 +1656,7 @@ export class ScopedPharoLauncher {
     try {
       return await start();
     } catch (error) {
-      if (!(error instanceof ProjectOpenError)) {
+      if (!(error instanceof StartProjectImageError)) {
         throw error;
       }
 
@@ -1839,7 +1839,7 @@ export class ScopedPharoLauncher {
       );
     }
 
-    let closeResult: ProjectCloseResult | undefined;
+    let closeResult: StopProjectImageResult | undefined;
     if (previousImage) {
       try {
         closeResult = await (this.options.stopImage ?? stopProjectImage)({
@@ -1850,7 +1850,7 @@ export class ScopedPharoLauncher {
           pharoLauncherMcpClient: this.options.pharoLauncherMcpClient,
         });
       } catch (error) {
-        if (error instanceof ProjectCloseError) {
+        if (error instanceof StopProjectImageError) {
           throw resetCloseError(imageId, error);
         }
         throw error;

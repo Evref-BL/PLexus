@@ -10,11 +10,11 @@ import {
 } from "../../src/launcher/pharoLauncherMcpClient.js";
 import type { PharoMcpHealthClient } from "../../src/mcp/pharoMcpHealth.js";
 import {
-  openProject,
-  ProjectOpenError,
+  startProjectImage,
+  StartProjectImageError,
   type LauncherCommandResult,
   type LauncherProcess,
-} from "../../src/lifecycle/projectOpen.js";
+} from "../../src/lifecycle/startProjectImage.js";
 import {
   loadProjectState,
   saveProjectState,
@@ -395,7 +395,7 @@ describe("project open", () => {
     ]);
     const healthClient = new FakeHealthClient(true);
 
-    const result = await openProject({
+    const result = await startProjectImage({
       projectRoot,
       stateRoot,
       workspaceId: "worktree-a",
@@ -406,7 +406,7 @@ describe("project open", () => {
       poll: {
         intervalMs: 0,
       },
-      imageIds: ["dev"],
+      imageId: "dev",
     });
 
     const scriptPath = path.join(
@@ -484,7 +484,7 @@ describe("project open", () => {
       },
     ]);
 
-    const result = await openProject({
+    const result = await startProjectImage({
       projectRoot,
       sourcePath,
       stateRoot,
@@ -496,7 +496,7 @@ describe("project open", () => {
       poll: {
         intervalMs: 0,
       },
-      imageIds: ["dev"],
+      imageId: "dev",
     });
 
     const scriptPath = path.join(
@@ -543,7 +543,7 @@ describe("project open", () => {
       },
     ]);
 
-    const result = await openProject({
+    const result = await startProjectImage({
       projectRoot,
       stateRoot,
       workspaceId: "worktree-a",
@@ -554,7 +554,7 @@ describe("project open", () => {
       poll: {
         intervalMs: 0,
       },
-      imageIds: ["dev"],
+      imageId: "dev",
     });
 
     expect(pharoLauncherMcpClient.calls[1]).toMatchObject({
@@ -583,7 +583,7 @@ describe("project open", () => {
       },
     ]);
 
-    const result = await openProject({
+    const result = await startProjectImage({
       projectRoot,
       stateRoot,
       workspaceId: "worktree-a",
@@ -595,7 +595,7 @@ describe("project open", () => {
       poll: {
         intervalMs: 0,
       },
-      imageIds: ["dev"],
+      imageId: "dev",
     });
 
     expect(pharoLauncherMcpClient.calls[1]).toMatchObject({
@@ -647,7 +647,7 @@ describe("project open", () => {
     const healthClient = new FakeHealthClient(false);
 
     await expect(
-      openProject({
+      startProjectImage({
         projectRoot,
         stateRoot,
         workspaceId: "worktree-a",
@@ -659,7 +659,7 @@ describe("project open", () => {
           intervalMs: 0,
           healthTimeoutMs: 60_000,
         },
-        imageIds: ["dev"],
+        imageId: "dev",
       }),
     ).rejects.toMatchObject({
       result: {
@@ -738,7 +738,7 @@ describe("project open", () => {
     );
     const healthClient = new FakeHealthClient(false);
 
-    const result = await openProject({
+    const result = await startProjectImage({
       projectRoot,
       stateRoot,
       workspaceId: "worktree-a",
@@ -749,7 +749,7 @@ describe("project open", () => {
       poll: {
         intervalMs: 0,
       },
-      imageIds: ["dev"],
+      imageId: "dev",
     });
 
     expect(result.ok).toBe(true);
@@ -801,7 +801,7 @@ describe("project open", () => {
       },
     );
 
-    const result = await openProject({
+    const result = await startProjectImage({
       projectRoot,
       stateRoot,
       workspaceId: "worktree-a",
@@ -812,7 +812,7 @@ describe("project open", () => {
       poll: {
         intervalMs: 0,
       },
-      imageIds: ["dev"],
+      imageId: "dev",
     });
 
     const pharoMcpLoad = result.state.images[0].pharoMcpLoad;
@@ -883,7 +883,7 @@ describe("project open", () => {
     );
     const healthClient = new FakeHealthClient(true);
 
-    const result = await openProject({
+    const result = await startProjectImage({
       projectRoot,
       stateRoot,
       workspaceId: "worktree-a",
@@ -894,7 +894,7 @@ describe("project open", () => {
       poll: {
         intervalMs: 0,
       },
-      imageIds: ["dev"],
+      imageId: "dev",
     });
 
     const scriptPath = path.join(
@@ -981,7 +981,7 @@ describe("project open", () => {
     );
 
     await expect(
-      openProject({
+      startProjectImage({
         projectRoot,
         stateRoot,
         workspaceId: "worktree-a",
@@ -992,9 +992,9 @@ describe("project open", () => {
         poll: {
           intervalMs: 0,
         },
-        imageIds: ["dev"],
+        imageId: "dev",
       }),
-    ).rejects.toThrow(ProjectOpenError);
+    ).rejects.toThrow(StartProjectImageError);
   });
 
   it("reports missing endpoint handoff when fallback health never becomes ready", async () => {
@@ -1020,7 +1020,7 @@ describe("project open", () => {
     ]);
 
     await expect(
-      openProject({
+      startProjectImage({
         projectRoot,
         stateRoot,
         workspaceId: "worktree-a",
@@ -1032,9 +1032,9 @@ describe("project open", () => {
           intervalMs: 0,
           healthTimeoutMs: 1,
         },
-        imageIds: ["dev"],
+        imageId: "dev",
       }),
-    ).rejects.toThrow(ProjectOpenError);
+    ).rejects.toThrow(StartProjectImageError);
   });
 
   it("materializes first-open template images from the PLexus home image cache", async () => {
@@ -1071,7 +1071,7 @@ describe("project open", () => {
     ]);
     const healthClient = new FakeHealthClient(true);
 
-    const result = await openProject({
+    const result = await startProjectImage({
       projectRoot,
       stateRoot,
       workspaceId: "worktree-a",
@@ -1086,7 +1086,7 @@ describe("project open", () => {
       poll: {
         intervalMs: 0,
       },
-      imageIds: ["dev"],
+      imageId: "dev",
     });
 
     const scriptPath = path.join(
@@ -1230,7 +1230,7 @@ describe("project open", () => {
       },
     ]);
 
-    const result = await openProject({
+    const result = await startProjectImage({
       projectRoot,
       stateRoot,
       workspaceId: "worktree-a",
@@ -1245,7 +1245,7 @@ describe("project open", () => {
       poll: {
         intervalMs: 0,
       },
-      imageIds: ["dev"],
+      imageId: "dev",
     });
 
     expect(result.ok).toBe(true);
@@ -1261,12 +1261,12 @@ describe("project open", () => {
       images: [],
     });
 
-    const result = await openProject({
+    const result = await startProjectImage({
       projectRoot,
       stateRoot,
       workspaceId: "worktree-a",
       now: fixedNow,
-      imageIds: ["dev"],
+      imageId: "dev",
     });
 
     expect(result).toMatchObject({
@@ -1305,7 +1305,7 @@ describe("project open", () => {
       },
     ]);
 
-    const result = await openProject({
+    const result = await startProjectImage({
       projectRoot,
       stateRoot,
       workspaceId: "worktree-a",
@@ -1316,7 +1316,7 @@ describe("project open", () => {
       poll: {
         intervalMs: 0,
       },
-      imageIds: ["dev"],
+      imageId: "dev",
     });
 
     expect(result.state.images[0]).toMatchObject({
@@ -1356,11 +1356,11 @@ describe("project open", () => {
     ]);
     const healthClient = new FakeHealthClient(true);
 
-    const result = await openProject({
+    const result = await startProjectImage({
       projectRoot,
       stateRoot,
       workspaceId: "worktree-a",
-      imageIds: ["baseline"],
+      imageId: "baseline",
       pharoLauncherMcpClient,
       healthClient,
       now: fixedNow,
@@ -1443,11 +1443,11 @@ describe("project open", () => {
       ],
     });
 
-    const firstOpen = await openProject({
+    const firstOpen = await startProjectImage({
       projectRoot,
       stateRoot,
       workspaceId: "worktree-a",
-      imageIds: ["baseline"],
+      imageId: "baseline",
       pharoLauncherMcpClient: new FakePharoLauncherMcpClient([
         {
           pid: 5678,
@@ -1478,11 +1478,11 @@ describe("project open", () => {
       loadProjectState(firstOpen.statePath)?.images.map((image) => image.id),
     ).toEqual(["baseline"]);
 
-    await openProject({
+    await startProjectImage({
       projectRoot,
       stateRoot,
       workspaceId: "worktree-a",
-      imageIds: ["dev"],
+      imageId: "dev",
       pharoLauncherMcpClient: new FakePharoLauncherMcpClient([
         {
           pid: 1234,
@@ -1536,7 +1536,7 @@ describe("project open", () => {
     const pharoLauncherMcpClient = new FakePharoLauncherMcpClient();
 
     await expect(
-      openProject({
+      startProjectImage({
         projectRoot,
         stateRoot,
         workspaceId: "worktree-a",
@@ -1547,9 +1547,9 @@ describe("project open", () => {
         poll: {
           intervalMs: 0,
         },
-        imageIds: ["dev"],
+        imageId: "dev",
       }),
-    ).rejects.toThrow(ProjectOpenError);
+    ).rejects.toThrow(StartProjectImageError);
     expect(pharoLauncherMcpClient.calls).toEqual([]);
   });
 
@@ -1594,7 +1594,7 @@ describe("project open", () => {
     ]);
     const healthClient = new FakeHealthClient(true);
 
-    const result = await openProject({
+    const result = await startProjectImage({
       projectRoot,
       stateRoot,
       workspaceId: "worktree-a",
@@ -1609,7 +1609,7 @@ describe("project open", () => {
       poll: {
         intervalMs: 0,
       },
-      imageIds: ["pharo-13-mcp", "dev"],
+      imageId: "dev",
     });
 
     const scriptPath = path.join(
@@ -1682,7 +1682,7 @@ describe("project open", () => {
     ]);
     const healthClient = new FakeHealthClient(false);
 
-    const result = await openProject({
+    const result = await startProjectImage({
       projectRoot,
       stateRoot,
       workspaceId: "worktree-a",
@@ -1693,7 +1693,7 @@ describe("project open", () => {
       poll: {
         intervalMs: 0,
       },
-      imageIds: ["legacy"],
+      imageId: "legacy",
     });
 
     const scriptPath = path.join(
@@ -1770,7 +1770,7 @@ describe("project open", () => {
     ]);
     const healthClient = new FakeHealthClient(false);
 
-    const result = await openProject({
+    const result = await startProjectImage({
       projectRoot,
       stateRoot,
       workspaceId: "worktree-a",
@@ -1781,7 +1781,7 @@ describe("project open", () => {
       poll: {
         intervalMs: 0,
       },
-      imageIds: ["plain"],
+      imageId: "plain",
     });
 
     const scriptPath = path.join(
@@ -1856,11 +1856,11 @@ describe("project open", () => {
       },
     );
 
-    const result = await openProject({
+    const result = await startProjectImage({
       projectRoot,
       stateRoot,
       workspaceId: "worktree-a",
-      imageIds: ["baseline"],
+      imageId: "baseline",
       pharoLauncherMcpClient: new FakePharoLauncherMcpClient([
         {
           pid: 5678,
@@ -1920,7 +1920,7 @@ describe("project open", () => {
     writeProjectConfig(projectRoot);
 
     await expect(
-      openProject({
+      startProjectImage({
         projectRoot,
         stateRoot,
         workspaceId: "worktree-a",
@@ -1928,9 +1928,9 @@ describe("project open", () => {
         healthClient: new FakeHealthClient(true),
         now: fixedNow,
         sleep: async () => {},
-        imageIds: ["dev"],
+        imageId: "dev",
       }),
-    ).rejects.toThrow(ProjectOpenError);
+    ).rejects.toThrow(StartProjectImageError);
 
     const statePath = path.join(
       stateRoot,
@@ -1970,7 +1970,7 @@ describe("project open", () => {
     );
 
     await expect(
-      openProject({
+      startProjectImage({
         projectRoot,
         stateRoot,
         workspaceId: "worktree-a",
@@ -1978,7 +1978,7 @@ describe("project open", () => {
         healthClient: new FakeHealthClient(true),
         now: fixedNow,
         sleep: async () => {},
-        imageIds: ["dev"],
+        imageId: "dev",
       }),
     ).rejects.toMatchObject({
       result: {
@@ -2020,7 +2020,7 @@ describe("project open", () => {
       new Promise<LauncherCommandResult>(() => undefined),
     );
 
-    const result = await openProject({
+    const result = await startProjectImage({
       projectRoot,
       stateRoot,
       workspaceId: "worktree-a",
@@ -2033,7 +2033,7 @@ describe("project open", () => {
         processTimeoutMs: 60_000,
         healthTimeoutMs: 60_000,
       },
-      imageIds: ["dev"],
+      imageId: "dev",
     });
 
     expect(result.state.images[0]).toMatchObject({
@@ -2068,7 +2068,7 @@ describe("project open", () => {
     );
 
     await expect(
-      openProject({
+      startProjectImage({
         projectRoot,
         stateRoot,
         workspaceId: "worktree-a",
@@ -2081,7 +2081,7 @@ describe("project open", () => {
           processTimeoutMs: 60_000,
           healthTimeoutMs: 60_000,
         },
-        imageIds: ["dev"],
+        imageId: "dev",
       }),
     ).rejects.toMatchObject({
       result: {
@@ -2135,7 +2135,7 @@ describe("project open", () => {
       },
     };
 
-    const result = await openProject({
+    const result = await startProjectImage({
       projectRoot,
       stateRoot,
       workspaceId: "worktree-a",
@@ -2148,7 +2148,7 @@ describe("project open", () => {
         processTimeoutMs: 60_000,
         healthTimeoutMs: 60_000,
       },
-      imageIds: ["dev"],
+      imageId: "dev",
     });
 
     expect(result.state.images[0]).toMatchObject({
@@ -2195,7 +2195,7 @@ describe("project open", () => {
     );
 
     await expect(
-      openProject({
+      startProjectImage({
         projectRoot,
         stateRoot,
         workspaceId: "worktree-a",
@@ -2208,7 +2208,7 @@ describe("project open", () => {
           processTimeoutMs: 60_000,
           healthTimeoutMs: 60_000,
         },
-        imageIds: ["dev"],
+        imageId: "dev",
       }),
     ).rejects.toMatchObject({
       result: {
@@ -2255,7 +2255,7 @@ describe("project open", () => {
     writeProjectConfig(projectRoot);
 
     await expect(
-      openProject({
+      startProjectImage({
         projectRoot,
         stateRoot,
         workspaceId: "worktree-a",
@@ -2267,9 +2267,9 @@ describe("project open", () => {
           intervalMs: 0,
           processTimeoutMs: 0,
         },
-        imageIds: ["dev"],
+        imageId: "dev",
       }),
-    ).rejects.toThrow(ProjectOpenError);
+    ).rejects.toThrow(StartProjectImageError);
 
     expect(
       loadProjectState(
@@ -2311,7 +2311,7 @@ describe("project open", () => {
     );
 
     await expect(
-      openProject({
+      startProjectImage({
         projectRoot,
         stateRoot,
         workspaceId: "worktree-a",
@@ -2320,9 +2320,9 @@ describe("project open", () => {
         now: fixedNow,
         sleep: async () => {},
         poll: { intervalMs: 0, processTimeoutMs: 0 },
-        imageIds: ["dev"],
+        imageId: "dev",
       }),
-    ).rejects.toThrow(ProjectOpenError);
+    ).rejects.toThrow(StartProjectImageError);
 
     // Refused before launching, so the stranger is left running and alone.
     expect(
