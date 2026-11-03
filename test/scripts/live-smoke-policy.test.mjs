@@ -733,30 +733,28 @@ test("keep-open cleanup context records scoped close and status commands", () =>
   assert.equal(context.retained.images[0].pid, 12345);
 });
 
-test("formats project-open diagnostics and launcher logs for smoke failures", () => {
+test("formats image start failures and launcher logs for smoke failures", () => {
+  // The shape a StartProjectImageResult actually has: failures at the top
+  // level, not under a diagnostics envelope no caller produces.
   const message = formatToolFailure(
-    "plexus_project_open",
+    "startProjectImage",
     {
       ok: false,
-      error: "One or more project images failed to open",
-      diagnostics: {
-        projectOpen: {
-          failures: [
-            {
-              imageId: "dev",
-              imageName: "PlexusSmokedev",
-              message: "Timed out waiting for Pharo MCP health on port 7100",
-            },
-          ],
+      error: "Timed out waiting for Pharo MCP health on port 7100",
+      failures: [
+        {
+          imageId: "dev",
+          imageName: "PlexusSmokedev",
+          message: "Timed out waiting for Pharo MCP health on port 7100",
         },
-      },
+      ],
     },
     {
       launcherLogFiles: ["/tmp/logs/2026-PlexusSmokedev-launch.err.log"],
     },
   );
 
-  assert.match(message, /project open failures:/);
+  assert.match(message, /image start failures:/);
   assert.match(message, /dev\/PlexusSmokedev: Timed out/);
   assert.match(message, /2026-PlexusSmokedev-launch.err.log/);
 });

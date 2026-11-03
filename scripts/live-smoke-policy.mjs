@@ -783,9 +783,12 @@ export function formatToolFailure(label, result, context = {}) {
   const lines = [
     `${label} failed: ${result?.error ?? JSON.stringify(result)}`,
   ];
-  const failures = result?.diagnostics?.projectOpen?.failures;
+  // The lifecycle result carries its failures directly. This used to read
+  // `diagnostics.projectOpen`, the envelope the deleted `plexus_project_open`
+  // tool returned, so every failure since has been reported as a bare label.
+  const failures = result?.failures;
   if (Array.isArray(failures) && failures.length > 0) {
-    lines.push("project open failures:");
+    lines.push("image start failures:");
     for (const failure of failures) {
       lines.push(
         `- ${failure.imageId}/${failure.imageName}: ${failure.message}`,
