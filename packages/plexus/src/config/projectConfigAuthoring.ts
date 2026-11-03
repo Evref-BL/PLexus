@@ -25,12 +25,18 @@ import {
 import { sanitizePathSegment } from "../support/pathStyle.js";
 
 /**
- * `{projectName}-{workspaceId}-{imageId}`: one image file per workspace, so
- * two checkouts of a project never share one. `renderProjectImageName`
- * expands it at launch.
+ * `{projectName}-{workspaceId}-<id>`: one image file per workspace, so two
+ * checkouts of a project never share one. `renderProjectImageName` expands
+ * the placeholders at launch.
+ *
+ * The image id is baked in rather than left as `{imageId}`, because
+ * `parseProjectConfig` rejects two images whose `imageName` are equal as
+ * written. A constant template would be the same string for every image, so
+ * the second declaration in a project would not load.
  */
-export const defaultProjectImageNameTemplate =
-  "{projectName}-{workspaceId}-{imageId}";
+export function defaultProjectImageName(imageId: string): string {
+  return `{projectName}-{workspaceId}-${imageId}`;
+}
 
 export interface ProjectImageDeclaration {
   id: string;
@@ -123,7 +129,7 @@ export function declareProjectImage(
   const raw = readRawConfig(projectRoot);
   const images = rawImages(raw);
   const imageName =
-    declaration.imageName ?? defaultProjectImageNameTemplate;
+    declaration.imageName ?? defaultProjectImageName(declaration.id);
 
   if (images.some((image) => image.id === declaration.id)) {
     throw new ProjectConfigError("Cannot declare image", [
