@@ -151,7 +151,7 @@ describe("writing plexus.json", () => {
         templateName: "Pharo 13.0 - 64bit",
         loadScript: "pharo/load-mcp.st",
       }),
-    ).toThrow(ProjectConfigError);
+    ).toThrow(/Image dev is already declared/);
 
     expect(() =>
       declareProjectImage(projectRoot, {
@@ -192,7 +192,9 @@ describe("writing plexus.json", () => {
     });
 
     expect(removeProjectImage(projectRoot, "dev").images).toEqual([]);
-    expect(() => removeProjectImage(projectRoot, "dev")).toThrow(ProjectConfigError);
+    expect(() => removeProjectImage(projectRoot, "dev")).toThrow(
+      /Image dev is not declared in this project/,
+    );
   });
 
   it("refuses an edit that would not load, leaving the file as it was", () => {

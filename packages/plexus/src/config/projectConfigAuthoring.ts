@@ -131,15 +131,20 @@ export function declareProjectImage(
   const imageName =
     declaration.imageName ?? defaultProjectImageName(declaration.id);
 
+  // The reason is the message. An authoring refusal has exactly one, and a
+  // caller that printed only `error.message` would otherwise show "Cannot
+  // declare image" and leave the why in a field it never looked at.
   if (images.some((image) => image.id === declaration.id)) {
-    throw new ProjectConfigError("Cannot declare image", [
-      `image ${declaration.id} is already declared`,
-    ]);
+    throw new ProjectConfigError(
+      `Image ${declaration.id} is already declared in this project`,
+      [`image ${declaration.id} is already declared`],
+    );
   }
   if (images.some((image) => image.imageName === imageName)) {
-    throw new ProjectConfigError("Cannot declare image", [
-      `image name ${imageName} is already declared`,
-    ]);
+    throw new ProjectConfigError(
+      `Image name ${imageName} is already declared in this project`,
+      [`image name ${imageName} is already declared`],
+    );
   }
 
   return writeRawConfig(projectRoot, {
@@ -179,9 +184,10 @@ export function setProjectImageTemplateCategory(
   const raw = readRawConfig(projectRoot);
   const images = rawImages(raw);
   if (!images.some((image) => image.id === imageId)) {
-    throw new ProjectConfigError("Cannot set the template category", [
-      `image ${imageId} is not declared`,
-    ]);
+    throw new ProjectConfigError(
+      `Image ${imageId} is not declared in this project`,
+      [`image ${imageId} is not declared`],
+    );
   }
 
   return writeRawConfig(projectRoot, {
@@ -208,9 +214,10 @@ export function removeProjectImage(
   const raw = readRawConfig(projectRoot);
   const images = rawImages(raw);
   if (!images.some((image) => image.id === imageId)) {
-    throw new ProjectConfigError("Cannot remove image", [
-      `image ${imageId} is not declared`,
-    ]);
+    throw new ProjectConfigError(
+      `Image ${imageId} is not declared in this project`,
+      [`image ${imageId} is not declared`],
+    );
   }
 
   return writeRawConfig(projectRoot, {
