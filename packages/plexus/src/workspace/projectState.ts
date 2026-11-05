@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import type { HomeImageCachePharoMcpLoad } from "../images/homeImageCache.js";
 import {
   projectImageDisplayMode,
   projectConfigId,
@@ -93,6 +94,19 @@ export type ProjectImagePharoMcpLoadState =
   | "provided"
   | "loaded"
   | "failed";
+
+/**
+ * For an MCP the image already had, whether the home image cache base it was
+ * copied from loaded what the project's configuration loads now (`current`),
+ * or something the project has since moved on from (`outdated`).
+ */
+export type ProjectImagePharoMcpPreparedBase = "current" | "outdated";
+
+/** The home image cache base an image was copied from, and what preparing it loaded. */
+export interface ProjectImageHomeImageCacheBaseState {
+  key: string;
+  pharoMcpLoad?: HomeImageCachePharoMcpLoad;
+}
 export type ProjectImageLeaseOwnerKind =
   | "target"
   | "workspace"
@@ -138,6 +152,11 @@ export interface ProjectImagePharoMcpLoadStatus {
   configuredRepositoryHint?: string;
   baseline?: string;
   error?: string;
+  /**
+   * Set for a `provided` MCP when the image was copied from a home image cache
+   * base PLexus recorded. Absent when nobody knows what the image holds.
+   */
+  preparedBase?: ProjectImagePharoMcpPreparedBase;
 }
 
 export interface ProjectImageState {
@@ -151,6 +170,7 @@ export interface ProjectImageState {
   lease?: ProjectImageLeaseState;
   pharoMcpContract?: ProjectImagePharoMcpContractState;
   pharoMcpLoad?: ProjectImagePharoMcpLoadStatus;
+  homeImageCacheBase?: ProjectImageHomeImageCacheBaseState;
   dependencyRepositoryDetach?: ProjectImageDependencyRepositoryDetachStatus;
   imagePath?: string;
   imageDirectoryPath?: string;
@@ -481,14 +501,20 @@ export function createProjectState(
       workspaceId: options.workspaceId,
       imageId: image.id,
     };
+    const imageName = renderProjectImageName(image.imageName, imageContext);
     return {
       id: image.id,
-      imageName: renderProjectImageName(image.imageName, imageContext),
+      imageName,
       ...(image.displayMode !== undefined
         ? { displayMode: projectImageDisplayMode(image) }
         : {}),
       status: "stopped",
       ...(previousImage?.lease ? { lease: previousImage.lease } : {}),
+      // What the image was copied from belongs to the image, so it is kept as
+      // long as the id still names the same image.
+      ...(previousImage?.homeImageCacheBase && previousImage.imageName === imageName
+        ? { homeImageCacheBase: previousImage.homeImageCacheBase }
+        : {}),
       ...supportState,
     };
   });

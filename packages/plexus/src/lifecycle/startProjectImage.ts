@@ -22,7 +22,10 @@ import {
 import {
   materializeProjectImageFromHomeCache,
   projectImageCanUseHomeImageCache,
+  projectImagePharoMcpLoad,
+  sameHomeImageCachePharoMcpLoad,
   type HomeImageCacheMutationApproval,
+  type HomeImageCachePharoMcpLoad,
 } from "../images/homeImageCache.js";
 import { isPidAlive } from "../gateway/server/support/processLiveness.js";
 import { pharoLauncherMcpProfileEnvironment } from "../launcher/pharoLauncherProfile.js";
@@ -498,9 +501,24 @@ function pharoMcpLoadStatusDetails(
   };
 }
 
+// An MCP the image already had is the project's own when the base the image
+// was copied from loaded what the project loads now. Without a recorded base,
+// nothing says what the image holds, and this says nothing either.
+function preparedBaseOf(
+  imageState: ProjectImageState,
+  loadNow: HomeImageCachePharoMcpLoad | undefined,
+) {
+  const loaded = imageState.homeImageCacheBase?.pharoMcpLoad;
+  if (!loaded || !loadNow) {
+    return undefined;
+  }
+  return sameHomeImageCachePharoMcpLoad(loaded, loadNow) ? "current" : "outdated";
+}
+
 function refreshPharoMcpLoadStatus(
   imageState: ProjectImageState,
   statusPath: string | undefined,
+  loadNow?: HomeImageCachePharoMcpLoad,
 ): string | undefined {
   if (!statusPath || !fs.existsSync(statusPath)) {
     return undefined;
@@ -511,9 +529,12 @@ function refreshPharoMcpLoadStatus(
   const details = pharoMcpLoadStatusDetails(properties, statusPath);
 
   if (status === "provided" || status === "loaded") {
+    const preparedBase =
+      status === "provided" ? preparedBaseOf(imageState, loadNow) : undefined;
     imageState.pharoMcpLoad = {
       state: status,
       ...details,
+      ...(preparedBase ? { preparedBase } : {}),
     };
     return undefined;
   }
@@ -1171,6 +1192,8 @@ interface ProjectImageStartSetup {
   displayMode: ProjectImageDisplayMode;
   endpointHandoffPath: string;
   pharoMcpLoadStatusPath?: string;
+  /** What the project's configuration loads into this image now. */
+  pharoMcpLoadNow?: HomeImageCachePharoMcpLoad;
   dependencyRepositoryDetachStatusPath?: string;
   startupScript: ReturnType<typeof writeProjectImageStartupScript>;
   launchClient: PharoLauncherMcpToolClient;
@@ -1213,6 +1236,12 @@ async function materializeProjectImageForStart(
   imageConfig: ProjectImageConfig,
   imageState: ProjectImageState,
 ): Promise<void> {
+  const existed = launcherImageMaterialized({
+    imagesDirectory:
+      context.launcherProfileEnvironment?.PHARO_LAUNCHER_MCP_IMAGES_DIR,
+    previousState: context.previousState,
+    imageState,
+  });
   const homeMaterialization = shouldMaterializeImageFromHomeCache({
     imagesDirectory:
       context.launcherProfileEnvironment?.PHARO_LAUNCHER_MCP_IMAGES_DIR,
@@ -1236,6 +1265,22 @@ async function materializeProjectImageForStart(
         now: context.now,
       })
     : undefined;
+
+  // The base an image is copied from is recorded with what preparing it
+  // loaded, so a later start can say whether the MCP the image already has is
+  // still the one the project loads. An image made any other way has no base.
+  const copiedFromBase =
+    homeMaterialization?.plan.runtimeCopy &&
+    homeMaterialization.operations.includes(homeMaterialization.plan.runtimeCopy);
+  if (copiedFromBase) {
+    const { key, keyMaterial } = homeMaterialization.plan;
+    imageState.homeImageCacheBase = {
+      key,
+      ...(keyMaterial.pharoMcp.load ? { pharoMcpLoad: keyMaterial.pharoMcp.load } : {}),
+    };
+  } else if (!existed) {
+    delete imageState.homeImageCacheBase;
+  }
 
   if (!homeMaterialization) {
     await copyProjectImageFromPreparedCache({
@@ -1293,6 +1338,11 @@ async function setupProjectImageForStart(
     displayMode,
     endpointHandoffPath,
     pharoMcpLoadStatusPath: startupScript.pharoMcpLoadStatusPath,
+    pharoMcpLoadNow: projectImagePharoMcpLoad({
+      projectRoot: context.projectRoot,
+      config: context.config,
+      imageConfig,
+    }),
     dependencyRepositoryDetachStatusPath:
       startupScript.dependencyRepositoryDetachStatusPath,
     startupScript,
@@ -1381,11 +1431,13 @@ function assertProjectImageLoadStatuses(options: {
   imageConfig: ProjectImageConfig;
   imageState: ProjectImageState;
   pharoMcpLoadStatusPath: string | undefined;
+  pharoMcpLoadNow: HomeImageCachePharoMcpLoad | undefined;
   dependencyRepositoryDetachStatusPath: string | undefined;
 }): void {
   const pharoMcpLoadFailure = refreshPharoMcpLoadStatus(
     options.imageState,
     options.pharoMcpLoadStatusPath,
+    options.pharoMcpLoadNow,
   );
   if (
     pharoMcpLoadFailure &&
@@ -1434,6 +1486,7 @@ async function launchProjectImage(options: {
       imageConfig,
       imageState,
       pharoMcpLoadStatusPath: setup.pharoMcpLoadStatusPath,
+      pharoMcpLoadNow: setup.pharoMcpLoadNow,
       dependencyRepositoryDetachStatusPath:
         setup.dependencyRepositoryDetachStatusPath,
     });
@@ -1454,6 +1507,7 @@ async function recordProjectImageStartFailure(options: {
   const pharoMcpLoadFailure = refreshPharoMcpLoadStatus(
     options.imageState,
     options.setup?.pharoMcpLoadStatusPath,
+    options.setup?.pharoMcpLoadNow,
   );
   const detachFailure = refreshDependencyRepositoryDetachStatus(
     options.imageState,

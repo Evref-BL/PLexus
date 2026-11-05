@@ -405,6 +405,33 @@ function sourceFromProjectImage(
   );
 }
 
+/**
+ * What preparing a home image cache base for this image would load now,
+ * decided as the preparation decides it. Compared with what an image's base
+ * loaded, it says whether an MCP the image already had is the one the project
+ * loads. Undefined when the image has no source a base is made from.
+ */
+export function projectImagePharoMcpLoad(options: {
+  projectRoot: string;
+  config: ProjectConfig;
+  imageConfig: ProjectImageConfig;
+}): HomeImageCachePharoMcpLoad | undefined {
+  if (!projectImageCanUseHomeImageCache(options.imageConfig)) {
+    return undefined;
+  }
+  return pharoMcpLoad(
+    options.projectRoot,
+    sourceFromProjectImage(options.config, options.imageConfig).mcp,
+  );
+}
+
+export function sameHomeImageCachePharoMcpLoad(
+  left: HomeImageCachePharoMcpLoad,
+  right: HomeImageCachePharoMcpLoad,
+): boolean {
+  return stableJson(left) === stableJson(right);
+}
+
 export function projectImageCanUseHomeImageCache(
   imageConfig: ProjectImageConfig,
 ): boolean {
