@@ -425,6 +425,27 @@ export function projectImagePharoMcpLoad(options: {
   );
 }
 
+/**
+ * Records on an image the base it was just copied from and what preparing that
+ * base loaded, so a later start can say whether the MCP the image already has
+ * is the one the project loads. An image made any other way gets no base.
+ */
+export function recordHomeImageCacheBase(
+  imageState: ProjectImageState,
+  materialization: HomeImageCacheMaterializationResult | undefined,
+): void {
+  const plan = materialization?.plan;
+  if (plan?.runtimeCopy && materialization?.operations.includes(plan.runtimeCopy)) {
+    const load = plan.keyMaterial.pharoMcp.load;
+    imageState.homeImageCacheBase = {
+      key: plan.key,
+      ...(load ? { pharoMcpLoad: load } : {}),
+    };
+    return;
+  }
+  delete imageState.homeImageCacheBase;
+}
+
 export function sameHomeImageCachePharoMcpLoad(
   left: HomeImageCachePharoMcpLoad,
   right: HomeImageCachePharoMcpLoad,

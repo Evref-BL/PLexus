@@ -23,6 +23,7 @@ import {
   materializeProjectImageFromHomeCache,
   projectImageCanUseHomeImageCache,
   projectImagePharoMcpLoad,
+  recordHomeImageCacheBase,
   sameHomeImageCachePharoMcpLoad,
   type HomeImageCacheMutationApproval,
   type HomeImageCachePharoMcpLoad,
@@ -1266,20 +1267,10 @@ async function materializeProjectImageForStart(
       })
     : undefined;
 
-  // The base an image is copied from is recorded with what preparing it
-  // loaded, so a later start can say whether the MCP the image already has is
-  // still the one the project loads. An image made any other way has no base.
-  const copiedFromBase =
-    homeMaterialization?.plan.runtimeCopy &&
-    homeMaterialization.operations.includes(homeMaterialization.plan.runtimeCopy);
-  if (copiedFromBase) {
-    const { key, keyMaterial } = homeMaterialization.plan;
-    imageState.homeImageCacheBase = {
-      key,
-      ...(keyMaterial.pharoMcp.load ? { pharoMcpLoad: keyMaterial.pharoMcp.load } : {}),
-    };
-  } else if (!existed) {
-    delete imageState.homeImageCacheBase;
+  // An image that existed keeps the base it was recorded with; one made now
+  // records the base it was copied from, or that it was not copied from one.
+  if (homeMaterialization || !existed) {
+    recordHomeImageCacheBase(imageState, homeMaterialization);
   }
 
   if (!homeMaterialization) {
