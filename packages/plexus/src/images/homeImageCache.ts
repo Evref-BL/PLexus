@@ -128,11 +128,26 @@ export interface HomeImageCacheKeyMaterial {
   templateMetadata?: HomeImageCacheTemplateMetadata;
   pharoMcp: {
     support: HomeImageCachePharoMcpSupport;
+    /** What preparing the base loads. Absent when it prepares no MCP. */
+    load?: HomeImageCachePharoMcpLoad;
   };
   git?: {
     transport: ProjectImageGitConfig["transport"];
   };
 }
+
+/**
+ * The preparation loads the image's own load script when that file exists,
+ * and the pinned repository otherwise. Either decides what every image copied
+ * from the base starts with, so the key has to name it: without it, the first
+ * project to prepare a template decided the MCP of every later one.
+ *
+ * A script is named by its content rather than its path, so projects whose
+ * scripts are the same still share a base.
+ */
+export type HomeImageCachePharoMcpLoad =
+  | { kind: "loadScript"; sha256: string }
+  | { kind: "metacello"; repository: PharoMcpMetacelloRepository };
 
 export interface HomeImageCacheManifest {
   schemaVersion: number;
@@ -607,6 +622,8 @@ export function homeImageCacheKeyMaterial(options: {
   mcp: ProjectPreparedImageMcpConfig | ProjectImageMcpConfig;
   git?: ProjectImageGitConfig;
   templateMetadata?: HomeImageCacheTemplateMetadata;
+  /** Where a relative `mcp.loadScript` is found, as the preparation finds it. */
+  projectRoot?: string;
 }): HomeImageCacheKeyMaterial {
   const support = classifyHomeImageCachePharoMcpSupport({
     config: options.config,
@@ -614,6 +631,10 @@ export function homeImageCacheKeyMaterial(options: {
     templateMetadata: options.templateMetadata,
   });
   const startupMode = projectMcpStartupMode(options.mcp);
+  const load =
+    startupMode !== "disabled" && support.status === "supported"
+      ? pharoMcpLoad(options.projectRoot, options.mcp)
+      : undefined;
   return {
     schemaVersion: homeImageCacheSchemaVersion,
     projectCachePolicy: {
@@ -625,8 +646,31 @@ export function homeImageCacheKeyMaterial(options: {
     ...(options.templateMetadata ? { templateMetadata: options.templateMetadata } : {}),
     pharoMcp: {
       support,
+      ...(load ? { load } : {}),
     },
     ...(options.git ? { git: { transport: options.git.transport } } : {}),
+  };
+}
+
+/** Decided the way `preparationScriptSource` decides it. */
+function pharoMcpLoad(
+  projectRoot: string | undefined,
+  mcp: ProjectPreparedImageMcpConfig | ProjectImageMcpConfig,
+): HomeImageCachePharoMcpLoad {
+  if (projectRoot !== undefined || isAbsolutePathLike(mcp.loadScript)) {
+    const loadScriptPath = resolveMcpLoadScriptPath(projectRoot ?? "", mcp);
+    if (fs.existsSync(loadScriptPath)) {
+      return {
+        kind: "loadScript",
+        sha256: sha256Hex(fs.readFileSync(loadScriptPath, "utf8")),
+      };
+    }
+  }
+  return {
+    kind: "metacello",
+    repository: toMetacelloRepository(
+      "repository" in mcp ? mcp.repository : undefined,
+    ),
   };
 }
 
@@ -1197,6 +1241,7 @@ export function buildHomeImageCachePlan(
     mcp,
     git: options.imageConfig.git,
     templateMetadata: options.templateMetadata,
+    projectRoot: options.projectRoot,
   });
   const key = deriveHomeImageCacheKey(keyMaterial);
   const entryDirectory = homeImageCacheEntryDirectory(cacheRoot, key);
