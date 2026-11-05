@@ -39,6 +39,7 @@ import {
 import { homeImageCacheNetworkPolicy } from "../config/plexusHome.js";
 import {
   materializeProjectImageFromHomeCache,
+  recordHomeImageCacheBase,
   type HomeImageCacheMutationApproval,
 } from "../images/homeImageCache.js";
 import {
@@ -1573,6 +1574,7 @@ export class ScopedPharoLauncher {
         ),
         now: this.options.now,
       });
+      recordHomeImageCacheBase(imageState, homeMaterialization);
 
       if (!homeMaterialization) {
         await ensureScopedTemplateCatalogReady({

@@ -996,6 +996,13 @@ describe("scoped pharo launcher facade", () => {
         },
       }),
     ]);
+    // The base it was copied from is recorded with what preparing it loaded,
+    // so a start can tell the MCP it finds there is the project's own.
+    const [entryKey] = fs.readdirSync(path.join(homePath, "image-cache", "entries"));
+    expect(savedState.images[0].homeImageCacheBase).toEqual({
+      key: entryKey,
+      pharoMcpLoad: { kind: "metacello", repository: expect.any(Object) },
+    });
   });
 
   it("rejects create when the workspace image limit is already reached", async () => {

@@ -1172,6 +1172,156 @@ describe("project open", () => {
     ]);
   });
 
+  describe("an MCP the image already had", () => {
+    function homeCachedProject(homePath: string) {
+      return {
+        home: {
+          path: homePath,
+          imageCache: { enabled: true, networkPolicy: "online" as const },
+        },
+        images: [
+          {
+            id: "dev",
+            imageName: "MyProject-{workspaceId}-dev",
+            create: {
+              kind: "template" as const,
+              templateName: "Pharo 13.0 - 64bit",
+              templateCategory: "Official",
+            },
+            mcp: {
+              port: 7123,
+              loadScript: "pharo/load-mcp.st",
+            },
+          },
+        ],
+      };
+    }
+
+    // The runtime start, not the headless one that prepares the base, reports
+    // that the image's startup found MCP there and left it.
+    function launcherReportingProvided() {
+      return new FakePharoLauncherMcpClient(
+        [
+          {
+            pid: 1234,
+            imageName: "MyProject-worktree-a-dev",
+            commandLine: "PharoConsole.exe MyProject-worktree-a-dev.image",
+          },
+        ],
+        undefined,
+        (argumentsValue) => {
+          if (argumentsValue.detached !== true) return;
+          const scriptPath = argumentsValue.script as string;
+          fs.writeFileSync(
+            path.join(path.dirname(scriptPath), "pharo-mcp-load-dev.properties"),
+            ["status=provided", "imageId=dev", "source=provided", "loadPolicy=ifMissing", ""].join("\n"),
+            "utf8",
+          );
+        },
+      );
+    }
+
+    async function start(projectRoot: string, stateRoot: string, approvalId: string) {
+      const launcher = launcherReportingProvided();
+      const result = await startProjectImage({
+        projectRoot,
+        stateRoot,
+        workspaceId: "worktree-a",
+        pharoLauncherMcpClient: launcher,
+        healthClient: new FakeHealthClient(true),
+        homeImageCacheApproval: { approved: true, approvalId },
+        now: fixedNow,
+        sleep: async () => {},
+        poll: { intervalMs: 0 },
+        imageId: "dev",
+      });
+      return { result, launcher };
+    }
+
+    it("is the project's own when the image was copied from a base that loaded what the project loads", async () => {
+      const projectRoot = makeTempDir("plexus-project-");
+      const stateRoot = makeTempDir("plexus-state-");
+      const homePath = makeTempDir("plexus-home-");
+      writeProjectConfig(projectRoot, homeCachedProject(homePath));
+
+      const { result } = await start(projectRoot, stateRoot, "provided-current");
+
+      const [entryKey] = fs.readdirSync(path.join(homePath, "image-cache", "entries"));
+      expect(result.ok).toBe(true);
+      expect(result.state.images[0].homeImageCacheBase).toEqual({
+        key: entryKey,
+        pharoMcpLoad: { kind: "metacello", repository: expect.any(Object) },
+      });
+      expect(result.state.images[0].pharoMcpLoad).toMatchObject({
+        state: "provided",
+        preparedBase: "current",
+      });
+    });
+
+    it("is outdated once the project loads something its base did not", async () => {
+      const projectRoot = makeTempDir("plexus-project-");
+      const stateRoot = makeTempDir("plexus-state-");
+      const homePath = makeTempDir("plexus-home-");
+      writeProjectConfig(projectRoot, homeCachedProject(homePath));
+      await start(projectRoot, stateRoot, "provided-outdated-1");
+      // The copy the launcher made, where it keeps the project's images.
+      fs.mkdirSync(path.join(homePath, "profiles", "images", "MyProject-worktree-a-dev"), {
+        recursive: true,
+      });
+
+      // The project now loads MCP through a script of its own, which the base
+      // the image was copied from never ran.
+      fs.mkdirSync(path.join(projectRoot, "pharo"), { recursive: true });
+      fs.writeFileSync(path.join(projectRoot, "pharo", "load-mcp.st"), "Metacello new load.\n", "utf8");
+      const { result, launcher } = await start(projectRoot, stateRoot, "provided-outdated-2");
+
+      expect(result.ok).toBe(true);
+      expect(launcher.calls.map((call) => call.name)).not.toContain(
+        "pharo_launcher_image_copy_between_profiles",
+      );
+      expect(result.state.images[0].pharoMcpLoad).toMatchObject({
+        state: "provided",
+        preparedBase: "outdated",
+      });
+    });
+
+    it("says nothing about where it came from when the image has no recorded base", async () => {
+      const projectRoot = makeTempDir("plexus-project-");
+      const stateRoot = makeTempDir("plexus-state-");
+      writeProjectConfig(projectRoot, {
+        images: [
+          {
+            id: "dev",
+            imageName: "MyProject-{workspaceId}-dev",
+            create: {
+              kind: "template",
+              templateName: "Pharo 13.0 - 64bit",
+              templateCategory: "Official",
+            },
+            mcp: { port: 7123, loadScript: "pharo/load-mcp.st" },
+          },
+        ],
+      });
+
+      const result = await startProjectImage({
+        projectRoot,
+        stateRoot,
+        workspaceId: "worktree-a",
+        pharoLauncherMcpClient: launcherReportingProvided(),
+        healthClient: new FakeHealthClient(true),
+        now: fixedNow,
+        sleep: async () => {},
+        poll: { intervalMs: 0 },
+        imageId: "dev",
+      });
+
+      expect(result.ok).toBe(true);
+      expect(result.state.images[0]).not.toHaveProperty("homeImageCacheBase");
+      expect(result.state.images[0].pharoMcpLoad).toMatchObject({ state: "provided" });
+      expect(result.state.images[0].pharoMcpLoad).not.toHaveProperty("preparedBase");
+    });
+  });
+
   it("materializes an image a stale state file claims but the launcher lacks", async () => {
     const projectRoot = makeTempDir("plexus-project-");
     const stateRoot = makeTempDir("plexus-state-");

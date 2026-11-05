@@ -405,6 +405,54 @@ function sourceFromProjectImage(
   );
 }
 
+/**
+ * What preparing a home image cache base for this image would load now,
+ * decided as the preparation decides it. Compared with what an image's base
+ * loaded, it says whether an MCP the image already had is the one the project
+ * loads. Undefined when the image has no source a base is made from.
+ */
+export function projectImagePharoMcpLoad(options: {
+  projectRoot: string;
+  config: ProjectConfig;
+  imageConfig: ProjectImageConfig;
+}): HomeImageCachePharoMcpLoad | undefined {
+  if (!projectImageCanUseHomeImageCache(options.imageConfig)) {
+    return undefined;
+  }
+  return pharoMcpLoad(
+    options.projectRoot,
+    sourceFromProjectImage(options.config, options.imageConfig).mcp,
+  );
+}
+
+/**
+ * Records on an image the base it was just copied from and what preparing that
+ * base loaded, so a later start can say whether the MCP the image already has
+ * is the one the project loads. An image made any other way gets no base.
+ */
+export function recordHomeImageCacheBase(
+  imageState: ProjectImageState,
+  materialization: HomeImageCacheMaterializationResult | undefined,
+): void {
+  const plan = materialization?.plan;
+  if (plan?.runtimeCopy && materialization?.operations.includes(plan.runtimeCopy)) {
+    const load = plan.keyMaterial.pharoMcp.load;
+    imageState.homeImageCacheBase = {
+      key: plan.key,
+      ...(load ? { pharoMcpLoad: load } : {}),
+    };
+    return;
+  }
+  delete imageState.homeImageCacheBase;
+}
+
+export function sameHomeImageCachePharoMcpLoad(
+  left: HomeImageCachePharoMcpLoad,
+  right: HomeImageCachePharoMcpLoad,
+): boolean {
+  return stableJson(left) === stableJson(right);
+}
+
 export function projectImageCanUseHomeImageCache(
   imageConfig: ProjectImageConfig,
 ): boolean {
