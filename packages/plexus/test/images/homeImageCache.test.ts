@@ -27,7 +27,10 @@ import {
 import type { PharoLauncherMcpToolClient } from "../../src/launcher/pharoLauncherMcpClient.js";
 import { parseProjectConfig, type ProjectConfig } from "../../src/config/projectConfig.js";
 import type { ProjectImageState } from "../../src/workspace/projectState.js";
-import { defaultPharoMcpMetacelloRepositoryLocation } from "../../src/workspace/projectStartupScript.js";
+import {
+  defaultPharoMcpMetacelloRepository,
+  defaultPharoMcpMetacelloRepositoryLocation,
+} from "../../src/workspace/projectStartupScript.js";
 import { launcherClientAnswering } from "../support/launcherHost.js";
 
 const tempDirs: string[] = [];
@@ -235,6 +238,67 @@ describe("home image cache", () => {
         },
       }),
     ).not.toBe(deriveHomeImageCacheKey(material));
+  });
+
+  it("keys a cache base on what its preparation loads", () => {
+    // The preparation files in the image's load script when it exists and
+    // loads the pinned release otherwise. Keyed on neither, the first project
+    // to prepare a template decided the MCP of every image copied from it.
+    const projectRoot = makeTempDir("plexus-home-cache-load-");
+    const projectConfig = config();
+    const source = { kind: "template" as const, templateName: "Moose 13 64bit", templateCategory: "Moose" };
+    const templateMetadata = {
+      identity: { source: "template-file" as const, name: "Moose 13 64bit", pharoVersion: "130" },
+      architecture: "64",
+      pharoVersion: "130",
+    };
+    const materialFor = (loadScript: string) =>
+      homeImageCacheKeyMaterial({
+        config: projectConfig,
+        source,
+        mcp: { loadScript },
+        templateMetadata,
+        projectRoot,
+      });
+    const keyFor = (loadScript: string) => deriveHomeImageCacheKey(materialFor(loadScript));
+    const writeScript = (name: string, text: string) => {
+      fs.mkdirSync(path.join(projectRoot, "pharo"), { recursive: true });
+      fs.writeFileSync(path.join(projectRoot, "pharo", name), text);
+    };
+
+    expect(materialFor("pharo/load-mcp.st").pharoMcp.load).toEqual({
+      kind: "metacello",
+      repository: defaultPharoMcpMetacelloRepository,
+    });
+    const pinned = keyFor("pharo/load-mcp.st");
+    expect(deriveHomeImageCacheKey({
+      ...materialFor("pharo/load-mcp.st"),
+      pharoMcp: {
+        ...materialFor("pharo/load-mcp.st").pharoMcp,
+        load: {
+          kind: "metacello",
+          repository: { ...defaultPharoMcpMetacelloRepository, commitish: "v0.0.1" },
+        },
+      },
+    })).not.toBe(pinned);
+
+    writeScript("load-mcp.st", "Metacello new baseline: 'MCP'; load.");
+    const scripted = keyFor("pharo/load-mcp.st");
+    expect(scripted).not.toBe(pinned);
+
+    writeScript("elsewhere.st", "Metacello new baseline: 'MCP'; load.");
+    expect(keyFor("pharo/elsewhere.st")).toBe(scripted);
+
+    writeScript("load-mcp.st", "Metacello new baseline: 'MCP'; load: 'all'.");
+    expect(keyFor("pharo/load-mcp.st")).not.toBe(scripted);
+
+    expect(homeImageCacheKeyMaterial({
+      config: projectConfig,
+      source,
+      mcp: { loadScript: "pharo/load-mcp.st", startupMode: "disabled" },
+      templateMetadata,
+      projectRoot,
+    }).pharoMcp.load).toBeUndefined();
   });
 
   it("classifies Moose templates by their underlying Pharo version", () => {
