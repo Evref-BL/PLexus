@@ -496,4 +496,67 @@ describe("StreamableHttpImageMcpToolRouter", () => {
       ),
     ).rejects.toThrow("MCP error -32601: Method not found");
   });
+
+  it("says what was wrong with the arguments, as the image does", async () => {
+    // What MCP Pharo answers repository_change_list called with `repository`
+    // instead of `name`.
+    const data = {
+      tool: "repository_change_list",
+      violations: [
+        {
+          expected: "name",
+          path: [],
+          keyword: "required",
+          message: "Object is missing a required property.",
+        },
+        {
+          path: ["repository"],
+          keyword: "additionalProperties",
+          message: "Object contains an unexpected property.",
+          actual: "repository",
+        },
+      ],
+    };
+    const port = await freePort();
+    const httpServer = http.createServer((_request, response) => {
+      response.writeHead(200, {
+        "content-type": "application/json; charset=utf-8",
+      });
+      response.end(
+        `${JSON.stringify({
+          jsonrpc: "2.0",
+          id: "test-response",
+          error: {
+            data,
+            message: "Invalid method parameter(s).",
+            code: -32602,
+          },
+        })}\n`,
+      );
+    });
+
+    await new Promise<void>((resolve) => {
+      httpServer.listen(port, "127.0.0.1", () => resolve());
+    });
+    servers.push(httpServer);
+
+    const router = new StreamableHttpImageMcpToolRouter();
+
+    await expect(
+      router.callTool(
+        {
+          projectId: "project-123",
+          workspaceId: "worktree-a",
+          imageId: "dev",
+          mcpServerId: "dev",
+          imageName: "MyProject-dev",
+          endpoint: { transport: "http", host: "127.0.0.1", port, path: "/" },
+        },
+        "repository_change_list",
+        { repository: "MyProject" },
+      ),
+    ).rejects.toThrow(
+      `MCP error -32602: Invalid method parameter(s). ${JSON.stringify(data)}`,
+    );
+  });
 });

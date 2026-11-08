@@ -384,16 +384,20 @@ function toolFromMcpListItem(value: unknown, index: number): Tool {
   return value as Tool;
 }
 
+// A server says why it refused a request in the error's data: MCP Pharo names
+// there each argument that broke a tool's schema, and its message alone says
+// only "Invalid method parameter(s)". Everything above the router passes the
+// message on, so the data goes into it, as the server sent it: the gateway
+// forwards any MCP server and does not know the shape of its data.
 function jsonRpcErrorText(value: unknown): string {
-  if (!isRecord(value)) {
+  if (!isRecord(value) || typeof value.message !== "string") {
     return JSON.stringify(value);
   }
 
-  const code = typeof value.code === "number" ? value.code : undefined;
-  const message =
-    typeof value.message === "string" ? value.message : JSON.stringify(value);
+  const code = typeof value.code === "number" ? `${value.code}: ` : "";
+  const data = value.data === undefined ? "" : ` ${JSON.stringify(value.data)}`;
 
-  return code === undefined ? message : `${code}: ${message}`;
+  return `${code}${value.message}${data}`;
 }
 
 function serverInfoFromInitializeResult(
