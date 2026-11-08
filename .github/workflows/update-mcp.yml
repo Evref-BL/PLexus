@@ -65,6 +65,10 @@ jobs:
         uses: peter-evans/create-pull-request@v7
         with:
           token: ${{ steps.app-token.outputs.token }}
+          # The bot as author and committer both: left unset, the committer is
+          # github-actions[bot] and the author whoever started the run.
+          author: devnexus-automation[bot] <286661136+devnexus-automation[bot]@users.noreply.github.com>
+          committer: devnexus-automation[bot] <286661136+devnexus-automation[bot]@users.noreply.github.com>
           branch: automation/update-mcp-v${{ steps.release.outputs.version }}
           delete-branch: true
           commit-message: "chore: update MCP to v${{ steps.release.outputs.version }}"
