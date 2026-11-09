@@ -61,8 +61,7 @@ import {
   createProjectState,
   defaultWorkspaceId,
   loadProjectState,
-  projectStatePathForConfig,
-  projectStateRootForConfig,
+  projectStatePath,
   renderProjectImageName,
   runtimeStatusForImages,
   sanitizeRuntimeId,
@@ -518,7 +517,7 @@ function scopedMutationApproval(
 function resolveScope(options: ScopedPharoLauncherOptions): ResolvedScope {
   const projectConfig = loadProjectConfig(options.projectRoot);
   const workspaceId = options.workspaceId ?? defaultWorkspaceId(options.projectRoot);
-  const stateRoot = projectStateRootForConfig(projectConfig, options.stateRoot);
+  const stateRoot = options.stateRoot;
   return {
     projectRoot: options.projectRoot,
     projectId: projectConfigId(projectConfig),
@@ -572,10 +571,8 @@ function statePathForScope(
   scope: ResolvedScope,
   projectConfig = loadProjectConfig(scope.projectRoot),
 ): string {
-  return projectStatePathForConfig({
+  return projectStatePath({
     projectRoot: scope.projectRoot,
-    config: projectConfig,
-    workspaceId: scope.workspaceId,
     stateRoot: scope.stateRoot,
   });
 }
@@ -815,8 +812,6 @@ function displayModeSnapshotStatusPath(
 ): string {
   const scriptsDirectory = projectScriptsDirectoryPath({
     projectRoot: scope.projectRoot,
-    projectId: scope.projectId,
-    workspaceId: scope.workspaceId,
     stateRoot: scope.stateRoot,
   });
   return joinPathLike(

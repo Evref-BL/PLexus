@@ -15,7 +15,7 @@ import {
   scopedPharoLauncherTools,
   type ScopedPharoLauncherOptions,
 } from "../launcher/scopedPharoLauncherServer.js";
-import { projectStatePathForConfig } from "../workspace/projectState.js";
+import { projectStatePath } from "../workspace/projectState.js";
 
 export interface PlexusAgentServerOptions extends ScopedPharoLauncherOptions {
   gateway?: PlexusGateway;
@@ -46,12 +46,8 @@ export function createPlexusAgentServer(
   const config = loadProjectConfig(options.projectRoot);
   gateway.addRouteSource({
     projectRoot: options.projectRoot,
-    statePath: projectStatePathForConfig({
+    statePath: projectStatePath({
       projectRoot: options.projectRoot,
-      config,
-      ...(options.workspaceId === undefined
-        ? {}
-        : { workspaceId: options.workspaceId }),
       ...(options.stateRoot === undefined
         ? {}
         : { stateRoot: options.stateRoot }),

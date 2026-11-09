@@ -46,8 +46,7 @@ import {
   createProjectState,
   defaultWorkspaceId,
   loadProjectState,
-  projectStatePathForConfig,
-  projectStateRootForConfig,
+  projectStatePath,
   runtimeStatusForImages,
   sanitizeRuntimeId,
   saveProjectState,
@@ -1296,8 +1295,6 @@ async function setupProjectImageForStart(
 
   const endpointHandoffPath = imageMcpEndpointHandoffPath({
     projectRoot: context.projectRoot,
-    projectId: context.state.projectId,
-    workspaceId: context.workspaceId,
     imageId: imageState.id,
     stateRoot: context.resolvedStateRoot,
   });
@@ -1567,13 +1564,11 @@ export async function startProjectImage(
     projectRoot,
     options.workspaceId,
   );
-  const statePath = projectStatePathForConfig({
+  const statePath = projectStatePath({
     projectRoot,
-    config,
-    workspaceId,
     stateRoot: options.stateRoot,
   });
-  const resolvedStateRoot = projectStateRootForConfig(config, options.stateRoot);
+  const resolvedStateRoot = options.stateRoot;
   const previousState = loadProjectState(statePath);
   const requestedSourcePath = options.sourcePath ?? previousState?.sourcePath;
   const sourcePath = resolveStartSourcePath({

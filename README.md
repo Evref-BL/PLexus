@@ -44,7 +44,8 @@ the gateway instead of spawning `plexus-gateway`.
 - An **imageId** identifies an image managed by PLexus.
 - An **mcpServerId** identifies one forwarded MCP server. An image can register
   more than one server, including servers on different ports.
-- A **state root** stores runtime state shared by PLexus processes on one host.
+- A **state root** holds one workspace's runtime state: its `.plexus` directory
+  unless `--state-root` names another. Two workspaces never share one.
 
 ## Requirements
 

@@ -47,10 +47,6 @@ const endpointHandoffPath = path.join(
   "git",
   "my-project",
   ".plexus",
-  "projects",
-  "project-123",
-  "workspaces",
-  "my-project",
   "mcp-endpoints",
   "dev.properties",
 );
@@ -68,33 +64,23 @@ describe("project startup scripts", () => {
     expect(
       projectScriptsDirectoryPath({
         projectRoot,
-        projectId: "project-123",
       }),
     ).toBe(
       path.win32.join(
         projectRoot,
         ".plexus",
-        "projects",
-        "project-123",
-        "workspaces",
-        "my-project",
         "scripts",
       ),
     );
     expect(
       imageStartupScriptPath({
         projectRoot,
-        projectId: "project-123",
         imageId: "dev",
       }),
     ).toBe(
       path.win32.join(
         projectRoot,
         ".plexus",
-        "projects",
-        "project-123",
-        "workspaces",
-        "my-project",
         "scripts",
         "start-dev.st",
       ),
@@ -192,10 +178,6 @@ describe("project startup scripts", () => {
       "git",
       "my-project",
       ".plexus",
-      "projects",
-      "project-123",
-      "workspaces",
-      "worktree-a",
       "scripts",
       "dependency-repository-detach-dev.properties",
     );
@@ -223,7 +205,7 @@ describe("project startup scripts", () => {
       '"Detach shared dependency repositories that PLexus loaded from the home cache."',
     );
     expect(source).toContain(
-      "plexusDependencyRepositoryDetachStatusFile := 'C:/dev/code/git/my-project/.plexus/projects/project-123/workspaces/worktree-a/scripts/dependency-repository-detach-dev.properties' asFileReference.",
+      "plexusDependencyRepositoryDetachStatusFile := 'C:/dev/code/git/my-project/.plexus/scripts/dependency-repository-detach-dev.properties' asFileReference.",
     );
     expect(source).toContain(
       "plexusDependencyRepositoryCachePath := 'C:/Users/ada/.plexus/repositories/iceberg'.",
@@ -275,10 +257,6 @@ describe("project startup scripts", () => {
       "git",
       "my-project",
       ".plexus",
-      "projects",
-      "project-123",
-      "workspaces",
-      "worktree-a",
       "scripts",
       "pharo-mcp-load-dev.properties",
     );
@@ -291,7 +269,7 @@ describe("project startup scripts", () => {
     });
 
     expect(source).toContain(
-      "'C:/dev/code/git/my-project/.plexus/projects/project-123/workspaces/worktree-a/scripts/pharo-mcp-load-dev.properties' asFileReference",
+      "'C:/dev/code/git/my-project/.plexus/scripts/pharo-mcp-load-dev.properties' asFileReference",
     );
     expect(source).toContain("pharoMcpLoadStatusWriter := [ :status :message |");
     expect(source).toContain("nextPutAll: 'imageId=';");
@@ -327,10 +305,6 @@ describe("project startup scripts", () => {
         "git",
         "my-project",
         ".plexus",
-        "projects",
-        "project-123",
-        "workspaces",
-        "worktree-a",
         "scripts",
         "pharo-mcp-load-dev.properties",
       ),
@@ -386,10 +360,6 @@ describe("project startup scripts", () => {
         "git",
         "my-project",
         ".plexus",
-        "projects",
-        "project-123",
-        "workspaces",
-        "worktree-a",
         "scripts",
         "pharo-mcp-load-dev.properties",
       ),
@@ -459,10 +429,6 @@ describe("project startup scripts", () => {
       "git",
       "my-project",
       ".plexus",
-      "projects",
-      "project-123",
-      "workspaces",
-      "worktree-a",
       "scripts",
       "pharo-mcp-load-dev.properties",
     );
@@ -513,10 +479,6 @@ describe("project startup scripts", () => {
         "git",
         "my-project",
         ".plexus",
-        "projects",
-        "project-123",
-        "workspaces",
-        "my-project",
         "mcp-endpoints",
         "dev.properties",
       ),
@@ -598,10 +560,6 @@ describe("project startup scripts", () => {
         "git",
         "my-project",
         ".plexus",
-        "projects",
-        "project-123",
-        "workspaces",
-        "my-project",
         "mcp-endpoints",
         "dev.properties",
       ),
@@ -783,10 +741,6 @@ describe("project startup scripts", () => {
       expect(written.filePath).toBe(
         path.join(
           stateRoot,
-          "projects",
-          "project-123",
-          "workspaces",
-          "worktree-a",
           "scripts",
           "start-dev.st",
         ),
@@ -795,9 +749,7 @@ describe("project startup scripts", () => {
       expect(written.pharoMcpLoadStatusPath).toBe(
         imagePharoMcpLoadStatusPath({
           projectRoot,
-          projectId: "project-123",
           imageId: "dev",
-          workspaceId: "worktree-a",
           stateRoot,
         }),
       );
@@ -826,9 +778,7 @@ describe("project startup scripts", () => {
       expect(written.dependencyRepositoryDetachStatusPath).toBe(
         imageDependencyRepositoryDetachStatusPath({
           projectRoot,
-          projectId: "project-123",
           imageId: "dev",
-          workspaceId: "worktree-a",
           stateRoot,
         }),
       );

@@ -5,10 +5,7 @@ import {
 } from "../config/projectConfig.js";
 import { joinPathLike, resolvePathLike } from "../support/pathStyle.js";
 import { resolvePlexusHomePath } from "../config/plexusHome.js";
-import {
-  defaultPlexusStateRoot,
-  sanitizeRuntimeId,
-} from "../workspace/projectState.js";
+import { sanitizeRuntimeId } from "../workspace/projectState.js";
 
 export type PharoLauncherMcpProfileOwnership =
   | "plexus-owned"
@@ -58,21 +55,6 @@ const launcherProfileEnvironmentKeys = [
 
 function profileName(config: ProjectConfig): string {
   return ["plexus", sanitizeRuntimeId(projectConfigId(config))].join("-");
-}
-
-function resolvedPlexusStateRoot(
-  projectRoot: string,
-  config: ProjectConfig,
-  stateRoot: string | undefined,
-): string {
-  if (stateRoot) {
-    return resolvePathLike(stateRoot);
-  }
-
-  const runtime = resolveProjectRuntimePolicy(config);
-  return runtime.stateRoot.mode === "external" && runtime.stateRoot.path
-    ? resolvePathLike(runtime.stateRoot.path)
-    : defaultPlexusStateRoot(projectRoot);
 }
 
 function defaultProfileRoot(

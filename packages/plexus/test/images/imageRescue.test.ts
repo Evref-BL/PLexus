@@ -190,10 +190,6 @@ function writeProjectConfig(projectRoot: string): void {
 function statePath(stateRoot: string): string {
   return path.join(
     stateRoot,
-    "projects",
-    "project-123",
-    "workspaces",
-    "worktree-a",
     "state.json",
   );
 }

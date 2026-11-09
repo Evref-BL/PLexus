@@ -132,10 +132,6 @@ function writeProjectConfig(projectRoot: string): void {
 function statePath(stateRoot: string): string {
   return path.join(
     stateRoot,
-    "projects",
-    "project-123",
-    "workspaces",
-    "worktree-a",
     "state.json",
   );
 }
@@ -314,10 +310,6 @@ describe("stop project image", () => {
     const stateRoot = makeTempDir("plexus-state-");
     const endpointPath = path.join(
       stateRoot,
-      "projects",
-      "project-123",
-      "workspaces",
-      "worktree-a",
       "mcp-endpoints",
       "dev.properties",
     );

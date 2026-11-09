@@ -31,8 +31,7 @@ import {
 import {
   defaultWorkspaceId,
   loadProjectState,
-  projectStatePathForConfig,
-  projectStateRootForConfig,
+  projectStatePath,
   runtimeStatusForImages,
   sanitizeRuntimeId,
   saveProjectState,
@@ -986,11 +985,9 @@ async function createImageRescueContext(
   const projectRoot = path.resolve(options.projectRoot);
   const config = loadProjectConfig(projectRoot);
   const workspaceId = resolveWorkspaceId(projectRoot, options.workspaceId);
-  const resolvedStateRoot = projectStateRootForConfig(config, options.stateRoot);
-  const statePath = projectStatePathForConfig({
+  const resolvedStateRoot = options.stateRoot;
+  const statePath = projectStatePath({
     projectRoot,
-    config,
-    workspaceId,
     stateRoot: resolvedStateRoot,
   });
   const state = loadProjectState(statePath);
@@ -1266,8 +1263,6 @@ async function prepareRescueTarget(
   );
   const endpointHandoffPath = imageMcpEndpointHandoffPath({
     projectRoot: context.projectRoot,
-    projectId: projectConfigId(context.config),
-    workspaceId: context.workspaceId,
     imageId: target.targetImageId,
     stateRoot: context.resolvedStateRoot,
   });

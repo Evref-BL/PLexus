@@ -116,13 +116,6 @@ export interface ProjectHomeConfig {
 }
 
 
-export type ProjectRuntimeStateRootMode = "project-local" | "external";
-
-export interface ProjectRuntimeStateRootPolicy {
-  mode: ProjectRuntimeStateRootMode;
-  path?: string;
-}
-
 
 export const defaultPharoMcpMetadataKey = "io.github.evref-bl/pharo";
 export const defaultPharoMcpSupportedMajorVersions = [12, 13, 14, 15] as const;
@@ -156,7 +149,6 @@ export interface ProjectLauncherProfilePolicy {
 }
 
 export interface ProjectRuntimePolicy {
-  stateRoot: ProjectRuntimeStateRootPolicy;
   workspaceImages?: ProjectWorkspaceImagePolicy;
   launcherProfile: ProjectLauncherProfilePolicy;
   pharoMcp: ProjectPharoMcpPolicy;
@@ -193,9 +185,6 @@ function isObject(value: unknown): value is Record<string, unknown> {
 
 export function defaultProjectRuntimePolicy(): ProjectRuntimePolicy {
   return {
-    stateRoot: {
-      mode: "project-local",
-    },
     launcherProfile: {
       mode: "project-owned",
     },
@@ -1050,47 +1039,6 @@ function parsePreparedImages(
   });
 }
 
-function parseRuntimeStateRoot(
-  value: unknown,
-  issues: string[],
-): ProjectRuntimeStateRootPolicy {
-  if (value === undefined) {
-    return { ...defaultProjectRuntimePolicy().stateRoot };
-  }
-
-  if (!isObject(value)) {
-    issues.push("runtime.stateRoot must be an object");
-    return { ...defaultProjectRuntimePolicy().stateRoot };
-  }
-
-  const modeValue = value.mode ?? "project-local";
-  const mode =
-    modeValue === "project-local" || modeValue === "external"
-      ? modeValue
-      : "project-local";
-  if (mode !== modeValue) {
-    issues.push("runtime.stateRoot.mode must be one of project-local, external");
-  }
-
-  if (mode === "external") {
-    return {
-      mode,
-      path: stringField(value, "path", issues, "runtime.stateRoot"),
-    };
-  }
-
-  if (value.path !== undefined) {
-    issues.push(
-      "runtime.stateRoot.path can only be used when runtime.stateRoot.mode is \"external\"",
-    );
-  }
-
-  return { mode };
-}
-
-
-
-
 function parseLauncherProfilePolicy(
   value: unknown,
   issues: string[],
@@ -1276,10 +1224,14 @@ function parseRuntimePolicy(
     issues,
   );
   const nodeId = optionalStringField(value, "nodeId", issues, "runtime");
+  if (value.stateRoot !== undefined) {
+    issues.push(
+      "runtime.stateRoot is no longer read: a workspace keeps its state in its own .plexus directory",
+    );
+  }
 
   return {
     ...(nodeId ? { nodeId } : {}),
-    stateRoot: parseRuntimeStateRoot(value.stateRoot, issues),
     ...(workspaceImages ? { workspaceImages } : {}),
     launcherProfile: parseLauncherProfilePolicy(
       value.launcherProfile,

@@ -154,15 +154,9 @@ function makeTempDir(prefix: string): string {
   return tempDir;
 }
 
+/** Workspaces side by side, each keeping its state in its own .plexus. */
 function statePath(stateRoot: string, workspaceId = "worktree-a"): string {
-  return path.join(
-    stateRoot,
-    "projects",
-    "project-123",
-    "workspaces",
-    workspaceId,
-    "state.json",
-  );
+  return path.join(stateRoot, workspaceId, ".plexus", "state.json");
 }
 
 /**
@@ -176,9 +170,9 @@ async function registerTarget(
   stateFilePath?: string,
 ): Promise<void> {
   const projectRoot = makeTempDir("plexus-project-");
-  // resolve, not join: a caller laying several workspaces out under one state
-  // root passes an absolute path, and joining one onto projectRoot builds a
-  // path Windows rejects.
+  // resolve, not join: a caller laying several workspaces out side by side
+  // passes an absolute path, and joining one onto projectRoot builds a path
+  // Windows rejects.
   const statePath = path.resolve(projectRoot, stateFilePath ?? "state.json");
   fs.mkdirSync(path.dirname(statePath), { recursive: true });
   fs.writeFileSync(statePath, JSON.stringify(state), "utf8");

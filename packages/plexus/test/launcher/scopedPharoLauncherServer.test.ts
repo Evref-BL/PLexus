@@ -11,7 +11,7 @@ import {
 import { imageMcpEndpointHandoffPath } from "../../src/gateway/projectImageMcpEndpoint.js";
 import {
   loadProjectState,
-  projectStatePathForConfig,
+  projectStatePath,
   saveProjectState,
   type ProjectImageLeaseState,
   type ProjectState,
@@ -74,12 +74,7 @@ function writeProjectConfig(
 }
 
 function statePath(projectRoot: string, stateRoot: string): string {
-  return projectStatePathForConfig({
-    projectRoot,
-    config: projectConfig(),
-    workspaceId: "worktree-a",
-    stateRoot,
-  });
+  return projectStatePath({ projectRoot, stateRoot });
 }
 
 function configOnDisk(projectRoot: string) {
@@ -121,8 +116,6 @@ function materializeLauncherImage(
 function writeEndpointHandoff(projectRoot: string, stateRoot: string): void {
   const filePath = imageMcpEndpointHandoffPath({
     projectRoot,
-    projectId: "project-123",
-    workspaceId: "worktree-a",
     stateRoot,
     imageId: "dev",
   });
@@ -138,8 +131,6 @@ function removeEndpointHandoff(projectRoot: string, stateRoot: string): void {
   fs.rmSync(
     imageMcpEndpointHandoffPath({
       projectRoot,
-      projectId: "project-123",
-      workspaceId: "worktree-a",
       stateRoot,
       imageId: "dev",
     }),

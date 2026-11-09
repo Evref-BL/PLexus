@@ -126,10 +126,6 @@ async function observeEndpoint(
   const handoff = readImageMcpEndpointHandoff(
     imageMcpEndpointHandoffPath({
       projectRoot: options.projectRoot,
-      projectId: options.projectId,
-      ...(options.workspaceId === undefined
-        ? {}
-        : { workspaceId: options.workspaceId }),
       ...(options.stateRoot === undefined
         ? {}
         : { stateRoot: options.stateRoot }),
