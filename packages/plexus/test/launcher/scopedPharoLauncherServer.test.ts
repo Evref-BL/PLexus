@@ -373,6 +373,40 @@ describe("scoped pharo launcher facade", () => {
     ).toEqual([]);
   });
 
+  it("deletes the image it made, under the name it made it with", async () => {
+    const projectRoot = makeTempDir("plexus-project-");
+    const stateRoot = makeTempDir("plexus-state-");
+    // The declaration holds a template, as every image the plugin declares
+    // does, and the launcher knows the image by the name rendered from it.
+    writeProjectConfig(projectRoot);
+    materializeLauncherImage(projectRoot, stateRoot);
+    const host = fakeLauncherClient({ projectRoot, stateRoot });
+
+    const result = await scopedLauncher({
+      projectRoot,
+      stateRoot,
+      workspaceId: "worktree-a",
+      pharoLauncherMcpClient: host.client,
+      isPidAlive: () => false,
+      isPortListening: async () => false,
+    }).deleteImage("dev");
+
+    expect(result.deleted).toEqual({
+      imageId: "dev",
+      launcherImage: true,
+      runtimeRecord: false,
+    });
+    expect(host.calls).toContainEqual({
+      name: "pharo_launcher_image_delete",
+      argumentsValue: { imageName: "MyProject-worktree-a-dev", force: true },
+    });
+    expect(
+      fs.existsSync(
+        launcherImageDirectory(projectRoot, stateRoot, "MyProject-worktree-a-dev"),
+      ),
+    ).toBe(false);
+  });
+
   it("reports scoped image listings without raw launcher mutation handles", async () => {
     const projectRoot = makeTempDir("plexus-project-");
     const stateRoot = makeTempDir("plexus-state-");
