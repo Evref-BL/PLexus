@@ -1933,18 +1933,13 @@ export class ScopedPharoLauncher {
     this.imageLeaseForMutation(scope, projectConfig, imageId, now);
 
     // Ask the profile what it holds rather than believing the record: a record
-    // can name an image the launcher never made, and deleting that fails.
-    const launcherImage = launcherHoldsImage(
-      scope,
-      projectConfig,
-      imageConfig.imageName,
-    );
+    // can name an image the launcher never made, and deleting that fails. The
+    // declaration's name is a template, and the launcher only knows the name
+    // creating rendered from it.
+    const imageName = renderedImageName(scope, imageConfig);
+    const launcherImage = launcherHoldsImage(scope, projectConfig, imageName);
     if (launcherImage) {
-      await this.deleteLauncherImage(
-        scope,
-        projectConfig,
-        imageConfig.imageName,
-      );
+      await this.deleteLauncherImage(scope, projectConfig, imageName);
     }
 
     const currentState = loadProjectState(statePath);
