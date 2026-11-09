@@ -18,8 +18,6 @@ import {
 } from "../support/pathStyle.js";
 
 export const plexusStateDirectoryName = ".plexus";
-export const plexusProjectsStateDirectoryName = "projects";
-export const plexusWorkspacesStateDirectoryName = "workspaces";
 export const projectStateFileName = "state.json";
 export const defaultWorkspaceIdValue = "default";
 
@@ -248,17 +246,13 @@ interface NormalizedCreateProjectStateOptions {
   sourcePath?: string;
 }
 
+/**
+ * Where a workspace keeps its runtime state: its own `.plexus` directory, or
+ * the state root a caller names instead. One workspace, one state directory;
+ * two workspaces never share one.
+ */
 export interface ProjectStatePathOptions {
   projectRoot: string;
-  projectId: string;
-  workspaceId?: string;
-  stateRoot?: string;
-}
-
-export interface ProjectStatePathForConfigOptions {
-  projectRoot: string;
-  config: ProjectConfig;
-  workspaceId?: string;
   stateRoot?: string;
 }
 
@@ -282,58 +276,14 @@ export function defaultWorkspaceId(projectRoot: string): string {
 }
 
 
-export function projectWorkspacesStateDirectoryPath(
-  options: Omit<ProjectStatePathOptions, "workspaceId">,
-): string {
-  const stateRoot =
-    options.stateRoot ?? defaultPlexusStateRoot(options.projectRoot);
-
-  return joinPathLike(
-    stateRoot,
-    plexusProjectsStateDirectoryName,
-    options.projectId,
-    plexusWorkspacesStateDirectoryName,
-  );
-}
-
 export function projectStateDirectoryPath(
   options: ProjectStatePathOptions,
 ): string {
-  return joinPathLike(
-    projectWorkspacesStateDirectoryPath(options),
-    options.workspaceId
-      ? sanitizeRuntimeId(options.workspaceId)
-      : defaultWorkspaceId(options.projectRoot),
-  );
+  return options.stateRoot ?? defaultPlexusStateRoot(options.projectRoot);
 }
 
 export function projectStatePath(options: ProjectStatePathOptions): string {
   return joinPathLike(projectStateDirectoryPath(options), projectStateFileName);
-}
-
-export function projectStateRootForConfig(
-  config: ProjectConfig,
-  stateRoot?: string,
-): string | undefined {
-  if (stateRoot) {
-    return stateRoot;
-  }
-
-  const runtime = resolveProjectRuntimePolicy(config);
-  return runtime.stateRoot.mode === "external"
-    ? runtime.stateRoot.path
-    : undefined;
-}
-
-export function projectStatePathForConfig(
-  options: ProjectStatePathForConfigOptions,
-): string {
-  return projectStatePath({
-    projectRoot: options.projectRoot,
-    projectId: projectConfigId(options.config),
-    workspaceId: options.workspaceId,
-    stateRoot: projectStateRootForConfig(options.config, options.stateRoot),
-  });
 }
 
 function pharoMajorVersionFromText(value: string | undefined): number | undefined {

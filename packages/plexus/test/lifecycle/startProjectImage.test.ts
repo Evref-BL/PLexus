@@ -411,10 +411,6 @@ describe("project open", () => {
 
     const scriptPath = path.join(
       stateRoot,
-      "projects",
-      "project-123",
-      "workspaces",
-      "worktree-a",
       "scripts",
       "start-dev.st",
     );
@@ -501,10 +497,6 @@ describe("project open", () => {
 
     const scriptPath = path.join(
       stateRoot,
-      "projects",
-      "project-123",
-      "workspaces",
-      "worktree-a",
       "scripts",
       "start-dev.st",
     );
@@ -676,10 +668,6 @@ describe("project open", () => {
     const failedState = loadProjectState(
       path.join(
         stateRoot,
-        "projects",
-        "project-123",
-        "workspaces",
-        "worktree-a",
         "state.json",
       ),
     );
@@ -828,10 +816,6 @@ describe("project open", () => {
     const savedState = loadProjectState(
       path.join(
         stateRoot,
-        "projects",
-        "project-123",
-        "workspaces",
-        "worktree-a",
         "state.json",
       ),
     );
@@ -856,10 +840,6 @@ describe("project open", () => {
     });
     const endpointPath = path.join(
       stateRoot,
-      "projects",
-      "project-123",
-      "workspaces",
-      "worktree-a",
       "mcp-endpoints",
       "dev.properties",
     );
@@ -899,10 +879,6 @@ describe("project open", () => {
 
     const scriptPath = path.join(
       stateRoot,
-      "projects",
-      "project-123",
-      "workspaces",
-      "worktree-a",
       "scripts",
       "start-dev.st",
     );
@@ -954,10 +930,6 @@ describe("project open", () => {
     });
     const endpointPath = path.join(
       stateRoot,
-      "projects",
-      "project-123",
-      "workspaces",
-      "worktree-a",
       "mcp-endpoints",
       "dev.properties",
     );
@@ -1091,10 +1063,6 @@ describe("project open", () => {
 
     const scriptPath = path.join(
       stateRoot,
-      "projects",
-      "project-123",
-      "workspaces",
-      "worktree-a",
       "scripts",
       "start-dev.st",
     );
@@ -1352,10 +1320,6 @@ describe("project open", () => {
     saveProjectState(
       path.join(
         stateRoot,
-        "projects",
-        "project-123",
-        "workspaces",
-        "worktree-a",
         "state.json",
       ),
       {
@@ -1522,10 +1486,6 @@ describe("project open", () => {
 
     const baselineScriptPath = path.join(
       stateRoot,
-      "projects",
-      "project-123",
-      "workspaces",
-      "worktree-a",
       "scripts",
       "start-baseline.st",
     );
@@ -1764,10 +1724,6 @@ describe("project open", () => {
 
     const scriptPath = path.join(
       stateRoot,
-      "projects",
-      "project-123",
-      "workspaces",
-      "worktree-a",
       "scripts",
       "start-dev.st",
     );
@@ -1848,10 +1804,6 @@ describe("project open", () => {
 
     const scriptPath = path.join(
       stateRoot,
-      "projects",
-      "project-123",
-      "workspaces",
-      "worktree-a",
       "scripts",
       "start-legacy.st",
     );
@@ -1936,10 +1888,6 @@ describe("project open", () => {
 
     const scriptPath = path.join(
       stateRoot,
-      "projects",
-      "project-123",
-      "workspaces",
-      "worktree-a",
       "scripts",
       "start-plain.st",
     );
@@ -1984,10 +1932,6 @@ describe("project open", () => {
     saveProjectState(
       path.join(
         stateRoot,
-        "projects",
-        "project-123",
-        "workspaces",
-        "worktree-a",
         "state.json",
       ),
       {
@@ -2084,10 +2028,6 @@ describe("project open", () => {
 
     const statePath = path.join(
       stateRoot,
-      "projects",
-      "project-123",
-      "workspaces",
-      "worktree-a",
       "state.json",
     );
 
@@ -2379,10 +2319,6 @@ describe("project open", () => {
 
     const statePath = path.join(
       stateRoot,
-      "projects",
-      "project-123",
-      "workspaces",
-      "worktree-a",
       "state.json",
     );
     expect(loadProjectState(statePath)?.images[0]).toMatchObject({
@@ -2425,10 +2361,6 @@ describe("project open", () => {
       loadProjectState(
         path.join(
           stateRoot,
-          "projects",
-          "project-123",
-          "workspaces",
-          "worktree-a",
           "state.json",
         ),
       )?.images[0],

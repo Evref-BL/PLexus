@@ -46,9 +46,6 @@ function validProjectConfig(): ProjectConfig {
 
 function defaultRuntimePolicy() {
   return {
-    stateRoot: {
-      mode: "project-local",
-    },
     launcherProfile: {
       mode: "project-owned",
     },
@@ -226,10 +223,6 @@ describe("project config", () => {
     const config: Omit<ReturnType<typeof validProjectConfig>, "runtime"> & { runtime?: unknown } =
       validProjectConfig();
     config.runtime = {
-        stateRoot: {
-        mode: "external",
-        path: "C:\\dev\\plexus-state",
-      },
       launcherProfile: {
         mode: "project-owned",
         name: "my-project-isolated",
@@ -244,6 +237,21 @@ describe("project config", () => {
     expect(parseProjectConfig(config)).toEqual(config);
   });
 
+
+  it("refuses a state root, which a workspace's own .plexus directory replaced", () => {
+    const config: Omit<ReturnType<typeof validProjectConfig>, "runtime"> & { runtime?: unknown } =
+      validProjectConfig();
+    config.runtime = { stateRoot: { mode: "external", path: "/srv/plexus-state" } };
+
+    expect(() => parseProjectConfig(config)).toThrow(ProjectConfigError);
+    try {
+      parseProjectConfig(config);
+    } catch (error) {
+      expect((error as ProjectConfigError).issues).toContain(
+        "runtime.stateRoot is no longer read: a workspace keeps its state in its own .plexus directory",
+      );
+    }
+  });
 
   it("allows external launcher profile policy as an explicit opt-out", () => {
     const config: Omit<ReturnType<typeof validProjectConfig>, "runtime"> & { runtime?: unknown } =

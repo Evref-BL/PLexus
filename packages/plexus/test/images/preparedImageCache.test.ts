@@ -138,8 +138,6 @@ describe("prepared image cache", () => {
     expect(written.filePath).toBe(
       path.join(
         stateRoot,
-        "projects",
-        "project-123",
         "prepared-images",
         "prepare-pharo-13-mcp.st",
       ),
@@ -147,7 +145,6 @@ describe("prepared image cache", () => {
     expect(written.loadStatusPath).toBe(
       preparedImageLoadStatusPath({
         projectRoot,
-        projectId: "project-123",
         cacheId: "pharo-13-mcp",
         stateRoot,
       }),

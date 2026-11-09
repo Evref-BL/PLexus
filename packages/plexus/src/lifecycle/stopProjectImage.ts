@@ -12,8 +12,7 @@ import { pharoLauncherMcpProfileEnvironment } from "../launcher/pharoLauncherPro
 import {
   defaultWorkspaceId,
   loadProjectState,
-  projectStateRootForConfig,
-  projectStatePathForConfig,
+  projectStatePath,
   runtimeStatusForImages,
   sanitizeRuntimeId,
   saveProjectState,
@@ -136,8 +135,6 @@ function clearImageEndpointRuntimeState(options: {
   removeImageMcpEndpointHandoff(
     imageMcpEndpointHandoffPath({
       projectRoot: options.projectRoot,
-      projectId: options.projectId,
-      workspaceId: options.workspaceId,
       stateRoot: options.stateRoot,
       imageId: options.imageState.id,
     }),
@@ -237,15 +234,13 @@ export async function stopProjectImage(
   const workspaceId = options.workspaceId
     ? sanitizeRuntimeId(options.workspaceId)
     : defaultWorkspaceId(projectRoot);
-  const statePath = projectStatePathForConfig({
+  const statePath = projectStatePath({
     projectRoot,
-    config,
-    workspaceId,
     stateRoot: options.stateRoot,
   });
   const state = loadProjectState(statePath);
   const now = options.now ?? (() => new Date());
-  const resolvedStateRoot = projectStateRootForConfig(config, options.stateRoot);
+  const resolvedStateRoot = options.stateRoot;
   if (!state) {
     return {
       ok: true,

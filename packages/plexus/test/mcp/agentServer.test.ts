@@ -82,16 +82,8 @@ function writeProject(options: { running: boolean }): {
     "utf8",
   );
 
-  const workspaceDir = path.join(
-    stateRoot,
-    "projects",
-    "project-123",
-    "workspaces",
-    workspaceId,
-  );
-  fs.mkdirSync(workspaceDir, { recursive: true });
   fs.writeFileSync(
-    path.join(workspaceDir, "state.json"),
+    path.join(stateRoot, "state.json"),
     JSON.stringify({
       projectId: "project-123",
       projectName: "my-project",
@@ -110,7 +102,7 @@ function writeProject(options: { running: boolean }): {
   );
 
   if (options.running) {
-    const endpoints = path.join(workspaceDir, "mcp-endpoints");
+    const endpoints = path.join(stateRoot, "mcp-endpoints");
     fs.mkdirSync(endpoints, { recursive: true });
     fs.writeFileSync(
       path.join(endpoints, "dev.properties"),

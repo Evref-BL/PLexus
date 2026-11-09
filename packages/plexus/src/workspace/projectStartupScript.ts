@@ -23,7 +23,6 @@ import {
 } from "../support/pathStyle.js";
 import {
   projectStateDirectoryPath,
-  projectStateRootForConfig,
   type ProjectImageState,
   type ProjectStatePathOptions,
 } from "./projectState.js";
@@ -749,8 +748,6 @@ export function writeImageStartupScript(
 ): WrittenImageStartupScript {
   const filePath = imageStartupScriptPath({
     projectRoot: options.projectRoot,
-    projectId: options.projectId,
-    workspaceId: options.workspaceId,
     imageId: options.imageConfig.id,
     stateRoot: options.stateRoot,
   });
@@ -760,8 +757,6 @@ export function writeImageStartupScript(
       ? undefined
       : imagePharoMcpLoadStatusPath({
           projectRoot: options.projectRoot,
-          projectId: options.projectId,
-          workspaceId: options.workspaceId,
           imageId: options.imageConfig.id,
           stateRoot: options.stateRoot,
         });
@@ -769,8 +764,6 @@ export function writeImageStartupScript(
     options.dependencyRepositoryCachePath
       ? imageDependencyRepositoryDetachStatusPath({
           projectRoot: options.projectRoot,
-          projectId: options.projectId,
-          workspaceId: options.workspaceId,
           imageId: options.imageConfig.id,
           stateRoot: options.stateRoot,
         })
@@ -843,13 +836,11 @@ export function writeProjectImageStartupScript(
     imageState: options.imageState,
     endpointHandoffPath: imageMcpEndpointHandoffPath({
       projectRoot: options.projectRoot,
-      projectId: projectConfigId(options.config),
-      workspaceId: options.workspaceId,
       imageId: options.imageId,
-      stateRoot: projectStateRootForConfig(options.config, options.stateRoot),
+      stateRoot: options.stateRoot,
     }),
     workspaceId: options.workspaceId,
-    stateRoot: projectStateRootForConfig(options.config, options.stateRoot),
+    stateRoot: options.stateRoot,
     dependencyRepositoryCachePath:
       homeDependencyRepositoryCachePath(plexusHomePath),
     dependencyRepositoryNetworkPolicy:

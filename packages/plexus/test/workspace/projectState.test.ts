@@ -2,7 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import type { ProjectConfig, ProjectRuntimePolicy } from "../../src/config/projectConfig.js";
+import type { ProjectConfig } from "../../src/config/projectConfig.js";
 import {
   createProjectState,
   defaultPlexusStateRoot,
@@ -11,7 +11,6 @@ import {
   renderProjectImageName,
   projectStateDirectoryPath,
   projectStatePath,
-  projectStatePathForConfig,
   saveProjectState,
 } from "../../src/workspace/projectState.js";
 
@@ -38,58 +37,18 @@ const config: ProjectConfig = {
   ],
 };
 
-function defaultRuntimePolicy(): ProjectRuntimePolicy {
-  return {
-    stateRoot: {
-      mode: "project-local",
-    },
-    launcherProfile: {
-      mode: "project-owned",
-    },
-    pharoMcp: {
-      metadataKey: "io.github.evref-bl/pharo",
-      supportedMajorVersions: [12, 13, 14, 15],
-    },
-  };
-}
-
 describe("project state", () => {
-  it("resolves the default runtime state path under .plexus", () => {
+  it("keeps a workspace's state directly in its .plexus directory", () => {
     const projectRoot = path.join("C:", "dev", "code", "git", "my-project");
 
     expect(defaultPlexusStateRoot(projectRoot)).toBe(
       path.win32.join(projectRoot, ".plexus"),
     );
-    expect(
-      projectStateDirectoryPath({
-        projectRoot,
-        projectId: "project-123",
-      }),
-    ).toBe(
-      path.win32.join(
-        projectRoot,
-        ".plexus",
-        "projects",
-        "project-123",
-        "workspaces",
-        "my-project",
-      ),
+    expect(projectStateDirectoryPath({ projectRoot })).toBe(
+      path.win32.join(projectRoot, ".plexus"),
     );
-    expect(
-      projectStatePath({
-        projectRoot,
-        projectId: "project-123",
-      }),
-    ).toBe(
-      path.win32.join(
-        projectRoot,
-        ".plexus",
-        "projects",
-        "project-123",
-        "workspaces",
-        "my-project",
-        "state.json",
-      ),
+    expect(projectStatePath({ projectRoot })).toBe(
+      path.win32.join(projectRoot, ".plexus", "state.json"),
     );
   });
 
@@ -113,21 +72,8 @@ describe("project state", () => {
       expect(defaultPlexusStateRoot(projectRoot)).toBe(
         pathApi.join(projectRoot, ".plexus"),
       );
-      expect(
-        projectStatePath({
-          projectRoot,
-          projectId: "project-123",
-          stateRoot,
-        }),
-      ).toBe(
-        pathApi.join(
-          stateRoot,
-          "projects",
-          "project-123",
-          "workspaces",
-          "my-project",
-          "state.json",
-        ),
+      expect(projectStatePath({ projectRoot, stateRoot })).toBe(
+        pathApi.join(stateRoot, "state.json"),
       );
     },
   );
@@ -136,64 +82,8 @@ describe("project state", () => {
     const projectRoot = path.join("C:", "dev", "code", "git", "my-project");
     const stateRoot = path.join("C:", "dev", "plexus-state");
 
-    expect(
-      projectStatePath({
-        projectRoot,
-        projectId: "project-123",
-        stateRoot,
-      }),
-    ).toBe(
-      path.win32.join(
-        stateRoot,
-        "projects",
-        "project-123",
-        "workspaces",
-        "my-project",
-        "state.json",
-      ),
-    );
-  });
-
-  it("resolves runtime state paths from project config", () => {
-    const projectRoot = path.join("C:", "dev", "code", "git", "my-project");
-
-    expect(projectStatePathForConfig({ projectRoot, config })).toBe(
-      path.win32.join(
-        projectRoot,
-        ".plexus",
-        "projects",
-        "project-123",
-        "workspaces",
-        "my-project",
-        "state.json",
-      ),
-    );
-  });
-
-  it("uses external runtime state root policy from project config", () => {
-    const projectRoot = path.join("C:", "dev", "code", "git", "my-project");
-    const runtimeConfig: ProjectConfig = {
-      ...config,
-      runtime: {
-        ...defaultRuntimePolicy(),
-        stateRoot: {
-          mode: "external",
-          path: path.join("C:", "dev", "plexus-state"),
-        },
-      },
-    };
-
-    expect(projectStatePathForConfig({ projectRoot, config: runtimeConfig })).toBe(
-      path.win32.join(
-        "C:",
-        "dev",
-        "plexus-state",
-        "projects",
-        "project-123",
-        "workspaces",
-        "my-project",
-        "state.json",
-      ),
+    expect(projectStatePath({ projectRoot, stateRoot })).toBe(
+      path.win32.join(stateRoot, "state.json"),
     );
   });
 
@@ -523,10 +413,6 @@ describe("project state", () => {
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "plexus-state-"));
     const filePath = path.join(
       tempRoot,
-      "projects",
-      "project-123",
-      "workspaces",
-      "worktree-a",
       "state.json",
     );
     const state = createProjectState(config, {

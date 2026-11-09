@@ -12,7 +12,6 @@ import type {
 import { projectConfigId } from "../config/projectConfig.js";
 import {
   defaultPlexusStateRoot,
-  projectStateRootForConfig,
   type ProjectImageState,
 } from "../workspace/projectState.js";
 import {
@@ -147,13 +146,10 @@ export function preparedImageCacheName(
 
 export function projectPreparedImagesDirectoryPath(options: {
   projectRoot: string;
-  projectId: string;
   stateRoot?: string;
 }): string {
   return joinPathLike(
     options.stateRoot ?? defaultPlexusStateRoot(options.projectRoot),
-    "projects",
-    options.projectId,
     preparedImagesDirectoryName,
   );
 }
@@ -170,7 +166,6 @@ export function preparedImageScriptFileName(cacheId: string): string {
 
 export function preparedImageScriptPath(options: {
   projectRoot: string;
-  projectId: string;
   cacheId: string;
   stateRoot?: string;
 }): string {
@@ -182,7 +177,6 @@ export function preparedImageScriptPath(options: {
 
 export function preparedImageLoadStatusPath(options: {
   projectRoot: string;
-  projectId: string;
   cacheId: string;
   stateRoot?: string;
 }): string {
@@ -282,16 +276,14 @@ export function writePreparedImageCacheScript(
   options: WritePreparedImageCacheScriptOptions,
 ): { filePath: string; source: string; loadStatusPath: string } {
   const preparedImage = findPreparedImageConfig(options.config, options.cacheId);
-  const stateRoot = projectStateRootForConfig(options.config, options.stateRoot);
+  const stateRoot = options.stateRoot;
   const filePath = preparedImageScriptPath({
     projectRoot: options.projectRoot,
-    projectId: projectConfigId(options.config),
     cacheId: preparedImage.id,
     stateRoot,
   });
   const loadStatusPath = preparedImageLoadStatusPath({
     projectRoot: options.projectRoot,
-    projectId: projectConfigId(options.config),
     cacheId: preparedImage.id,
     stateRoot,
   });
@@ -316,18 +308,16 @@ export function buildPreparedImageCachePlan(options: {
   imageState?: ProjectImageState;
 }): PreparedImageCachePlan {
   const preparedImage = findPreparedImageConfig(options.config, options.cacheId);
-  const stateRoot = projectStateRootForConfig(options.config, options.stateRoot);
+  const stateRoot = options.stateRoot;
   const imageName = preparedImageCacheName(options.config, preparedImage);
   const loadStatusPath = preparedImageLoadStatusPath({
     projectRoot: options.projectRoot,
-    projectId: projectConfigId(options.config),
     cacheId: preparedImage.id,
     stateRoot,
   });
   const prepareScript = {
     filePath: preparedImageScriptPath({
       projectRoot: options.projectRoot,
-      projectId: projectConfigId(options.config),
       cacheId: preparedImage.id,
       stateRoot,
     }),
