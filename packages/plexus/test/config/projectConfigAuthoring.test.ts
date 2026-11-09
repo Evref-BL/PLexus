@@ -116,7 +116,7 @@ describe("writing plexus.json", () => {
   it("gives each image its own name, so a second declaration still loads", () => {
     // parseProjectConfig rejects two images whose imageName are equal as
     // written, so a constant default template would make every project
-    // single-image. Only {projectName} and {workspaceId} stay placeholders.
+    // single-image. Only {workspaceId} stays a placeholder.
     const projectRoot = makeProject();
 
     declareProjectImage(projectRoot, {
@@ -132,8 +132,8 @@ describe("writing plexus.json", () => {
 
     expect(loadProjectConfig(projectRoot).images.map((image) => image.imageName))
       .toEqual([
-        "{projectName}-{workspaceId}-dev",
-        "{projectName}-{workspaceId}-ci",
+        "{workspaceId}-dev",
+        "{workspaceId}-ci",
       ]);
   });
 

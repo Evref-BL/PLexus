@@ -25,9 +25,14 @@ import {
 import { sanitizePathSegment } from "../support/pathStyle.js";
 
 /**
- * `{projectName}-{workspaceId}-<id>`: one image file per workspace, so two
- * checkouts of a project never share one. `renderProjectImageName` expands
- * the placeholders at launch.
+ * `{workspaceId}-<id>`: one image file per workspace, so two checkouts of a
+ * project never share one. `renderProjectImageName` expands the placeholder at
+ * launch.
+ *
+ * No `{projectName}` in front: a project is named after its workspace
+ * directory unless someone renames it, and the workspace id is that
+ * directory's name, so the two said the same word twice without telling any
+ * more images apart.
  *
  * The image id is baked in rather than left as `{imageId}`, because
  * `parseProjectConfig` rejects two images whose `imageName` are equal as
@@ -35,7 +40,7 @@ import { sanitizePathSegment } from "../support/pathStyle.js";
  * the second declaration in a project would not load.
  */
 export function defaultProjectImageName(imageId: string): string {
-  return `{projectName}-{workspaceId}-${imageId}`;
+  return `{workspaceId}-${imageId}`;
 }
 
 export interface ProjectImageDeclaration {
