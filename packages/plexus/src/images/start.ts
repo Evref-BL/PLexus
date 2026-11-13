@@ -8,6 +8,7 @@ import {
   type LauncherProcess,
 } from "../launcher/pharoLauncherMcpClient.js";
 import type { Display, Endpoint, StartOptions } from "../types.js";
+import { readClaim, takeClaim, type ClaimHolder, type ClaimState } from "./claims.js";
 import type { ImagesContext } from "./context.js";
 import { observeEndpoint } from "./endpoint.js";
 import { hostProcesses, killFailureLines, killVms, vmsOn } from "./processes.js";
@@ -16,6 +17,7 @@ import {
   errorCode,
   existingImage,
   isPidAlive,
+  noSuchImage,
   readProperties,
   type ImageFiles,
 } from "./store.js";
@@ -47,13 +49,16 @@ export async function start(
   if (fs.existsSync(files.building)) {
     throw new PlexusError("building", `Image ${name} is still being created.`);
   }
-  const running = vmsOn(files.imagePath, await hostProcesses(context));
-  if (running.length > 0) {
-    throw alreadyRunning(files, running);
-  }
 
   const release = takeLaunchLock(context, files, timeoutMs);
   try {
+    // Under the lock: a start that looked before another released it would
+    // find no VM yet, and launch a second one on the same file.
+    const running = vmsOn(files.imagePath, await hostProcesses(context));
+    if (running.length > 0) {
+      throw alreadyRunning(files, running);
+    }
+
     fs.rmSync(files.endpoint, { force: true });
     fs.rmSync(files.startStatus, { force: true });
     fs.writeFileSync(files.startScript, startScript, "utf8");
@@ -173,60 +178,50 @@ async function waitForEndpoint(
   }
 }
 
-interface LaunchLock {
-  pid: number;
-  at: string;
+/** How long a launch lock holds: longer than any start it was taken for. */
+function launchLockMs(timeoutMs: number): number {
+  return timeoutMs + 60_000;
 }
 
 /**
- * Two starts of one image would launch two VMs on one file. The lock is held
- * for one start, and one left by a process that died, or that has had longer
- * than any start, is taken over.
+ * Two starts of one image would launch two VMs on one file, so a start holds
+ * the image's launch lock while it launches.
  */
 function takeLaunchLock(
   context: ImagesContext,
   files: ImageFiles,
   timeoutMs: number,
 ): () => void {
-  fs.mkdirSync(files.plexusDir, { recursive: true });
-  const content = JSON.stringify({ pid: process.pid, at: new Date(context.now()).toISOString() });
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    try {
-      fs.writeFileSync(files.launchLock, content, { flag: "wx" });
-      return () => fs.rmSync(files.launchLock, { force: true });
-    } catch (error) {
-      if (errorCode(error) !== "EEXIST") {
-        throw error;
-      }
-    }
-    const holder = liveLaunchLock(context, files, timeoutMs);
-    if (holder !== undefined) {
-      throw beingStarted(files, holder);
-    }
-    fs.rmSync(files.launchLock, { force: true });
-  }
-  throw beingStarted(files, liveLaunchLock(context, files, timeoutMs));
-}
-
-/** The start that holds this image's launch lock, while it is still one. */
-export function liveLaunchLock(
-  context: ImagesContext,
-  files: ImageFiles,
-  timeoutMs = defaultStartTimeoutMs,
-): LaunchLock | undefined {
-  let lock: LaunchLock;
   try {
-    lock = JSON.parse(fs.readFileSync(files.launchLock, "utf8")) as LaunchLock;
-  } catch {
-    return undefined;
+    // Not recursive: a delete that took the image away since it was found
+    // must not get its directory back, empty, from a start.
+    fs.mkdirSync(files.plexusDir);
+  } catch (error) {
+    if (errorCode(error) === "ENOENT") {
+      throw noSuchImage(files);
+    }
+    if (errorCode(error) !== "EEXIST") {
+      throw error;
+    }
   }
-  const age = context.now() - Date.parse(lock.at);
-  return Number.isInteger(lock.pid) && isPidAlive(lock.pid) && age < timeoutMs + 60_000
-    ? lock
-    : undefined;
+  let taken: ReturnType<typeof takeClaim>;
+  try {
+    taken = takeClaim(context, files.launchLock, launchLockMs(timeoutMs));
+  } catch (error) {
+    throw errorCode(error) === "ENOENT" ? noSuchImage(files) : error;
+  }
+  if ("release" in taken) {
+    return taken.release;
+  }
+  throw beingStarted(files, taken.heldBy);
 }
 
-export function beingStarted(files: ImageFiles, holder: LaunchLock | undefined): PlexusError {
+/** Whether a start holds this image's launch lock now. */
+export function launchLockState(context: ImagesContext, files: ImageFiles): ClaimState {
+  return readClaim(context, files.launchLock, launchLockMs(defaultStartTimeoutMs));
+}
+
+export function beingStarted(files: ImageFiles, holder: ClaimHolder | undefined): PlexusError {
   return new PlexusError(
     "being-started",
     `Image ${files.name} is being started${holder ? ` by process ${holder.pid}` : ""}.`,

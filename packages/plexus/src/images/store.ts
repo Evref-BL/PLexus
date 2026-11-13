@@ -169,6 +169,15 @@ export function randomSuffix(): string {
 }
 
 /**
+ * A path only this process uses while it works on it: `prefix`, then its pid
+ * and a random part. The pid says whose it is, so that what a process left
+ * when it was killed can be told from what a running one is working on.
+ */
+export function ownedName(prefix: string): string {
+  return `${prefix}${process.pid}-${randomSuffix()}`;
+}
+
+/**
  * Remove a directory: rename it out of the store first, so that nothing
  * lists or launches a half-removed image while the files go.
  */

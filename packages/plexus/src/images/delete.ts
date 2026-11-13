@@ -1,7 +1,7 @@
 import { PlexusError } from "../errors.js";
 import type { ImagesContext } from "./context.js";
 import { hostProcesses, vmsOn } from "./processes.js";
-import { beingStarted, liveLaunchLock } from "./start.js";
+import { beingStarted, launchLockState } from "./start.js";
 import { exists, imageFiles, noSuchImage, removeDirectory } from "./store.js";
 
 /**
@@ -24,9 +24,9 @@ export async function deleteImage(
       { pids },
     );
   }
-  const holder = liveLaunchLock(context, files);
-  if (holder !== undefined) {
-    throw beingStarted(files, holder);
+  const lock = launchLockState(context, files);
+  if (lock.state === "held") {
+    throw beingStarted(files, lock.holder);
   }
   removeDirectory(context.home, files.dir);
   return { name };

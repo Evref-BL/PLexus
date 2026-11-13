@@ -214,15 +214,42 @@ describe("start", () => {
     for (const lock of [
       { pid: 2_147_483_646, at: "2026-11-13T12:00:00Z" },
       { pid: process.pid, at: "2026-11-13T11:00:00Z" },
-      "not json",
+      "never written",
     ]) {
       const { plexus, context } = setup();
       fs.mkdirSync(plexus, { recursive: true });
-      fs.writeFileSync(path.join(plexus, "launch.lock"), typeof lock === "string" ? lock : JSON.stringify(lock));
+      const file = path.join(plexus, "launch.lock");
+      fs.writeFileSync(file, typeof lock === "string" ? lock : JSON.stringify(lock));
+      const minuteAgo = new Date(context.now() - 60_000);
+      fs.utimesSync(file, minuteAgo, minuteAgo);
 
       await expect(start(context, "dev")).resolves.toMatchObject({ name: "dev" });
-      expect(fs.existsSync(path.join(plexus, "launch.lock"))).toBe(false);
+      expect(fs.readdirSync(plexus).filter((entry) => entry.startsWith("launch.lock"))).toEqual([]);
     }
+  });
+
+  it("takes a lock it cannot read yet for one its creator is still writing", async () => {
+    const { launcher, plexus, context } = setup();
+    fs.mkdirSync(plexus, { recursive: true });
+    fs.writeFileSync(path.join(plexus, "launch.lock"), "");
+    const now = new Date(context.now());
+    fs.utimesSync(path.join(plexus, "launch.lock"), now, now);
+
+    await expect(start(context, "dev")).rejects.toMatchObject({ code: "being-started" });
+    expect(launcher.called("startImage")).toEqual([]);
+  });
+
+  it("looks for a VM on the image only once it holds the launch lock", async () => {
+    const { launcher, plexus, context } = setup();
+    const locked: boolean[] = [];
+    const listProcesses = launcher.listProcesses.bind(launcher);
+    launcher.listProcesses = async () => {
+      locked.push(fs.existsSync(path.join(plexus, "launch.lock")));
+      return listProcesses();
+    };
+
+    await start(context, "dev");
+    expect(locked[0]).toBe(true);
   });
 
   it("refuses an image that is not there, or still being created", async () => {
