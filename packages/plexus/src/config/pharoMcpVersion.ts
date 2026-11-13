@@ -6,4 +6,4 @@
  * checks across the package boundary that the two agree, and because the
  * release workflows read and rewrite it here.
  */
-export const defaultPharoMcpVersion = "3.7.0";
+export const defaultPharoMcpVersion = "3.8.0";
