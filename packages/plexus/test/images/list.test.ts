@@ -158,10 +158,16 @@ describe("list", () => {
     });
 
     it("is missing until the VM writes it, and refused when malformed", async () => {
-      const notYet = await observe((launcher) => {
-        launcher.run(imagePath(launcher, "dev"));
+      const notYet = await observe((launcher, dir) => {
+        launcher.run(imagePath(launcher, "dev"), { script: path.join(dir, "plexus", "start.st") });
       });
       expect(notYet.endpointProblem).toBe("no endpoint written yet");
+
+      // A VM another tool or an older PLexus started will never write one.
+      const never = await observe((launcher) => {
+        launcher.run(imagePath(launcher, "dev"), { script: "/old/.plexus/scripts/start-dev.st" });
+      });
+      expect(never.endpointProblem).toBe("not started by this PLexus");
 
       const malformed = await observe((launcher, dir) => {
         const vm = launcher.run(imagePath(launcher, "dev"));

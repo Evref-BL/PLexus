@@ -13,7 +13,7 @@ describe("Images", () => {
 
     await expect(images.endpoint("dev")).rejects.toMatchObject({ code: "not-running" });
 
-    const vm = launcher.run(path.join(dir, "Scope-dev.image"));
+    const vm = launcher.run(path.join(dir, "Scope-dev.image"), { script: path.join(dir, "plexus", "start.st") });
     await expect(images.endpoint("dev")).rejects.toMatchObject({
       code: "no-endpoint",
       message: "Image dev runs, but has no endpoint to forward to: no endpoint written yet.",

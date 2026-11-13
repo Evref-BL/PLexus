@@ -24,7 +24,12 @@ export function observeEndpoint(
   try {
     text = fs.readFileSync(files.endpoint, "utf8");
   } catch {
-    return { problem: "no endpoint written yet" };
+    // A VM this PLexus launched names the start script and writes its
+    // endpoint soon; any other VM on the image never will, so waiting is
+    // not the answer for it.
+    return vms.some((vm) => namesStartScript(vm, files))
+      ? { problem: "no endpoint written yet" }
+      : { problem: "not started by this PLexus" };
   }
 
   let handoff: EndpointHandoff;
