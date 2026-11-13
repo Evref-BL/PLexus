@@ -1,11 +1,11 @@
 # PLexus
 
-`@evref-bl/plexus` orchestrates project-scoped Pharo runtimes: opening and
-closing project images, and forwarding MCP calls to the servers they run.
+`@evref-bl/plexus` makes, starts, stops and deletes Pharo images that answer
+MCP, and forwards tool calls to a running one. An image is a directory, a
+running image is a VM process on its image file, and every call looks at both
+when it is made.
 
-It is a command-line application and a library. The lifecycle is reachable as
-functions, so a caller inside Node does not have to round-trip through MCP to
-use it.
+It is a command and a library:
 
 ```sh
 npm install --global @evref-bl/plexus
@@ -13,12 +13,8 @@ plexus --help
 ```
 
 ```ts
-import { loadProjectState, startProjectImage, stopProjectImage } from "@evref-bl/plexus";
+import { Images, callTool, listTools } from "@evref-bl/plexus";
 ```
 
-Everything reachable from the package root is API. `@evref-bl/plexus/internal`
-reaches the working parts and promises nothing. `@evref-bl/plexus/gateway` is
-the forwarding surface for a host that embeds the gateway.
-
-Configuration and MCP usage are documented at
-https://github.com/Evref-BL/PLexus.
+Everything reachable from the package root is API. The model, the commands
+and `plexus mcp` are documented at https://github.com/Evref-BL/PLexus.
