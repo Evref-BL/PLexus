@@ -2,6 +2,7 @@ import fs from "node:fs";
 import { PlexusError } from "../errors.js";
 import {
   exitedLaunchHint,
+  launchedPid,
   launcherFailureMessage,
   launchLogPaths,
   type LauncherProcess,
@@ -9,7 +10,7 @@ import {
 import type { Display, Endpoint, StartOptions } from "../types.js";
 import type { ImagesContext } from "./context.js";
 import { observeEndpoint } from "./endpoint.js";
-import { hostProcesses, killVms, vmsOn } from "./processes.js";
+import { hostProcesses, killFailureLines, killVms, vmsOn } from "./processes.js";
 import { startScript } from "./scripts.js";
 import {
   errorCode,
@@ -67,12 +68,41 @@ export async function start(
     if (!launch.ok) {
       throw new PlexusError("start-failed", launcherFailureMessage("startImage", launch));
     }
-    const logs = launchLogPaths(launch);
-    const endpoint = await waitForEndpoint(context, files, { timeoutMs, startedAt, launch, logs });
+    // The VM the launcher started, which the process list may not show on
+    // this image (a path it cannot read back), and which a failed start must
+    // not leave running unseen.
+    const launched = launchedPid(launch);
+    const killOnFailure = (pids: readonly number[]) =>
+      killVms(context, [
+        ...new Set([
+          ...pids,
+          ...(launched !== undefined && isPidAlive(launched) ? [launched] : []),
+        ]),
+      ]);
+
+    let outcome: WaitOutcome;
+    try {
+      outcome = await waitForEndpoint(context, files, {
+        timeoutMs,
+        startedAt,
+        launch,
+        logs: launchLogPaths(launch),
+      });
+    } catch (error) {
+      await killOnFailure([]);
+      throw error;
+    }
+    if ("failure" in outcome) {
+      const failures = await killOnFailure(outcome.pids);
+      throw new PlexusError(
+        "start-failed",
+        [outcome.failure, ...killFailureLines(failures)].join("\n"),
+      );
+    }
     return {
       name,
-      pids: endpoint.pids,
-      endpoint: endpoint.endpoint,
+      pids: outcome.pids,
+      endpoint: outcome.endpoint,
       display,
       seconds: Math.round((context.now() - startedAt) / 100) / 10,
     };
@@ -91,29 +121,32 @@ function alreadyRunning(files: ImageFiles, vms: readonly LauncherProcess[]): Ple
   );
 }
 
+/** The endpoint that answered, or why the start failed and which VMs ran then. */
+type WaitOutcome =
+  | { endpoint: Endpoint; pids: number[] }
+  | { failure: string; pids: number[] };
+
 async function waitForEndpoint(
   context: ImagesContext,
   files: ImageFiles,
   launch: { timeoutMs: number; startedAt: number; launch: unknown; logs: string[] },
-): Promise<{ endpoint: Endpoint; pids: number[] }> {
+): Promise<WaitOutcome> {
   const logLine = launch.logs.length > 0 ? `\nLauncher logs: ${launch.logs.join(", ")}` : "";
   let sawVm = false;
-  let pids: number[] = [];
 
   for (;;) {
     // The host first: a VM that wrote its failure and exited between the two
     // looks is then caught by the status, not reported as a silent exit.
     const vms = vmsOn(files.imagePath, await hostProcesses(context));
-    pids = vms.map((vm) => vm.pid);
+    const pids = vms.map((vm) => vm.pid);
     const elapsed = context.now() - launch.startedAt;
 
     const status = readProperties(files.startStatus);
     if (status?.status === "failed") {
-      await killVms(context, pids);
-      throw new PlexusError(
-        "start-failed",
-        `Image ${files.name} failed to start: ${status.message || "it gave no message"}${logLine}`,
-      );
+      return {
+        failure: `Image ${files.name} failed to start: ${status.message || "it gave no message"}${logLine}`,
+        pids,
+      };
     }
 
     if (vms.length > 0) {
@@ -124,18 +157,17 @@ async function waitForEndpoint(
       }
     } else if (sawVm || elapsed >= context.vmAppearMs) {
       const hint = exitedLaunchHint(launch.launch, launch.logs);
-      throw new PlexusError(
-        "start-failed",
-        `Image ${files.name} exited during start.${logLine}${hint ? `\n${hint}` : ""}`,
-      );
+      return {
+        failure: `Image ${files.name} exited during start.${logLine}${hint ? `\n${hint}` : ""}`,
+        pids,
+      };
     }
 
     if (elapsed >= launch.timeoutMs) {
-      await killVms(context, pids);
-      throw new PlexusError(
-        "start-failed",
-        `Image ${files.name} did not answer within ${Math.round(launch.timeoutMs / 1000)} s.${logLine}`,
-      );
+      return {
+        failure: `Image ${files.name} did not answer within ${Math.round(launch.timeoutMs / 1000)} s.${logLine}`,
+        pids,
+      };
     }
     await context.sleep(context.pollMs);
   }

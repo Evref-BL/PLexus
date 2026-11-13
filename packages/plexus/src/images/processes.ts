@@ -11,6 +11,7 @@ import {
 } from "../launcher/pharoLauncherMcpClient.js";
 import type { Display } from "../types.js";
 import type { ImagesContext } from "./context.js";
+import { isPidAlive } from "./store.js";
 
 export async function hostProcesses(context: ImagesContext): Promise<LauncherProcess[]> {
   const result = await context.launcher().listProcesses();
@@ -44,11 +45,37 @@ export function displayOf(process: LauncherProcess): Display {
     : "interactive";
 }
 
-export async function killVms(context: ImagesContext, pids: readonly number[]): Promise<void> {
+export interface KillFailure {
+  pid: number;
+  reason: string;
+}
+
+/**
+ * Kill each VM, and say which kills failed and why. A kill that fails on a VM
+ * that is gone meanwhile did what it was asked.
+ */
+export async function killVms(
+  context: ImagesContext,
+  pids: readonly number[],
+): Promise<KillFailure[]> {
+  const failures: KillFailure[] = [];
   for (const pid of pids) {
-    // A VM that is already gone is what a kill asks for.
-    await context.launcher().killProcess({ pid }).catch(() => undefined);
+    let reason: string | undefined;
+    try {
+      const result = await context.launcher().killProcess({ pid });
+      reason = result.ok ? undefined : launcherFailureMessage("killProcess", result);
+    } catch (error) {
+      reason = error instanceof Error ? error.message : String(error);
+    }
+    if (reason !== undefined && isPidAlive(pid)) {
+      failures.push({ pid, reason });
+    }
   }
+  return failures;
+}
+
+export function killFailureLines(failures: readonly KillFailure[]): string[] {
+  return failures.map(({ pid, reason }) => `Killing pid ${pid} failed: ${reason}`);
 }
 
 // A relative path names a file only from the VM's working directory, which

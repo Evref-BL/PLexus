@@ -2,6 +2,7 @@ import fs from "node:fs";
 import {
   launcherFailureMessage,
   launchLogPaths,
+  launchOutputTail,
 } from "../launcher/pharoLauncherMcpClient.js";
 import type { ImagesContext } from "./context.js";
 import { prepareScript, type PrepareSource } from "./scripts.js";
@@ -63,9 +64,11 @@ export async function prepare(
   ].filter((reason): reason is string => reason !== undefined);
   const logs = launchLogPaths(result);
   return [
-    reasons.length > 0
-      ? reasons.join("\n")
-      : "The preparation ended without saying whether MCP loaded.",
+    // A launch that failed says how in its own message. One that ended well
+    // without a status leaves only what the VM printed to say why.
+    ...(reasons.length > 0
+      ? reasons
+      : ["The preparation ended without saying whether MCP loaded.", ...launchOutputTail(result)]),
     ...(logs.length > 0 ? [`Launcher logs: ${logs.join(", ")}`] : []),
   ].join("\n");
 }

@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import { PlexusError } from "../errors.js";
 import type { ImagesContext } from "./context.js";
-import { hostProcesses, killVms, vmsOn } from "./processes.js";
+import { hostProcesses, killFailureLines, killVms, vmsOn } from "./processes.js";
 import { exists, imageFiles, noSuchImage } from "./store.js";
 
 /**
@@ -22,7 +22,18 @@ export async function stop(
     return { name, killed: [] };
   }
 
-  await killVms(context, pids);
+  // A VM the launcher would not kill is still there, and waiting for it to
+  // go would only hide why.
+  const failures = await killVms(context, pids);
+  if (failures.length > 0) {
+    const survivors = failures.map((failure) => failure.pid);
+    throw new PlexusError(
+      "stop-failed",
+      [`Image ${name} still runs as pid ${survivors.join(", ")}.`, ...killFailureLines(failures)].join("\n"),
+      { pids: survivors },
+    );
+  }
+
   const startedAt = context.now();
   for (;;) {
     const survivors = vmsOn(files.imagePath, await hostProcesses(context))

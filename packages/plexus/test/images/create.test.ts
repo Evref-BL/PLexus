@@ -191,6 +191,26 @@ describe("create without a script", () => {
     expect(listing(basesRoot(home))).toEqual([]);
   });
 
+  it("says what the VM printed when the preparation ended without a status", async () => {
+    const { launcher, context } = setup();
+    launcher.prepareAnswer = () => ({
+      ...ok(),
+      raw: {
+        stdout: `Profile-scoped Pharo image launch.\n${"x".repeat(600)}Loaded nothing\n`,
+        stderr: "Error: eval failed: MessageNotUnderstood\n",
+        format: "text" as const,
+      },
+    });
+
+    const error = (await create(context, "dev", { ...options }).catch((caught: unknown) => caught)) as Error;
+    expect(error).toMatchObject({ code: "create-failed" });
+    expect(error.message).toContain(
+      "The preparation ended without saying whether MCP loaded.\nIts error output ends with:\nError: eval failed: MessageNotUnderstood\nIts output ends with:\n…",
+    );
+    expect(error.message).toContain("xLoaded nothing");
+    expect(error.message).not.toContain("Profile-scoped");
+  });
+
   it("says what the launcher said when it could not make the image", async () => {
     const { home, launcher, context } = setup();
     launcher.createAnswer = () => failed("Cannot download the template.");

@@ -113,6 +113,36 @@ export function launchReport(result: unknown): string {
     : "";
 }
 
+/** The VM a detached launch started, as the launcher reports its pid. */
+export function launchedPid(result: unknown): number | undefined {
+  const pid = /^Detached profile-scoped Pharo image pid (\d+)\./m.exec(launchReport(result))?.[1];
+  return pid === undefined ? undefined : Number(pid);
+}
+
+/**
+ * The end of what a waited launch's VM wrote, where it says why it stopped:
+ * its errors first, then its output, each trimmed like a diagnostic.
+ */
+export function launchOutputTail(result: unknown): string[] {
+  if (!isRecord(result) || !isRecord(result.raw)) {
+    return [];
+  }
+  const streams: Array<[string, unknown]> = [
+    ["Its error output ends with:", result.raw.stderr],
+    ["Its output ends with:", result.raw.stdout],
+  ];
+  return streams.flatMap(([label, text]) => {
+    const trimmed = typeof text === "string" ? text.trim() : "";
+    if (!trimmed) {
+      return [];
+    }
+    const tail = trimmed.length > failureDetailLength
+      ? `…${trimmed.slice(-failureDetailLength)}`
+      : trimmed;
+    return [`${label}\n${tail}`];
+  });
+}
+
 /** The log files a detached launch writes the VM's output to. */
 export function launchLogPaths(result: unknown): string[] {
   const paths = launchReport(result)

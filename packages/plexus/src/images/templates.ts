@@ -26,10 +26,13 @@ export async function templates(context: ImagesContext): Promise<Template[]> {
   }
 
   const listed: Template[] = [];
+  let failure: string | undefined;
   for (const category of await categories(context)) {
     const result = await launcher.listTemplates({ templateCategory: category });
     if (!result.ok) {
-      // A group the sources list names but this launcher cannot open.
+      // A group the sources list names but this launcher cannot open, unless
+      // no group opens at all.
+      failure ??= launcherFailureMessage("listTemplates", result);
       continue;
     }
     for (const template of result.data ?? []) {
@@ -40,6 +43,10 @@ export async function templates(context: ImagesContext): Promise<Template[]> {
         listed.push({ name: template.name, category });
       }
     }
+  }
+
+  if (listed.length === 0 && failure !== undefined) {
+    throw new PlexusError("launcher-failed", failure);
   }
 
   return listed.map((template) =>

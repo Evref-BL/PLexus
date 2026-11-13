@@ -50,6 +50,22 @@ describe("templates", () => {
     expect(launcher.called("listTemplateCategories")).toHaveLength(1);
   });
 
+  it("skips a category the launcher cannot list, unless it can list none", async () => {
+    const home = tempHome();
+    const launcher = new FakeLauncher(home);
+    writeSourcesList(home, ["Official distributions", "Retired"]);
+
+    expect(await templates(testContext(home, launcher))).toEqual([
+      { name: "Pharo 14.0 - 64bit", category: "Official distributions" },
+    ]);
+
+    launcher.listTemplates = async () => failed("The launcher timed out.");
+    await expect(templates(testContext(home, launcher))).rejects.toMatchObject({
+      code: "launcher-failed",
+      message: "Pharo Launcher listTemplates failed: The launcher timed out.",
+    });
+  });
+
   it("says what the launcher said when it could not refresh", async () => {
     const home = tempHome();
     const launcher = new FakeLauncher(home);

@@ -5,6 +5,7 @@ import { storeRoot, tmpRoot } from "../../src/home.js";
 import { deleteImage } from "../../src/images/delete.js";
 import { stop } from "../../src/images/stop.js";
 import {
+  failed,
   FakeLauncher,
   tempHome,
   testContext,
@@ -52,6 +53,35 @@ describe("stop", () => {
       details: { pids: [vm.pid] },
     });
     expect(context.clock.now - Date.parse("2026-11-13T12:00:00Z")).toBe(10_000);
+  });
+
+  it("says at once why the launcher would not kill a VM", async () => {
+    const { launcher, imagePath, context } = setup();
+    launcher.nextPid = process.pid;
+    launcher.run(imagePath);
+    launcher.killProcess = async (input) => {
+      launcher.calls.push({ method: "killProcess", input });
+      return failed("kill EPERM");
+    };
+
+    await expect(stop(context, "dev")).rejects.toMatchObject({
+      code: "stop-failed",
+      message: `Image dev still runs as pid ${process.pid}.\nKilling pid ${process.pid} failed: Pharo Launcher killProcess failed: kill EPERM`,
+      details: { pids: [process.pid] },
+    });
+    expect(context.clock.now - Date.parse("2026-11-13T12:00:00Z")).toBe(0);
+  });
+
+  it("takes a kill that failed on a VM gone meanwhile for one that worked", async () => {
+    const { launcher, imagePath, context } = setup();
+    launcher.nextPid = 2_147_483_646;
+    const vm = launcher.run(imagePath);
+    launcher.killProcess = async () => {
+      launcher.processes = [];
+      return failed(`No matching Pharo process found for ${vm.pid}`);
+    };
+
+    expect(await stop(context, "dev")).toEqual({ name: "dev", killed: [vm.pid] });
   });
 
   it("refuses an image that is not there", async () => {

@@ -124,15 +124,41 @@ describe("start", () => {
     expect(error.message).toContain("Remove /vms/140-x64 and start again");
   });
 
-  it("fails when no VM appears at all", async () => {
+  it("fails when no VM appears at all, and kills the one the launcher said it started", async () => {
     const { home, launcher, context } = setup();
-    launcher.launchAnswer = () => launched(4242, home);
+    // A pid that runs, as the VM's would while the process list shows it on
+    // no image; the fake launcher only records the kill.
+    launcher.launchAnswer = () => launched(process.pid, home);
 
     await expect(start(context, "dev")).rejects.toMatchObject({
       code: "start-failed",
       message: expect.stringContaining("Image dev exited during start."),
     });
     expect(context.clock.now - Date.parse("2026-11-13T12:00:00Z")).toBe(30_000);
+    expect(launcher.called("killProcess")).toEqual([{ pid: process.pid }]);
+  });
+
+  it("kills nothing when the VM the launcher started is gone", async () => {
+    const { home, launcher, context } = setup();
+    launcher.launchAnswer = () => launched(2_147_483_646, home);
+
+    await expect(start(context, "dev")).rejects.toMatchObject({ code: "start-failed" });
+    expect(launcher.called("killProcess")).toEqual([]);
+  });
+
+  it("says why a VM it gave up on could not be killed", async () => {
+    const { launcher, context } = setup({ ping: async () => false });
+    launcher.nextPid = process.pid;
+    launcher.killProcess = async (input) => {
+      launcher.calls.push({ method: "killProcess", input });
+      return failed("kill EPERM");
+    };
+
+    const error = (await start(context, "dev", { timeoutMs: 60_000 }).catch((caught: unknown) => caught)) as Error;
+    expect(error).toMatchObject({ code: "start-failed" });
+    expect(error.message).toContain("Image dev did not answer within 60 s.");
+    expect(error.message).toContain(`Killing pid ${process.pid} failed: Pharo Launcher killProcess failed: kill EPERM`);
+    expect(launcher.called("killProcess")).toEqual([{ pid: process.pid }]);
   });
 
   it("gives up after the timeout and kills the VM", async () => {
