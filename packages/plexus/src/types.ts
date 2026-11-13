@@ -61,7 +61,7 @@ export interface StartOptions {
 export interface ImagesOptions {
   /** `plexusHome()` unless given. */
   home?: string;
-  /** A name prefix: image `dev` is the directory `<scope>-dev`. */
+  /** A name prefix, without dashes: image `dev` is the directory `<scope>-dev`. */
   scope?: string;
   /** The launcher on the home's profile unless given. */
   launcher?: LauncherPort;

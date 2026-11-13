@@ -191,7 +191,7 @@ function help(): string {
     "",
     `Every command takes ${globalUsage}.`,
     "  --home   where images, VMs and templates live (PLEXUS_HOME; ~/.plexus)",
-    "  --scope  a name prefix: image dev is the directory <scope>-dev (PLEXUS_SCOPE)",
+    "  --scope  a name prefix, without dashes: image dev is the directory <scope>-dev (PLEXUS_SCOPE)",
     "",
     "Results are JSON on stdout. A refusal is {\"ok\":false,\"code\":...,\"error\":...} and exits 1.",
   ].join("\n");

@@ -14,16 +14,16 @@ import {
 const now = new Date("2026-11-13T12:34:56Z");
 
 test("runs in a scratch scope of its own unless given another scratch scope", () => {
-  assert.equal(defaultRunId(now), "20261113-123456");
-  assert.equal(parseSmokeArgs([], { now }).scope, `${scratchScopePrefix}20261113-123456`);
-  assert.equal(parseSmokeArgs(["--scope", "plexus-smoke-ci"]).scope, "plexus-smoke-ci");
+  assert.equal(defaultRunId(now), "20261113T123456");
+  assert.equal(parseSmokeArgs([], { now }).scope, `${scratchScopePrefix}20261113T123456`);
+  assert.equal(parseSmokeArgs(["--scope", "plexus_smoke_ci"]).scope, "plexus_smoke_ci");
   assert.throws(() => parseSmokeArgs(["--scope", "Pharo4Agents"]), /scratch scope/);
 });
 
 test("reads its options, with defaults for a plain run", () => {
   assert.deepEqual(parseSmokeArgs([], { now }), {
     template: "Pharo 14.0 - 64bit",
-    scope: "plexus-smoke-20261113-123456",
+    scope: "plexus_smoke_20261113T123456",
     name: "smoke",
     timeoutMs: 600_000,
     toolArguments: {},
@@ -48,7 +48,7 @@ test("reads its options, with defaults for a plain run", () => {
       template: "Pharo 13.0 - 64bit",
       category: "Official distributions",
       home: "/tmp/plexus",
-      scope: "plexus-smoke-20261113-123456",
+      scope: "plexus_smoke_20261113T123456",
       name: "dev",
       timeoutMs: 90_000,
       tool: "class_search",

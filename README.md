@@ -15,8 +15,9 @@ forwards tool calls to a running one.
   Nothing tells PLexus that a VM stopped, so nothing records that one started.
 - **A scope is a name prefix.** With scope `Proj`, image `dev` is the directory
   `Proj-dev`, and only `Proj-` directories are listed, without the prefix.
-  PLexus stores no scope: the caller passes one, and without one every image is
-  listed.
+  A scope holds no dash, so the first dash of a directory name ends its scope:
+  `shop` never lists `shop_api-dev`, which is `shop_api`'s. PLexus stores no
+  scope: the caller passes one, and without one every image is listed.
 
 An image keeps what PLexus knows about it in `<image>/plexus/`, which goes
 with it:
@@ -119,5 +120,5 @@ npm run smoke:start-route-stop -- --template "Pharo 14.0 - 64bit"
 ```
 
 The smoke runs a real image through create, start, a tool listing, stop and
-delete, in a scratch scope of its own (`plexus-smoke-<run>`), so it never names
+delete, in a scratch scope of its own (`plexus_smoke_<run>`), so it never names
 an image anyone works in. It is not part of `npm run check`.

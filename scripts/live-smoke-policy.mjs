@@ -6,7 +6,7 @@
  * in a scope of its own: a scratch scope cannot name an image anyone works in.
  */
 
-export const scratchScopePrefix = "plexus-smoke-";
+export const scratchScopePrefix = "plexus_smoke_";
 
 const valueOptions = new Set([
   "template",
@@ -21,9 +21,9 @@ const valueOptions = new Set([
 ]);
 const flagOptions = new Set(["keep"]);
 
-/** A run id that sorts by time and fits in an image name. */
+/** A run id that sorts by time and fits in a scope, which holds no dash. */
 export function defaultRunId(now = new Date()) {
-  return now.toISOString().replace(/[-:]/g, "").replace("T", "-").slice(0, 15);
+  return now.toISOString().replace(/[-:]/g, "").slice(0, 15);
 }
 
 /**

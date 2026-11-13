@@ -4,7 +4,7 @@
  * forwarding PLexus does, stop it and delete it, in a scratch scope.
  *
  *   npm run smoke:start-route-stop -- [--template "Pharo 14.0 - 64bit"] [--category <c>]
- *     [--home <dir>] [--scope plexus-smoke-<id>] [--name smoke] [--timeout <seconds>]
+ *     [--home <dir>] [--scope plexus_smoke_<id>] [--name smoke] [--timeout <seconds>]
  *     [--tool class_search --arguments '{"name":"MCPToolRegistry"}' --expect class=MCPToolRegistry]
  *     [--keep]
  *

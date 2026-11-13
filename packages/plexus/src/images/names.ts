@@ -2,6 +2,11 @@ import { PlexusError } from "../errors.js";
 
 const namePattern = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 
+// The first dash of a disk name ends its scope. A scope that could hold one
+// would make `shop-api-dev` both image `api-dev` of `shop` and image `dev` of
+// `shop-api`, and each scope would list, stop and delete the other's.
+const scopePattern = /^[A-Za-z0-9][A-Za-z0-9._]{0,63}$/;
+
 /** The disk names of bases being built, which share the store with images. */
 export const buildPrefix = "plexus-build-";
 
@@ -15,8 +20,21 @@ function check(value: unknown, what: string): string {
   return value;
 }
 
+/**
+ * The scope a caller gave, or nothing for none. An empty scope is refused
+ * rather than read as none, since none reaches every image in the store.
+ */
 export function checkScope(scope: unknown): string | undefined {
-  return scope === undefined || scope === "" ? undefined : check(scope, "Scope");
+  if (scope === undefined) {
+    return undefined;
+  }
+  if (typeof scope !== "string" || !scopePattern.test(scope)) {
+    throw new PlexusError(
+      "invalid-name",
+      `Scope ${JSON.stringify(scope)} is not valid: use 1 to 64 letters, digits, dots or underscores, starting with a letter or a digit. A dash separates the scope from the image name, so a scope holds none.`,
+    );
+  }
+  return scope;
 }
 
 /** The directory and file base name of an image in the store. */

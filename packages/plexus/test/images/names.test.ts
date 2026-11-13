@@ -32,11 +32,24 @@ describe("names", () => {
     expect(nameOfDisk("plexus-build-1a2b", undefined)).toBeUndefined();
   });
 
-  it("holds a scope to the same rule", () => {
+  it("holds a scope to the same rule, without dashes", () => {
     expect(checkScope("Pharo4Agents")).toBe("Pharo4Agents");
+    expect(checkScope("pharo_agent.evals")).toBe("pharo_agent.evals");
     expect(checkScope(undefined)).toBeUndefined();
-    expect(code(() => checkScope("my workspace"))).toBe("invalid-name");
+    for (const bad of ["", "my workspace", "shop-api", "-shop", "x".repeat(65), 42]) {
+      expect(code(() => checkScope(bad)), String(bad)).toBe("invalid-name");
+    }
     expect(code(() => imagesContext({ scope: "a/b" }))).toBe("invalid-name");
+    expect(code(() => imagesContext({ scope: "" }))).toBe("invalid-name");
+  });
+
+  // With a dash allowed, `shop-api-dev` was both `shop`'s `api-dev` and
+  // `shop-api`'s `dev`.
+  it("gives each disk name to one scope only", () => {
+    expect(diskName("api-dev", "shop")).toBe("shop-api-dev");
+    expect(nameOfDisk("shop-api-dev", "shop")).toBe("api-dev");
+    expect(nameOfDisk(diskName("dev", "shop_api"), "shop")).toBeUndefined();
+    expect(nameOfDisk(diskName("dev", "shop.api"), "shop")).toBeUndefined();
   });
 
   it("reads a directory back as a name in scope, or as out of it", () => {
