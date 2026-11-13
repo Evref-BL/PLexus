@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { runCli, type CliDependencies } from "../src/commandLine.js";
 import { PlexusError } from "../src/errors.js";
+import { Images } from "../src/images/index.js";
 import type { ImagesApi } from "../src/mcp/server.js";
 import type { ImagesOptions } from "../src/types.js";
 
@@ -94,6 +95,34 @@ describe("plexus", () => {
       { home: "/env/home", scope: "EnvScope" },
       { home: "/flag/home", scope: "FlagScope" },
     ]);
+  });
+
+  it("refuses an empty scope rather than reading it as none", async () => {
+    const cases: Array<[string[], NodeJS.ProcessEnv]> = [
+      [["image", "list", "--scope", ""], {}],
+      [["image", "list", "--scope="], {}],
+      [["image", "list"], { PLEXUS_SCOPE: "" }],
+      [["mcp", "--scope", ""], {}],
+      [["mcp"], { PLEXUS_SCOPE: "" }],
+    ];
+    for (const [argv, env] of cases) {
+      const out: string[] = [];
+      let served = false;
+      const code = await runCli(
+        [...argv, "--home", "/nonexistent/plexus-home"],
+        { stdout: (text) => out.push(text), stderr: () => undefined, env },
+        {
+          images: (options) => new Images(options),
+          serveMcp: async () => {
+            served = true;
+          },
+        },
+      );
+      const label = `${argv.join(" ")} ${JSON.stringify(env)}`;
+      expect(code, label).toBe(1);
+      expect(JSON.parse(out.join("")), label).toMatchObject({ ok: false, code: "invalid-name" });
+      expect(served, label).toBe(false);
+    }
   });
 
   it("prints a refusal as JSON on stdout and exits 1", async () => {

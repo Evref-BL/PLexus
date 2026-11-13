@@ -163,7 +163,9 @@ function imagesOptions(parsed: Parsed, env: NodeJS.ProcessEnv): ImagesOptions {
   const scope = parsed.values.get("scope") ?? env.PLEXUS_SCOPE;
   return {
     ...(home ? { home } : {}),
-    ...(scope ? { scope } : {}),
+    // An empty scope goes on to be refused: dropped, it would mean none, and
+    // none reaches every image in the store.
+    ...(scope === undefined ? {} : { scope }),
   };
 }
 
