@@ -7,4 +7,4 @@
  * has a test that the two agree. The script generator that uses it is an
  * internal, and nothing about publishing this should drag that along.
  */
-export const defaultPharoMcpVersion = "3.6.0";
+export const defaultPharoMcpVersion = "3.7.0";
