@@ -1,3 +1,4 @@
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { PlexusError } from "../../src/errors.js";
 import { imagesContext } from "../../src/images/context.js";
@@ -47,5 +48,11 @@ describe("names", () => {
     expect(nameOfDisk("Pharo4Agents-", "Pharo4Agents")).toBeUndefined();
     expect(nameOfDisk("Pharo4Agents", "Pharo4Agents")).toBeUndefined();
     expect(nameOfDisk("pifs-linux", undefined)).toBe("pifs-linux");
+  });
+});
+
+describe("the home", () => {
+  it("is absolute whatever the caller gave", () => {
+    expect(imagesContext({ home: "relative/home" }).home).toBe(path.resolve("relative/home"));
   });
 });

@@ -181,7 +181,12 @@ export function removeDirectory(home: string, dir: string): void {
     if (errorCode(error) === "ENOENT") {
       return;
     }
-    throw error;
+    if (errorCode(error) !== "EXDEV") {
+      throw error;
+    }
+    // A store linked to another volume cannot rename out of it.
+    fs.rmSync(dir, { recursive: true, force: true });
+    return;
   }
   fs.rmSync(doomed, { recursive: true, force: true });
 }

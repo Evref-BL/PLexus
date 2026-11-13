@@ -20,8 +20,8 @@ import { templates } from "./templates.js";
  *
  * An image exists when its directory holds its image file; it runs when a VM
  * runs that file. Every call looks at the store and the host when it is made
- * and keeps nothing between calls, so its answer is as old as the call, like
- * `ps`, and a call is never wrong about something another one did.
+ * and keeps nothing between calls, so, like `ps`, its answer is as old as the
+ * call that gave it.
  */
 export class Images {
   private readonly context: ImagesContext;

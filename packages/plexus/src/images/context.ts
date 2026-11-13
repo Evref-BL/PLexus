@@ -1,3 +1,4 @@
+import path from "node:path";
 import { ping } from "../forward/index.js";
 import { plexusHome } from "../home.js";
 import {
@@ -27,7 +28,9 @@ export interface ImagesContext {
 }
 
 export function imagesContext(options: ImagesOptions = {}): ImagesContext {
-  const home = options.home ?? plexusHome();
+  // The launcher is handed these paths, and a VM's command line is compared
+  // with them, so they are absolute whatever the caller's directory.
+  const home = options.home === undefined ? plexusHome() : path.resolve(options.home);
   const scope = checkScope(options.scope);
   let launcher = options.launcher;
   return {
