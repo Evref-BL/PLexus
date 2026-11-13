@@ -1,207 +1,156 @@
 /**
- * How PLexus reaches the launcher.
- *
- * It used to spawn `pharo-launcher-mcp` and send tool names over stdio. The
- * package answers those names as functions now, so the call is a call: no
- * process, no handshake, and no object stringified into a text block for the
- * other side to parse back. Asking the host what it is running went from
- * 175ms to the 46ms the question itself costs.
- *
- * The names stay because PLexus uses them: an operation that needs approval is
- * described before it is performed, and what it names is a tool.
+ * How PLexus reaches the launcher: pharo-launcher-mcp's functions, called in
+ * this process on PLexus's one profile.
  */
+import fs from "node:fs";
 import {
   openPharoLauncher,
   type PharoLauncher,
 } from "@evref-bl/pharo-launcher-mcp/launcher";
+import { homeProfileEnvironment } from "./pharoLauncherProfile.js";
 import { vmRenewalHint } from "./vmRenewal.js";
 
-export interface PharoLauncherMcpToolClient {
-  callTool<K extends LauncherToolName>(
-    name: K,
-    argumentsValue?: LauncherToolInput<K>,
-  ): Promise<LauncherToolResult<K>>;
-  close?(): Promise<void>;
+export type {
+  LauncherCommandResult,
+  LauncherProcess,
+} from "@evref-bl/pharo-launcher-mcp/launcher";
+
+/** What PLexus asks of the launcher. Tests give a fake one. */
+export type LauncherPort = Pick<
+  PharoLauncher,
+  | "createImage"
+  | "startImage"
+  | "listProcesses"
+  | "killProcess"
+  | "listTemplateCategories"
+  | "listTemplates"
+  | "updateTemplates"
+>;
+
+// The launcher gives a command 30 s. Downloading a template, or a launch that
+// waits while an image loads MCP and saves, takes minutes.
+const longCommandTimeoutMs = 60 * 60_000;
+
+export function openLauncherPort(home: string): LauncherPort {
+  const env = homeProfileEnvironment(home);
+  let quick: PharoLauncher | undefined;
+  let long: PharoLauncher | undefined;
+  const quickLauncher = (): PharoLauncher => (quick ??= openPharoLauncher({ env }));
+  const longLauncher = (): PharoLauncher =>
+    (long ??= openPharoLauncher({ env, timeoutMs: longCommandTimeoutMs }));
+
+  return {
+    createImage: (input) => longLauncher().createImage(input),
+    startImage: (input) =>
+      (input.detached ? quickLauncher() : longLauncher()).startImage(input),
+    listProcesses: (input) => quickLauncher().listProcesses(input),
+    killProcess: (input) => quickLauncher().killProcess(input),
+    listTemplateCategories: (input) => quickLauncher().listTemplateCategories(input),
+    listTemplates: (input) => quickLauncher().listTemplates(input),
+    updateTemplates: (input) => quickLauncher().updateTemplates(input),
+  };
 }
 
-export class PharoLauncherMcpToolError extends Error {
-  constructor(
-    message: string,
-    public readonly toolName: string,
-    public readonly result: unknown,
-  ) {
-    super(message);
-    this.name = "PharoLauncherMcpToolError";
-  }
-}
+const failureDetailLength = 500;
 
-export interface OpenPharoLauncherClientOptions {
-  /** The profile this caller works in, as the launcher's own variables. */
-  profileEnvironment?: Record<string, string> | undefined;
-}
-
-const launcherFailureDetailLength = 500;
-
-function failureDetailField(payload: unknown, key: string): string | undefined {
-  if (!payload || typeof payload !== "object") {
+function detailField(payload: unknown, key: string): string | undefined {
+  if (!isRecord(payload)) {
     return undefined;
   }
-
-  const value = (payload as Record<string, unknown>)[key];
-  if (typeof value !== "string") {
+  const value = payload[key];
+  if (typeof value !== "string" || !value.trim()) {
     return undefined;
   }
-
   const detail = value.trim();
-  if (!detail) {
-    return undefined;
-  }
-
-  return detail.length > launcherFailureDetailLength
-    ? `${detail.slice(0, launcherFailureDetailLength)}…`
+  return detail.length > failureDetailLength
+    ? `${detail.slice(0, failureDetailLength)}…`
     : detail;
 }
 
-// The launcher says what went wrong and what to do about it. A message naming
-// only the tool throws that away, and the caller above us has nothing left to
-// report. Carry the explanation, trimmed: a diagnostic built from launcher
-// output can run to pages.
-export function launcherToolFailureMessage(
-  toolName: string,
+/**
+ * What the launcher said went wrong, trimmed: a diagnostic built from
+ * launcher output can run to pages. A launch whose VM stopped with its own
+ * fatal-error report also says how to renew that VM.
+ */
+export function launcherFailureMessage(
+  operation: keyof LauncherPort,
   payload: unknown,
 ): string {
   const detail =
-    failureDetailField(payload, "message") ??
-    [
-      failureDetailField(payload, "diagnostic"),
-      failureDetailField(payload, "action"),
-    ]
+    detailField(payload, "message") ??
+    [detailField(payload, "diagnostic"), detailField(payload, "action")]
       .filter(Boolean)
       .join(" ");
   const message = detail
-    ? `pharo-launcher-mcp tool failed: ${toolName}: ${detail}`
-    : `pharo-launcher-mcp tool failed: ${toolName}`;
-  const renewal = launchVmRenewalHint(toolName, payload);
+    ? `Pharo Launcher ${operation} failed: ${detail}`
+    : `Pharo Launcher ${operation} failed`;
+  const renewal =
+    operation === "startImage" ? waitedLaunchRenewalHint(payload) : undefined;
   return renewal ? `${message}\n${renewal}` : message;
 }
 
-// A launch that waited for its VM has the VM's output in the launcher's raw
-// result, after the launcher's own report of which VM it ran.
-function launchVmRenewalHint(toolName: string, payload: unknown): string | undefined {
-  if (toolName !== "pharo_launcher_image_start" || !payload || typeof payload !== "object") {
+// A launch that waited for its VM has the VM's output in the raw result,
+// after the launcher's own report of which VM it ran.
+function waitedLaunchRenewalHint(payload: unknown): string | undefined {
+  if (!isRecord(payload) || !isRecord(payload.raw)) {
     return undefined;
   }
-  const raw = (payload as Record<string, unknown>).raw;
-  if (!raw || typeof raw !== "object") {
-    return undefined;
-  }
-  const { stdout, stderr } = raw as Record<string, unknown>;
+  const { stdout, stderr } = payload.raw;
   const report = typeof stdout === "string" ? stdout : "";
-  const output = `${report}\n${typeof stderr === "string" ? stderr : ""}`;
-  return vmRenewalHint(output, report);
+  return vmRenewalHint(`${report}\n${typeof stderr === "string" ? stderr : ""}`, report);
+}
+
+/** The launcher's report of a launch: which VM, which pid, which logs. */
+export function launchReport(result: unknown): string {
+  if (!isRecord(result)) {
+    return "";
+  }
+  if (isRecord(result.raw) && typeof result.raw.stdout === "string") {
+    return result.raw.stdout;
+  }
+  return isRecord(result.data) && typeof result.data.message === "string"
+    ? result.data.message
+    : "";
+}
+
+/** The log files a detached launch writes the VM's output to. */
+export function launchLogPaths(result: unknown): string[] {
+  const paths = launchReport(result)
+    .split(/\r?\n/)
+    .map((line) => /^(?:stdout|stderr):\s*(\S.*)$/.exec(line.trim())?.[1])
+    .filter((value): value is string => value !== undefined);
+  return [...new Set(paths)];
 }
 
 /**
- * The tool names PLexus speaks, and what each one is.
- *
- * The launcher's own test keeps its thirteen tools and thirteen functions
- * level with each other. This table is the third list, and it is here rather
- * than there because the names are PLexus's vocabulary: they appear in the
- * plans it shows for approval and in what it reports when one fails.
+ * What a detached launch's logs say about a VM that stopped: the renewal hint
+ * when it stopped with its own fatal-error report, or nothing.
  */
-export const launcherMethodForTool = {
-  pharo_launcher_config: "describeConfig",
-  pharo_launcher_image_copy: "copyImage",
-  pharo_launcher_image_copy_between_profiles: "copyImageBetweenProfiles",
-  pharo_launcher_image_create: "createImage",
-  pharo_launcher_image_delete: "deleteImage",
-  pharo_launcher_image_info: "imageInfo",
-  pharo_launcher_image_list: "listImages",
-  pharo_launcher_image_start: "startImage",
-  pharo_launcher_process_kill: "killProcess",
-  pharo_launcher_process_list: "listProcesses",
-  pharo_launcher_template_category_list: "listTemplateCategories",
-  pharo_launcher_template_list: "listTemplates",
-  pharo_launcher_template_update: "updateTemplates",
-} as const satisfies Record<string, keyof PharoLauncher>;
-
-export type LauncherToolName = keyof typeof launcherMethodForTool;
-
-type LauncherMethodFor<K extends LauncherToolName> =
-  PharoLauncher[(typeof launcherMethodForTool)[K]];
-
-/** What that tool takes, read off the function it calls. */
-export type LauncherToolInput<K extends LauncherToolName> = Parameters<
-  LauncherMethodFor<K>
->[0];
-
-/** What that tool answers, read off the function it calls. */
-export type LauncherToolResult<K extends LauncherToolName> = Awaited<
-  ReturnType<LauncherMethodFor<K>>
->;
-
-/**
- * The tools an operation plan may name: the ones that change something, and
- * are therefore written down and approved before they run. Every one of them
- * answers with an `ok`, which is what the caller checks afterwards.
- */
-export type LauncherMutationToolName =
-  | "pharo_launcher_image_copy"
-  | "pharo_launcher_image_copy_between_profiles"
-  | "pharo_launcher_image_create"
-  | "pharo_launcher_image_delete"
-  | "pharo_launcher_image_start"
-  | "pharo_launcher_template_update";
-
-export const launcherToolNames = Object.keys(
-  launcherMethodForTool,
-) as LauncherToolName[];
-
-function failed(result: unknown): boolean {
-  return (
-    Boolean(result) &&
-    typeof result === "object" &&
-    (result as { ok?: unknown }).ok === false
-  );
+export function exitedLaunchHint(result: unknown, logPaths: readonly string[]): string | undefined {
+  const report = launchReport(result);
+  return report ? vmRenewalHint(logPaths.map(logTail).join("\n"), report) : undefined;
 }
 
-export function openPharoLauncherClient(
-  options: OpenPharoLauncherClientOptions = {},
-): PharoLauncherMcpToolClient {
-  const launcher = openPharoLauncher(
-    options.profileEnvironment === undefined
-      ? {}
-      : { env: options.profileEnvironment },
-  );
+// The end of a log, where a VM that stopped wrote why. A log that is gone says
+// nothing.
+function logTail(logPath: string): string {
+  const tailLength = 64 * 1024;
+  try {
+    const size = fs.statSync(logPath).size;
+    const descriptor = fs.openSync(logPath, "r");
+    try {
+      const length = Math.min(size, tailLength);
+      const buffer = Buffer.alloc(length);
+      fs.readSync(descriptor, buffer, 0, length, size - length);
+      return buffer.toString("utf8");
+    } finally {
+      fs.closeSync(descriptor);
+    }
+  } catch {
+    return "";
+  }
+}
 
-  return {
-    async callTool<K extends LauncherToolName>(
-      name: K,
-      argumentsValue?: LauncherToolInput<K>,
-    ): Promise<LauncherToolResult<K>> {
-      const method = launcherMethodForTool[name];
-      if (!method) {
-        throw new PharoLauncherMcpToolError(
-          `pharo-launcher-mcp has no tool named ${name}`,
-          name,
-          undefined,
-        );
-      }
-
-      // The one cast left: every method takes its own input, and the table
-      // above is what ties a name to the right one.
-      const call = launcher[method] as (input: unknown) => unknown;
-      const result = (await call.call(launcher, argumentsValue ?? {})) as
-        LauncherToolResult<K>;
-      if (failed(result)) {
-        throw new PharoLauncherMcpToolError(
-          launcherToolFailureMessage(name, result),
-          name,
-          result,
-        );
-      }
-
-      return result;
-    },
-  };
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }

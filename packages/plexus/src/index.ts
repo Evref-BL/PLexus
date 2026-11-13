@@ -1,25 +1,22 @@
 /**
- * What PLexus promises.
- *
- * Everything reachable from here is API: a consumer may import it, and it
- * moves under semver. Everything else is behind `@evref-bl/plexus/internal`,
- * which promises nothing and may change in any release — it is there for this
- * repository's own scripts, and for a consumer that knowingly reaches past the
- * contract.
- *
- * The split is by module rather than by name, because a function is only
- * usable when the types in its signature can be named too. Narrowing further
- * means splitting those modules, not hiding names out of them.
- *
- * `packageExports.test.ts` holds the list. Adding a name to this surface is a
- * decision, so it fails until the list says so.
+ * What PLexus promises: everything reachable from here is API and moves under
+ * semver. `packageExports.test.ts` holds the list, so a name added here is a
+ * decision written down there.
  */
-
-export * from "./config/pharoMcpVersion.js";
-export * from "./config/projectConfigAuthoring.js";
-export * from "./config/plexusHome.js";
-export * from "./config/projectConfig.js";
-export * from "./launcher/scopedPharoLauncherServer.js";
-export * from "./lifecycle/stopProjectImage.js";
-export * from "./lifecycle/startProjectImage.js";
-export * from "./workspace/projectState.js";
+export { defaultPharoMcpVersion } from "./config/pharoMcpVersion.js";
+export { PlexusError, type PlexusErrorCode } from "./errors.js";
+export { callTool, listTools } from "./forward/index.js";
+export { plexusHome } from "./home.js";
+export { Images } from "./images/index.js";
+export type { CreateResult } from "./images/create.js";
+export type { StartResult } from "./images/start.js";
+export type { LauncherPort } from "./launcher/pharoLauncherMcpClient.js";
+export type {
+  CreateOptions,
+  Display,
+  Endpoint,
+  ImageInfo,
+  ImagesOptions,
+  StartOptions,
+  Template,
+} from "./types.js";

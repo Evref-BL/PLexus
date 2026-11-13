@@ -1,948 +1,154 @@
-import fs from "node:fs";
-import path from "node:path";
+/**
+ * What the live smoke may do, kept apart from doing it so that it is tested
+ * without a Pharo image.
+ *
+ * The smoke creates, starts, lists the tools of, stops and deletes one image,
+ * in a scope of its own: a scratch scope cannot name an image anyone works in.
+ */
 
-export const defaultTimeoutBudget = {
-  setupMs: 30_000,
-  imagePrepareMs: 120_000,
-  openMs: 300_000,
-  routingMs: 120_000,
-  scenarioMs: 300_000,
-  closeMs: 60_000,
-  cleanupMs: 60_000,
-};
+export const scratchScopePrefix = "plexus-smoke-";
 
-const timeoutBudgetKeys = Object.keys(defaultTimeoutBudget);
-
-const smokeProfileDefaultKeys = new Set([
-  "approvalProfile",
-  "launcherProfile",
-  "launcherProfileRoot",
-  "pharoLauncherMcpRepoDir",
-  "mcpPharoRepoDir",
-  "artifactRoot",
-  "runId",
-  "timeoutBudgetJson",
-  "requiredWorkspacePrefix",
-  "stateRoot",
-  "fixtureRoot",
-  "projectRoot",
-  "homePath",
-  "homeImageCacheNetworkPolicy",
-  "workspaceId",
-  "projectId",
-  "imageId",
-  "port",
-  "loadScript",
-  "toolName",
-  "toolArgumentsJson",
-  "expectedText",
-  "keepOpen",
-  "keepTemp",
-  "allowRemoteMcpFallback",
-  "scenario",
-  "createSourceFromTemplate",
-  "sourceImageName",
-  "sourceTemplateName",
-  "sourceTemplateCategory",
-  "pollIntervalMs",
-  "processTimeoutMs",
-  "healthTimeoutMs",
-  "copyFromImageName",
-  "imageName",
-  "imageSpecs",
-  "stepSpecs",
+const valueOptions = new Set([
+  "template",
+  "category",
+  "home",
+  "scope",
+  "name",
+  "timeout",
+  "tool",
+  "arguments",
+  "expect",
 ]);
+const flagOptions = new Set(["keep"]);
 
-export function resolveSmokeProfilePath(profile, context = {}) {
-  const profileName = requiredString(profile, "--profile");
-  const repoRoot = path.resolve(requiredString(context.repoRoot, "repoRoot"));
-  if (
-    path.isAbsolute(profileName) ||
-    profileName.includes("/") ||
-    profileName.includes("\\")
-  ) {
-    return path.resolve(repoRoot, profileName);
-  }
-
-  const fileName = profileName.endsWith(".json")
-    ? profileName
-    : `${profileName}.json`;
-  return path.join(repoRoot, "scripts", "smoke-profiles", fileName);
+/** A run id that sorts by time and fits in an image name. */
+export function defaultRunId(now = new Date()) {
+  return now.toISOString().replace(/[-:]/g, "").replace("T", "-").slice(0, 15);
 }
 
-export function loadSmokeProfile(profile, context = {}) {
-  const profilePath = resolveSmokeProfilePath(profile, context);
-  let parsed;
-  try {
-    parsed = JSON.parse(fs.readFileSync(profilePath, "utf8"));
-  } catch (error) {
-    throw new Error(
-      `Unable to load smoke profile ${profile}: ${
-        error instanceof Error ? error.message : String(error)
-      }`,
-    );
-  }
-
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    throw new Error(`Smoke profile ${profile} must be a JSON object`);
-  }
-
-  return {
-    profile,
-    profilePath,
-    defaults: normalizeSmokeProfileDefaults(parsed, profile),
-  };
-}
-
-export function applySmokeProfileDefaults(options, profileDefaults, context = {}) {
-  const blockedKeys = new Set(context.blockedKeys ?? []);
-  const applied = [];
-  for (const [key, value] of Object.entries(profileDefaults ?? {})) {
-    if (value === undefined || blockedKeys.has(key)) {
-      continue;
+/**
+ * The smoke's options. The template may be the start of a name: the launcher
+ * suffixes Pharo versions with a lifecycle, "(next stable)" today and
+ * something else later.
+ *
+ * @param {readonly string[]} argv
+ * @param {{ now?: Date }} [context]
+ */
+export function parseSmokeArgs(argv, context = {}) {
+  /** @type {Record<string, string | true>} */
+  const given = {};
+  for (let index = 0; index < argv.length; index += 1) {
+    const arg = argv[index];
+    if (!arg.startsWith("--")) {
+      throw new Error(`Unexpected argument ${arg}`);
     }
-
-    if (key === "imageSpecs" || key === "stepSpecs") {
-      if ((options[key] ?? []).length > 0) {
-        continue;
+    const [name, inline] = arg.slice(2).split(/=(.*)/s, 2);
+    if (flagOptions.has(name)) {
+      given[name] = true;
+    } else if (valueOptions.has(name)) {
+      const value = inline ?? argv[++index];
+      if (value === undefined) {
+        throw new Error(`--${name} needs a value`);
       }
-      options[key] = value.map((entry) => ({ ...entry }));
-      applied.push(key);
-      continue;
-    }
-
-    options[key] = value;
-    if (key === "loadScript") {
-      options.loadScriptExplicit = true;
-    }
-    if (key === "homePath") {
-      options.homePathExplicit = true;
-    }
-    applied.push(key);
-  }
-
-  return applied;
-}
-
-export function sanitizeRuntimeId(value) {
-  const sanitized = sanitizedPathSegment(String(value ?? "").trim());
-  return sanitized || "default";
-}
-
-function sanitizedPathSegment(value) {
-  let result = "";
-  let previousWasSeparator = false;
-
-  for (const char of value) {
-    const allowed =
-      (char >= "A" && char <= "Z") ||
-      (char >= "a" && char <= "z") ||
-      (char >= "0" && char <= "9") ||
-      char === "." ||
-      char === "_" ||
-      char === "-";
-    if (allowed) {
-      result += char;
-      previousWasSeparator = false;
-      continue;
-    }
-
-    if (!previousWasSeparator) {
-      result += "-";
-      previousWasSeparator = true;
+      given[name] = value;
+    } else {
+      throw new Error(`Unknown option --${name}`);
     }
   }
 
-  while (result.startsWith("-")) {
-    result = result.slice(1);
+  const scope = /** @type {string | undefined} */ (given.scope) ?? `${scratchScopePrefix}${defaultRunId(context.now)}`;
+  if (!scope.startsWith(scratchScopePrefix)) {
+    throw new Error(`A smoke runs in a scratch scope: --scope must start with ${scratchScopePrefix}`);
   }
-  while (result.endsWith("-")) {
-    result = result.slice(0, -1);
+
+  const timeout = given.timeout === undefined ? 600 : Number(given.timeout);
+  if (!(Number.isFinite(timeout) && timeout > 0)) {
+    throw new Error("--timeout is a number of seconds");
   }
-  return result;
-}
 
-export function defaultProjectOwnedLauncherProfileName(projectId) {
-  return ["plexus", sanitizeRuntimeId(projectId)].join("-");
-}
-
-export function defaultProjectOwnedLauncherProfileRoot({ stateRoot, projectId }) {
-  return path.join(
-    path.resolve(requiredString(stateRoot, "stateRoot")),
-    "profiles",
-    sanitizeRuntimeId(requiredString(projectId, "projectId")),
-  );
-}
-
-export function projectOwnedLauncherProfileEnvironment({
-  stateRoot,
-  projectId,
-  launcherProfile,
-  launcherProfileRoot,
-}) {
-  const root = path.resolve(
-    launcherProfileRoot === undefined
-      ? defaultProjectOwnedLauncherProfileRoot({ stateRoot, projectId })
-      : requiredString(launcherProfileRoot, "--launcherProfileRoot"),
-  );
-  const profile =
-    launcherProfile === undefined
-      ? defaultProjectOwnedLauncherProfileName(projectId)
-      : requiredString(launcherProfile, "--launcherProfile");
+  /** @type {Record<string, unknown>} */
+  let toolArguments = {};
+  if (given.arguments !== undefined) {
+    toolArguments = JSON.parse(/** @type {string} */ (given.arguments));
+    if (!toolArguments || typeof toolArguments !== "object" || Array.isArray(toolArguments)) {
+      throw new Error("--arguments is a JSON object");
+    }
+  }
+  if (given.expect !== undefined && given.tool === undefined) {
+    throw new Error("--expect needs --tool");
+  }
 
   return {
-    PHARO_LAUNCHER_MCP_PROFILE: profile,
-    PHARO_LAUNCHER_MCP_STATE_ROOT: root,
-    PHARO_LAUNCHER_MCP_LAUNCHER_IMAGE: path.join(
-      root,
-      "launcher",
-      "PharoLauncher.image",
-    ),
-    PHARO_LAUNCHER_MCP_IMAGES_DIR: path.join(root, "images"),
-    PHARO_LAUNCHER_MCP_VMS_DIR: path.join(root, "vms"),
-    PHARO_LAUNCHER_MCP_TEMPLATE_SOURCES_DIR: path.join(root, "templates"),
-    PHARO_LAUNCHER_MCP_INIT_SCRIPTS_DIR: path.join(root, "init-scripts"),
-    PHARO_LAUNCHER_MCP_LOGS_DIR: path.join(root, "logs"),
-    PHARO_LAUNCHER_MCP_LAUNCHER_CONFIGURATION: path.join(
-      root,
-      "launcher",
-      "pharo-launcher-cli-config.ston",
-    ),
+    template: /** @type {string} */ (given.template ?? "Pharo 14.0 - 64bit"),
+    ...(given.category === undefined ? {} : { category: /** @type {string} */ (given.category) }),
+    ...(given.home === undefined ? {} : { home: /** @type {string} */ (given.home) }),
+    scope,
+    name: /** @type {string} */ (given.name ?? "smoke"),
+    timeoutMs: Math.round(timeout * 1000),
+    ...(given.tool === undefined ? {} : { tool: /** @type {string} */ (given.tool) }),
+    toolArguments,
+    ...(given.expect === undefined ? {} : { expectedText: /** @type {string} */ (given.expect) }),
+    keep: given.keep === true,
   };
 }
 
-export function defaultRunId(now = new Date(), pid = process.pid) {
-  return sanitizeRuntimeId(
-    `smoke-${now.toISOString().replaceAll(/[^0-9A-Za-z]+/g, "-")}-${pid}`,
+/** The steps a run takes, in order. */
+export function smokeSteps(options) {
+  return ["create", "start", "listTools", ...(options.tool ? ["callTool"] : []), "stop", "delete"];
+}
+
+/**
+ * The template a run creates from: the one named, or the one whose name is
+ * that followed by a parenthesised suffix, in the category given if any.
+ *
+ * @param {{ template: string; category?: string }} options
+ * @param {readonly { name: string; category: string }[]} templates
+ */
+export function resolveTemplate(options, templates) {
+  const inCategory = templates.filter(
+    (template) => options.category === undefined || template.category === options.category,
   );
-}
-
-export function parseTimeoutBudget(value) {
-  if (!value) {
-    return { ...defaultTimeoutBudget };
+  const exact = inCategory.filter((template) => template.name === options.template);
+  const matches = exact.length > 0
+    ? exact
+    : inCategory.filter((template) => template.name.startsWith(`${options.template} (`));
+  if (matches.length === 1) {
+    return { name: matches[0].name, category: matches[0].category };
   }
-
-  let parsed;
-  try {
-    parsed = JSON.parse(value);
-  } catch (error) {
-    throw new Error(
-      `--timeoutBudgetJson must be valid JSON: ${
-        error instanceof Error ? error.message : String(error)
-      }`,
-    );
-  }
-
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    throw new Error("--timeoutBudgetJson must decode to a JSON object");
-  }
-
-  const budget = { ...defaultTimeoutBudget };
-  for (const [key, rawValue] of Object.entries(parsed)) {
-    if (!timeoutBudgetKeys.includes(key)) {
-      throw new Error(`Unknown timeout budget key: ${key}`);
-    }
-    if (!Number.isInteger(rawValue) || rawValue <= 0) {
-      throw new Error(`${key} must be a positive integer timeout in ms`);
-    }
-    budget[key] = rawValue;
-  }
-
-  return budget;
-}
-
-function normalizeSmokeProfileDefaults(profile, profileName) {
-  const defaults = {};
-  for (const [key, value] of Object.entries(profile)) {
-    if (key === "description") {
-      continue;
-    }
-    if (key === "timeoutBudget") {
-      if (!value || typeof value !== "object" || Array.isArray(value)) {
-        throw new Error(
-          `Smoke profile ${profileName} timeoutBudget must be a JSON object`,
-        );
-      }
-      parseTimeoutBudget(JSON.stringify(value));
-      defaults.timeoutBudgetJson = JSON.stringify(value);
-      continue;
-    }
-    if (!smokeProfileDefaultKeys.has(key)) {
-      throw new Error(`Smoke profile ${profileName} has unknown key: ${key}`);
-    }
-    if (key === "imageSpecs" || key === "stepSpecs") {
-      defaults[key] = validateProfileObjectArray(value, key, profileName);
-      continue;
-    }
-    defaults[key] = value;
-  }
-
-  return defaults;
-}
-
-function validateProfileObjectArray(value, key, profileName) {
-  if (!Array.isArray(value)) {
-    throw new Error(`Smoke profile ${profileName} ${key} must be a JSON array`);
-  }
-
-  return value.map((entry, index) => {
-    if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
-      throw new Error(
-        `Smoke profile ${profileName} ${key}[${index}] must be a JSON object`,
-      );
-    }
-    return { ...entry };
-  });
-}
-
-export function isPathInside(parent, candidate) {
-  const normalizedParent = comparablePath(path.resolve(parent));
-  const normalizedCandidate = comparablePath(path.resolve(candidate));
-  const relative = path.relative(normalizedParent, normalizedCandidate);
-  return (
-    relative === "" ||
-    (!!relative && !relative.startsWith("..") && !path.isAbsolute(relative))
-  );
-}
-
-export function buildLiveSmokeRunPlan(options, context = {}) {
-  const repoRoot = path.resolve(requiredString(context.repoRoot, "repoRoot"));
-  const approvalProfile = requiredString(
-    options.approvalProfile,
-    "--approvalProfile",
-  );
-  const artifactRoot = requiredPath(options.artifactRoot, "--artifactRoot");
-  const stateRoot = requiredPath(options.stateRoot, "--stateRoot");
-  const projectId = requiredString(options.projectId, "--projectId");
-  const launcherProfileEnvironment = projectOwnedLauncherProfileEnvironment({
-    stateRoot,
-    projectId,
-    launcherProfile: options.launcherProfile,
-    launcherProfileRoot: options.launcherProfileRoot,
-  });
-  const launcherProfileRoot =
-    launcherProfileEnvironment.PHARO_LAUNCHER_MCP_STATE_ROOT;
-  const launcherProfile =
-    launcherProfileEnvironment.PHARO_LAUNCHER_MCP_PROFILE;
-  const runId = sanitizeRuntimeId(
-    options.runId ?? defaultRunId(context.now ?? new Date(), context.pid ?? process.pid),
-  );
-  const workspaceId = sanitizeRuntimeId(options.workspaceId ?? runId);
-
-  validatePrefix(
-    workspaceId,
-    options.requiredWorkspacePrefix,
-    "--workspaceId",
-    "--requiredWorkspacePrefix",
-  );
-
-  assertDisposablePath(stateRoot, "--stateRoot", repoRoot);
-  assertDisposablePath(artifactRoot, "--artifactRoot", repoRoot);
-  assertDisposablePath(launcherProfileRoot, "--launcherProfileRoot", repoRoot);
-  if (options.projectRoot) {
-    assertDisposablePath(options.projectRoot, "--projectRoot", repoRoot);
-  }
-  if (options.fixtureRoot) {
-    assertDisposablePath(options.fixtureRoot, "--fixtureRoot", repoRoot);
-  }
-  if (options.homePath) {
-    assertDisposablePath(options.homePath, "--homePath", repoRoot);
-  }
-
-  validateDisposableImages(options.images ?? []);
-
-  const resolvedArtifactRoot = path.resolve(artifactRoot);
-  return {
-    approvalProfile,
-    launcherProfile,
-    launcherProfileRoot,
-    launcherProfileEnvironment,
-    runId,
-    workspaceId,
-    artifactRoot: resolvedArtifactRoot,
-    artifactDirectory: path.join(resolvedArtifactRoot, runId),
-    timeoutBudget: parseTimeoutBudget(options.timeoutBudgetJson),
-  };
-}
-
-export function mcpPharoTonelLoadScriptSource(repoDir) {
-  const sourceDirectory = path.join(path.resolve(repoDir), "src");
-  return [
-    '"Load MCP-Pharo from an explicit local Tonel checkout for this PLexus smoke run."',
-    '"Bare load, which is the default group, because that is what the startup',
-    'PLexus writes for the released package does. Core alone leaves out MCP-IDE,',
-    'so the image comes up with tool_call, tool_get and tool_search and nothing',
-    'a project actually asks for."',
-    "Metacello new",
-    "  baseline: 'MCP';",
-    `  repository: ${smalltalkString(`tonel://${sourceDirectory.replaceAll("\\", "/")}`)};`,
-    "  load.",
-    "",
-  ].join("\n");
-}
-
-export function dependencyCacheSourceImagePreparationScriptSource({ statusPath }) {
-  const statusFile = path
-    .resolve(requiredString(statusPath, "source dependency-cache statusPath"))
-    .replaceAll("\\", "/");
-  return `"Prepare a temporary PLexus smoke source image for the dependency repository cache contract."
-
-| plexusStatusFile plexusStatusWriter plexusDependencyProbePath |
-
-plexusStatusFile := ${smalltalkString(statusFile)} asFileReference.
-plexusStatusFile exists ifTrue: [ plexusStatusFile delete ].
-plexusStatusWriter := [ :status :message |
-  plexusStatusFile parent ensureCreateDirectory.
-  plexusStatusFile writeStreamDo: [ :stream |
-    stream nextPutAll: 'status='; nextPutAll: status; cr.
-    stream nextPutAll: 'preparedAt='; nextPutAll: DateAndTime now asString; cr.
-    message ifNotNil: [
-      stream nextPutAll: 'message='; nextPutAll: message asString; cr ] ] ].
-[
-  plexusDependencyProbePath := (plexusStatusFile parent / 'iceberg') pathString.
-  Iceberg enableMetacelloIntegration: true.
-  IceLibgitRepository
-    shareRepositoriesBetweenImages: true;
-    sharedRepositoriesLocationString: plexusDependencyProbePath.
-  plexusStatusWriter value: 'prepared' value: nil
-] on: Error do: [ :error |
-  plexusStatusWriter value: 'failed' value: error description.
-  error pass ].
-
-Smalltalk snapshot: true andQuit: true.
-`;
-}
-
-export function usesDefaultSmokeLoadScript({
-  imageLoadScriptExplicit,
-  loadScriptExplicit,
-}) {
-  return !imageLoadScriptExplicit && !loadScriptExplicit;
-}
-
-export function resolvePharoLauncherMcpRepoDirOption(options, env = process.env) {
-  return (
-    options.pharoLauncherMcpRepoDir ??
-    env.PLEXUS_SMOKE_PHARO_LAUNCHER_MCP_REPO_DIR ??
-    env.PHARO_LAUNCHER_MCP_REPO_DIR
-  );
-}
-
-function templateName(value) {
-  return typeof value?.name === "string" && value.name.trim().length > 0
-    ? value.name.trim()
-    : undefined;
-}
-
-function templateCategory(value) {
-  return typeof value?.category === "string" && value.category.trim().length > 0
-    ? value.category.trim()
-    : undefined;
-}
-
-function templateCategoryMatches(requestedCategory, candidateCategory) {
-  if (!requestedCategory) {
-    return true;
-  }
-
-  return (
-    !candidateCategory ||
-    candidateCategory === "uncategorized" ||
-    candidateCategory === requestedCategory
-  );
-}
-
-function templateMatchesRequestedName(requestedName, candidateName) {
-  return (
-    candidateName === requestedName ||
-    candidateName.startsWith(`${requestedName} (`)
-  );
-}
-
-function describeTemplate(candidate) {
-  const name = templateName(candidate);
-  if (!name) {
-    return undefined;
-  }
-
-  const category = templateCategory(candidate);
-  return category ? `${category}/${name}` : name;
-}
-
-function sourceTemplateFromCandidate(candidate) {
-  const name = templateName(candidate);
-  if (!name) {
-    return undefined;
-  }
-
-  const category = templateCategory(candidate);
-  return {
-    name,
-    ...(category && category !== "uncategorized" ? { category } : {}),
-  };
-}
-
-export function resolveRequestedSourceTemplate(request, templates) {
-  const requestedName = requiredString(request?.name, "sourceTemplateName");
-  const requestedCategory =
-    typeof request?.category === "string" && request.category.trim().length > 0
-      ? request.category.trim()
-      : undefined;
-  const candidates = Array.isArray(templates) ? templates : [];
-  const exact = candidates.find((candidate) => {
-    const candidateName = templateName(candidate);
-    return (
-      candidateName === requestedName &&
-      templateCategoryMatches(requestedCategory, templateCategory(candidate))
-    );
-  });
-  const compatibleNameMatch =
-    exact ??
-    candidates.find((candidate) => {
-      const candidateName = templateName(candidate);
-      return (
-        candidateName !== undefined &&
-        templateMatchesRequestedName(requestedName, candidateName) &&
-        templateCategoryMatches(requestedCategory, templateCategory(candidate))
-      );
-    });
-  const resolved = sourceTemplateFromCandidate(compatibleNameMatch);
-  if (resolved) {
-    return resolved;
-  }
-
-  const requested = requestedCategory
-    ? `${requestedCategory}/${requestedName}`
-    : requestedName;
-  const available = candidates
-    .map(describeTemplate)
-    .filter(Boolean)
-    .join(", ");
+  const named = matches.length === 0 ? inCategory : matches;
   throw new Error(
-    [
-      `Requested source template was not found: ${requested}`,
-      available
-        ? `Available templates: ${available}`
-        : "No named templates were returned.",
-    ].join("\n"),
+    `${matches.length === 0 ? "No" : "More than one"} template matches ${options.template}`
+      + `${options.category === undefined ? "" : ` in ${options.category}`}: `
+      + named.map((template) => `${template.name} (${template.category})`).join(", "),
   );
 }
 
-export function defaultSmokeImageSpec(options) {
-  return {
-    id: options.imageId,
-    imageName: options.imageName,
-    copyFromImageName: options.copyFromImageName,
-    port: options.port,
-    ...(options.loadScriptExplicit ? { loadScript: options.loadScript } : {}),
-  };
-}
-
-export function assertMcpPharoRepoDir(repoDir) {
-  const resolvedRepoDir = path.resolve(requiredString(repoDir, "--mcpPharoRepoDir"));
-  const baselinePath = path.join(
-    resolvedRepoDir,
-    "src",
-    "BaselineOfMCP",
-    "BaselineOfMCP.class.st",
-  );
-  if (!fs.existsSync(baselinePath)) {
-    throw new Error(
-      `--mcpPharoRepoDir must point at an MCP-Pharo checkout with src/BaselineOfMCP/BaselineOfMCP.class.st: ${resolvedRepoDir}`,
-    );
+/** A started image must offer tools, and the one asked for. */
+export function checkListedTools(tools, tool) {
+  if (tools.length === 0) {
+    throw new Error("The image listed no tools.");
   }
-
-  return resolvedRepoDir;
-}
-
-export function resolveSmokeLoadScriptPath(image, options, context = {}) {
-  const loadScript = image.loadScript;
-  if (typeof loadScript !== "string" || loadScript.trim().length === 0) {
-    return undefined;
-  }
-  if (path.isAbsolute(loadScript)) {
-    return path.resolve(loadScript);
-  }
-
-  if (!options.projectRoot) {
-    throw new Error(
-      `Image ${image.id} loadScript is relative (${loadScript}) but --projectRoot is not set; pass an absolute --loadScript, set --projectRoot, or use --mcpPharoRepoDir.`,
-    );
-  }
-
-  return path.resolve(options.projectRoot ?? context.repoRoot, loadScript);
-}
-
-export function assertSmokeLoadScriptsReady(options, context = {}) {
-  const checked = [];
-  for (const image of options.images ?? []) {
-    const resolvedPath = resolveSmokeLoadScriptPath(image, options, context);
-    const exists = resolvedPath !== undefined && fs.existsSync(resolvedPath);
-    checked.push({
-      imageId: image.id,
-      loadScript: image.loadScript,
-      resolvedPath,
-      exists,
-      gitTransport: image.git?.transport,
-    });
-
-    if (!exists && !options.allowRemoteMcpFallback) {
-      throw new Error(
-        [
-          resolvedPath === undefined
-            ? `Image ${image.id} has no MCP load script, and loading one from the network is not implicit.`
-            : `Image ${image.id} MCP load script does not exist before image startup: ${resolvedPath}`,
-          "Pass --loadScript pointing at a real script, use --mcpPharoRepoDir to generate a local Tonel load script, or pass --allowRemoteMcpFallback to explicitly use the configured remote Metacello fallback.",
-        ].join("\n"),
-      );
-    }
-  }
-
-  return checked;
-}
-
-export function smokeProjectConfig(options) {
-  return {
-    id: requiredString(options.projectId, "projectId"),
-    name: "plexus-smoke-start-route-stop",
-    ...(options.homePath
-      ? {
-          home: {
-            path: path.resolve(options.homePath),
-            imageCache: {
-              enabled: true,
-              networkPolicy: options.homeImageCacheNetworkPolicy ?? "online",
-            },
-          },
-        }
-      : {}),
-    images: (options.images ?? []).map((image) => ({
-      id: image.id,
-      imageName: image.imageName,
-      ...(image.create ? { create: image.create } : {}),
-      mcp: {
-        ...(image.loadScript ? { loadScript: image.loadScript } : {}),
-        ...(image.port ? { port: image.port } : {}),
-      },
-      ...(image.git ? { git: image.git } : {}),
-    })),
-  };
-}
-
-export function assertKeepOpenShowcaseBoundary(options) {
-  if (!options.keepOpen) {
-    return;
-  }
-
-  const stateRoot = requiredPath(options.stateRoot, "--stateRoot");
-  const launcherProfileRoot = requiredPath(
-    options.launcherProfileRoot,
-    "--launcherProfileRoot",
-  );
-  if (!isPathInside(stateRoot, launcherProfileRoot)) {
-    throw new Error(
-      "--launcherProfileRoot must be inside --stateRoot for keep-open mode",
-    );
-  }
-
-  const images = options.images ?? [];
-  if (images.length === 0) {
-    throw new Error("Keep-open mode requires at least one image");
-  }
-  for (const image of images) {
-    if (!image.copyFromImageName && !options.createSourceFromTemplate) {
-      throw new Error(
-        `Keep-open mode requires copied or template-created disposable images; image ${image.id} only references an existing imageName`,
-      );
-    }
+  if (tool !== undefined && !tools.some((each) => each.name === tool)) {
+    throw new Error(`The image does not list ${tool}: ${tools.map((each) => each.name).join(", ")}`);
   }
 }
 
-export function buildKeepOpenCleanupContext({
-  projectPaths,
-  options,
-  openData,
-}) {
-  const projectRoot = requiredString(
-    projectPaths?.projectRoot,
-    "projectPaths.projectRoot",
-  );
-  const stateRoot = requiredString(projectPaths?.stateRoot, "projectPaths.stateRoot");
-  const workspaceId = requiredString(options?.workspaceId, "options.workspaceId");
-  const copiedImages = (options?.images ?? [])
-    .filter((image) => image.copied && image.imageName)
-    .map((image) => ({
-      id: image.id,
-      imageName: image.imageName,
-    }));
-  const cleanupImageNames = [
-    ...copiedImages.map((image) => image.imageName),
-    ...(options?.createdSourceImageName ? [options.createdSourceImageName] : []),
-  ];
-
-  // One runtime per image, so cleanup is per image: the project verbs this
-  // used to name went when routes became discovered, and a command that no
-  // longer exists is worse advice than none.
-  const scopeArguments = [
-    "--project-path",
-    projectRoot,
-    "--workspace-id",
-    workspaceId,
-    "--state-root",
-    stateRoot,
-  ];
-  const closeCommands = copiedImages.map((image) => [
-    "plexus",
-    "image",
-    "stop",
-    image.id,
-    ...scopeArguments,
-  ]);
-  const statusCommand = ["plexus", "image", "list", ...scopeArguments];
-
-  return {
-    mode: "keep-open",
-    reason:
-      "The smoke operation retained the scoped disposable project and images after successful validation.",
-    closeCommands,
-    closeCommandStrings: closeCommands.map(shellCommand),
-    statusCommand,
-    statusCommandString: shellCommand(statusCommand),
-    launcherCleanup: {
-      profile: options?.launcherProfile,
-      profileRoot: options?.launcherProfileRoot,
-      environment: options?.launcherProfileEnvironment,
-      deleteImageToolCalls: cleanupImageNames.map((imageName) => ({
-        tool: "pharo_launcher_image_delete",
-        arguments: {
-          imageName,
-          force: true,
-        },
-      })),
-    },
-    routeControl: {
-      projectId: openData?.state?.projectId,
-      workspaceId,
-      // No endpoint to name: a gateway pointed at this project directory
-      // discovers the route, so the status call is all there is to record.
-      routeStatusTool: "plexus_gateway_status",
-      routeStatusArguments: {
-        projectId: openData?.state?.projectId,
-        workspaceId,
-        refreshHealth: true,
-      },
-    },
-    retained: {
-      artifactDirectory: options?.artifactDirectory,
-      eventsPath: options?.artifactEventsPath,
-      projectRoot,
-      stateRoot,
-      fixtureRoot: projectPaths?.fixtureRoot,
-      launcherProfile: options?.launcherProfile,
-      launcherProfileRoot: options?.launcherProfileRoot,
-      statePath: openData?.statePath,
-      copiedImages,
-      createdSourceImageName: options?.createdSourceImageName,
-      images: (openData?.state?.images ?? []).map((image) => ({
-        id: image.id,
-        imageName: image.imageName,
-        mcpServers: image.mcpServers,
-        pid: image.pid,
-        status: image.status,
-      })),
-    },
-  };
-}
-
-/** @param {{ logsDir?: string, imageNames?: string[] }} options */
-export function collectLauncherLogFiles({ logsDir, imageNames = [] }) {
-  if (!logsDir || !fs.existsSync(logsDir)) {
-    return [];
+/** A call must succeed, and say what was expected when something was. */
+export function checkToolResult(result, expectedText) {
+  const text = (result.content ?? [])
+    .map((part) => (part.type === "text" ? part.text : ""))
+    .join("\n");
+  if (result.isError) {
+    throw new Error(`The tool answered an error: ${text}`);
   }
-
-  const imageSegments = imageNames
-    .filter((imageName) => typeof imageName === "string" && imageName.length > 0)
-    .map(safeFileSegment);
-  if (imageSegments.length === 0) {
-    return [];
-  }
-
-  return fs
-    .readdirSync(logsDir, { withFileTypes: true })
-    .filter((entry) => entry.isFile())
-    .map((entry) => path.join(logsDir, entry.name))
-    .filter(
-      (filePath) =>
-        /\.(?:out|err)\.log$/.test(path.basename(filePath)) &&
-        imageSegments.some((segment) => path.basename(filePath).includes(segment)),
-    )
-    .sort();
-}
-
-export function formatToolFailure(label, result, context = {}) {
-  const lines = [
-    `${label} failed: ${result?.error ?? JSON.stringify(result)}`,
-  ];
-  // The lifecycle result carries its failures directly. This used to read
-  // `diagnostics.projectOpen`, the envelope the deleted `plexus_project_open`
-  // tool returned, so every failure since has been reported as a bare label.
-  const failures = result?.failures;
-  if (Array.isArray(failures) && failures.length > 0) {
-    lines.push("image start failures:");
-    for (const failure of failures) {
-      lines.push(
-        `- ${failure.imageId}/${failure.imageName}: ${failure.message}`,
-      );
-    }
-  }
-
-  if (context.launcherLogFiles?.length > 0) {
-    lines.push("launcher logs:");
-    for (const filePath of context.launcherLogFiles) {
-      lines.push(`- ${filePath}`);
-    }
-  }
-
-  if (result?.diagnostics) {
-    lines.push(`diagnostics: ${JSON.stringify(result.diagnostics, null, 2)}`);
-  }
-
-  return lines.join("\n");
-}
-
-export function assertFreshPharoLauncherMcpHealth(healthResult, runtime = {}) {
-  const runtimeLabel = pharoLauncherMcpRuntimeLabel(runtime);
-  const remediation =
-    "Use --pharoLauncherMcpRepoDir, PLEXUS_SMOKE_PHARO_LAUNCHER_MCP_REPO_DIR, or PHARO_LAUNCHER_MCP_REPO_DIR to run the smoke against the current pharo-launcher-mcp component source or packed artifact.";
-
-  const discovery = assertPharoLauncherMcpDiscoveryMetadata(
-    healthResult,
-    runtime,
-  );
-
-  const health = healthResult.health;
-  if (healthResult.ok !== true || health.ok !== true) {
-    throw new Error(
-      `pharo-launcher-mcp preflight failed before image mutation for ${runtimeLabel}. ${remediation} Health: ${JSON.stringify(healthResult)}`,
-    );
-  }
-
-  return discovery;
-}
-
-export function assertPharoLauncherMcpDiscoveryMetadata(
-  healthResult,
-  runtime = {},
-) {
-  const runtimeLabel = pharoLauncherMcpRuntimeLabel(runtime);
-  const remediation =
-    "Use --pharoLauncherMcpRepoDir, PLEXUS_SMOKE_PHARO_LAUNCHER_MCP_REPO_DIR, or PHARO_LAUNCHER_MCP_REPO_DIR to run the smoke against the current pharo-launcher-mcp component source or packed artifact.";
-
-  if (!healthResult || typeof healthResult !== "object") {
-    throw new Error(
-      `pharo-launcher-mcp preflight failed before image mutation: --health did not return a JSON object for ${runtimeLabel}. ${remediation}`,
-    );
-  }
-
-  const health = healthResult.health;
-  if (!health || typeof health !== "object") {
-    throw new Error(
-      `pharo-launcher-mcp preflight failed before image mutation: --health did not return health details for ${runtimeLabel}. ${remediation}`,
-    );
-  }
-
-  const discovery = health.config?.discovery;
-  if (!discovery || typeof discovery.source !== "string") {
-    throw new Error(
-      `pharo-launcher-mcp preflight failed before image mutation: ${runtimeLabel} does not report launcher discovery metadata. This usually means PLexus is resolving a stale installed @evref-bl/pharo-launcher-mcp package instead of the current component source. ${remediation}`,
-    );
-  }
-
-  return {
-    discoverySource: discovery.source,
-  };
-}
-
-function requiredString(value, label) {
-  if (typeof value !== "string" || value.trim().length === 0) {
-    throw new Error(`${label} is required for live smoke runs`);
-  }
-  return value.trim();
-}
-
-function smalltalkString(value) {
-  return `'${String(value).replaceAll("'", "''")}'`;
-}
-
-function safeFileSegment(value) {
-  const cleaned = String(value).replaceAll(/[^A-Za-z0-9._-]+/g, "-");
-  return cleaned.length > 0 ? cleaned : "image";
-}
-
-function requiredPath(value, label) {
-  return path.resolve(requiredString(value, label));
-}
-
-function shellCommand(args) {
-  return args.map(shellQuote).join(" ");
-}
-
-function shellQuote(value) {
-  const text = String(value);
-  if (/^[A-Za-z0-9_./:=@+-]+$/.test(text)) {
-    return text;
-  }
-
-  return `'${text.replaceAll("'", "'\\''")}'`;
-}
-
-function pharoLauncherMcpRuntimeLabel(runtime) {
-  const source = typeof runtime.source === "string" ? runtime.source : "unknown";
-  const pathValue =
-    typeof runtime.repoDir === "string"
-      ? runtime.repoDir
-      : typeof runtime.packageDir === "string"
-        ? runtime.packageDir
-        : typeof runtime.entry === "string"
-          ? runtime.entry
-          : runtime.command;
-  return `${source}${pathValue ? ` runtime at ${pathValue}` : " runtime"}`;
-}
-
-function comparablePath(value) {
-  const resolved = path.resolve(value);
-  return process.platform === "win32" ? resolved.toLowerCase() : resolved;
-}
-
-function assertDisposablePath(value, label, repoRoot) {
-  const resolved = path.resolve(value);
-  if (path.parse(resolved).root === resolved) {
-    throw new Error(`${label} must not point at a filesystem root`);
-  }
-  if (isPathInside(repoRoot, resolved)) {
-    throw new Error(`${label} must be outside the PLexus source checkout`);
+  if (expectedText !== undefined && !text.includes(expectedText)) {
+    throw new Error(`The tool's answer does not contain ${expectedText}: ${text}`);
   }
 }
 
-function validatePrefix(value, prefix, valueLabel, prefixLabel) {
-  if (!prefix) {
-    return;
-  }
-  if (!value.startsWith(prefix)) {
-    throw new Error(`${valueLabel} must start with ${prefixLabel} ${prefix}`);
-  }
-}
-
-function validateDisposableImages(images) {
-  for (const image of images) {
-    if (
-      image.imageName &&
-      image.copyFromImageName &&
-      image.imageName === image.copyFromImageName
-    ) {
-      throw new Error(
-        `Image ${image.id} target imageName must differ from copyFromImageName`,
-      );
-    }
-  }
+/** One line per step that failed, with the code PLexus gave when it gave one. */
+export function formatFailure(step, error) {
+  const code = error && typeof error === "object" && "code" in error ? ` [${error.code}]` : "";
+  const message = error instanceof Error ? error.message : String(error);
+  return `smoke failed at ${step}${code}: ${message}`;
 }

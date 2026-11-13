@@ -2,7 +2,7 @@
   "name": "plexus",
   "version": "0.15.2",
   "private": true,
-  "description": "Pharo image lifecycle management and MCP server forwarding.",
+  "description": "Pharo images as directories and processes, and forwarding to the MCP servers they run.",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
@@ -10,8 +10,7 @@
   },
   "type": "module",
   "bin": {
-    "plexus": "./packages/plexus/dist/cli.js",
-    "plexus-gateway": "./packages/plexus/dist/gateway/server/index.js"
+    "plexus": "./packages/plexus/dist/cli.js"
   },
   "workspaces": [
     "packages/plexus"
