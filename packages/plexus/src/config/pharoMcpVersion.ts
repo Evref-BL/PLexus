@@ -1,10 +1,9 @@
 /**
- * The Pharo MCP version PLexus loads into an image unless a project says
- * otherwise.
+ * The MCP release PLexus loads into an image that is created without a
+ * script.
  *
- * It lives in a module of its own because it is the one thing a consumer
- * checks across the package boundary: `pharo-agent` pins the same version and
- * has a test that the two agree. The script generator that uses it is an
- * internal, and nothing about publishing this should drag that along.
+ * It is a module of its own because `pharo-agent` pins the same version and
+ * checks across the package boundary that the two agree, and because the
+ * release workflows read and rewrite it here.
  */
 export const defaultPharoMcpVersion = "3.7.0";

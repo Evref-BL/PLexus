@@ -1,880 +1,115 @@
 import assert from "node:assert/strict";
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
 import test from "node:test";
 import {
-  applySmokeProfileDefaults,
-  assertKeepOpenShowcaseBoundary,
-  assertSmokeLoadScriptsReady,
-  buildKeepOpenCleanupContext,
-  collectLauncherLogFiles,
-  defaultSmokeImageSpec,
-  dependencyCacheSourceImagePreparationScriptSource,
-  assertPharoLauncherMcpDiscoveryMetadata,
-  assertFreshPharoLauncherMcpHealth,
-  buildLiveSmokeRunPlan,
+  checkListedTools,
+  checkToolResult,
   defaultRunId,
-  formatToolFailure,
-  isPathInside,
-  loadSmokeProfile,
-  mcpPharoTonelLoadScriptSource,
-  parseTimeoutBudget,
-  resolveRequestedSourceTemplate,
-  resolvePharoLauncherMcpRepoDirOption,
-  smokeProjectConfig,
-  usesDefaultSmokeLoadScript,
+  formatFailure,
+  parseSmokeArgs,
+  resolveTemplate,
+  scratchScopePrefix,
+  smokeSteps,
 } from "../../scripts/live-smoke-policy.mjs";
 
-const repoRoot = path.resolve("C:/work/PLexus");
+const now = new Date("2026-11-13T12:34:56Z");
 
-function baseOptions(overrides = {}) {
-  return {
-    approvalProfile: "overnight-live-20260517",
-    launcherProfileRoot: "C:/work/launcher-profile",
-    artifactRoot: "C:/work/artifacts",
-    stateRoot: "C:/work/state",
-    projectId: "smoke-start-route-stop",
-    images: [
-      {
-        id: "dev",
-        copyFromImageName: "MCP12-2",
-      },
-    ],
-    ...overrides,
-  };
-}
-
-test("requires approval, artifact, and state inputs", () => {
-  assert.throws(
-    () =>
-      buildLiveSmokeRunPlan(
-        baseOptions({
-          approvalProfile: undefined,
-        }),
-        { repoRoot },
-      ),
-    /--approvalProfile is required/,
-  );
-  assert.throws(
-    () =>
-      buildLiveSmokeRunPlan(
-        baseOptions({
-          artifactRoot: undefined,
-        }),
-        { repoRoot },
-      ),
-    /--artifactRoot is required/,
-  );
-  assert.throws(
-    () =>
-      buildLiveSmokeRunPlan(
-        baseOptions({
-          stateRoot: undefined,
-        }),
-        { repoRoot },
-      ),
-    /--stateRoot is required/,
-  );
+test("runs in a scratch scope of its own unless given another scratch scope", () => {
+  assert.equal(defaultRunId(now), "20261113T123456");
+  assert.equal(parseSmokeArgs([], { now }).scope, `${scratchScopePrefix}20261113T123456`);
+  assert.equal(parseSmokeArgs(["--scope", "plexus_smoke_ci"]).scope, "plexus_smoke_ci");
+  assert.throws(() => parseSmokeArgs(["--scope", "Pharo4Agents"]), /scratch scope/);
 });
 
-test("rejects shared PLexus source paths", () => {
-  assert.throws(
-    () =>
-      buildLiveSmokeRunPlan(
-        baseOptions({
-          stateRoot: path.join(repoRoot, ".plexus"),
-        }),
-        { repoRoot },
-      ),
-    /outside the PLexus source checkout/,
-  );
-});
-
-test("allocates stable run, workspace, target, and artifact ids", () => {
-  const plan = buildLiveSmokeRunPlan(baseOptions(), {
-    repoRoot,
-    now: new Date("2026-05-17T01:23:45.000Z"),
-    pid: 1234,
+test("reads its options, with defaults for a plain run", () => {
+  assert.deepEqual(parseSmokeArgs([], { now }), {
+    template: "Pharo 14.0 - 64bit",
+    scope: "plexus_smoke_20261113T123456",
+    name: "smoke",
+    timeoutMs: 600_000,
+    toolArguments: {},
+    keep: false,
   });
-
-  assert.equal(plan.runId, "smoke-2026-05-17T01-23-45-000Z-1234");
-  assert.equal(plan.workspaceId, plan.runId);
-  assert.equal(
-    plan.artifactDirectory,
-    path.join(path.resolve("C:/work/artifacts"), plan.runId),
-  );
-});
-
-test("defaults launcher profile to the project-owned root used by project-open", () => {
-  const plan = buildLiveSmokeRunPlan(
-    baseOptions({
-      launcherProfile: undefined,
-      launcherProfileRoot: undefined,
-      projectId: "Project A",
-    }),
-    { repoRoot },
-  );
-  const profileRoot = path.join(
-    path.resolve("C:/work/state"),
-    "profiles",
-    "Project-A",
-  );
-
-  assert.equal(plan.launcherProfile, "plexus-Project-A");
-  assert.equal(plan.launcherProfileRoot, profileRoot);
-  assert.equal(
-    plan.launcherProfileEnvironment.PHARO_LAUNCHER_MCP_LAUNCHER_IMAGE,
-    path.join(profileRoot, "launcher", "PharoLauncher.image"),
-  );
-  assert.equal(
-    plan.launcherProfileEnvironment.PHARO_LAUNCHER_MCP_LAUNCHER_CONFIGURATION,
-    path.join(profileRoot, "launcher", "pharo-launcher-cli-config.ston"),
-  );
-});
-
-test("enforces the configured workspace prefix", () => {
-  assert.doesNotThrow(() =>
-    buildLiveSmokeRunPlan(
-      baseOptions({
-        workspaceId: "smoke-nightly-1",
-        requiredWorkspacePrefix: "smoke-nightly",
-      }),
-      { repoRoot },
-    ),
-  );
-  assert.throws(
-    () =>
-      buildLiveSmokeRunPlan(
-        baseOptions({
-          workspaceId: "manual-1",
-          requiredWorkspacePrefix: "smoke-nightly",
-        }),
-        { repoRoot },
-      ),
-    /--workspaceId must start/,
-  );
-});
-
-test("rejects a target image that aliases the copy source", () => {
-  assert.throws(
-    () =>
-      buildLiveSmokeRunPlan(
-        baseOptions({
-          images: [
-            {
-              id: "dev",
-              imageName: "MCP12-2",
-              copyFromImageName: "MCP12-2",
-            },
-          ],
-        }),
-        { repoRoot },
-      ),
-    /must differ from copyFromImageName/,
-  );
-});
-
-test("rejects a smoke image with no MCP load script at all", () => {
-  // Loading from the network is a choice the run has to make out loud. There
-  // is no default script in this repository to fall back to, and naming one
-  // that has never existed made the refusal read as a deleted file.
-  assert.throws(
-    () => assertSmokeLoadScriptsReady({ images: [{ id: "dev" }] }),
-    /has no MCP load script, and loading one from the network is not implicit/,
-  );
   assert.deepEqual(
-    assertSmokeLoadScriptsReady({
-      images: [{ id: "dev" }],
-      allowRemoteMcpFallback: true,
-    }).map((entry) => entry.exists),
-    [false],
-  );
-});
-
-test("rejects missing smoke MCP load scripts before image startup", () => {
-  const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), "plexus-smoke-project-"));
-  try {
-    assert.throws(
-      () =>
-        assertSmokeLoadScriptsReady({
-          projectRoot,
-          images: [
-            {
-              id: "dev",
-              loadScript: "pharo/missing-load-mcp.st",
-            },
-          ],
-        }),
-      /MCP load script does not exist before image startup/,
-    );
-  } finally {
-    fs.rmSync(projectRoot, { recursive: true, force: true });
-  }
-});
-
-test("requires explicit project root or absolute path for relative smoke MCP load scripts", () => {
-  assert.throws(
-    () =>
-      assertSmokeLoadScriptsReady({
-        images: [
-          {
-            id: "dev",
-            loadScript: "pharo/load-mcp.st",
-          },
-        ],
-      }),
-    /loadScript is relative .* --projectRoot is not set/,
-  );
-});
-
-test("allows explicit remote MCP fallback while recording missing load scripts", () => {
-  const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), "plexus-smoke-project-"));
-  try {
-    const checked = assertSmokeLoadScriptsReady({
-      projectRoot,
-      allowRemoteMcpFallback: true,
-      images: [
-        {
-          id: "dev",
-          loadScript: "pharo/missing-load-mcp.st",
-        },
-      ],
-    });
-
-    assert.equal(checked[0].exists, false);
-    assert.equal(
-      checked[0].resolvedPath,
-      path.join(projectRoot, "pharo", "missing-load-mcp.st"),
-    );
-  } finally {
-    fs.rmSync(projectRoot, { recursive: true, force: true });
-  }
-});
-
-test("records Git transport for explicit remote MCP fallback", () => {
-  const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), "plexus-smoke-project-"));
-  try {
-    const checked = assertSmokeLoadScriptsReady({
-      projectRoot,
-      allowRemoteMcpFallback: true,
-      images: [
-        {
-          id: "dev",
-          loadScript: "pharo/missing-load-mcp.st",
-          git: {
-            transport: "https",
-          },
-        },
-      ],
-    });
-
-    assert.equal(checked[0].exists, false);
-    assert.equal(checked[0].gitTransport, "https");
-  } finally {
-    fs.rmSync(projectRoot, { recursive: true, force: true });
-  }
-});
-
-test("loads named smoke profile defaults from scripts/smoke-profiles", () => {
-  const tempRepoRoot = fs.mkdtempSync(path.join(os.tmpdir(), "plexus-smoke-profile-"));
-  const profileDirectory = path.join(tempRepoRoot, "scripts", "smoke-profiles");
-  fs.mkdirSync(profileDirectory, { recursive: true });
-  fs.writeFileSync(
-    path.join(profileDirectory, "pharo13-template-local.json"),
-    JSON.stringify({
-      description: "Profile fixture",
-      createSourceFromTemplate: true,
-      sourceTemplateName: "Pharo 13.0 - 64bit (stable)",
-      timeoutBudget: {
-        openMs: 600_000,
-        routingMs: 180_000,
-      },
-    }),
-    "utf8",
-  );
-
-  try {
-    const profile = loadSmokeProfile("pharo13-template-local", {
-      repoRoot: tempRepoRoot,
-    });
-
-    assert.equal(
-      profile.profilePath,
-      path.join(profileDirectory, "pharo13-template-local.json"),
-    );
-    assert.equal(profile.defaults.createSourceFromTemplate, true);
-    assert.equal(
-      profile.defaults.sourceTemplateName,
-      "Pharo 13.0 - 64bit (stable)",
-    );
-    assert.equal(
-      profile.defaults.timeoutBudgetJson,
-      JSON.stringify({
-        openMs: 600_000,
-        routingMs: 180_000,
-      }),
-    );
-  } finally {
-    fs.rmSync(tempRepoRoot, { recursive: true, force: true });
-  }
-});
-
-test("applies smoke profile defaults while preserving explicit CLI values", () => {
-  const options = {
-    projectId: "cli-project",
-    imageSpecs: [],
-  };
-  const applied = applySmokeProfileDefaults(
-    options,
-    {
-      projectId: "profile-project",
-      createSourceFromTemplate: true,
-      sourceTemplateName: "Pharo 13.0 - 64bit (stable)",
-      imageSpecs: [
-        {
-          id: "dev",
-          copyFromImageName: "PreparedSource",
-        },
-      ],
-    },
-    {
-      blockedKeys: new Set(["projectId"]),
-    },
-  );
-
-  assert.deepEqual(applied, [
-    "createSourceFromTemplate",
-    "sourceTemplateName",
-    "imageSpecs",
-  ]);
-  assert.equal(options.projectId, "cli-project");
-  assert.equal(options.createSourceFromTemplate, true);
-  assert.deepEqual(options.imageSpecs, [
-    {
-      id: "dev",
-      copyFromImageName: "PreparedSource",
-    },
-  ]);
-});
-
-test("renders image Git transport into smoke project config", () => {
-  const config = smokeProjectConfig({
-    projectId: "smoke-transport",
-    images: [
-      {
-        id: "dev",
-        imageName: "PlexusSmokeDev",
-        active: true,
-        loadScript: "/tmp/load-mcp.st",
-        git: {
-          transport: "ssh",
-          ssh: {
-            username: "git",
-            host: "ssh.github.com",
-            port: 443,
-          },
-        },
-      },
-    ],
-  });
-
-  assert.deepEqual(config.images[0].git, {
-    transport: "ssh",
-    ssh: {
-      username: "git",
-      host: "ssh.github.com",
-      port: 443,
-    },
-  });
-});
-
-test("renders home cache project config for template-created smoke images", () => {
-  const config = smokeProjectConfig({
-    projectId: "home-cache-smoke",
-    homePath: "/tmp/plexus-home-cache-smoke/home",
-    images: [
-      {
-        id: "dev",
-        imageName: "PlexusHomeCacheSmoke-{workspaceId}-dev",
-        active: true,
-        create: {
-          kind: "template",
-          templateName: "Pharo 13.0 - 64bit (stable)",
-        },
-        loadScript: "/tmp/load-mcp.st",
-        git: {
-          transport: "https",
-        },
-      },
-    ],
-  });
-
-  assert.deepEqual(config.home, {
-    path: path.resolve("/tmp/plexus-home-cache-smoke/home"),
-    imageCache: {
-      enabled: true,
-      networkPolicy: "online",
-    },
-  });
-  assert.deepEqual(config.images[0].create, {
-    kind: "template",
-    templateName: "Pharo 13.0 - 64bit (stable)",
-  });
-  assert.equal(config.images[0].git.transport, "https");
-});
-
-test("renders local-only home cache network policy for smoke images", () => {
-  const config = smokeProjectConfig({
-    projectId: "home-cache-smoke",
-    homePath: "/tmp/plexus-home-cache-smoke/home",
-    homeImageCacheNetworkPolicy: "local-only",
-    images: [
-      {
-        id: "dev",
-        imageName: "PlexusHomeCacheSmoke-{workspaceId}-dev",
-        active: true,
-        create: {
-          kind: "template",
-          templateName: "Pharo 13.0 - 64bit (stable)",
-        },
-        loadScript: "/tmp/load-mcp.st",
-      },
-    ],
-  });
-
-  assert.equal(config.home?.imageCache.networkPolicy, "local-only");
-});
-
-test("resolves stale explicit source template selectors against current inventory", () => {
-  assert.deepEqual(
-    resolveRequestedSourceTemplate(
-      {
-        name: "Pharo 13.0 - 64bit",
-        category: "Official",
-      },
+    parseSmokeArgs(
       [
-        {
-          name: "Pharo 14.0 - 64bit (development version, latest)",
-        },
-        {
-          name: "Pharo 13.0 - 64bit (stable)",
-        },
+        "--template=Pharo 13.0 - 64bit",
+        "--category", "Official distributions",
+        "--home", "/tmp/plexus",
+        "--name", "dev",
+        "--timeout", "90",
+        "--tool", "class_search",
+        "--arguments", '{"name":"MCPToolRegistry"}',
+        "--expect", "class=MCPToolRegistry",
+        "--keep",
       ],
+      { now },
     ),
     {
-      name: "Pharo 13.0 - 64bit (stable)",
+      template: "Pharo 13.0 - 64bit",
+      category: "Official distributions",
+      home: "/tmp/plexus",
+      scope: "plexus_smoke_20261113T123456",
+      name: "dev",
+      timeoutMs: 90_000,
+      tool: "class_search",
+      toolArguments: { name: "MCPToolRegistry" },
+      expectedText: "class=MCPToolRegistry",
+      keep: true,
     },
   );
 });
 
-test("reports available templates when an explicit source selector is missing", () => {
-  assert.throws(
-    () =>
-      resolveRequestedSourceTemplate(
-        {
-          name: "Pharo 11.0 - 64bit",
-          category: "Official",
-        },
-        [
-          {
-            name: "Pharo 13.0 - 64bit (stable)",
-          },
-        ],
-      ),
-    /Requested source template was not found: Official\/Pharo 11\.0 - 64bit\nAvailable templates: Pharo 13\.0 - 64bit \(stable\)/,
-  );
+test("refuses options it does not know or cannot read", () => {
+  assert.throws(() => parseSmokeArgs(["--approvalProfile", "x"]), /Unknown option --approvalProfile/);
+  assert.throws(() => parseSmokeArgs(["--template"]), /--template needs a value/);
+  assert.throws(() => parseSmokeArgs(["dev"]), /Unexpected argument dev/);
+  assert.throws(() => parseSmokeArgs(["--timeout", "0"]), /seconds/);
+  assert.throws(() => parseSmokeArgs(["--arguments", "[1]"]), /JSON object/);
+  assert.throws(() => parseSmokeArgs(["--expect", "x"]), /--expect needs --tool/);
 });
 
-test("renders local MCP-Pharo Tonel load script source", () => {
-  const source = mcpPharoTonelLoadScriptSource("/tmp/mcp-pharo");
-  const expectedRepository = `tonel://${path
-    .resolve("/tmp/mcp-pharo", "src")
-    .replaceAll("\\", "/")}`;
-
-  assert.match(source, new RegExp(`repository: '${expectedRepository}'`));
-  // Bare load is the default group; Core alone leaves MCP-IDE out, which is
-  // every tool a project asks for.
-  assert.match(source, /\n  load\.$/m);
-  assert.doesNotMatch(source, /load: 'Core'/);
+test("creates, starts, lists, stops and deletes, and calls a tool only when asked", () => {
+  assert.deepEqual(smokeSteps({}), ["create", "start", "listTools", "stop", "delete"]);
+  assert.deepEqual(smokeSteps({ tool: "class_search" }), [
+    "create",
+    "start",
+    "listTools",
+    "callTool",
+    "stop",
+    "delete",
+  ]);
 });
 
-test("renders source image dependency-cache preparation script", () => {
-  const source = dependencyCacheSourceImagePreparationScriptSource({
-    statusPath: "/tmp/plexus-smoke/source-cache.properties",
-  });
-
-  assert.match(source, /Iceberg enableMetacelloIntegration: true\./);
-  assert.match(source, /IceLibgitRepository\s+shareRepositoriesBetweenImages: true;/);
-  assert.match(source, /sharedRepositoriesLocationString: plexusDependencyProbePath/);
-  assert.match(source, /plexusStatusWriter value: 'prepared' value: nil/);
-  assert.match(source, /Smalltalk snapshot: true andQuit: true\./);
-});
-
-test("only replaces implicit smoke load scripts with generated local MCP-Pharo loader", () => {
-  assert.equal(
-    usesDefaultSmokeLoadScript({
-      imageLoadScriptExplicit: false,
-      loadScriptExplicit: false,
-    }),
-    true,
-  );
-  assert.equal(
-    usesDefaultSmokeLoadScript({
-      imageLoadScriptExplicit: false,
-      loadScriptExplicit: true,
-    }),
-    false,
-  );
-  assert.equal(
-    usesDefaultSmokeLoadScript({
-      imageLoadScriptExplicit: true,
-      loadScriptExplicit: false,
-    }),
-    false,
-  );
-});
-
-test("resolves pharo-launcher-mcp component source from the general launcher environment", () => {
-  assert.equal(
-    resolvePharoLauncherMcpRepoDirOption(
-      {},
-      {
-        PHARO_LAUNCHER_MCP_REPO_DIR: "C:/work/pharo-launcher-mcp",
-      },
-    ),
-    "C:/work/pharo-launcher-mcp",
-  );
-  assert.equal(
-    resolvePharoLauncherMcpRepoDirOption(
-      {},
-      {
-        PLEXUS_SMOKE_PHARO_LAUNCHER_MCP_REPO_DIR:
-          "C:/work/smoke/pharo-launcher-mcp",
-        PHARO_LAUNCHER_MCP_REPO_DIR: "C:/work/pharo-launcher-mcp",
-      },
-    ),
-    "C:/work/smoke/pharo-launcher-mcp",
-  );
-  assert.equal(
-    resolvePharoLauncherMcpRepoDirOption(
-      { pharoLauncherMcpRepoDir: "C:/work/explicit/pharo-launcher-mcp" },
-      {
-        PHARO_LAUNCHER_MCP_REPO_DIR: "C:/work/pharo-launcher-mcp",
-      },
-    ),
-    "C:/work/explicit/pharo-launcher-mcp",
-  );
-});
-
-test("default one-image smoke spec carries no load script it was not given", () => {
-  assert.deepEqual(
-    defaultSmokeImageSpec({
-      imageId: "dev",
-      loadScript: "/somewhere/load-mcp.st",
-      loadScriptExplicit: false,
-    }),
-    {
-      id: "dev",
-      imageName: undefined,
-      copyFromImageName: undefined,
-      port: undefined,
-    },
-  );
-
-  assert.deepEqual(
-    defaultSmokeImageSpec({
-      imageId: "dev",
-      loadScript: "/tmp/custom-load.st",
-      loadScriptExplicit: true,
-    }),
-    {
-      id: "dev",
-      imageName: undefined,
-      copyFromImageName: undefined,
-      port: undefined,
-      loadScript: "/tmp/custom-load.st",
-    },
-  );
-});
-
-test("keep-open showcase mode requires project-owned disposable image state", () => {
-  assert.doesNotThrow(() =>
-    assertKeepOpenShowcaseBoundary({
-      keepOpen: true,
-      stateRoot: "C:/work/state",
-      launcherProfileRoot: "C:/work/state/profiles/showcase",
-      images: [
-        {
-          id: "dev",
-          copyFromImageName: "MCP12-2",
-        },
-      ],
-    }),
-  );
-
-  assert.throws(
-    () =>
-      assertKeepOpenShowcaseBoundary({
-        keepOpen: true,
-        stateRoot: "C:/work/state",
-        launcherProfileRoot: "C:/shared/pharo-launcher",
-        images: [
-          {
-            id: "dev",
-            copyFromImageName: "MCP12-2",
-          },
-        ],
-      }),
-    /--launcherProfileRoot must be inside --stateRoot for keep-open mode/,
-  );
-
-  assert.throws(
-    () =>
-      assertKeepOpenShowcaseBoundary({
-        keepOpen: true,
-        createSourceFromTemplate: false,
-        stateRoot: "C:/work/state",
-        launcherProfileRoot: "C:/work/state/profiles/showcase",
-        images: [
-          {
-            id: "dev",
-            imageName: "SharedMCPImage",
-          },
-        ],
-      }),
-    /requires copied or template-created disposable images/,
-  );
-});
-
-test("keep-open cleanup context records scoped close and status commands", () => {
-  const context = buildKeepOpenCleanupContext({
-    projectPaths: {
-      projectRoot: "C:/work/showcase/project",
-      stateRoot: "C:/work/showcase/state",
-      fixtureRoot: "C:/work/showcase/fixtures",
-    },
-    options: {
-      artifactDirectory: "C:/work/showcase/artifacts/smoke-1",
-      artifactEventsPath: "C:/work/showcase/artifacts/smoke-1/events.jsonl",
-      launcherProfileRoot: "C:/work/showcase/state/profiles/showcase",
-      launcherProfile: "plexus-showcase",
-      launcherProfileEnvironment: {
-        PHARO_LAUNCHER_MCP_PROFILE: "plexus-showcase",
-      },
-      workspaceId: "showcase-1",
-      createdSourceImageName: "PlexusSmokeSource",
-      images: [
-        {
-          id: "dev",
-          imageName: "PlexusSmokedev",
-          copied: true,
-        },
-      ],
-    },
-    openData: {
-      statePath: "C:/work/showcase/state/projects/showcase/workspaces/showcase-1/state.json",
-      state: {
-        projectId: "showcase",
-        workspaceId: "showcase-1",
-        gateway: {
-          endpoint: "http://127.0.0.1:8133/mcp",
-          controlEndpoint: "http://127.0.0.1:8133/control-mcp",
-        },
-        images: [
-          {
-            id: "dev",
-            imageName: "PlexusSmokedev",
-            pid: 12345,
-            status: "running",
-          },
-        ],
-      },
-    },
-  });
-
-  const scope = [
-    "--project-path",
-    "C:/work/showcase/project",
-    "--workspace-id",
-    "showcase-1",
-    "--state-root",
-    "C:/work/showcase/state",
+test("finds the template behind a name the launcher suffixes", () => {
+  const templates = [
+    { name: "Pharo 14.0 - 64bit (next stable)", category: "Official distributions" },
+    { name: "Pharo 13.0 - 64bit", category: "Official distributions" },
+    { name: "Pharo 13.0 - 64bit", category: "Deprecated" },
   ];
-  assert.deepEqual(context.closeCommands, [
-    ["plexus", "image", "stop", "dev", ...scope],
-  ]);
-  assert.deepEqual(context.statusCommand, ["plexus", "image", "list", ...scope]);
-  assert.equal(context.mcpCloseCall, undefined);
-  assert.equal(context.routeControl.projectId, "showcase");
-  assert.equal(context.routeControl.workspaceId, "showcase-1");
-  assert.deepEqual(context.launcherCleanup.deleteImageToolCalls, [
-    {
-      tool: "pharo_launcher_image_delete",
-      arguments: {
-        imageName: "PlexusSmokedev",
-        force: true,
-      },
-    },
-    {
-      tool: "pharo_launcher_image_delete",
-      arguments: {
-        imageName: "PlexusSmokeSource",
-        force: true,
-      },
-    },
-  ]);
-  assert.equal(
-    context.launcherCleanup.environment.PHARO_LAUNCHER_MCP_PROFILE,
-    "plexus-showcase",
-  );
-  assert.equal(context.retained.artifactDirectory, "C:/work/showcase/artifacts/smoke-1");
-  assert.equal(context.retained.createdSourceImageName, "PlexusSmokeSource");
-  assert.equal(context.retained.images[0].pid, 12345);
+  assert.deepEqual(resolveTemplate({ template: "Pharo 14.0 - 64bit" }, templates), {
+    name: "Pharo 14.0 - 64bit (next stable)",
+    category: "Official distributions",
+  });
+  assert.deepEqual(resolveTemplate({ template: "Pharo 13.0 - 64bit", category: "Deprecated" }, templates), {
+    name: "Pharo 13.0 - 64bit",
+    category: "Deprecated",
+  });
+  assert.throws(() => resolveTemplate({ template: "Pharo 13.0 - 64bit" }, templates), /More than one template/);
+  assert.throws(() => resolveTemplate({ template: "Pharo 99" }, templates), /No template matches Pharo 99: Pharo 14\.0/);
 });
 
-test("formats image start failures and launcher logs for smoke failures", () => {
-  // The shape a StartProjectImageResult actually has: failures at the top
-  // level, not under a diagnostics envelope no caller produces.
-  const message = formatToolFailure(
-    "startProjectImage",
-    {
-      ok: false,
-      error: "Timed out waiting for Pharo MCP health on port 7100",
-      failures: [
-        {
-          imageId: "dev",
-          imageName: "PlexusSmokedev",
-          message: "Timed out waiting for Pharo MCP health on port 7100",
-        },
-      ],
-    },
-    {
-      launcherLogFiles: ["/tmp/logs/2026-PlexusSmokedev-launch.err.log"],
-    },
-  );
+test("checks what the image answers", () => {
+  assert.throws(() => checkListedTools([]), /no tools/);
+  assert.throws(() => checkListedTools([{ name: "eval" }], "class_search"), /does not list class_search: eval/);
+  checkListedTools([{ name: "class_search" }], "class_search");
 
-  assert.match(message, /image start failures:/);
-  assert.match(message, /dev\/PlexusSmokedev: Timed out/);
-  assert.match(message, /2026-PlexusSmokedev-launch.err.log/);
+  checkToolResult({ content: [{ type: "text", text: "class=MCPToolRegistry" }] }, "class=MCPToolRegistry");
+  assert.throws(() => checkToolResult({ content: [{ type: "text", text: "nope" }], isError: true }), /answered an error: nope/);
+  assert.throws(() => checkToolResult({ content: [{ type: "text", text: "nope" }] }, "class="), /does not contain class=/);
 });
 
-test("collects launcher logs for failed smoke images", () => {
-  const logsDir = fs.mkdtempSync(path.join(os.tmpdir(), "plexus-smoke-logs-"));
-  try {
-    const expected = path.join(logsDir, "2026-PlexusSmokedev-launch.err.log");
-    fs.writeFileSync(expected, "failure\n", "utf8");
-    fs.writeFileSync(
-      path.join(logsDir, "2026-OtherImage-launch.err.log"),
-      "other\n",
-      "utf8",
-    );
-
-    assert.deepEqual(
-      collectLauncherLogFiles({
-        logsDir,
-        imageNames: ["PlexusSmokedev"],
-      }),
-      [expected],
-    );
-  } finally {
-    fs.rmSync(logsDir, { recursive: true, force: true });
-  }
-});
-
-test("parses timeout budget overrides", () => {
-  assert.equal(parseTimeoutBudget().openMs, 300_000);
-  assert.equal(parseTimeoutBudget('{"openMs":1000}').openMs, 1000);
-  assert.throws(
-    () => parseTimeoutBudget('{"openMs":0}'),
-    /openMs must be a positive integer/,
-  );
-  assert.throws(
-    () => parseTimeoutBudget('{"unknownMs":1}'),
-    /Unknown timeout budget key/,
-  );
-});
-
-test("accepts fresh pharo-launcher-mcp health with discovery metadata", () => {
-  const preflight = assertFreshPharoLauncherMcpHealth(
-    {
-      ok: true,
-      health: {
-        ok: true,
-        config: {
-          discovery: {
-            source: "macos-system-app",
-          },
-        },
-      },
-    },
-    { source: "env", repoDir: "C:/work/pharo-launcher-mcp" },
-  );
-
-  assert.equal(preflight.discoverySource, "macos-system-app");
-});
-
-test("accepts discovery metadata before profile launcher image staging", () => {
-  const preflight = assertPharoLauncherMcpDiscoveryMetadata(
-    {
-      ok: true,
-      health: {
-        ok: false,
-        config: {
-          discovery: {
-            source: "macos-system-app",
-          },
-          launcherImage: {
-            path: "C:/work/state/profiles/project/launcher/PharoLauncher.image",
-            exists: false,
-          },
-        },
-      },
-    },
-    { source: "env", repoDir: "C:/work/pharo-launcher-mcp" },
-  );
-
-  assert.equal(preflight.discoverySource, "macos-system-app");
-});
-
-test("rejects unhealthy pharo-launcher-mcp preflight before image mutation", () => {
-  assert.throws(
-    () =>
-      assertFreshPharoLauncherMcpHealth(
-        {
-          ok: true,
-          health: {
-            ok: false,
-            config: {},
-          },
-        },
-        { source: "package", packageDir: "C:/work/plexus/node_modules/pharo" },
-      ),
-    /preflight failed before image mutation/,
-  );
-});
-
-test("rejects pharo-launcher-mcp runtimes without discovery metadata", () => {
-  assert.throws(
-    () =>
-      assertFreshPharoLauncherMcpHealth(
-        {
-          ok: true,
-          health: {
-            ok: true,
-            config: {
-              launcherDir: { path: "C:/PharoLauncher", exists: true },
-            },
-          },
-        },
-        { source: "package", packageDir: "C:/work/plexus/node_modules/pharo" },
-      ),
-    /does not report launcher discovery metadata/,
-  );
-});
-
-test("detects nested paths", () => {
-  assert.equal(isPathInside("C:/work/root", "C:/work/root/file.txt"), true);
-  assert.equal(isPathInside("C:/work/root", "C:/work/other/file.txt"), false);
-  assert.match(defaultRunId(new Date("2026-05-17T00:00:00Z"), 1), /^smoke-/);
+test("names the step that failed and the code PLexus gave", () => {
+  const error = Object.assign(new Error("Image smoke exited during start."), { code: "start-failed" });
+  assert.equal(formatFailure("start", error), "smoke failed at start [start-failed]: Image smoke exited during start.");
+  assert.equal(formatFailure("listTools", new Error("HTTP 500")), "smoke failed at listTools: HTTP 500");
 });
