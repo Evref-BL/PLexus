@@ -40,6 +40,7 @@ import {
   resolvePathLike,
 } from "../support/pathStyle.js";
 import {
+  homeProfilesRoot,
   pharoLauncherMcpProfileEnvironment,
   type PharoLauncherMcpProfilePaths,
 } from "../launcher/pharoLauncherProfile.js";
@@ -535,13 +536,17 @@ export function homeImageCacheImageName(key: string): string {
 export function homeImageCacheProfile(
   homePath: string,
 ): Required<PharoLauncherMcpProfilePaths> {
-  const stateRoot = joinPathLike(homePath, "profiles", "image-cache");
+  const stateRoot = joinPathLike(homeProfilesRoot(homePath), "image-cache");
   return {
     profileName: "plexus-home-image-cache",
     stateRoot,
     launcherImage: joinPathLike(stateRoot, "launcher", "PharoLauncher.image"),
     imagesDir: joinPathLike(stateRoot, "images"),
-    vmsDir: joinPathLike(stateRoot, "vms"),
+    // The default profile's VMs: a store of its own aged apart, and its old
+    // VM stopped running on a newer macOS while the default one ran. One VM
+    // per Pharo version is one to renew, and the cache builds on the VM its
+    // copies then run on.
+    vmsDir: joinPathLike(homeProfilesRoot(homePath), "vms"),
     templateSourcesDir: joinPathLike(stateRoot, "templates"),
     initScriptsDir: joinPathLike(stateRoot, "init-scripts"),
     logsDir: joinPathLike(stateRoot, "logs"),

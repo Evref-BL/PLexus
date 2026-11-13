@@ -57,12 +57,19 @@ function profileName(config: ProjectConfig): string {
   return ["plexus", sanitizeRuntimeId(projectConfigId(config))].join("-");
 }
 
+/**
+ * Where a PLexus home keeps its default launcher profile, shared across
+ * projects: the launcher image, VMs and templates are large and identical.
+ */
+export function homeProfilesRoot(homePath: string): string {
+  return joinPathLike(homePath, "profiles");
+}
+
 function defaultProfileRoot(
   config: ProjectConfig,
   env: NodeJS.ProcessEnv | undefined,
 ): string {
-  // Shared across projects: the launcher image, VMs and templates are large and identical.
-  return joinPathLike(resolvePlexusHomePath({ config, env }), "profiles");
+  return homeProfilesRoot(resolvePlexusHomePath({ config, env }));
 }
 
 function projectOwnedPaths(

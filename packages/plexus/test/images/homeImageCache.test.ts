@@ -32,6 +32,7 @@ import {
   defaultPharoMcpMetacelloRepositoryLocation,
 } from "../../src/workspace/projectStartupScript.js";
 import { launcherClientAnswering } from "../support/launcherHost.js";
+import { describePharoLauncherMcpProfile } from "../../src/launcher/pharoLauncherProfile.js";
 
 const tempDirs: string[] = [];
 
@@ -106,6 +107,24 @@ function materializeCacheImage(plan: { homePath: string; cacheImageName: string 
   fs.writeFileSync(path.join(directory, `${plan.cacheImageName}.image`), "");
   return directory;
 }
+
+// The cache's own VM store aged apart from the default one, and its Pharo 14
+// VM, from 2025, stopped starting images on macOS 27 while the default
+// profile's ran them.
+describe("the home image cache's VMs", () => {
+  it("are the default profile's", () => {
+    const home = rootPath("home", "me", ".plexus");
+    const projectProfile = describePharoLauncherMcpProfile({
+      projectRoot: rootPath("work", "project"),
+      config: config({ home: { path: home } }),
+      workspaceId: "worktree-a",
+    });
+
+    expect(homeImageCacheProfile(home).vmsDir).toBe(path.join(home, "profiles", "vms"));
+    expect(homeImageCacheProfile(home).vmsDir).toBe(projectProfile.vmsDir);
+    expect(homeImageCacheProfile(home).imagesDir).not.toBe(projectProfile.imagesDir);
+  });
+});
 
 describe("home image cache", () => {
   it("resolves the PLexus home path from environment, config, then user home", () => {

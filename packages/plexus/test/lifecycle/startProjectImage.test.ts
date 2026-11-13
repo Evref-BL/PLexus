@@ -2255,6 +2255,75 @@ describe("project open", () => {
     ).toHaveLength(3);
   });
 
+  // A VM older than the system can stop at once, after writing its fatal
+  // error to the launcher's stderr log; the failure says how to renew it.
+  it("says how to renew a VM that stopped before its image ran", async () => {
+    const projectRoot = makeTempDir("plexus-project-");
+    const stateRoot = makeTempDir("plexus-state-");
+    const logs = makeTempDir("plexus-logs-");
+    writeProjectConfig(projectRoot);
+    const stderrLog = path.join(logs, "myproject-dev.err.log");
+    fs.writeFileSync(
+      stderrLog,
+      "allocateHeap: Could not allocate codeZone in the expected place\nVM Error Fri Nov 13 10:02:44 2026\n",
+    );
+
+    const launchedProcess: LauncherProcess = {
+      pid: 987654321,
+      imageName: "MyProject-dev",
+      commandLine: "Pharo MyProject-dev.image",
+    };
+    const launchResult = {
+      ok: true,
+      raw: {
+        stdout: [
+          `Detached profile-scoped Pharo image pid ${launchedProcess.pid}.`,
+          "vm: /home/me/.plexus/profiles/vms/140-x64/Pharo.app/Contents/MacOS/Pharo",
+          "vmId: 140-x64",
+          `stdout: ${path.join(logs, "myproject-dev.out.log")}`,
+          `stderr: ${stderrLog}`,
+        ].join("\n"),
+        stderr: "",
+      },
+    };
+    const pharoLauncherMcpClient = new FakePharoLauncherMcpClient(
+      [[launchedProcess], []],
+      undefined,
+      undefined,
+      undefined,
+      launchResult,
+    );
+
+    await expect(
+      startProjectImage({
+        projectRoot,
+        stateRoot,
+        workspaceId: "worktree-a",
+        pharoLauncherMcpClient,
+        healthClient: new FakeHealthClient(false),
+        now: fixedNow,
+        sleep: async () => {},
+        poll: {
+          intervalMs: 0,
+          processTimeoutMs: 60_000,
+          healthTimeoutMs: 60_000,
+        },
+        imageId: "dev",
+      }),
+    ).rejects.toMatchObject({
+      result: {
+        failures: [
+          {
+            imageId: "dev",
+            message: expect.stringContaining(
+              "Remove /home/me/.plexus/profiles/vms/140-x64 and start again",
+            ),
+          },
+        ],
+      },
+    });
+  });
+
   it("fails fast when a launched image exits before MCP health", async () => {
     const projectRoot = makeTempDir("plexus-project-");
     const stateRoot = makeTempDir("plexus-state-");
