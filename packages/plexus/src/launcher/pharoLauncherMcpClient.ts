@@ -14,6 +14,7 @@ import {
   openPharoLauncher,
   type PharoLauncher,
 } from "@evref-bl/pharo-launcher-mcp/launcher";
+import { vmRenewalHint } from "./vmRenewal.js";
 
 export interface PharoLauncherMcpToolClient {
   callTool<K extends LauncherToolName>(
@@ -77,10 +78,27 @@ export function launcherToolFailureMessage(
     ]
       .filter(Boolean)
       .join(" ");
-
-  return detail
+  const message = detail
     ? `pharo-launcher-mcp tool failed: ${toolName}: ${detail}`
     : `pharo-launcher-mcp tool failed: ${toolName}`;
+  const renewal = launchVmRenewalHint(toolName, payload);
+  return renewal ? `${message}\n${renewal}` : message;
+}
+
+// A launch that waited for its VM has the VM's output in the launcher's raw
+// result, after the launcher's own report of which VM it ran.
+function launchVmRenewalHint(toolName: string, payload: unknown): string | undefined {
+  if (toolName !== "pharo_launcher_image_start" || !payload || typeof payload !== "object") {
+    return undefined;
+  }
+  const raw = (payload as Record<string, unknown>).raw;
+  if (!raw || typeof raw !== "object") {
+    return undefined;
+  }
+  const { stdout, stderr } = raw as Record<string, unknown>;
+  const report = typeof stdout === "string" ? stdout : "";
+  const output = `${report}\n${typeof stderr === "string" ? stderr : ""}`;
+  return vmRenewalHint(output, report);
 }
 
 /**

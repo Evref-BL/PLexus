@@ -55,6 +55,7 @@ import {
   type ProjectState,
 } from "../workspace/projectState.js";
 import { writeProjectImageStartupScript } from "../workspace/projectStartupScript.js";
+import { vmRenewalHint } from "../launcher/vmRenewal.js";
 
 /**
  * What PLexus reads from a launcher result, not the launcher's result.
@@ -1039,7 +1040,8 @@ function imageStartupExitedBeforeProcessObservedError(options: {
     logPaths.length > 0 ? `. Launcher logs: ${logPaths.join(", ")}` : "";
 
   return new ImageStartupExitedBeforeHealthError(
-    `Image ${options.imageName} process ${options.process.pid} exited before PLexus observed the launcher process${logHint}`,
+    `Image ${options.imageName} process ${options.process.pid} exited before PLexus observed the launcher process${logHint}`
+      + renewalLine(options.launcherResult, logPaths),
     options.launcherResult,
     options.process,
   );
@@ -1056,10 +1058,58 @@ function imageStartupExitedBeforeHealthError(options: {
     logPaths.length > 0 ? `. Launcher logs: ${logPaths.join(", ")}` : "";
 
   return new ImageStartupExitedBeforeHealthError(
-    `Image ${options.imageName} process ${options.process.pid} exited before Pharo MCP became healthy or wrote its endpoint to ${options.endpointHandoffPath}${logHint}`,
+    `Image ${options.imageName} process ${options.process.pid} exited before Pharo MCP became healthy or wrote its endpoint to ${options.endpointHandoffPath}${logHint}`
+      + renewalLine(options.launcherResult, logPaths),
     options.launcherResult,
     options.process,
   );
+}
+
+// A detached launch leaves the VM's output in the launcher's logs, and its
+// own report of which VM it ran in its result: a VM that stopped with its
+// fatal-error report says there how to renew it.
+function renewalLine(
+  launcherResult: LauncherCommandResult | undefined,
+  logPaths: readonly string[],
+): string {
+  const report = launcherReport(launcherResult);
+  if (!report) {
+    return "";
+  }
+  const hint = vmRenewalHint(logPaths.map(logTail).join("\n"), report);
+  return hint ? `\n${hint}` : "";
+}
+
+function launcherReport(result: LauncherCommandResult | undefined): string | undefined {
+  if (!isObject(result)) {
+    return undefined;
+  }
+  const raw = (result as Record<string, unknown>).raw;
+  if (isObject(raw) && typeof raw.stdout === "string") {
+    return raw.stdout;
+  }
+  const data = result.data;
+  return isObject(data) && typeof data.message === "string" ? data.message : undefined;
+}
+
+// The end of a log, where a VM that stopped wrote why; a log that is gone
+// says nothing.
+function logTail(logPath: string): string {
+  const tailLength = 64 * 1024;
+  try {
+    const size = fs.statSync(logPath).size;
+    const descriptor = fs.openSync(logPath, "r");
+    try {
+      const length = Math.min(size, tailLength);
+      const buffer = Buffer.alloc(length);
+      fs.readSync(descriptor, buffer, 0, length, size - length);
+      return buffer.toString("utf8");
+    } finally {
+      fs.closeSync(descriptor);
+    }
+  } catch {
+    return "";
+  }
 }
 
 /**

@@ -948,6 +948,7 @@ describe("scoped pharo launcher facade", () => {
           script: expect.stringContaining(
             path.join(homePath, "image-cache", "entries"),
           ),
+          includeRaw: true,
         },
       },
       {

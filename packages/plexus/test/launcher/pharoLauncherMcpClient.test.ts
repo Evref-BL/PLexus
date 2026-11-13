@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { toolNames } from "@evref-bl/pharo-launcher-mcp";
+import { openPharoLauncher } from "@evref-bl/pharo-launcher-mcp/launcher";
 import {
   launcherToolFailureMessage,
   launcherToolNames,
@@ -53,5 +54,73 @@ describe("pharo-launcher-mcp tool failures", () => {
     expect(failure({ ok: false }).message).toBe(
       "pharo-launcher-mcp tool failed: pharo_launcher_image_copy_between_profiles",
     );
+  });
+});
+
+describe("a launch whose VM cannot run an image", () => {
+  // What the launcher answers for a waited launch, as the cache build makes
+  // one, with the launcher's report on stdout and the VM's on stderr.
+  async function failedLaunch(options: { stderr: string; includeRaw: boolean; vmUpdated?: boolean }) {
+    const launcher = openPharoLauncher({
+      runner: async () => ({
+        exitCode: 1,
+        stdout: [
+          "Profile-scoped Pharo image launch.",
+          "image: /home/me/.plexus/profiles/image-cache/images/Base/Base.image",
+          "vm: /home/me/.plexus/profiles/vms/140-x64/Pharo.app/Contents/MacOS/Pharo",
+          "vmId: 140-x64",
+          `vmUpdated: ${options.vmUpdated ?? false}`,
+        ].join("\n"),
+        stderr: options.stderr,
+        durationMs: 5,
+        timedOut: false,
+      }),
+    });
+    return launcher.startImage({
+      imageName: "Base",
+      detached: false,
+      displayMode: "headless",
+      script: "/home/me/prepare.st",
+      includeRaw: options.includeRaw,
+    });
+  }
+  const staleVm = "allocateHeap: Could not allocate codeZone in the expected place\nVM Error Fri Nov 13 10:02:44 2026";
+
+  it("says how to renew the VM", async () => {
+    const message = launcherToolFailureMessage(
+      "pharo_launcher_image_start",
+      await failedLaunch({ stderr: staleVm, includeRaw: true }),
+    );
+
+    expect(message).toContain("pharo-launcher-mcp tool failed: pharo_launcher_image_start: allocateHeap");
+    expect(message).toContain("Remove /home/me/.plexus/profiles/vms/140-x64 and start again");
+  });
+
+  it("needs the launcher's raw result, which names the VM", async () => {
+    const message = launcherToolFailureMessage(
+      "pharo_launcher_image_start",
+      await failedLaunch({ stderr: staleVm, includeRaw: false }),
+    );
+
+    expect(message).not.toContain("Remove");
+  });
+
+  it("says renewing will not help when the launch just installed the VM", async () => {
+    const message = launcherToolFailureMessage(
+      "pharo_launcher_image_start",
+      await failedLaunch({ stderr: staleVm, includeRaw: true, vmUpdated: true }),
+    );
+
+    expect(message).toContain("was installed by this launch, so it is the current one");
+    expect(message).not.toContain("Remove");
+  });
+
+  it("says nothing more when the image failed rather than its VM", async () => {
+    const message = launcherToolFailureMessage(
+      "pharo_launcher_image_start",
+      await failedLaunch({ stderr: "Error: the script failed", includeRaw: true }),
+    );
+
+    expect(message).not.toContain("Remove");
   });
 });
