@@ -1098,6 +1098,7 @@ describe("project open", () => {
           script: expect.stringContaining(
             path.join(homePath, "image-cache", "entries"),
           ),
+          includeRaw: true,
         },
       },
       {

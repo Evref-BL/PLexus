@@ -33,9 +33,16 @@ describe("a VM that cannot run an image", () => {
     expect(vmRenewalHint(staleVmOutput, "Detached Pharo image pid 42.")).toBeUndefined();
   });
 
+  it("says renewing will not help when the launch just installed it", () => {
+    const hint = vmRenewalHint(staleVmOutput, `${report}\nvmUpdated: true`);
+
+    expect(hint).toContain("was installed by this launch, so it is the current one");
+    expect(hint).not.toContain("Remove");
+  });
+
   it("finds the slot on Windows paths too", () => {
     expect(
       launchedVmSlot("vm: C:\\Users\\me\\.plexus\\profiles\\vms\\140-x64\\Pharo.exe\nvmId: 140-x64"),
-    ).toEqual({ vmId: "140-x64", slot: "C:\\Users\\me\\.plexus\\profiles\\vms\\140-x64" });
+    ).toEqual({ vmId: "140-x64", slot: "C:\\Users\\me\\.plexus\\profiles\\vms\\140-x64", installedNow: false });
   });
 });

@@ -14,17 +14,24 @@
 // before any image code could have run.
 const vmFatalErrorBanner = "VM Error";
 
-/** The VM slot a profile-scoped launch ran, from the launcher's report of it. */
+/**
+ * The VM slot a profile-scoped launch ran, from the launcher's report of it,
+ * and whether the launch installed that VM itself, which makes it the current
+ * one.
+ */
 export function launchedVmSlot(
   launcherReport: string,
-): { vmId: string; slot: string } | undefined {
+): { vmId: string; slot: string; installedNow: boolean } | undefined {
   const vmPath = /^vm: (.+)$/m.exec(launcherReport)?.[1]?.trim();
   const vmId = /^vmId: (.+)$/m.exec(launcherReport)?.[1]?.trim();
   if (!vmPath || !vmId) {
     return undefined;
   }
   const match = new RegExp(`^(.*[\\\\/]${escapeRegExp(vmId)})[\\\\/]`).exec(vmPath);
-  return match ? { vmId, slot: match[1] } : undefined;
+  if (!match) {
+    return undefined;
+  }
+  return { vmId, slot: match[1], installedNow: /^vmUpdated: true$/m.test(launcherReport) };
 }
 
 /**
@@ -44,6 +51,11 @@ export function vmRenewalHint(
   const vm = launchedVmSlot(launcherReport);
   if (!vm) {
     return undefined;
+  }
+  if (vm.installedNow) {
+    // Removing it again would download the same VM and fail the same way.
+    return `The Pharo VM ${vm.vmId} was installed by this launch, so it is the current one,`
+      + " and it still stopped before its image ran: renewing it will not help on this system.";
   }
   return `The Pharo VM ${vm.vmId} stopped before its image ran, which a VM older than this system can do.`
     + ` Remove ${vm.slot} and start again: the current VM is installed in its place.`;
