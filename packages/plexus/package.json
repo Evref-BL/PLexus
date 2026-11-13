@@ -1,6 +1,6 @@
 {
   "name": "@evref-bl/plexus",
-  "version": "0.15.2",
+  "version": "0.16.0",
   "private": false,
   "description": "PLexus: Pharo images as directories and processes, and forwarding to the MCP servers they run.",
   "license": "Apache-2.0",
