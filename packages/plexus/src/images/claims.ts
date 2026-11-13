@@ -1,6 +1,6 @@
 /**
- * A claim is a file naming the process that holds it and since when, such
- * as a start's launch lock. A claim whose process is
+ * A claim is a file naming the process that holds it and since when: a
+ * start's launch lock, a create's building marker. A claim whose process is
  * gone, or that has been held longer than its work can take, is stale, so a
  * process that was killed never blocks an image for good.
  */

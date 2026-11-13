@@ -10,6 +10,7 @@ import {
 import type { Display, Endpoint, StartOptions } from "../types.js";
 import { readClaim, takeClaim, type ClaimHolder, type ClaimState } from "./claims.js";
 import type { ImagesContext } from "./context.js";
+import { buildingState, stillBuilding } from "./create.js";
 import { observeEndpoint } from "./endpoint.js";
 import { hostProcesses, killFailureLines, killVms, vmsOn } from "./processes.js";
 import { startScript } from "./scripts.js";
@@ -46,8 +47,15 @@ export async function start(
   const display = options.display ?? "headless";
   const timeoutMs = options.timeoutMs ?? defaultStartTimeoutMs;
   const files = existingImage(context, name);
-  if (fs.existsSync(files.building)) {
-    throw new PlexusError("building", `Image ${name} is still being created.`);
+  const building = buildingState(context, files);
+  if (building.state === "held") {
+    throw stillBuilding(files, building.holder);
+  }
+  if (building.state === "stale") {
+    throw new PlexusError(
+      "building",
+      `Image ${name} was never finished: the create that made it ended before it was done. Delete it, and create it again.`,
+    );
   }
 
   const release = takeLaunchLock(context, files, timeoutMs);

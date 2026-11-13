@@ -29,7 +29,7 @@ export type LauncherPort = Pick<
 
 // The launcher gives a command 30 s. Downloading a template, or a launch that
 // waits while an image loads MCP and saves, takes minutes.
-const longCommandTimeoutMs = 60 * 60_000;
+export const longCommandTimeoutMs = 60 * 60_000;
 
 export function openLauncherPort(home: string): LauncherPort {
   const env = homeProfileEnvironment(home);

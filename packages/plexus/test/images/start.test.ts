@@ -253,11 +253,32 @@ describe("start", () => {
   });
 
   it("refuses an image that is not there, or still being created", async () => {
-    const { plexus, context } = setup();
+    const { launcher, plexus, context } = setup();
     await expect(start(context, "other")).rejects.toMatchObject({ code: "no-such-image" });
 
     fs.mkdirSync(plexus, { recursive: true });
-    fs.writeFileSync(path.join(plexus, "building"), "");
-    await expect(start(context, "dev")).rejects.toMatchObject({ code: "building" });
+    fs.writeFileSync(
+      path.join(plexus, "building"),
+      JSON.stringify({ pid: process.pid, at: new Date(context.now()).toISOString() }),
+    );
+    await expect(start(context, "dev")).rejects.toMatchObject({
+      code: "building",
+      message: `Image dev is still being created by process ${process.pid}.`,
+    });
+    expect(launcher.calls).toEqual([]);
+  });
+
+  it("refuses an image whose create ended before it was done, saying to delete it", async () => {
+    const { plexus, context } = setup();
+    fs.mkdirSync(plexus, { recursive: true });
+    fs.writeFileSync(
+      path.join(plexus, "building"),
+      JSON.stringify({ pid: 2_147_483_646, at: new Date(context.now()).toISOString() }),
+    );
+
+    await expect(start(context, "dev")).rejects.toMatchObject({
+      code: "building",
+      message: expect.stringContaining("Delete it, and create it again."),
+    });
   });
 });

@@ -110,7 +110,7 @@ describe("create without a script", () => {
       noLaunch: true,
     });
     const buildName = createImage.newImageName as string;
-    expect(buildName).toMatch(/^plexus-build-[0-9a-f]{8}$/);
+    expect(buildName).toMatch(new RegExp(`^plexus-build-${process.pid}-[0-9a-f]{8}$`));
     expect(launcher.called("startImage")).toEqual([
       {
         imageName: buildName,
@@ -147,6 +147,10 @@ describe("create without a script", () => {
 
     await create(context, "dev", { template: template.name });
     expect(launcher.called("updateTemplates")).toHaveLength(1);
+    expect(launcher.called("createImage")).toEqual([]);
+    expect(readProperties(path.join(storeRoot(home), "dev", "plexus", "created.properties"))).toMatchObject({
+      category: template.category,
+    });
   });
 
   it("refuses an ambiguous or unknown template before making anything", async () => {
@@ -238,6 +242,41 @@ describe("create without a script", () => {
     expect(listing(basesRoot(home))).toEqual([key]);
   });
 
+  it("removes a build that failed for any reason, and keeps nothing of it", async () => {
+    const { home, launcher, context } = setup();
+    launcher.prepareAnswer = () => {
+      throw new Error("The launcher went away.");
+    };
+
+    await expect(create(context, "dev", { ...options })).rejects.toThrow("The launcher went away.");
+    expect(listing(storeRoot(home))).toEqual([]);
+    expect(listing(tmpRoot(home))).toEqual([]);
+  });
+
+  it("removes what a create that was killed left, and keeps what a running one works on", async () => {
+    const { home, context } = setup();
+    writeBase(home, key);
+    const dead = 2_147_483_646;
+    const leftovers = [
+      path.join(storeRoot(home), `plexus-build-${dead}-0a0a0a0a`),
+      path.join(tmpRoot(home), `Scope-dev-${dead}-0b0b0b0b`),
+    ];
+    const working = [
+      path.join(storeRoot(home), `plexus-build-${process.pid}-0c0c0c0c`),
+      path.join(tmpRoot(home), `Scope-dev-${process.pid}-0d0d0d0d`),
+      path.join(tmpRoot(home), "not-ours"),
+    ];
+    for (const dir of [...leftovers, ...working]) {
+      fs.mkdirSync(path.join(dir, "plexus"), { recursive: true });
+    }
+
+    await create(context, "dev", { ...options });
+
+    expect(leftovers.filter((dir) => fs.existsSync(dir))).toEqual([]);
+    expect(working.filter((dir) => fs.existsSync(dir))).toEqual(working);
+    expect(listing(storeRoot(home))).toEqual(["dev", `plexus-build-${process.pid}-0c0c0c0c`]);
+  });
+
   it("removes the bases of other pins once it built one", async () => {
     const { home, context } = setup();
     writeBase(home, "pharo-13-0-64bit-0a1b2c3d-mcp-3.6.0");
@@ -259,14 +298,14 @@ describe("create with a script", () => {
     return file;
   }
 
-  it("builds the image where it stays and files the script in once", async () => {
+  it("builds the image apart, renames it in marked as building, and files the script in once", async () => {
     const { home, launcher, context } = setup("Scope");
     const loader = script(home);
-    let buildingWhilePreparing = false;
+    let building: unknown;
     let prepareScript = "";
     launcher.prepareAnswer = (input) => {
       const plexus = path.dirname(input.script!);
-      buildingWhilePreparing = fs.existsSync(path.join(plexus, "building"));
+      building = JSON.parse(fs.readFileSync(path.join(plexus, "building"), "utf8"));
       prepareScript = fs.readFileSync(input.script!, "utf8");
       fs.writeFileSync(path.join(plexus, "prepare-status.properties"), "status=ok\r");
       return ok();
@@ -274,17 +313,72 @@ describe("create with a script", () => {
 
     const created = await create(context, "mcp", { ...options, script: loader });
 
-    expect(launcher.called("createImage")).toEqual([
-      expect.objectContaining({ newImageName: "Scope-mcp", noLaunch: true }),
+    const [createImage] = launcher.called("createImage") as Array<Record<string, unknown>>;
+    expect(createImage).toMatchObject({ noLaunch: true });
+    expect(createImage.newImageName).toMatch(new RegExp(`^plexus-build-${process.pid}-[0-9a-f]{8}$`));
+    expect(launcher.called("startImage")).toEqual([
+      expect.objectContaining({
+        imageName: "Scope-mcp",
+        script: path.join(storeRoot(home), "Scope-mcp", "plexus", "prepare.st"),
+      }),
     ]);
-    expect(buildingWhilePreparing).toBe(true);
+    expect(building).toEqual({ pid: process.pid, at: new Date(context.now()).toISOString() });
     expect(prepareScript).toContain(`'${loader.replace(/\\/g, "/")}' asFileReference fileIn.`);
     expect(prepareScript).not.toContain("Metacello new\n");
-    expect(created).toMatchObject({ name: "mcp", fromBase: false, mcp: { source: "script", script: loader } });
+    expect(created).toMatchObject({
+      name: "mcp",
+      path: path.join(storeRoot(home), "Scope-mcp", "Scope-mcp.image"),
+      fromBase: false,
+      mcp: { source: "script", script: loader },
+    });
     expect(created.building).toBeUndefined();
     expect(created.everyStart).toBeUndefined();
-    expect(listing(path.join(storeRoot(home), "Scope-mcp", "plexus"))).toEqual(["created.properties"]);
+    const dir = path.join(storeRoot(home), "Scope-mcp");
+    expect(listing(dir)).toEqual([
+      "Pharo14.0-64bit.sources",
+      "Scope-mcp.changes",
+      "Scope-mcp.image",
+      "meta-inf.ston",
+      "pharo.version",
+      "plexus",
+    ]);
+    expect(fs.readFileSync(path.join(dir, "meta-inf.ston"), "utf8")).toContain(
+      "RelativePath [ 'Scope-mcp', 'Scope-mcp.image' ]",
+    );
+    expect(listing(path.join(dir, "plexus"))).toEqual(["created.properties"]);
+    expect(listing(storeRoot(home))).toEqual(["Scope-mcp"]);
     expect(listing(basesRoot(home))).toEqual([]);
+  });
+
+  it("leaves alone the image of a create that took the name meanwhile", async () => {
+    const { home, launcher, context } = setup();
+    launcher.createAnswer = (input) => {
+      writeLauncherImage(launcher.imageDir(input.newImageName), input.newImageName);
+      writeLauncherImage(launcher.imageDir("mcp"), "mcp");
+      fs.writeFileSync(path.join(launcher.imageDir("mcp"), "mcp.image"), "theirs");
+      return ok();
+    };
+
+    await expect(create(context, "mcp", { ...options, script: script(home) })).rejects.toMatchObject({
+      code: "image-exists",
+    });
+    expect(listing(storeRoot(home))).toEqual(["mcp"]);
+    expect(fs.readFileSync(path.join(storeRoot(home), "mcp", "mcp.image"), "utf8")).toBe("theirs");
+    expect(launcher.called("startImage")).toEqual([]);
+  });
+
+  it("removes its build when the launcher could not make the image", async () => {
+    const { home, launcher, context } = setup();
+    launcher.createAnswer = (input) => {
+      fs.mkdirSync(launcher.imageDir(input.newImageName), { recursive: true });
+      return failed("Cannot download the template.");
+    };
+
+    await expect(create(context, "mcp", { ...options, script: script(home) })).rejects.toMatchObject({
+      code: "create-failed",
+      message: expect.stringContaining("Pharo Launcher createImage failed: Cannot download the template."),
+    });
+    expect(listing(storeRoot(home))).toEqual([]);
   });
 
   it("records the script for every start when asked", async () => {

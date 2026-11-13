@@ -1,12 +1,14 @@
 import { PlexusError } from "../errors.js";
 import type { ImagesContext } from "./context.js";
+import { buildingState, stillBuilding } from "./create.js";
 import { hostProcesses, vmsOn } from "./processes.js";
 import { beingStarted, launchLockState } from "./start.js";
 import { exists, imageFiles, noSuchImage, removeDirectory } from "./store.js";
 
 /**
- * Remove the image's directory, complete or not, unless a VM runs it or a
- * start is launching one.
+ * Remove the image's directory, complete or not, unless a VM runs it, or a
+ * create or a start is still working on it. An image whose create ended
+ * before it was done is removed like any other.
  */
 export async function deleteImage(
   context: ImagesContext,
@@ -15,6 +17,10 @@ export async function deleteImage(
   const files = imageFiles(context, name);
   if (!exists(files.dir)) {
     throw noSuchImage(files);
+  }
+  const building = buildingState(context, files);
+  if (building.state === "held") {
+    throw stillBuilding(files, building.holder);
   }
   const pids = vmsOn(files.imagePath, await hostProcesses(context)).map((vm) => vm.pid);
   if (pids.length > 0) {

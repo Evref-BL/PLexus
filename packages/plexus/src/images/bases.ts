@@ -14,7 +14,8 @@ import { buildPrefix } from "./names.js";
 import { createFromTemplate, prepare } from "./prepare.js";
 import {
   filesOfDirectory,
-  randomSuffix,
+  isFile,
+  ownedName,
   removeDirectory,
   type ImageFiles,
 } from "./store.js";
@@ -37,6 +38,15 @@ export function baseKey(template: string, category: string, pin: string): string
 }
 
 /**
+ * Where an image is made from a template before it is what it is for: in the
+ * store, where the launcher makes images, under a name no image can have and
+ * that says which process owns it.
+ */
+export function newBuild(context: ImagesContext, name: string): ImageFiles {
+  return filesOfDirectory(ownedName(path.join(storeRoot(context.home), buildPrefix)), name);
+}
+
+/**
  * The base for this template, built first when there is none. `built` says
  * whether this call built the one it answers.
  */
@@ -47,38 +57,34 @@ export async function ensureBase(
 ): Promise<{ dir: string; built: boolean }> {
   const key = baseKey(template.name, template.category, pin);
   const dir = path.join(basesRoot(context.home), key);
-  if (fs.existsSync(path.join(dir, `${baseFileName}.image`))) {
+  const isBase = () => isFile(path.join(dir, `${baseFileName}.image`));
+  if (isBase()) {
     return { dir, built: false };
   }
 
-  const build = filesOfDirectory(
-    path.join(storeRoot(context.home), `${buildPrefix}${randomSuffix()}`),
-    key,
-  );
-  const failure =
-    (await createFromTemplate(context, build, template)) ??
-    (await prepare(context, build, { kind: "pin", version: pin }));
-  if (failure !== undefined) {
-    removeDirectory(context.home, build.dir);
-    throw new PlexusError(
-      "create-failed",
-      `Building the base for ${template.name} failed.\n${failure}`,
-    );
-  }
-
-  // What the build kept about itself is not the images' to copy.
-  fs.rmSync(build.plexusDir, { recursive: true, force: true });
-  renameImageFiles(build.dir, build.diskName, baseFileName);
-  fs.mkdirSync(basesRoot(context.home), { recursive: true });
+  const build = newBuild(context, key);
   try {
+    const failure =
+      (await createFromTemplate(context, build, template)) ??
+      (await prepare(context, build, { kind: "pin", version: pin }));
+    if (failure !== undefined) {
+      throw new PlexusError(
+        "create-failed",
+        `Building the base for ${template.name} failed.\n${failure}`,
+      );
+    }
+    // What the build kept about itself is not the images' to copy.
+    fs.rmSync(build.plexusDir, { recursive: true, force: true });
+    renameImageFiles(build.dir, build.diskName, baseFileName);
+    fs.mkdirSync(basesRoot(context.home), { recursive: true });
     fs.renameSync(build.dir, dir);
   } catch (error) {
     removeDirectory(context.home, build.dir);
-    if (fs.existsSync(path.join(dir, `${baseFileName}.image`))) {
-      // Another create built the same base meanwhile, and it is as good.
-      return { dir, built: true };
+    if (error instanceof PlexusError || !isBase()) {
+      throw error;
     }
-    throw error;
+    // Another create built the same base meanwhile, and it is as good.
+    return { dir, built: true };
   }
   evictOtherPins(context.home, pin);
   return { dir, built: true };
@@ -110,24 +116,32 @@ export function copyBase(
   files: ImageFiles,
   finish: (assembled: ImageFiles) => void,
 ): void {
-  const assembly = path.join(tmpRoot(context.home), `${files.diskName}-${randomSuffix()}`);
+  const assembly = ownedName(path.join(tmpRoot(context.home), `${files.diskName}-`));
   const assembled = filesOfDirectory(assembly, files.name, files.diskName);
   try {
     copyTree(base, assembly);
     renameImageFiles(assembly, baseFileName, files.diskName);
     renameInMetaInf(path.join(assembly, "meta-inf.ston"), files.diskName);
     finish(assembled);
-    fs.mkdirSync(path.dirname(files.dir), { recursive: true });
-    try {
-      fs.renameSync(assembly, files.dir);
-    } catch (error) {
-      if (fs.existsSync(files.dir)) {
-        throw new PlexusError("image-exists", `Image ${files.name} already exists.`);
-      }
-      throw error;
-    }
+    moveIntoStore(assembly, files);
   } finally {
     fs.rmSync(assembly, { recursive: true, force: true });
+  }
+}
+
+/**
+ * Rename a directory in as the image `files` names, whole: a name another
+ * create took meanwhile is refused, and that create's image left alone.
+ */
+export function moveIntoStore(dir: string, files: ImageFiles): void {
+  fs.mkdirSync(path.dirname(files.dir), { recursive: true });
+  try {
+    fs.renameSync(dir, files.dir);
+  } catch (error) {
+    if (fs.existsSync(files.dir)) {
+      throw new PlexusError("image-exists", `Image ${files.name} already exists.`);
+    }
+    throw error;
   }
 }
 
@@ -148,7 +162,7 @@ function copyTree(source: string, target: string): void {
   }
 }
 
-function renameImageFiles(dir: string, from: string, to: string): void {
+export function renameImageFiles(dir: string, from: string, to: string): void {
   for (const extension of [".image", ".changes"]) {
     const source = path.join(dir, `${from}${extension}`);
     if (fs.existsSync(source)) {

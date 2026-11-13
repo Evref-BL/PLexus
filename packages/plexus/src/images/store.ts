@@ -177,12 +177,18 @@ export function ownedName(prefix: string): string {
   return `${prefix}${process.pid}-${randomSuffix()}`;
 }
 
+/** The process an owned name belongs to, or nothing for a name that is not one. */
+export function ownerOf(name: string): number | undefined {
+  const pid = /-(\d+)-[0-9a-f]{8}$/.exec(name)?.[1];
+  return pid === undefined ? undefined : Number(pid);
+}
+
 /**
  * Remove a directory: rename it out of the store first, so that nothing
  * lists or launches a half-removed image while the files go.
  */
 export function removeDirectory(home: string, dir: string): void {
-  const doomed = path.join(tmpRoot(home), `${path.basename(dir)}-${randomSuffix()}`);
+  const doomed = ownedName(path.join(tmpRoot(home), `${path.basename(dir)}-`));
   fs.mkdirSync(tmpRoot(home), { recursive: true });
   try {
     fs.renameSync(dir, doomed);

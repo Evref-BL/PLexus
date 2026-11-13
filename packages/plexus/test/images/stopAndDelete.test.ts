@@ -98,13 +98,31 @@ describe("delete", () => {
     expect(fs.readdirSync(tmpRoot(home))).toEqual([]);
   });
 
-  it("removes a directory a create left incomplete", async () => {
+  it("removes an image whose create ended before it was done", async () => {
     const { home, context } = setup();
     fs.mkdirSync(path.join(storeRoot(home), "half", "plexus"), { recursive: true });
-    fs.writeFileSync(path.join(storeRoot(home), "half", "plexus", "building"), "");
+    fs.writeFileSync(
+      path.join(storeRoot(home), "half", "plexus", "building"),
+      JSON.stringify({ pid: 2_147_483_646, at: new Date(context.now()).toISOString() }),
+    );
 
     await deleteImage(context, "half");
     expect(fs.readdirSync(storeRoot(home))).toEqual(["dev"]);
+  });
+
+  it("refuses an image a create is still making", async () => {
+    const { dir, context } = setup();
+    fs.mkdirSync(path.join(dir, "plexus"), { recursive: true });
+    fs.writeFileSync(
+      path.join(dir, "plexus", "building"),
+      JSON.stringify({ pid: process.pid, at: new Date(context.now()).toISOString() }),
+    );
+
+    await expect(deleteImage(context, "dev")).rejects.toMatchObject({
+      code: "building",
+      details: { pid: process.pid },
+    });
+    expect(fs.existsSync(dir)).toBe(true);
   });
 
   it("refuses while a VM runs the image", async () => {

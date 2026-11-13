@@ -28,7 +28,14 @@ with it:
 | `on-start` | by create with `--every-start`: the script to file in | by every start, before MCP starts |
 | `endpoint.properties` | by the running VM: the port it bound and its pid | by list and forwarding, while that pid runs the image |
 | `start.st`, `start-status.properties`, `launch.lock` | during a start | by that start |
-| `building` | while a create with a script prepares the image | by list and start |
+| `building` | by a create with a script, naming its process, until the image is ready | by list, start and delete |
+
+A create with a script builds the image under a name of its own and renames it
+in with `building`, which start refuses. While that create runs, delete
+refuses the image too; once its process is gone, delete is how the unfinished
+image goes. What a PLexus that was killed left elsewhere, a base it was
+building or a directory it was copying or removing, is named after its
+process, and the next create removes it.
 
 ## Commands
 
@@ -57,7 +64,8 @@ Every command takes `--home <dir>` (`PLEXUS_HOME`) and `--scope <prefix>`
 - **stop** kills every VM running the image. A kill does not save, so an agent
   that wants the image saved saves it through the image first. An image that is
   not running is already stopped.
-- **delete** removes the image's directory, and refuses while a VM runs it.
+- **delete** removes the image's directory, and refuses while a VM runs it or
+  a create or a start is still at work on it.
 - **list** shows each image, whether it runs, its pids, its endpoint, its
   template, Pharo version and how MCP got into it. It pings nothing and writes
   nothing.
