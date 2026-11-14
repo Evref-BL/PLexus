@@ -27,6 +27,7 @@ type Reply =
   | { result?: unknown; error?: unknown; status?: number; afterMs?: number }
   | "never"
   | "hang up"
+  | "half an answer"
   | undefined;
 
 /**
@@ -61,6 +62,11 @@ async function fakeMcpServer(
       }
       if (reply === "hang up") {
         request.socket.destroy();
+        return;
+      }
+      if (reply === "half an answer") {
+        response.writeHead(200, { "content-type": "application/json", "content-length": "1000" });
+        response.write('{"jsonrpc":"2.0",', () => request.socket.destroy());
         return;
       }
       if (message.id === undefined || reply === undefined) {
@@ -237,6 +243,14 @@ describe("a forwarded call", () => {
       message: "socket hang up",
       kind: "closed",
     });
+  });
+
+  it("says the connection closed in the middle of the answer, rather than waiting on it", async () => {
+    const { url } = await fakeMcpServer((request) =>
+      request.method === "tools/call" ? "half an answer" : standardAnswers(request),
+    );
+
+    expect(await failureOf(callTool({ url }, "class_search"))).toEqual({ message: "aborted", kind: "closed" });
   });
 
   it("says what else went wrong as other", async () => {
