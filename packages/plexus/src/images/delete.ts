@@ -1,3 +1,4 @@
+import * as texts from "../answers/texts.js";
 import { PlexusError } from "../errors.js";
 import type { ImagesContext } from "./context.js";
 import { buildingState, stillBuilding } from "./create.js";
@@ -24,11 +25,7 @@ export async function deleteImage(
   }
   const pids = vmsOn(files.imagePath, await hostProcesses(context)).map((vm) => vm.pid);
   if (pids.length > 0) {
-    throw new PlexusError(
-      "image-running",
-      `Image ${name} is running as pid ${pids.join(", ")}. Stop it before deleting it.`,
-      { pids },
-    );
+    throw new PlexusError("image-running", texts.deleteRunning(name, pids), { pids });
   }
   const lock = launchLockState(context, files);
   if (lock.state === "held") {

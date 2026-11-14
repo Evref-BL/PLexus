@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { templates } from "../../src/images/templates.js";
+import { categoryOf, templates } from "../../src/images/templates.js";
 import { failed, FakeLauncher, tempHome, testContext } from "../support/fakeLauncher.js";
 
 function writeSourcesList(home: string, groups: string[]): void {
@@ -74,6 +74,28 @@ describe("templates", () => {
     await expect(templates(testContext(home, launcher))).rejects.toMatchObject({
       code: "launcher-failed",
       message: "Pharo Launcher updateTemplates failed: Could not reach files.pharo.org",
+    });
+  });
+
+  it("names the category of a template in one, and refuses one in none or in several", async () => {
+    const home = tempHome();
+    const launcher = new FakeLauncher(home);
+    writeSourcesList(home, ["Official distributions", "Moose's"]);
+    launcher.templatesByCategory = {
+      "Official distributions": ["Pharo 14.0 - 64bit", "Pharo 13.0 - 64bit"],
+      "Moose's": ["Pharo 13.0 - 64bit"],
+    };
+    const context = testContext(home, launcher);
+
+    expect(await categoryOf(context, "Pharo 14.0 - 64bit")).toBe("Official distributions");
+    await expect(categoryOf(context, "Pharo 14")).rejects.toMatchObject({
+      code: "unknown-template",
+      message: "There is no template named Pharo 14. image_templates lists the templates there are.",
+    });
+    await expect(categoryOf(context, "Pharo 13.0 - 64bit")).rejects.toMatchObject({
+      code: "ambiguous-template",
+      message: "Template Pharo 13.0 - 64bit is in several categories: Official distributions, Moose's. Say which with a category.",
+      details: { categories: ["Official distributions", "Moose's"] },
     });
   });
 });

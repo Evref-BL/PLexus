@@ -7,6 +7,7 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import * as texts from "../answers/texts.js";
 import { PlexusError } from "../errors.js";
 import { basesRoot, storeRoot, tmpRoot } from "../home.js";
 import type { ImagesContext } from "./context.js";
@@ -139,7 +140,7 @@ export function moveIntoStore(dir: string, files: ImageFiles): void {
     fs.renameSync(dir, files.dir);
   } catch (error) {
     if (fs.existsSync(files.dir)) {
-      throw new PlexusError("image-exists", `Image ${files.name} already exists.`);
+      throw new PlexusError("image-exists", texts.imageExists(files.name));
     }
     throw error;
   }

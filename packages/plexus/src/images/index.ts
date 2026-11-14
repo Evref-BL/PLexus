@@ -1,4 +1,3 @@
-import { PlexusError } from "../errors.js";
 import type {
   CreateOptions,
   Endpoint,
@@ -10,6 +9,7 @@ import type {
 import { imagesContext, type ImagesContext } from "./context.js";
 import { create, type CreateResult } from "./create.js";
 import { deleteImage } from "./delete.js";
+import { endpointOf } from "./endpoint.js";
 import { list } from "./list.js";
 import { start, type StartResult } from "./start.js";
 import { stop } from "./stop.js";
@@ -54,18 +54,8 @@ export class Images {
     return deleteImage(this.context, name);
   }
 
+  /** Where a call to the image goes, or a refusal saying why none can and what to do. */
   async endpoint(name: string): Promise<Endpoint> {
-    const [image] = await list(this.context, name);
-    if (!image.running) {
-      throw new PlexusError("not-running", `Image ${name} is not running.`);
-    }
-    if (image.endpoint === undefined) {
-      throw new PlexusError(
-        "no-endpoint",
-        `Image ${name} runs, but has no endpoint to forward to: ${image.endpointProblem}.`,
-        { pids: image.pids },
-      );
-    }
-    return image.endpoint;
+    return endpointOf((await list(this.context, name))[0]);
   }
 }

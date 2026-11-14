@@ -188,8 +188,32 @@ describe("start", () => {
 
     await expect(start(context, "dev")).rejects.toMatchObject({
       code: "image-running",
-      message: expect.stringContaining(`already running as pid ${vm.pid}`),
+      message: "Image dev is already running; its tools answer now.",
       details: { pids: [vm.pid], endpoint: { url: "http://127.0.0.1:7001/", pid: vm.pid } },
+    });
+    expect(launcher.called("startImage")).toEqual([]);
+  });
+
+  it("says a running image it launched is starting while its server has not answered", async () => {
+    const { launcher, plexus, imagePath, context } = setup();
+    const vm = launcher.run(imagePath, { script: path.join(plexus, "start.st") });
+
+    await expect(start(context, "dev")).rejects.toMatchObject({
+      code: "image-running",
+      message: `Image dev is already running as pid ${vm.pid}, and is starting: its MCP server does not answer yet. Call its tools once image_list shows it running.`,
+      details: { pids: [vm.pid] },
+    });
+    expect(launcher.called("startImage")).toEqual([]);
+  });
+
+  it("says what a stop would do to a VM it did not start, without ordering it", async () => {
+    const { launcher, imagePath, context } = setup();
+    const vm = launcher.run(imagePath);
+
+    await expect(start(context, "dev")).rejects.toMatchObject({
+      code: "image-running",
+      message: `Image dev is already running as pid ${vm.pid} but takes no calls: not started by this PLexus. image_stop kills that VM without saving; image_start then starts it as it was last saved.`,
+      details: { pids: [vm.pid] },
     });
     expect(launcher.called("startImage")).toEqual([]);
   });
@@ -204,6 +228,7 @@ describe("start", () => {
 
     await expect(start(context, "dev")).rejects.toMatchObject({
       code: "being-started",
+      message: `Image dev is being started by process ${process.pid}. Its tools take calls once image_list shows it running.`,
       details: { pid: process.pid },
     });
     expect(launcher.called("startImage")).toEqual([]);
@@ -235,7 +260,12 @@ describe("start", () => {
     const now = new Date(context.now());
     fs.utimesSync(path.join(plexus, "launch.lock"), now, now);
 
-    await expect(start(context, "dev")).rejects.toMatchObject({ code: "being-started" });
+    const refused = await start(context, "dev").catch((caught: unknown) => caught);
+    expect(refused).toMatchObject({
+      code: "being-started",
+      message: "Image dev is being started. Its tools take calls once image_list shows it running.",
+    });
+    expect((refused as { details?: unknown }).details).toBeUndefined();
     expect(launcher.called("startImage")).toEqual([]);
   });
 
@@ -254,7 +284,10 @@ describe("start", () => {
 
   it("refuses an image that is not there, or still being created", async () => {
     const { launcher, plexus, context } = setup();
-    await expect(start(context, "other")).rejects.toMatchObject({ code: "no-such-image" });
+    await expect(start(context, "other")).rejects.toMatchObject({
+      code: "no-such-image",
+      message: "There is no image other. image_list names the images there are; image_create makes one.",
+    });
 
     fs.mkdirSync(plexus, { recursive: true });
     fs.writeFileSync(
@@ -263,7 +296,8 @@ describe("start", () => {
     );
     await expect(start(context, "dev")).rejects.toMatchObject({
       code: "building",
-      message: `Image dev is still being created by process ${process.pid}.`,
+      message: `Image dev is still being created by process ${process.pid}; image_list shows it as creating until it is done.`,
+      details: { pid: process.pid },
     });
     expect(launcher.calls).toEqual([]);
   });
@@ -278,7 +312,7 @@ describe("start", () => {
 
     await expect(start(context, "dev")).rejects.toMatchObject({
       code: "building",
-      message: expect.stringContaining("Delete it, and create it again."),
+      message: "Image dev was never finished: the create that made it ended before it was done. Delete it with image_delete and create it again with image_create.",
     });
   });
 });

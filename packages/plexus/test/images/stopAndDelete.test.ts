@@ -86,7 +86,10 @@ describe("stop", () => {
 
   it("refuses an image that is not there", async () => {
     const { context } = setup();
-    await expect(stop(context, "other")).rejects.toMatchObject({ code: "no-such-image" });
+    await expect(stop(context, "other")).rejects.toMatchObject({
+      code: "no-such-image",
+      message: "There is no image other. image_list names the images there are; image_create makes one.",
+    });
   });
 });
 
@@ -120,8 +123,25 @@ describe("delete", () => {
 
     await expect(deleteImage(context, "dev")).rejects.toMatchObject({
       code: "building",
+      message: `Image dev is still being created by process ${process.pid}; image_list shows it as creating until it is done.`,
       details: { pid: process.pid },
     });
+    expect(fs.existsSync(dir)).toBe(true);
+  });
+
+  it("refuses an image whose create has not written its claim yet", async () => {
+    const { dir, context } = setup();
+    fs.mkdirSync(path.join(dir, "plexus"), { recursive: true });
+    fs.writeFileSync(path.join(dir, "plexus", "building"), "");
+    const now = new Date(context.now());
+    fs.utimesSync(path.join(dir, "plexus", "building"), now, now);
+
+    const refused = await deleteImage(context, "dev").catch((caught: unknown) => caught);
+    expect(refused).toMatchObject({
+      code: "building",
+      message: "Image dev is still being created; image_list shows it as creating until it is done.",
+    });
+    expect((refused as { details?: unknown }).details).toBeUndefined();
     expect(fs.existsSync(dir)).toBe(true);
   });
 
@@ -131,6 +151,7 @@ describe("delete", () => {
 
     await expect(deleteImage(context, "dev")).rejects.toMatchObject({
       code: "image-running",
+      message: `Image dev is running as pid ${vm.pid}. Stop it with image_stop before deleting it.`,
       details: { pids: [vm.pid] },
     });
     expect(fs.existsSync(dir)).toBe(true);
@@ -144,12 +165,18 @@ describe("delete", () => {
       JSON.stringify({ pid: process.pid, at: new Date(context.now()).toISOString() }),
     );
 
-    await expect(deleteImage(context, "dev")).rejects.toMatchObject({ code: "being-started" });
+    await expect(deleteImage(context, "dev")).rejects.toMatchObject({
+      code: "being-started",
+      message: `Image dev is being started by process ${process.pid}. Its tools take calls once image_list shows it running.`,
+    });
     expect(fs.existsSync(dir)).toBe(true);
   });
 
   it("refuses an image that is not there", async () => {
     const { context } = setup();
-    await expect(deleteImage(context, "other")).rejects.toMatchObject({ code: "no-such-image" });
+    await expect(deleteImage(context, "other")).rejects.toMatchObject({
+      code: "no-such-image",
+      message: "There is no image other. image_list names the images there are; image_create makes one.",
+    });
   });
 });
