@@ -8,6 +8,25 @@ export interface Session {
   sessionId?: string;
 }
 
+/**
+ * How a forwarded request failed, beside its message: whether the image
+ * answered, never got the call, or got it and gave no answer.
+ *
+ * - `answered`: the image answered a JSON-RPC error, with its code;
+ * - `no-handshake`: the handshake timed out, so the call was not sent;
+ * - `timeout`: the call was sent and not answered in time;
+ * - `refused`: the connection was refused, so nothing was sent;
+ * - `closed`: the connection closed after the call was sent;
+ * - `cancelled`: the caller's signal aborted the request;
+ * - `other`: an HTTP status, invalid JSON, or a response with no result.
+ */
+export type ForwardError = Error &
+  (
+    | { kind: "answered"; rpcCode?: number }
+    | { kind: "no-handshake" | "timeout"; waitedMs: number }
+    | { kind: "refused" | "closed" | "cancelled" | "other" }
+  );
+
 interface HttpAnswer {
   payload: unknown;
   sessionId?: string;
