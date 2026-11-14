@@ -5,7 +5,7 @@
  */
 import { PlexusError } from "./errors.js";
 import { Images } from "./images/index.js";
-import { runPlexusMcpServer, type ImagesApi } from "./mcp/server.js";
+import { imageTools, runPlexusMcpServer, type ImagesApi } from "./mcp/server.js";
 import type { ImagesOptions, StartOptions } from "./types.js";
 
 export interface CliIo {
@@ -226,6 +226,11 @@ export async function runCli(
       return 0;
     }
 
+    // A refusal names the MCP tool that resolves it, which is a command here.
+    if (imageTools.some((tool) => tool.name === noun)) {
+      const command = noun.slice("image_".length) as Verb;
+      throw new UsageError(`${noun} is plexus image ${command} here.`, imageCommands[command].usage);
+    }
     if (noun !== "image") {
       throw new UsageError(`Unknown command ${noun}`, help());
     }

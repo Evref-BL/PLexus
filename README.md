@@ -100,6 +100,13 @@ that runs with an endpoint. Each of those takes an `image` argument naming the
 image to call; it may be left out while one image runs. After a start, a stop
 or a delete, the server tells the host its tool list changed.
 
+Its own tools answer in plain text, for a model: what happened first, then
+what it found. A refusal, a call whose arguments break the tool's schema
+among them, is an error result that says what happened and what to do. A
+forwarded call waits as long as the call's own time limit allows, and at least
+a minute; whatever the image answers passes through as it is, and a call that
+gets no answer says what became of the image.
+
 ## Library
 
 ```ts
@@ -114,6 +121,10 @@ await images.stop("dev");
 
 Everything reachable from the package root is API and moves under semver.
 Refusals are `PlexusError`s whose `code` says which.
+
+`imageToolAnswers` renders the answers of `plexus mcp`'s image tools, checks
+their arguments and says what a failed forwarded call did, for a server that
+offers the same tools.
 
 ## Development
 
