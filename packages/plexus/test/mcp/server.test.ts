@@ -6,11 +6,22 @@ import {
   type Tool,
 } from "@modelcontextprotocol/sdk/types.js";
 import { describe, expect, it } from "vitest";
+import * as texts from "../../src/answers/texts.js";
+import { defaultPharoMcpVersion } from "../../src/config/pharoMcpVersion.js";
 import { PlexusError } from "../../src/errors.js";
-import { createPlexusMcpServer, type ImagesApi } from "../../src/mcp/server.js";
+import { callWaitMs } from "../../src/forward/index.js";
+import {
+  createPlexusMcpServer,
+  type ForwardOptions,
+  type ImagesApi,
+  type PlexusMcpServerOptions,
+} from "../../src/mcp/server.js";
 import type { CreateOptions, Endpoint, ImageInfo, StartOptions } from "../../src/types.js";
 
-function row(name: string, state: { port?: number; running?: boolean } = {}): ImageInfo {
+function row(
+  name: string,
+  state: { port?: number; running?: boolean; problem?: string; fields?: Partial<ImageInfo> } = {},
+): ImageInfo {
   const running = state.running ?? state.port !== undefined;
   return {
     name,
@@ -19,7 +30,8 @@ function row(name: string, state: { port?: number; running?: boolean } = {}): Im
     running,
     pids: running ? [100] : [],
     ...(state.port === undefined ? {} : { endpoint: { url: `http://127.0.0.1:${state.port}/`, pid: 100 } }),
-    ...(running && state.port === undefined ? { endpointProblem: "no endpoint written yet" } : {}),
+    ...(running && state.port === undefined ? { endpointProblem: state.problem ?? "no endpoint written yet" } : {}),
+    ...state.fields,
   };
 }
 
@@ -39,14 +51,14 @@ class FakeImages implements ImagesApi {
     }
     const found = this.rows.filter((each) => each.name === name);
     if (found.length === 0) {
-      throw new PlexusError("no-such-image", `There is no image ${name}.`);
+      throw new PlexusError("no-such-image", texts.noSuchImage(name));
     }
     return found;
   }
 
   async create(name: string, options: CreateOptions) {
     this.calls.push(["create", name, options]);
-    return { ...row(name), fromBase: true, seconds: 1 };
+    return { ...row(name, { fields: { template: options.template } }), fromBase: true, seconds: 1 };
   }
 
   async start(name: string, options?: StartOptions) {
@@ -72,11 +84,16 @@ function tool(name: string, properties: Record<string, object> = {}, required: s
   return { name, description: `${name} in the image`, inputSchema: { type: "object", properties, required } };
 }
 
+type Forwarded = { endpoint: Endpoint; name: string; args: Record<string, unknown>; options: ForwardOptions };
+
 async function connect(
   images: FakeImages,
   toolsByUrl: Record<string, Tool[] | Error> = {},
+  answer: NonNullable<PlexusMcpServerOptions["callTool"]> = async (_endpoint, name) => ({
+    content: [{ type: "text", text: `${name} answered` }],
+  }),
 ) {
-  const forwarded: Array<{ endpoint: Endpoint; name: string; args: Record<string, unknown> }> = [];
+  const forwarded: Forwarded[] = [];
   const server = createPlexusMcpServer({
     images,
     listTools: async (endpoint) => {
@@ -86,9 +103,9 @@ async function connect(
       }
       return tools;
     },
-    callTool: async (endpoint, name, args): Promise<CallToolResult> => {
-      forwarded.push({ endpoint, name, args });
-      return { content: [{ type: "text", text: `${name} answered` }] };
+    callTool: async (endpoint, name, args, options): Promise<CallToolResult> => {
+      forwarded.push({ endpoint, name, args, options });
+      return answer(endpoint, name, args, options);
     },
   });
   const client = new Client({ name: "test", version: "1.0.0" });
@@ -97,10 +114,20 @@ async function connect(
     listChanged += 1;
   });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  // What the server answered, by request id.
+  const responded: unknown[] = [];
+  const send = serverTransport.send.bind(serverTransport);
+  serverTransport.send = async (message, options) => {
+    if ("id" in message && ("result" in message || "error" in message)) {
+      responded.push(message.id);
+    }
+    return send(message, options);
+  };
   await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
   return {
     client,
     forwarded,
+    responded,
     listChanged: async () => {
       await new Promise((resolve) => setImmediate(resolve));
       return listChanged;
@@ -108,6 +135,11 @@ async function connect(
     call: async (name: string, args: Record<string, unknown> = {}) =>
       (await client.callTool({ name, arguments: args })) as CallToolResult,
   };
+}
+
+/** An error as callTool rejects with: its message, and its kind with what that carries. */
+function forwardFailure(message: string, kind: Record<string, unknown>): Error {
+  return Object.assign(new Error(message), kind);
 }
 
 function textOf(result: CallToolResult): string {
@@ -165,15 +197,28 @@ describe("plexus mcp", () => {
 
     expect(textOf(await call("class_search", { name: "Object" }))).toBe("class_search answered");
     expect((await call("class_search", { name: "Object", image: "dev" })).isError).toBeUndefined();
-    expect(forwarded).toEqual([
+    expect(forwarded.map(({ options: _options, ...rest }) => rest)).toEqual([
       { endpoint: { url: "http://127.0.0.1:7001/", pid: 100 }, name: "class_search", args: { name: "Object" } },
       { endpoint: { url: "http://127.0.0.1:7001/", pid: 100 }, name: "class_search", args: { name: "Object" } },
     ]);
   });
 
+  it("passes the image's own error as it is", async () => {
+    const refused: CallToolResult = { content: [{ type: "text", text: "Unable to compile method." }], isError: true };
+    const { call } = await connect(new FakeImages([row("dev", { port: 7001 })]), {}, async () => refused);
+
+    expect(await call("method_compile", { source: "x" })).toEqual(refused);
+  });
+
   it("asks which image when several run, and refuses one that cannot take the call", async () => {
     const { call, forwarded } = await connect(
-      new FakeImages([row("a", { port: 7001 }), row("b", { port: 7002 }), row("idle"), row("starting", { running: true })]),
+      new FakeImages([
+        row("a", { port: 7001 }),
+        row("b", { port: 7002 }),
+        row("idle"),
+        row("starting", { running: true }),
+        row("legacy", { running: true, problem: "not started by this PLexus" }),
+      ]),
     );
 
     const ambiguous = await call("eval");
@@ -183,34 +228,231 @@ describe("plexus mcp", () => {
     await call("eval", { image: "b", code: "1" });
     expect(forwarded.at(-1)).toMatchObject({ endpoint: { url: "http://127.0.0.1:7002/" }, args: { code: "1" } });
 
-    expect(textOf(await call("eval", { image: "idle" }))).toBe("Image idle is not running.");
-    expect(textOf(await call("eval", { image: "starting" }))).toBe(
-      "Image starting runs, but has no endpoint to forward to: no endpoint written yet.",
+    const refusals: Array<[string, string]> = [
+      ["idle", "Image idle is not running. Start it with image_start; it starts as it was last saved."],
+      [
+        "starting",
+        "Image starting is starting as pid 100: its MCP server does not answer yet. Call it again once image_list shows it running.",
+      ],
+      [
+        "legacy",
+        "Image legacy runs as pid 100 but takes no calls: not started by this PLexus. image_stop kills that VM without saving; image_start then starts it as it was last saved.",
+      ],
+      ["gone", "There is no image gone. image_list names the images there are; image_create makes one."],
+    ];
+    for (const [image, refusal] of refusals) {
+      const result = await call("eval", { image });
+      expect(result.isError, image).toBe(true);
+      expect(textOf(result), image).toBe(refusal);
+    }
+    expect(forwarded).toHaveLength(1);
+  });
+
+  it("says why no image takes a call that names none", async () => {
+    const one = await connect(new FakeImages([row("idle"), row("dev", { running: true })]));
+    expect(textOf(await one.call("eval"))).toBe(
+      "Image dev is starting as pid 100: its MCP server does not answer yet. Call it again once image_list shows it running.",
     );
-    expect(textOf(await call("eval", { image: "gone" }))).toBe('There is no image "gone".');
+
+    const two = await connect(
+      new FakeImages([row("a", { running: true }), row("b", { running: true, problem: "not started by this PLexus" })]),
+    );
+    const none = await two.call("eval");
+    expect(none.isError).toBe(true);
+    expect(textOf(none)).toBe("Images a and b are running, but none takes calls: image_list says why.");
+    expect(two.forwarded).toEqual([]);
   });
 
   it("knows no tool beyond its own while no image runs", async () => {
     const { call } = await connect(new FakeImages([row("dev")]));
     const result = await call("class_search");
     expect(result.isError).toBe(true);
-    expect(textOf(result)).toBe("Unknown tool: class_search");
+    expect(textOf(result)).toBe(
+      "No image is running to take class_search. Start one with image_start; it starts as it was last saved.",
+    );
   });
 
-  it("answers the image tools from Images, refusals as their code", async () => {
+  it("refuses an image argument that is not a name", async () => {
+    const { call, forwarded } = await connect(new FakeImages([row("dev", { port: 7001 })]));
+    const result = await call("class_search", { image: 3 });
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toBe("Invalid arguments for class_search. image must be string, not integer.");
+    expect(forwarded).toEqual([]);
+  });
+
+  it("answers the image tools in plain text, refusals as their message", async () => {
+    const older = { source: "pin", version: "3.7.0" } as const;
+    const images = new FakeImages([
+      row("dev", { fields: { template: "Pharo 14.0 - 64bit", pharoVersion: "140", mcp: { source: "pin", version: defaultPharoMcpVersion } } }),
+      row("old", { port: 7001, fields: { template: "Pharo 13.0 - 64bit", pharoVersion: "130", mcp: older, everyStart: "/abs/load.st" } }),
+    ]);
+    const { call } = await connect(images);
+    const olderWarning = `Warning: Image old holds Pharo MCP 3.7.0, and images are created with ${defaultPharoMcpVersion} now, so its tools may differ from the current ones. Recreating it gives it the current MCP.`;
+
+    expect(textOf(await call("image_templates"))).toBe(
+      ["1 template in 1 category.", "Official distributions:", "  Pharo 14.0 - 64bit"].join("\n"),
+    );
+    expect(textOf(await call("image_list"))).toBe(
+      [
+        "2 images, 1 running.",
+        olderWarning,
+        "images:",
+        `  dev state=stopped pharo=14.0 template="Pharo 14.0 - 64bit" mcp=${defaultPharoMcpVersion}`,
+        '  old state=running pharo=13.0 template="Pharo 13.0 - 64bit" mcp=3.7.0',
+      ].join("\n"),
+    );
+    expect(textOf(await call("image_list", { name: "dev" }))).toBe(
+      [
+        "Image dev is not running.",
+        "pharo: 14.0",
+        "template: Pharo 14.0 - 64bit",
+        `mcp: ${defaultPharoMcpVersion}`,
+        "path: /home/.plexus/profiles/images/Scope-dev/Scope-dev.image",
+      ].join("\n"),
+    );
+    expect(
+      textOf(await call("image_create", { name: "new", template: "Pharo 14.0 - 64bit", category: "Official distributions" })),
+    ).toBe("Created image new from Pharo 14.0 - 64bit. It is not running yet; image_start starts it.");
+    expect(textOf(await call("image_start", { name: "dev", display: "interactive" }))).toBe(
+      'Started image dev as it was last saved, with its window open. Pass image: "dev" to its tools while another image runs.',
+    );
+    expect(textOf(await call("image_start", { name: "old" }))).toBe(
+      [
+        'Started image old as it was last saved, with /abs/load.st filed in again. Pass image: "old" to its tools while another image runs.',
+        olderWarning,
+      ].join("\n"),
+    );
+    expect(textOf(await call("image_stop", { name: "dev" }))).toBe("Stopped image dev; what it had not saved is lost.");
+    expect(textOf(await call("image_delete", { name: "dev" }))).toBe("Deleted image dev and its files.");
+    expect(images.calls).toContainEqual(["create", "new", { template: "Pharo 14.0 - 64bit", category: "Official distributions" }]);
+    expect(images.calls).toContainEqual(["start", "dev", { display: "interactive" }]);
+    expect(images.calls).toContainEqual(["start", "old", {}]);
+
+    for (const [tool, args, refusal] of [
+      ["image_list", { name: "gone" }, "There is no image gone. image_list names the images there are; image_create makes one."],
+      ["image_start", { name: "broken" }, "Image broken exited during start."],
+    ] as const) {
+      const refused = await call(tool, args);
+      expect(refused.isError, tool).toBe(true);
+      expect(textOf(refused), tool).toBe(refusal);
+    }
+  });
+
+  it("refuses arguments that break a tool's schema before any of it runs", async () => {
     const images = new FakeImages([row("dev")]);
     const { call } = await connect(images);
 
-    expect(JSON.parse(textOf(await call("image_list")))).toEqual([row("dev")]);
-    expect(JSON.parse(textOf(await call("image_list", { name: "dev" })))).toEqual([row("dev")]);
-    await call("image_create", { name: "new", template: "Pharo 14.0 - 64bit", category: "Official distributions" });
-    await call("image_start", { name: "dev", display: "interactive" });
-    expect(images.calls).toContainEqual(["create", "new", { template: "Pharo 14.0 - 64bit", category: "Official distributions" }]);
-    expect(images.calls).toContainEqual(["start", "dev", { display: "interactive" }]);
+    for (const [tool, args, refusal] of [
+      ["image_start", {}, "Invalid arguments for image_start. name is required."],
+      ["image_start", { name: "  " }, "Invalid arguments for image_start. name is required."],
+      [
+        "image_delete",
+        { name: "dev", force: true },
+        "Invalid arguments for image_delete. force is not accepted here; expected one of name.",
+      ],
+      [
+        "image_start",
+        { name: "dev", display: "window" },
+        'Invalid arguments for image_start. display must be "headless" or "interactive", not "window".',
+      ],
+      ["image_create", { name: "new", template: 3 }, "Invalid arguments for image_create. template must be string, not integer."],
+    ] as const) {
+      const result = await call(tool, args);
+      expect(result.isError, tool).toBe(true);
+      expect(textOf(result), JSON.stringify(args)).toBe(refusal);
+    }
+    expect(images.calls).toEqual([]);
+  });
 
-    const refused = await call("image_list", { name: "gone" });
-    expect(refused.isError).toBe(true);
-    expect(JSON.parse(textOf(refused))).toEqual({ ok: false, code: "no-such-image", error: "There is no image gone." });
+  it("passes the schema the image listed and the host's signal to the call", async () => {
+    const testRun = tool("test_run", { timeoutSeconds: { type: "integer", default: 90 } });
+    const { client, call, forwarded } = await connect(new FakeImages([row("dev", { port: 7001 })]), {
+      "http://127.0.0.1:7001/": [testRun],
+    });
+
+    await client.listTools();
+    await call("test_run", { timeoutSeconds: 120 });
+    await call("test_run", {});
+    await call("found_by_search", {});
+
+    expect(forwarded[0].options.inputSchema).toEqual(testRun.inputSchema);
+    expect(forwarded[0].options.signal).toBeInstanceOf(AbortSignal);
+    expect(callWaitMs(forwarded[0].args, forwarded[0].options)).toBe(150_000);
+    expect(callWaitMs(forwarded[1].args, forwarded[1].options)).toBe(120_000);
+    expect(forwarded[2].options.inputSchema).toBeUndefined();
+    expect(callWaitMs(forwarded[2].args, forwarded[2].options)).toBe(60_000);
+  });
+
+  it("says what a call that failed did to the image", async () => {
+    const images = new FakeImages([row("p13", { port: 7001, fields: { mcp: { source: "pin", version: "2.0.3" } } })]);
+    const failures: Record<string, Error> = {
+      not_found: forwardFailure("MCP error -32601: Method not found", { kind: "answered", rpcCode: -32601 }),
+      invalid: forwardFailure("MCP error -32602: Invalid method parameter(s).", { kind: "answered", rpcCode: -32602 }),
+      busy: forwardFailure("MCP initialize timed out after 60000ms", { kind: "no-handshake", waitedMs: 60_000 }),
+      slow: forwardFailure("MCP request timed out after 120000ms", { kind: "timeout", waitedMs: 120_000 }),
+      refused: forwardFailure("connect ECONNREFUSED 127.0.0.1:7001", { kind: "refused" }),
+      save: forwardFailure("socket hang up", { kind: "closed" }),
+      broken: forwardFailure("HTTP 500 Internal Server Error", { kind: "other" }),
+    };
+    const { call } = await connect(images, {}, async (_endpoint, name) => {
+      if (name === "quit") {
+        images.rows = [row("p13")];
+        throw forwardFailure("socket hang up", { kind: "closed" });
+      }
+      throw failures[name];
+    });
+
+    const answers: Array<[string, string]> = [
+      [
+        "not_found",
+        "Image p13 answered that it has no tool not_found, but its Pharo MCP 2.0.3 may hold the tool without listing it. Recreating the image gives it the current MCP.",
+      ],
+      ["invalid", "MCP error -32602: Invalid method parameter(s)."],
+      [
+        "busy",
+        "Image p13 did not answer within 60 s, so busy was not sent. It still runs, and may be busy with an earlier call: image_stop kills it without saving, and image_start then starts it as it was last saved.",
+      ],
+      [
+        "slow",
+        "Image p13 did not answer slow within 120 s, and still runs: it may still be working on the call. image_stop kills it without saving, and image_start then starts it as it was last saved.",
+      ],
+      ["refused", "Image p13 runs, but refused the connection for refused, so the call was not made."],
+      [
+        "save",
+        "Image p13 closed the connection before answering save, and still runs: check whether the call took effect before making it again.",
+      ],
+      ["broken", "Image p13 did not answer broken: HTTP 500 Internal Server Error. It still runs."],
+      ["quit", "Image p13 stopped before answering quit. Start it with image_start; it starts as it was last saved."],
+    ];
+    for (const [name, answer] of answers) {
+      const result = await call(name);
+      expect(result.isError, name).toBe(true);
+      expect(textOf(result), name).toBe(answer);
+    }
+  });
+
+  it("aborts a forwarded call the host cancels, and answers nothing for it", async () => {
+    let signal: AbortSignal | undefined;
+    const { client, responded } = await connect(new FakeImages([row("dev", { port: 7001 })]), {}, (_endpoint, _name, _args, options) => {
+      signal = options.signal;
+      return new Promise((_resolve, reject) => {
+        options.signal?.addEventListener("abort", () =>
+          reject(forwardFailure("MCP request cancelled", { kind: "cancelled" })),
+        );
+      });
+    });
+
+    const controller = new AbortController();
+    const call = client.callTool({ name: "image_evaluate", arguments: {} }, undefined, { signal: controller.signal });
+    while (signal === undefined) {
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+    const answeredBefore = responded.length;
+    controller.abort();
+    await expect(call).rejects.toThrow();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(signal.aborted).toBe(true);
+    expect(responded).toHaveLength(answeredBefore);
   });
 
   it("says the tool list changed after a start, a stop or a delete, and only then", async () => {
@@ -220,6 +462,7 @@ describe("plexus mcp", () => {
     await call("image_templates");
     await call("image_create", { name: "new", template: "T" });
     await call("image_start", { name: "broken" });
+    await call("image_start", {});
     expect(await listChanged()).toBe(0);
 
     await call("image_start", { name: "dev" });
