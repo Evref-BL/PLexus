@@ -8,6 +8,9 @@ import { initialize, request } from "./jsonRpc.js";
 
 const defaultTimeoutMs = 60_000;
 
+/** What a call waits beyond its own time limit, so that the image's answer to a call it stopped arrives first. */
+const beyondLimitMs = 30_000;
+
 export async function listTools(
   endpoint: Endpoint,
   options: { timeoutMs?: number } = {},
@@ -25,21 +28,73 @@ export async function listTools(
   return result.tools.map((tool, index) => checkedTool(tool, index));
 }
 
+export interface CallToolOptions {
+  /** One wait for each of the two requests, in place of the waits below. */
+  timeoutMs?: number;
+  /** The schema the image listed for the tool; the default of its `timeoutSeconds` is the call's limit. */
+  inputSchema?: Tool["inputSchema"];
+  /** What the handshake waits, and the least the call waits: 60000 unless given. */
+  minimumMs?: number;
+  /** Aborting it destroys the request in flight, and the call rejects as cancelled. */
+  signal?: AbortSignal;
+}
+
+/**
+ * One call, answered by the tool's result as the image sent it. The call
+ * waits longer than any limit the image keeps itself, so that its own answer
+ * to a call it stopped arrives first: see `callWaitMs`. A handshake the image
+ * does not answer fails the call before it is sent.
+ *
+ * It rejects with a `ForwardError`, whose `kind` says whether the image
+ * answered, never got the call, or got it and gave no answer.
+ */
 export async function callTool(
   endpoint: Endpoint,
   name: string,
   args: Record<string, unknown> = {},
-  options: { timeoutMs?: number } = {},
+  options: CallToolOptions = {},
 ): Promise<CallToolResult> {
-  const timeoutMs = options.timeoutMs ?? defaultTimeoutMs;
-  const session = await initialize(endpoint.url, timeoutMs);
+  const handshakeMs = options.timeoutMs ?? options.minimumMs ?? defaultTimeoutMs;
+  const session = await initialize(endpoint.url, handshakeMs, {
+    failOnTimeout: true,
+    ...(options.signal === undefined ? {} : { signal: options.signal }),
+  });
   const response = await request(
     endpoint.url,
     "tools/call",
     { name, arguments: args },
-    { timeoutMs, session },
+    {
+      timeoutMs: options.timeoutMs ?? callWaitMs(args, options),
+      session,
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
+    },
   );
   return response.result as CallToolResult;
+}
+
+/**
+ * How long a call waits for its answer: the larger of the minimum and the
+ * call's time limit plus 30 s. The limit is the call's own `timeoutSeconds`
+ * when it is a number of 0 or more, otherwise the default of `timeoutSeconds`
+ * in the schema the image listed; with neither, the call waits the minimum.
+ * Exported for tests only.
+ */
+export function callWaitMs(
+  args: Record<string, unknown>,
+  options: Pick<CallToolOptions, "inputSchema" | "minimumMs"> = {},
+): number {
+  const minimumMs = options.minimumMs ?? defaultTimeoutMs;
+  const limitSeconds = timeLimit(args.timeoutSeconds) ?? timeLimit(listedTimeLimit(options.inputSchema));
+  return limitSeconds === undefined ? minimumMs : Math.max(minimumMs, limitSeconds * 1000 + beyondLimitMs);
+}
+
+function timeLimit(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : undefined;
+}
+
+function listedTimeLimit(inputSchema: Tool["inputSchema"] | undefined): unknown {
+  const property = inputSchema?.properties?.timeoutSeconds;
+  return isRecord(property) ? property.default : undefined;
 }
 
 /**

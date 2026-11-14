@@ -2,7 +2,8 @@ import http from "node:http";
 import type { AddressInfo } from "node:net";
 import { afterEach, describe, expect, it } from "vitest";
 import { parseEndpointHandoff } from "../../src/forward/endpointHandoffFormat.js";
-import { callTool, listTools, ping } from "../../src/forward/index.js";
+import { callTool, callWaitMs, listTools, ping } from "../../src/forward/index.js";
+import type { ForwardError } from "../../src/forward/jsonRpc.js";
 
 interface Received {
   method: string;
@@ -15,13 +16,25 @@ const servers: http.Server[] = [];
 
 afterEach(async () => {
   await Promise.all(
-    servers.splice(0).map((server) => new Promise((resolve) => server.close(resolve))),
+    servers.splice(0).map((server) => {
+      server.closeAllConnections();
+      return new Promise((resolve) => server.close(resolve));
+    }),
   );
 });
 
-/** An MCP server over HTTP, as far as forwarding needs one: canned answers. */
+type Reply =
+  | { result?: unknown; error?: unknown; status?: number; afterMs?: number }
+  | "never"
+  | "hang up"
+  | undefined;
+
+/**
+ * An MCP server over HTTP, as far as forwarding needs one: canned answers,
+ * given at once or after `afterMs`, never, or a connection closed unanswered.
+ */
 async function fakeMcpServer(
-  answer: (request: Received) => { result?: unknown; error?: unknown; status?: number } | undefined,
+  answer: (request: Received) => Reply,
 ): Promise<{ url: string; received: Received[] }> {
   const received: Received[] = [];
   const server = http.createServer((request, response) => {
@@ -43,15 +56,25 @@ async function fakeMcpServer(
       };
       received.push(seen);
       const reply = answer(seen);
+      if (reply === "never") {
+        return;
+      }
+      if (reply === "hang up") {
+        request.socket.destroy();
+        return;
+      }
       if (message.id === undefined || reply === undefined) {
         response.writeHead(202).end();
         return;
       }
-      response.writeHead(reply.status ?? 200, {
-        "content-type": "application/json",
-        ...(message.method === "initialize" ? { "mcp-session-id": "session-1" } : {}),
-      });
-      response.end(JSON.stringify({ jsonrpc: "2.0", id: message.id, ...reply }));
+      const { afterMs, ...rest } = reply;
+      setTimeout(() => {
+        response.writeHead(rest.status ?? 200, {
+          "content-type": "application/json",
+          ...(message.method === "initialize" ? { "mcp-session-id": "session-1" } : {}),
+        });
+        response.end(JSON.stringify({ jsonrpc: "2.0", id: message.id, ...rest }));
+      }, afterMs ?? 0);
     });
   });
   servers.push(server);
@@ -116,16 +139,18 @@ describe("forwarding", () => {
     expect(received.at(-1)?.sessionId).toBeUndefined();
   });
 
-  it("puts what the server said about a refused call in the error", async () => {
+  it("puts what the server said about a refused call in the error, as answered with its code", async () => {
     const { url } = await fakeMcpServer((request) =>
       request.method === "tools/call"
         ? { error: { code: -32602, message: "Invalid method parameter(s)", data: { name: "required" } } }
         : standardAnswers(request),
     );
 
-    await expect(callTool({ url }, "class_search")).rejects.toThrow(
-      'MCP error -32602: Invalid method parameter(s) {"name":"required"}',
-    );
+    expect(await failureOf(callTool({ url }, "class_search"))).toEqual({
+      message: 'MCP error -32602: Invalid method parameter(s) {"name":"required"}',
+      kind: "answered",
+      rpcCode: -32602,
+    });
   });
 
   it("pings: any JSON-RPC answer counts, and nothing listening does not", async () => {
@@ -143,6 +168,129 @@ describe("forwarding", () => {
     const closed = await fakeMcpServer(standardAnswers);
     await new Promise((resolve) => servers.pop()!.close(resolve));
     expect(await ping({ url: closed.url })).toBe(false);
+  });
+});
+
+/** What a rejection says: its message, its kind, and what the kind carries. */
+async function failureOf(promise: Promise<unknown>): Promise<Record<string, unknown>> {
+  const error = (await promise.then(
+    () => {
+      throw new Error("expected a rejection");
+    },
+    (rejected: unknown) => rejected,
+  )) as ForwardError;
+  return {
+    message: error.message,
+    kind: error.kind,
+    ...("rpcCode" in error ? { rpcCode: error.rpcCode } : {}),
+    ...("waitedMs" in error ? { waitedMs: error.waitedMs } : {}),
+  };
+}
+
+const testRun = {
+  type: "object",
+  properties: { timeoutSeconds: { type: "integer", default: 90 } },
+} as const;
+
+describe("a forwarded call", () => {
+  it("says it was sent and not answered, in today's words", async () => {
+    const { url } = await fakeMcpServer((request) =>
+      request.method === "tools/call" ? "never" : standardAnswers(request),
+    );
+
+    expect(await failureOf(callTool({ url }, "class_search", {}, { minimumMs: 100 }))).toEqual({
+      message: "MCP request timed out after 100ms",
+      kind: "timeout",
+      waitedMs: 100,
+    });
+  });
+
+  it("is not sent when the image does not answer the handshake", async () => {
+    const { url, received } = await fakeMcpServer((request) =>
+      request.method === "initialize" ? "never" : standardAnswers(request),
+    );
+
+    expect(await failureOf(callTool({ url }, "class_search", {}, { minimumMs: 100 }))).toEqual({
+      message: "MCP initialize timed out after 100ms",
+      kind: "no-handshake",
+      waitedMs: 100,
+    });
+    expect(received.map((request) => request.method)).toEqual(["initialize"]);
+  });
+
+  it("says nothing was sent to a port nobody listens on", async () => {
+    const { url } = await fakeMcpServer(standardAnswers);
+    const server = servers.pop()!;
+    await new Promise((resolve) => server.close(resolve));
+
+    const failure = await failureOf(callTool({ url }, "class_search"));
+    expect(failure.kind).toBe("refused");
+    expect(failure.message).toContain("ECONNREFUSED");
+  });
+
+  it("says the connection closed after the call was sent, in Node's words", async () => {
+    const { url } = await fakeMcpServer((request) =>
+      request.method === "tools/call" ? "hang up" : standardAnswers(request),
+    );
+
+    expect(await failureOf(callTool({ url }, "class_search"))).toEqual({
+      message: "socket hang up",
+      kind: "closed",
+    });
+  });
+
+  it("says what else went wrong as other", async () => {
+    const { url } = await fakeMcpServer((request) =>
+      request.method === "tools/call" ? { status: 500 } : standardAnswers(request),
+    );
+
+    expect(await failureOf(callTool({ url }, "class_search"))).toEqual({
+      message: "HTTP 500 Internal Server Error",
+      kind: "other",
+    });
+  });
+
+  it("waits the minimum with no time limit, and the call's limit plus 30 s with one", async () => {
+    const { url } = await fakeMcpServer((request) =>
+      request.method === "tools/call"
+        ? { result: { content: [{ type: "text", text: "done" }] }, afterMs: 250 }
+        : standardAnswers(request),
+    );
+
+    expect((await failureOf(callTool({ url }, "slow", {}, { minimumMs: 100 }))).kind).toBe("timeout");
+    expect(await callTool({ url }, "slow", { timeoutSeconds: 0 }, { minimumMs: 100 })).toEqual({
+      content: [{ type: "text", text: "done" }],
+    });
+  });
+
+  it("is cancelled by its signal, before it is sent and while it waits", async () => {
+    const { url, received } = await fakeMcpServer((request) =>
+      request.method === "tools/call" ? "never" : standardAnswers(request),
+    );
+
+    expect(
+      await failureOf(callTool({ url }, "class_search", {}, { signal: AbortSignal.abort() })),
+    ).toEqual({ message: "MCP request cancelled", kind: "cancelled" });
+    expect(received).toEqual([]);
+
+    const controller = new AbortController();
+    const call = callTool({ url }, "class_search", {}, { signal: controller.signal });
+    while (!received.some((request) => request.method === "tools/call")) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    controller.abort();
+    expect(await failureOf(call)).toEqual({ message: "MCP request cancelled", kind: "cancelled" });
+  });
+
+  it("waits longer than the image's own limit, and never less than the minimum", () => {
+    expect(callWaitMs({ timeoutSeconds: 120 })).toBe(150_000);
+    expect(callWaitMs({ timeoutSeconds: 120 }, { inputSchema: testRun })).toBe(150_000);
+    expect(callWaitMs({}, { inputSchema: testRun })).toBe(120_000);
+    expect(callWaitMs({ timeoutSeconds: 10 })).toBe(60_000);
+    expect(callWaitMs({})).toBe(60_000);
+    expect(callWaitMs({ timeoutSeconds: 120 }, { minimumMs: 300_000 })).toBe(300_000);
+    expect(callWaitMs({ timeoutSeconds: -1 }, { inputSchema: testRun })).toBe(120_000);
+    expect(callWaitMs({ timeoutSeconds: "120" })).toBe(60_000);
   });
 });
 
