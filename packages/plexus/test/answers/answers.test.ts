@@ -1,6 +1,7 @@
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import { describe, expect, it } from "vitest";
 import {
+  callFailed,
   checkArguments,
   created,
   deleted,
@@ -472,6 +473,99 @@ describe("checkArguments", () => {
     expect(checkArguments(pluginStop, { all: true })).toBeUndefined();
     expect(checkArguments(pluginStop, { all: "yes" })).toBe(
       "Invalid arguments for image_stop. all must be boolean, not string.",
+    );
+  });
+});
+
+/** An error as callTool rejects with: its message, and its kind with what that carries. */
+function forwardFailure(message: string, kind: Record<string, unknown>): Error {
+  return Object.assign(new Error(message), kind);
+}
+
+describe("callFailed", () => {
+  const asked: string[] = [];
+  const rowIs = (found: ImageInfo | undefined) => async () => {
+    asked.push("row");
+    return found;
+  };
+  const answerOf = async (error: unknown, found: ImageInfo | undefined = runningRow("p13", { mcp: pinned })) => {
+    const answer = await callFailed("p13", "image_evaluate", error, rowIs(found));
+    return answer === undefined ? undefined : render(answer);
+  };
+
+  it("answers nothing for a cancelled call, and passes the image's own error as it is, without listing", async () => {
+    asked.length = 0;
+    expect(await answerOf(forwardFailure("MCP request cancelled", { kind: "cancelled" }))).toBeUndefined();
+    const invalid = 'MCP error -32602: Invalid method parameter(s). {"code":"1"}';
+    expect(await answerOf(forwardFailure(invalid, { kind: "answered", rpcCode: -32602 }))).toBe(invalid);
+    expect(asked).toEqual([]);
+  });
+
+  it("says a tool the image does not know may be one an MCP before 2.1.0 holds without listing", async () => {
+    const notFound = forwardFailure("MCP error -32601: Method not found", { kind: "answered", rpcCode: -32601 });
+
+    expect(await answerOf(notFound, runningRow("p13", { mcp: { source: "pin", version: "2.0.3" } }))).toBe(
+      "Image p13 answered that it has no tool image_evaluate, but its Pharo MCP 2.0.3 may hold the tool without listing it. Recreating the image gives it the current MCP.",
+    );
+    expect(await answerOf(notFound, runningRow("p13", { mcp: { source: "pin", version: "3.7.0" } }))).toBe(
+      [
+        "Image p13 answered that it has no tool image_evaluate: tool_search finds the tools it has.",
+        `Warning: Image p13 holds Pharo MCP 3.7.0, and images are created with ${defaultPharoMcpVersion} now, so its tools may differ from the current ones. Recreating it gives it the current MCP.`,
+      ].join("\n"),
+    );
+    for (const found of [runningRow("p13", { mcp: pinned }), runningRow("p13", { mcp: { source: "script", script: "/abs/x.st" } }), undefined]) {
+      expect(await answerOf(notFound, found)).toBe(
+        "Image p13 answered that it has no tool image_evaluate: tool_search finds the tools it has.",
+      );
+    }
+  });
+
+  it("says an image that stopped before answering starts as it was last saved, whatever broke", async () => {
+    for (const kind of [
+      { kind: "closed" },
+      { kind: "timeout", waitedMs: 120_000 },
+      { kind: "no-handshake", waitedMs: 60_000 },
+      { kind: "refused" },
+      { kind: "other" },
+    ]) {
+      expect(await answerOf(forwardFailure("socket hang up", kind), row("p13")), kind.kind).toBe(
+        "Image p13 stopped before answering image_evaluate. Start it with image_start; it starts as it was last saved.",
+      );
+    }
+  });
+
+  it("says what became of the call to an image that still runs", async () => {
+    expect(
+      await answerOf(forwardFailure("MCP initialize timed out after 60000ms", { kind: "no-handshake", waitedMs: 60_000 })),
+    ).toBe(
+      "Image p13 did not answer within 60 s, so image_evaluate was not sent. It still runs, and may be busy with an earlier call: image_stop kills it without saving, and image_start then starts it as it was last saved.",
+    );
+    expect(
+      await answerOf(forwardFailure("MCP request timed out after 120000ms", { kind: "timeout", waitedMs: 120_000 })),
+    ).toBe(
+      "Image p13 did not answer image_evaluate within 120 s, and still runs: it may still be working on the call. image_stop kills it without saving, and image_start then starts it as it was last saved.",
+    );
+    expect(await answerOf(forwardFailure("connect ECONNREFUSED 127.0.0.1:7001", { kind: "refused" }))).toBe(
+      "Image p13 runs, but refused the connection for image_evaluate, so the call was not made.",
+    );
+    expect(await answerOf(forwardFailure("socket hang up", { kind: "closed" }))).toBe(
+      "Image p13 closed the connection before answering image_evaluate, and still runs: check whether the call took effect before making it again.",
+    );
+    expect(await answerOf(forwardFailure("HTTP 500 Internal Server Error", { kind: "other" }))).toBe(
+      "Image p13 did not answer image_evaluate: HTTP 500 Internal Server Error. It still runs.",
+    );
+    expect(await answerOf(new Error("MCP response was not a JSON object."))).toBe(
+      "Image p13 did not answer image_evaluate: MCP response was not a JSON object. It still runs.",
+    );
+  });
+
+  it("says only what broke when the image cannot be listed", async () => {
+    const unlisted = async () => {
+      throw new Error("ps failed");
+    };
+    const answer = await callFailed("p13", "image_evaluate", forwardFailure("socket hang up", { kind: "closed" }), unlisted);
+    expect(answer === undefined ? undefined : render(answer)).toBe(
+      "Image p13 did not answer image_evaluate: socket hang up.",
     );
   });
 });

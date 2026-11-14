@@ -6,6 +6,7 @@
  */
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import { defaultPharoMcpVersion } from "../config/pharoMcpVersion.js";
+import type { ForwardError } from "../forward/jsonRpc.js";
 import { noEndpointYet } from "../images/endpoint.js";
 import type { StartResult } from "../images/start.js";
 import type { ImageInfo, Template } from "../types.js";
@@ -271,6 +272,94 @@ export function deleted(result: { name: string }): ToolAnswer {
 
 function known(key: string, value: string | undefined): Pair[] {
   return value === undefined ? [] : [[key, value]];
+}
+
+function said(summary: string, warnings: string[] = []): ToolAnswer {
+  return { summary, warnings, fields: [] };
+}
+
+// A forwarded call that failed.
+
+/** The JSON-RPC code of a method the server does not know. */
+const methodNotFound = -32601;
+
+/**
+ * What a forwarded call that failed did to the image, from `callTool`'s
+ * error, or nothing for a call its caller cancelled, which is answered
+ * nothing. An answer the image gave passes as it is. `rowOf` is asked for the
+ * image as listed only when the text depends on it: whether it still runs, or
+ * which MCP it holds. A `rowOf` that rejects leaves both unknown.
+ */
+export async function callFailed(
+  image: string,
+  tool: string,
+  error: unknown,
+  rowOf: () => Promise<ImageInfo | undefined>,
+): Promise<ToolAnswer | undefined> {
+  const failure = (error instanceof Error ? error : new Error(String(error))) as Error & {
+    kind?: ForwardError["kind"];
+    rpcCode?: number;
+    waitedMs?: number;
+  };
+  const kind = failure.kind ?? "other";
+  if (kind === "cancelled") {
+    return undefined;
+  }
+  if (kind === "answered" && failure.rpcCode !== methodNotFound) {
+    return said(failure.message);
+  }
+
+  const row = await rowOf().catch(() => undefined);
+  if (kind === "answered") {
+    return noSuchTool(image, tool, row);
+  }
+  if (row === undefined) {
+    return said(texts.didNotAnswer(image, tool, withoutFinalPeriod(failure.message)));
+  }
+  if (!row.running) {
+    return said(texts.stoppedBeforeAnswering(image, tool));
+  }
+  switch (kind) {
+    case "no-handshake":
+      return said(texts.noHandshake(image, tool, secondsOf(failure.waitedMs)));
+    case "timeout":
+      return said(texts.callTimedOut(image, tool, secondsOf(failure.waitedMs)));
+    case "refused":
+      return said(texts.connectionRefused(image, tool));
+    case "closed":
+      return said(texts.connectionClosed(image, tool));
+    default:
+      return said(texts.didNotAnswerRunning(image, tool, withoutFinalPeriod(failure.message)));
+  }
+}
+
+// An MCP older than 2.1.0 resolves tools/call against what it lists, so a
+// tool it holds without listing it is answered as unknown.
+function noSuchTool(image: string, tool: string, row: ImageInfo | undefined): ToolAnswer {
+  const pinned = row?.mcp?.source === "pin" ? row.mcp.version : undefined;
+  if (pinned !== undefined && versionBefore(pinned, [2, 1, 0])) {
+    return said(texts.olderMcpLacksTool(image, tool, pinned));
+  }
+  const older = row === undefined ? undefined : olderMcp(row);
+  return said(texts.noSuchTool(image, tool), older === undefined ? [] : [older]);
+}
+
+/** Whether `version` reads as a release before `than`; a version that does not read as one is not. */
+function versionBefore(version: string, than: readonly number[]): boolean {
+  const parts = /^v?(\d+)\.(\d+)\.(\d+)/.exec(version)?.slice(1).map(Number);
+  if (parts === undefined) {
+    return false;
+  }
+  const differing = parts.findIndex((part, index) => part !== than[index]);
+  return differing >= 0 && parts[differing] < than[differing];
+}
+
+function secondsOf(waitedMs: number | undefined): number {
+  return Math.round((waitedMs ?? 0) / 1000);
+}
+
+function withoutFinalPeriod(message: string): string {
+  return message.replace(/\.$/, "");
 }
 
 // Arguments.

@@ -34,8 +34,9 @@ describe("the published surface", () => {
     expect(Object.keys(publicSurface).sort()).toEqual([...publicNames].sort());
   });
 
-  it("renders the image tools' answers, checks their arguments, and holds their texts", () => {
+  it("renders the image tools' answers, checks their arguments, says what a failed call did, and holds their texts", () => {
     expect(Object.keys(publicSurface.imageToolAnswers).sort()).toEqual([
+      "callFailed",
       "checkArguments",
       "created",
       "deleted",
