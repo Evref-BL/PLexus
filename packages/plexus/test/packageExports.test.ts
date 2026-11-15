@@ -24,6 +24,7 @@ const publicNames = [
   "PlexusError",
   "callTool",
   "defaultPharoMcpVersion",
+  "imageToolAnswers",
   "listTools",
   "plexusHome",
 ];
@@ -31,6 +32,25 @@ const publicNames = [
 describe("the published surface", () => {
   it("exports exactly what the contract names", () => {
     expect(Object.keys(publicSurface).sort()).toEqual([...publicNames].sort());
+  });
+
+  it("renders the image tools' answers, checks their arguments, says what a failed call did, and holds their texts", () => {
+    expect(Object.keys(publicSurface.imageToolAnswers).sort()).toEqual([
+      "callFailed",
+      "checkArguments",
+      "created",
+      "deleted",
+      "image",
+      "list",
+      "olderMcp",
+      "pharoVersion",
+      "render",
+      "started",
+      "state",
+      "stopped",
+      "templates",
+      "texts",
+    ]);
   });
 
   it("is the root export alone, and one command", () => {

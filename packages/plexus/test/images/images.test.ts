@@ -11,18 +11,24 @@ describe("Images", () => {
     writeLauncherImage(dir, "Scope-dev");
     const images = new Images({ home, scope: "Scope", launcher });
 
-    await expect(images.endpoint("dev")).rejects.toMatchObject({ code: "not-running" });
+    await expect(images.endpoint("dev")).rejects.toMatchObject({
+      code: "not-running",
+      message: "Image dev is not running. Start it with image_start; it starts as it was last saved.",
+    });
 
     const vm = launcher.run(path.join(dir, "Scope-dev.image"), { script: path.join(dir, "plexus", "start.st") });
     await expect(images.endpoint("dev")).rejects.toMatchObject({
       code: "no-endpoint",
-      message: "Image dev runs, but has no endpoint to forward to: no endpoint written yet.",
+      message: `Image dev is starting as pid ${vm.pid}: its MCP server does not answer yet. Call it again once image_list shows it running.`,
       details: { pids: [vm.pid] },
     });
 
     writeEndpoint(dir, { port: 7001, pid: vm.pid });
     expect(await images.endpoint("dev")).toEqual({ url: "http://127.0.0.1:7001/", pid: vm.pid });
-    await expect(images.endpoint("other")).rejects.toMatchObject({ code: "no-such-image" });
+    await expect(images.endpoint("other")).rejects.toMatchObject({
+      code: "no-such-image",
+      message: "There is no image other. image_list names the images there are; image_create makes one.",
+    });
   });
 
   it("creates, lists, stops and deletes through one scope", async () => {

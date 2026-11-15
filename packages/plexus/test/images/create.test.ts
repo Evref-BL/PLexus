@@ -164,9 +164,11 @@ describe("create without a script", () => {
     });
     await expect(create(context, "dev", { template: "Pharo 99" })).rejects.toMatchObject({
       code: "unknown-template",
+      message: "There is no template named Pharo 99. image_templates lists the templates there are.",
     });
     await expect(create(context, "dev", { template: "" })).rejects.toMatchObject({
       code: "unknown-template",
+      message: "A create needs a template.",
     });
     expect(launcher.called("createImage")).toEqual([]);
     expect(listing(storeRoot(home))).toEqual([]);
@@ -175,7 +177,10 @@ describe("create without a script", () => {
   it("refuses a name that is taken, in any state", async () => {
     const { home, context } = setup();
     fs.mkdirSync(path.join(storeRoot(home), "dev"), { recursive: true });
-    await expect(create(context, "dev", { ...options })).rejects.toMatchObject({ code: "image-exists" });
+    await expect(create(context, "dev", { ...options })).rejects.toMatchObject({
+      code: "image-exists",
+      message: "Image dev already exists: choose another name, or delete it with image_delete first to create it again.",
+    });
   });
 
   it("removes a build whose preparation failed and says why", async () => {
@@ -361,6 +366,7 @@ describe("create with a script", () => {
 
     await expect(create(context, "mcp", { ...options, script: script(home) })).rejects.toMatchObject({
       code: "image-exists",
+      message: "Image mcp already exists: choose another name, or delete it with image_delete first to create it again.",
     });
     expect(listing(storeRoot(home))).toEqual(["mcp"]);
     expect(fs.readFileSync(path.join(storeRoot(home), "mcp", "mcp.image"), "utf8")).toBe("theirs");

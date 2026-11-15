@@ -5,6 +5,7 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import * as texts from "../answers/texts.js";
 import { PlexusError } from "../errors.js";
 import { storeRoot, tmpRoot } from "../home.js";
 import type { ImageInfo } from "../types.js";
@@ -72,7 +73,7 @@ export function existingImage(context: ImagesContext, name: string): ImageFiles 
 }
 
 export function noSuchImage(files: ImageFiles): PlexusError {
-  return new PlexusError("no-such-image", `There is no image ${files.name}.`);
+  return new PlexusError("no-such-image", texts.noSuchImage(files.name));
 }
 
 export function isFile(file: string): boolean {

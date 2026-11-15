@@ -153,15 +153,25 @@ describe("plexus", () => {
       [["image", "start", "dev", "--timeout", "soon"], "--timeout is a number of seconds"],
       [["image", "add", "dev"], "Unknown image command add"],
       [["project", "open"], "Unknown command project"],
+      [["image_stop", "dev"], "image_stop is plexus image stop here."],
+      [["image_templates"], "image_templates is plexus image templates here."],
       [["mcp", "pharo-launcher"], "Unexpected argument pharo-launcher"],
     ];
     for (const [argv, message] of cases) {
       const cli = harness();
       expect(await cli.run(...argv), argv.join(" ")).toBe(2);
-      expect(cli.stderr(), argv.join(" ")).toContain(`plexus: ${message}`);
+      expect(cli.stderr(), argv.join(" ")).toContain(`plexus: ${message}\n`);
       expect(cli.stdout()).toBe("");
       expect(cli.calls).toEqual([]);
     }
+  });
+
+  it("says which command an image tool is, with its usage", async () => {
+    const cli = harness();
+    expect(await cli.run("image_start", "dev")).toBe(2);
+    expect(cli.stderr()).toBe(
+      "plexus: image_start is plexus image start here.\n\nplexus image start <name> [--display interactive] [--timeout <seconds>]\n",
+    );
   });
 
   it("explains itself and each command", async () => {

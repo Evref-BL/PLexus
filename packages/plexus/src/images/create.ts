@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import * as texts from "../answers/texts.js";
 import { defaultPharoMcpVersion } from "../config/pharoMcpVersion.js";
 import { PlexusError } from "../errors.js";
 import { longCommandTimeoutMs } from "../launcher/pharoLauncherMcpClient.js";
@@ -49,7 +50,7 @@ export async function create(
   const startedAt = context.now();
   const files = imageFiles(context, name);
   if (exists(files.dir)) {
-    throw new PlexusError("image-exists", `Image ${name} already exists.`);
+    throw new PlexusError("image-exists", texts.imageExists(name));
   }
   const script = checkedScript(options);
   if (typeof options.template !== "string" || options.template.trim() === "") {
@@ -87,7 +88,7 @@ export function buildingState(context: ImagesContext, files: ImageFiles): ClaimS
 export function stillBuilding(files: ImageFiles, holder: ClaimHolder | undefined): PlexusError {
   return new PlexusError(
     "building",
-    `Image ${files.name} is still being created${holder ? ` by process ${holder.pid}` : ""}.`,
+    texts.stillBuilding(files.name, holder?.pid),
     holder ? { pid: holder.pid } : undefined,
   );
 }

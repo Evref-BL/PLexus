@@ -39,7 +39,7 @@ test("reads its options, with defaults for a plain run", () => {
         "--timeout", "90",
         "--tool", "class_search",
         "--arguments", '{"name":"MCPToolRegistry"}',
-        "--expect", "class=MCPToolRegistry",
+        "--expect", "MCPToolRegistry",
         "--keep",
       ],
       { now },
@@ -53,7 +53,7 @@ test("reads its options, with defaults for a plain run", () => {
       timeoutMs: 90_000,
       tool: "class_search",
       toolArguments: { name: "MCPToolRegistry" },
-      expectedText: "class=MCPToolRegistry",
+      expectedText: "MCPToolRegistry",
       keep: true,
     },
   );

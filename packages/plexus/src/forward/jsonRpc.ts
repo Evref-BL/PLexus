@@ -8,6 +8,25 @@ export interface Session {
   sessionId?: string;
 }
 
+/**
+ * How a forwarded request failed, beside its message: whether the image
+ * answered, never got the call, or got it and gave no answer.
+ *
+ * - `answered`: the image answered a JSON-RPC error, with its code;
+ * - `no-handshake`: the handshake timed out, so the call was not sent;
+ * - `timeout`: the call was sent and not answered in time;
+ * - `refused`: the connection was refused, so nothing was sent;
+ * - `closed`: the connection closed after the call was sent;
+ * - `cancelled`: the caller's signal aborted the request;
+ * - `other`: an HTTP status, invalid JSON, or a response with no result.
+ */
+export type ForwardError = Error & ForwardErrorKind;
+
+type ForwardErrorKind =
+  | { kind: "answered"; rpcCode?: number }
+  | { kind: "no-handshake" | "timeout"; waitedMs: number }
+  | { kind: "refused" | "closed" | "cancelled" | "other" };
+
 interface HttpAnswer {
   payload: unknown;
   sessionId?: string;
@@ -21,7 +40,7 @@ export async function request(
   url: string,
   method: string,
   params: Record<string, unknown> | undefined,
-  options: { timeoutMs: number; session?: Session },
+  options: { timeoutMs: number; session?: Session; signal?: AbortSignal },
 ): Promise<Record<string, unknown>> {
   const answer = await post(
     url,
@@ -33,16 +52,21 @@ export async function request(
     },
     options.timeoutMs,
     options.session,
+    options.signal,
   );
   const payload = answer.payload;
   if (!isRecord(payload)) {
-    throw new Error("MCP response was not a JSON object");
+    throw forwardError(new Error("MCP response was not a JSON object"), { kind: "other" });
   }
   if ("error" in payload) {
-    throw new Error(`MCP error ${jsonRpcErrorText(payload.error)}`);
+    const code = isRecord(payload.error) ? payload.error.code : undefined;
+    throw forwardError(new Error(`MCP error ${jsonRpcErrorText(payload.error)}`), {
+      kind: "answered",
+      ...(typeof code === "number" ? { rpcCode: code } : {}),
+    });
   }
   if (!("result" in payload)) {
-    throw new Error(`MCP ${method} response did not include a result`);
+    throw forwardError(new Error(`MCP ${method} response did not include a result`), { kind: "other" });
   }
   return payload;
 }
@@ -50,9 +74,16 @@ export async function request(
 /**
  * The handshake a stateful MCP server needs before a call. A server that does
  * not take it still answers calls, so a failed handshake leaves the call to
- * go without a session rather than failing it.
+ * go without a session rather than failing it, except when it was cancelled,
+ * or timed out and `failOnTimeout` asks: a server that does not answer the
+ * handshake will not answer the call either, and failing here says the call
+ * was never sent.
  */
-export async function initialize(url: string, timeoutMs: number): Promise<Session> {
+export async function initialize(
+  url: string,
+  timeoutMs: number,
+  options: { failOnTimeout?: boolean; signal?: AbortSignal } = {},
+): Promise<Session> {
   let answer: HttpAnswer;
   try {
     answer = await post(
@@ -68,8 +99,20 @@ export async function initialize(url: string, timeoutMs: number): Promise<Sessio
         },
       },
       timeoutMs,
+      {},
+      options.signal,
     );
-  } catch {
+  } catch (error) {
+    const kind = (error as Partial<ForwardError>).kind;
+    if (kind === "cancelled") {
+      throw error;
+    }
+    if (kind === "timeout" && options.failOnTimeout) {
+      throw forwardError(new Error(`MCP initialize timed out after ${timeoutMs}ms`), {
+        kind: "no-handshake",
+        waitedMs: timeoutMs,
+      });
+    }
     return {};
   }
 
@@ -89,6 +132,7 @@ export async function initialize(url: string, timeoutMs: number): Promise<Sessio
     { jsonrpc: "2.0", method: "notifications/initialized" },
     timeoutMs,
     session,
+    options.signal,
   ).catch(() => undefined);
   return session;
 }
@@ -106,19 +150,53 @@ export function jsonRpcErrorText(value: unknown): string {
   return `${code}${value.message}${data}`;
 }
 
+/** The error with its kind, its message kept. */
+function forwardError(error: Error, kind: ForwardErrorKind): ForwardError {
+  return Object.assign(error, kind) as ForwardError;
+}
+
+function cancelled(): ForwardError {
+  return forwardError(new Error("MCP request cancelled"), { kind: "cancelled" });
+}
+
+// What the socket said, by whether the request could have reached the server:
+// a refused connection sent nothing, a reset one had the request written.
+function socketError(error: unknown, signal: AbortSignal | undefined): ForwardError {
+  if (signal?.aborted) {
+    return cancelled();
+  }
+  const failure = error instanceof Error ? error : new Error(String(error));
+  if ("kind" in failure) {
+    return failure as ForwardError;
+  }
+  const code = (failure as NodeJS.ErrnoException).code;
+  return forwardError(failure, {
+    kind: code === "ECONNREFUSED" ? "refused" : code === "ECONNRESET" || code === "EPIPE" ? "closed" : "other",
+  });
+}
+
+/**
+ * One POST, waiting at most `timeoutMs` for the server to say anything, and
+ * no longer than `signal` lets it: an abort destroys the request in flight.
+ */
 function post(
   url: string,
   payload: Record<string, unknown>,
   timeoutMs: number,
   session: Session = {},
+  signal?: AbortSignal,
 ): Promise<HttpAnswer> {
   const target = new URL(url);
   if (target.protocol !== "http:") {
-    return Promise.reject(new Error(`Unsupported MCP endpoint: ${url}`));
+    return Promise.reject(forwardError(new Error(`Unsupported MCP endpoint: ${url}`), { kind: "other" }));
+  }
+  if (signal?.aborted) {
+    return Promise.reject(cancelled());
   }
   const body = JSON.stringify(payload);
 
   return new Promise((resolve, reject) => {
+    const fail = (error: unknown) => reject(socketError(error, signal));
     const outgoing = http.request(
       {
         // URL keeps an IPv6 host in brackets; the socket wants it bare.
@@ -137,8 +215,11 @@ function post(
           ...(session.sessionId ? { "Mcp-Session-Id": session.sessionId } : {}),
         },
         timeout: timeoutMs,
+        ...(signal === undefined ? {} : { signal }),
       },
       (response) => {
+        // A connection that closes in the middle of the body ends nothing.
+        response.on("error", fail);
         const chunks: Buffer[] = [];
         response.on("data", (chunk: Buffer | string) => {
           chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
@@ -147,8 +228,9 @@ function post(
           const status = response.statusCode;
           if (status === undefined || status < 200 || status >= 300) {
             reject(
-              new Error(
-                `HTTP ${status ?? "unknown"} ${response.statusMessage ?? ""}`.trim(),
+              forwardError(
+                new Error(`HTTP ${status ?? "unknown"} ${response.statusMessage ?? ""}`.trim()),
+                { kind: "other" },
               ),
             );
             return;
@@ -165,10 +247,13 @@ function post(
             data = JSON.parse(text);
           } catch (error) {
             reject(
-              new Error(
-                `MCP response was not valid JSON: ${
-                  error instanceof Error ? error.message : String(error)
-                }`,
+              forwardError(
+                new Error(
+                  `MCP response was not valid JSON: ${
+                    error instanceof Error ? error.message : String(error)
+                  }`,
+                ),
+                { kind: "other" },
               ),
             );
             return;
@@ -183,9 +268,14 @@ function post(
     );
 
     outgoing.on("timeout", () => {
-      outgoing.destroy(new Error(`MCP request timed out after ${timeoutMs}ms`));
+      outgoing.destroy(
+        forwardError(new Error(`MCP request timed out after ${timeoutMs}ms`), {
+          kind: "timeout",
+          waitedMs: timeoutMs,
+        }),
+      );
     });
-    outgoing.on("error", reject);
+    outgoing.on("error", fail);
     outgoing.end(body);
   });
 }

@@ -1,11 +1,19 @@
 import fs from "node:fs";
+import * as texts from "../answers/texts.js";
+import { PlexusError } from "../errors.js";
 import {
   parseEndpointHandoff,
   type EndpointHandoff,
 } from "../forward/endpointHandoffFormat.js";
 import type { LauncherProcess } from "../launcher/pharoLauncherMcpClient.js";
-import type { Endpoint } from "../types.js";
+import type { Endpoint, ImageInfo } from "../types.js";
 import type { ImageFiles } from "./store.js";
+
+/**
+ * The endpoint problem of an image a start of this PLexus launched, whose
+ * server has not written where it answers yet: it is starting, and will.
+ */
+export const noEndpointYet = "no endpoint written yet";
 
 export type EndpointObservation =
   | { endpoint: Endpoint }
@@ -28,7 +36,7 @@ export function observeEndpoint(
     // endpoint soon; any other VM on the image never will, so waiting is
     // not the answer for it.
     return vms.some((vm) => namesStartScript(vm, files))
-      ? { problem: "no endpoint written yet" }
+      ? { problem: noEndpointYet }
       : { problem: "not started by this PLexus" };
   }
 
@@ -52,6 +60,32 @@ export function observeEndpoint(
   return vms.some((vm) => namesStartScript(vm, files))
     ? { endpoint: { url } }
     : { problem: "not started by this PLexus" };
+}
+
+/**
+ * Where a call to the image goes, or why none can, from one look at it. A
+ * create still making the image comes first whatever runs it: a script
+ * create's own VM does not name the start script, and stopping it would kill
+ * the create.
+ */
+export function endpointOf(row: ImageInfo): Endpoint {
+  if (row.building) {
+    throw new PlexusError("building", texts.stillBuilding(row.name));
+  }
+  if (!row.running) {
+    throw new PlexusError("not-running", texts.notRunning(row.name));
+  }
+  if (row.endpoint !== undefined) {
+    return row.endpoint;
+  }
+  const problem = row.endpointProblem ?? "it wrote no endpoint";
+  throw new PlexusError(
+    "no-endpoint",
+    problem === noEndpointYet
+      ? texts.starting(row.name, row.pids)
+      : texts.takesNoCalls(row.name, row.pids, problem),
+    { pids: row.pids },
+  );
 }
 
 export function endpointUrl(handoff: EndpointHandoff): string {

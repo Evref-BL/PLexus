@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import * as texts from "../answers/texts.js";
 import { PlexusError } from "../errors.js";
 import { launcherFailureMessage } from "../launcher/pharoLauncherMcpClient.js";
 import { homeProfileEnvironment } from "../launcher/pharoLauncherProfile.js";
@@ -60,10 +61,7 @@ export async function templates(context: ImagesContext): Promise<Template[]> {
 export async function categoryOf(context: ImagesContext, template: string): Promise<string> {
   const found = (await templates(context)).filter((each) => each.name === template);
   if (found.length === 0) {
-    throw new PlexusError(
-      "unknown-template",
-      `There is no template named ${template}: the template list says which there are.`,
-    );
+    throw new PlexusError("unknown-template", texts.unknownTemplate(template));
   }
   if (found.length > 1) {
     const names = found.map((each) => each.category);

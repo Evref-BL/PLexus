@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import * as texts from "../answers/texts.js";
 import { PlexusError } from "../errors.js";
 import {
   exitedLaunchHint,
@@ -11,7 +12,7 @@ import type { Display, Endpoint, StartOptions } from "../types.js";
 import { readClaim, takeClaim, type ClaimHolder, type ClaimState } from "./claims.js";
 import type { ImagesContext } from "./context.js";
 import { buildingState, stillBuilding } from "./create.js";
-import { observeEndpoint } from "./endpoint.js";
+import { noEndpointYet, observeEndpoint } from "./endpoint.js";
 import { hostProcesses, killFailureLines, killVms, vmsOn } from "./processes.js";
 import { startScript } from "./scripts.js";
 import {
@@ -52,10 +53,7 @@ export async function start(
     throw stillBuilding(files, building.holder);
   }
   if (building.state === "stale") {
-    throw new PlexusError(
-      "building",
-      `Image ${name} was never finished: the create that made it ended before it was done. Delete it, and create it again.`,
-    );
+    throw new PlexusError("building", texts.neverFinished(name));
   }
 
   const release = takeLaunchLock(context, files, timeoutMs);
@@ -127,9 +125,15 @@ export async function start(
 function alreadyRunning(files: ImageFiles, vms: readonly LauncherProcess[]): PlexusError {
   const pids = vms.map((vm) => vm.pid);
   const observed = observeEndpoint(files, vms);
+  const message =
+    "endpoint" in observed
+      ? texts.alreadyRunning(files.name)
+      : observed.problem === noEndpointYet
+        ? texts.alreadyStarting(files.name, pids)
+        : texts.alreadyRunningWithoutCalls(files.name, pids, observed.problem);
   return new PlexusError(
     "image-running",
-    `Image ${files.name} is already running as pid ${pids.join(", ")}. Stop it first to start it again.`,
+    message,
     { pids, ...("endpoint" in observed ? { endpoint: observed.endpoint } : {}) },
   );
 }
@@ -232,7 +236,7 @@ export function launchLockState(context: ImagesContext, files: ImageFiles): Clai
 export function beingStarted(files: ImageFiles, holder: ClaimHolder | undefined): PlexusError {
   return new PlexusError(
     "being-started",
-    `Image ${files.name} is being started${holder ? ` by process ${holder.pid}` : ""}.`,
+    texts.beingStarted(files.name, holder?.pid),
     holder ? { pid: holder.pid } : undefined,
   );
 }
