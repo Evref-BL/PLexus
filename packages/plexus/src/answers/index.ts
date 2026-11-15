@@ -153,20 +153,8 @@ export function templates(listed: readonly Template[]): ToolAnswer {
       group.lines.push(template.name);
     }
   }
-  const ambiguous = [
-    ...new Set(
-      listed
-        .filter((template) =>
-          listed.some((other) => other.name === template.name && other.category !== template.category),
-        )
-        .map((template) => template.name),
-    ),
-  ];
   return {
-    summary: [
-      texts.templatesSummary(listed.length, groups.length),
-      ...(ambiguous.length === 0 ? [] : [texts.ambiguousTemplates(ambiguous)]),
-    ].join(" "),
+    summary: texts.templatesSummary(listed.length, groups.length),
     warnings: [],
     fields: [],
     groups,
@@ -336,25 +324,9 @@ export async function callFailed(
   }
 }
 
-// An MCP older than 2.1.0 resolves tools/call against what it lists, so a
-// tool it holds without listing it is answered as unknown.
 function noSuchTool(image: string, tool: string, row: ImageInfo | undefined): ToolAnswer {
-  const pinned = row?.mcp?.source === "pin" ? row.mcp.version : undefined;
-  if (pinned !== undefined && versionBefore(pinned, [2, 1, 0])) {
-    return said(texts.olderMcpLacksTool(image, tool, pinned));
-  }
   const older = row === undefined ? undefined : olderMcp(row);
   return said(texts.noSuchTool(image, tool), older === undefined ? [] : [older]);
-}
-
-/** Whether `version` reads as a release before `than`; a version that does not read as one is not. */
-function versionBefore(version: string, than: readonly number[]): boolean {
-  const parts = /^v?(\d+)\.(\d+)\.(\d+)/.exec(version)?.slice(1).map(Number);
-  if (parts === undefined) {
-    return false;
-  }
-  const differing = parts.findIndex((part, index) => part !== than[index]);
-  return differing >= 0 && parts[differing] < than[differing];
 }
 
 function secondsOf(waitedMs: number | undefined): number {

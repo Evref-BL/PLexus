@@ -129,8 +129,8 @@ function alreadyRunning(files: ImageFiles, vms: readonly LauncherProcess[]): Ple
     "endpoint" in observed
       ? texts.alreadyRunning(files.name)
       : observed.problem === noEndpointYet
-        ? texts.alreadyStarting(files.name, pids)
-        : texts.alreadyRunningWithoutCalls(files.name, pids, observed.problem);
+        ? texts.starting(files.name, pids)
+        : texts.takesNoCalls(files.name, pids, observed.problem);
   return new PlexusError(
     "image-running",
     message,

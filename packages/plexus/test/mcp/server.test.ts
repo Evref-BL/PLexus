@@ -384,7 +384,7 @@ describe("plexus mcp", () => {
   });
 
   it("says what a call that failed did to the image", async () => {
-    const images = new FakeImages([row("p13", { port: 7001, fields: { mcp: { source: "pin", version: "2.0.3" } } })]);
+    const images = new FakeImages([row("p13", { port: 7001 })]);
     const failures: Record<string, Error> = {
       not_found: forwardFailure("MCP error -32601: Method not found", { kind: "answered", rpcCode: -32601 }),
       invalid: forwardFailure("MCP error -32602: Invalid method parameter(s).", { kind: "answered", rpcCode: -32602 }),
@@ -405,7 +405,7 @@ describe("plexus mcp", () => {
     const answers: Array<[string, string]> = [
       [
         "not_found",
-        "Image p13 answered that it has no tool not_found, but its Pharo MCP 2.0.3 may hold the tool without listing it. Recreating the image gives it the current MCP.",
+        "Image p13 answered that it has no tool not_found: tool_search finds the tools it has.",
       ],
       ["invalid", "MCP error -32602: Invalid method parameter(s)."],
       [
