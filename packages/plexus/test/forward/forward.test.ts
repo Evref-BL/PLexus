@@ -277,6 +277,47 @@ describe("a forwarded call", () => {
     });
   });
 
+  it("waits an explicit timeoutMs for the call, whatever the call's own limit", async () => {
+    const { url } = await fakeMcpServer((request) =>
+      request.method === "tools/call"
+        ? { result: { content: [{ type: "text", text: "done" }] }, afterMs: 250 }
+        : standardAnswers(request),
+    );
+
+    expect(
+      await failureOf(callTool({ url }, "slow", { timeoutSeconds: 120 }, { timeoutMs: 100, inputSchema: testRun })),
+    ).toEqual({ message: "MCP request timed out after 100ms", kind: "timeout", waitedMs: 100 });
+  });
+
+  it("is still sent when the handshake times out under an explicit timeoutMs", async () => {
+    const { url, received } = await fakeMcpServer((request) =>
+      request.method === "initialize" ? "never" : standardAnswers(request),
+    );
+
+    expect(await callTool({ url }, "class_search", {}, { timeoutMs: 100 })).toEqual({
+      content: [{ type: "text", text: "class=MCPToolRegistry" }],
+    });
+    expect(received.map((request) => request.method)).toEqual(["initialize", "tools/call"]);
+  });
+
+  it("takes a time limit longer than Node's timers keep, with no warning", async () => {
+    const { url } = await fakeMcpServer(standardAnswers);
+    const warnings: string[] = [];
+    const onWarning = (warning: Error) => warnings.push(warning.name);
+    process.on("warning", onWarning);
+    try {
+      for (const timeoutSeconds of [1e10, 1e308]) {
+        expect(await callTool({ url }, "class_search", { timeoutSeconds })).toEqual({
+          content: [{ type: "text", text: "class=MCPToolRegistry" }],
+        });
+      }
+      await new Promise((resolve) => setImmediate(resolve));
+    } finally {
+      process.off("warning", onWarning);
+    }
+    expect(warnings).toEqual([]);
+  });
+
   it("is cancelled by its signal, before it is sent and while it waits", async () => {
     const { url, received } = await fakeMcpServer((request) =>
       request.method === "tools/call" ? "never" : standardAnswers(request),
@@ -305,6 +346,19 @@ describe("a forwarded call", () => {
     expect(callWaitMs({ timeoutSeconds: 120 }, { minimumMs: 300_000 })).toBe(300_000);
     expect(callWaitMs({ timeoutSeconds: -1 }, { inputSchema: testRun })).toBe(120_000);
     expect(callWaitMs({ timeoutSeconds: "120" })).toBe(60_000);
+  });
+
+  it("waits no longer than the listed maximum allows, nor than Node's timers keep", () => {
+    const evaluate = {
+      type: "object",
+      properties: { timeoutSeconds: { type: "integer", default: 30, maximum: 600 } },
+    } as const;
+    expect(callWaitMs({ timeoutSeconds: 1e10 }, { inputSchema: evaluate })).toBe(630_000);
+    expect(callWaitMs({ timeoutSeconds: 300 }, { inputSchema: evaluate })).toBe(330_000);
+    expect(callWaitMs({}, { inputSchema: evaluate })).toBe(60_000);
+    expect(callWaitMs({ timeoutSeconds: 1e10 }, { inputSchema: testRun })).toBe(2 ** 31 - 1);
+    expect(callWaitMs({ timeoutSeconds: 1e308 })).toBe(2 ** 31 - 1);
+    expect(callWaitMs({}, { minimumMs: 1e12 })).toBe(2 ** 31 - 1);
   });
 });
 
