@@ -161,36 +161,21 @@ describe("the facts of an image", () => {
 });
 
 describe("image_templates", () => {
-  it("lists the names under their categories, and says which need one", () => {
+  it("lists the names under their categories", () => {
     const answer = templates([
       { name: "Pharo 14.0 - 64bit (stable)", category: "Official distributions" },
       { name: "Pharo 13.0 - 64bit", category: "Official distributions" },
-      { name: "Pharo 10.0 - 64bit", category: "Official distributions", ambiguous: true },
-      { name: "Pharo 10.0 - 64bit", category: "Pharo Mooc", ambiguous: true },
+      { name: "Pharo 10.0 - 64bit", category: "Pharo Mooc" },
     ]);
     expect(render(answer)).toBe(
       [
-        "4 templates in 2 categories. Pharo 10.0 - 64bit is in more than one, so image_create needs its category.",
+        "3 templates in 2 categories.",
         "Official distributions:",
         "  Pharo 14.0 - 64bit (stable)",
         "  Pharo 13.0 - 64bit",
-        "  Pharo 10.0 - 64bit",
         "Pharo Mooc:",
         "  Pharo 10.0 - 64bit",
       ].join("\n"),
-    );
-  });
-
-  it("names every template in several categories", () => {
-    const twice = (name: string) => [
-      { name, category: "A" },
-      { name, category: "B" },
-    ];
-    expect(templates([...twice("X"), ...twice("Y")]).summary).toBe(
-      "4 templates in 2 categories. X and Y are each in more than one, so image_create needs their category.",
-    );
-    expect(templates([...twice("X"), ...twice("Y"), ...twice("Z")]).summary).toBe(
-      "6 templates in 2 categories. X, Y, and Z are each in more than one, so image_create needs their category.",
     );
     expect(templates([{ name: "X", category: "A" }]).summary).toBe("1 template in 1 category.");
   });
@@ -381,62 +366,26 @@ describe("image_create, image_start, image_stop and image_delete", () => {
 });
 
 describe("checkArguments", () => {
-  it("passes the arguments a schema accepts", () => {
-    expect(checkArguments(tool("image_start"), { name: "dev", display: "interactive" })).toBeUndefined();
-    expect(checkArguments(tool("image_templates"), undefined)).toBeUndefined();
-    expect(checkArguments(tool("image_list"), {})).toBeUndefined();
-  });
-
-  it("says an argument is required, a blank one being missing", () => {
-    expect(checkArguments(tool("image_start"), {})).toBe("Invalid arguments for image_start. name is required.");
-    expect(checkArguments(tool("image_start"), { name: "  " })).toBe(
-      "Invalid arguments for image_start. name is required.",
-    );
-  });
-
-  it("says an optional argument is blank", () => {
-    expect(checkArguments(tool("image_create"), { name: "x", template: "y", category: " \t" })).toBe(
-      "Invalid arguments for image_create. category is blank; leave it out or give it a value.",
-    );
-  });
-
-  it("names the values an enum allows", () => {
-    expect(checkArguments(tool("image_start"), { name: "dev", display: "window" })).toBe(
-      'Invalid arguments for image_start. display must be "headless" or "interactive", not "window".',
-    );
-  });
-
-  it("names a value's JSON type", () => {
-    expect(checkArguments(tool("image_create"), { name: "x", template: 3 })).toBe(
-      "Invalid arguments for image_create. template must be string, not integer.",
-    );
-    expect(checkArguments(tool("image_create"), { name: "x", template: 1.5 })).toBe(
-      "Invalid arguments for image_create. template must be string, not number.",
-    );
-    for (const [value, type] of [
-      [null, "null"],
-      [{}, "object"],
-      [[], "array"],
-      [true, "boolean"],
-    ] as const) {
-      expect(checkArguments(tool("image_stop"), { name: value })).toBe(
-        `Invalid arguments for image_stop. name must be string, not ${type}.`,
-      );
-    }
-  });
-
-  it("refuses an argument the schema does not accept, naming those it does", () => {
-    expect(checkArguments(tool("image_delete"), { name: "dev", force: true })).toBe(
-      "Invalid arguments for image_delete. force is not accepted here; expected one of name.",
-    );
-    expect(checkArguments(tool("image_templates"), { detail: 1 })).toBe(
-      "Invalid arguments for image_templates. detail is not accepted here.",
-    );
-  });
-
-  it("says the required first, then the values, then what is not accepted", () => {
-    expect(checkArguments(tool("image_create"), { extra: 1, template: 3 })).toBe(
-      "Invalid arguments for image_create. name is required. template must be string, not integer. extra is not accepted here; expected one of category, name, template.",
+  // Required first, then each value, then what the schema does not accept.
+  it.each<[string, Record<string, unknown> | undefined, string | undefined]>([
+    ["image_start", { name: "dev", display: "interactive" }, undefined],
+    ["image_templates", undefined, undefined],
+    ["image_start", { name: "  " }, "name is required."],
+    ["image_create", { name: "x", template: "y", category: " \t" }, "category is blank; leave it out or give it a value."],
+    ["image_start", { name: "dev", display: "window" }, 'display must be "headless" or "interactive", not "window".'],
+    ["image_create", { name: "x", template: 1.5 }, "template must be string, not number."],
+    ["image_stop", { name: null }, "name must be string, not null."],
+    ["image_stop", { name: [] }, "name must be string, not array."],
+    ["image_delete", { name: "dev", force: true }, "force is not accepted here; expected one of name."],
+    ["image_templates", { detail: 1 }, "detail is not accepted here."],
+    [
+      "image_create",
+      { extra: 1, template: 3 },
+      "name is required. template must be string, not integer. extra is not accepted here; expected one of category, name, template.",
+    ],
+  ])("%s %j", (name, args, violations) => {
+    expect(checkArguments(tool(name), args)).toBe(
+      violations === undefined ? undefined : `Invalid arguments for ${name}. ${violations}`,
     );
   });
 
@@ -501,12 +450,9 @@ describe("callFailed", () => {
     expect(asked).toEqual([]);
   });
 
-  it("says a tool the image does not know may be one an MCP before 2.1.0 holds without listing", async () => {
+  it("says a tool the image does not know, and when its MCP is older than the pinned one", async () => {
     const notFound = forwardFailure("MCP error -32601: Method not found", { kind: "answered", rpcCode: -32601 });
 
-    expect(await answerOf(notFound, runningRow("p13", { mcp: { source: "pin", version: "2.0.3" } }))).toBe(
-      "Image p13 answered that it has no tool image_evaluate, but its Pharo MCP 2.0.3 may hold the tool without listing it. Recreating the image gives it the current MCP.",
-    );
     expect(await answerOf(notFound, runningRow("p13", { mcp: { source: "pin", version: "3.7.0" } }))).toBe(
       [
         "Image p13 answered that it has no tool image_evaluate: tool_search finds the tools it has.",

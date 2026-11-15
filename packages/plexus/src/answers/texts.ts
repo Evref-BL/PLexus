@@ -48,20 +48,6 @@ export function alreadyRunning(name: string): string {
   return `Image ${name} is already running; its tools answer now.`;
 }
 
-/** A start of an image a start of this PLexus launched, whose server does not answer yet. */
-export function alreadyStarting(name: string, pids: readonly number[]): string {
-  return `Image ${name} is already running as ${pidsText(pids)}, and is starting: its MCP server does not answer yet. Call its tools once image_list shows it running.`;
-}
-
-/** A start of an image a VM runs that takes no calls, for `problem`. */
-export function alreadyRunningWithoutCalls(
-  name: string,
-  pids: readonly number[],
-  problem: string,
-): string {
-  return `Image ${name} is already running as ${pidsText(pids)} but takes no calls: ${problem}. image_stop kills ${vmsText(pids)} without saving; ${startsAsSaved}`;
-}
-
 export function beingStarted(name: string, holder?: number): string {
   return `Image ${name} is being started${holder === undefined ? "" : ` by process ${holder}`}. Its tools take calls once image_list shows it running.`;
 }
@@ -110,10 +96,6 @@ export function noImageRunning(tool: string): string {
 
 // What a forwarded call that failed did to the image.
 
-export function olderMcpLacksTool(name: string, tool: string, version: string): string {
-  return `Image ${name} answered that it has no tool ${tool}, but its Pharo MCP ${version} may hold the tool without listing it. Recreating the image gives it the current MCP.`;
-}
-
 export function noSuchTool(name: string, tool: string): string {
   return `Image ${name} answered that it has no tool ${tool}: tool_search finds the tools it has.`;
 }
@@ -150,13 +132,6 @@ export function didNotAnswer(name: string, tool: string, reason: string): string
 
 export function templatesSummary(templates: number, categories: number): string {
   return `${plural(templates, "template")} in ${plural(categories, "category", "categories")}.`;
-}
-
-/** Said after the templates' summary for the names in several categories. */
-export function ambiguousTemplates(names: readonly string[]): string {
-  return names.length === 1
-    ? `${names[0]} is in more than one, so image_create needs its category.`
-    : `${andList(names)} are each in more than one, so image_create needs their category.`;
 }
 
 export function noTemplates(): string {

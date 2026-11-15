@@ -200,7 +200,7 @@ describe("start", () => {
 
     await expect(start(context, "dev")).rejects.toMatchObject({
       code: "image-running",
-      message: `Image dev is already running as pid ${vm.pid}, and is starting: its MCP server does not answer yet. Call its tools once image_list shows it running.`,
+      message: `Image dev is starting as pid ${vm.pid}: its MCP server does not answer yet. Call it again once image_list shows it running.`,
       details: { pids: [vm.pid] },
     });
     expect(launcher.called("startImage")).toEqual([]);
@@ -212,7 +212,7 @@ describe("start", () => {
 
     await expect(start(context, "dev")).rejects.toMatchObject({
       code: "image-running",
-      message: `Image dev is already running as pid ${vm.pid} but takes no calls: not started by this PLexus. image_stop kills that VM without saving; image_start then starts it as it was last saved.`,
+      message: `Image dev runs as pid ${vm.pid} but takes no calls: not started by this PLexus. image_stop kills that VM without saving; image_start then starts it as it was last saved.`,
       details: { pids: [vm.pid] },
     });
     expect(launcher.called("startImage")).toEqual([]);
