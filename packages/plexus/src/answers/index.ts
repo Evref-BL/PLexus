@@ -58,7 +58,9 @@ export function render(answer: ToolAnswer): string {
 
 // A field every record holds with the same value is said once, beside the
 // label. Each record keeps its name, which tells it from the others, so the
-// name is never lifted.
+// name is never lifted, and a record may be left with its name alone: the
+// name plays the part of the method reference that lets MCP's
+// `keysSharedByEntries:` lift every shared field.
 function listLines(label: string, records: readonly ToolRecord[]): string[] {
   const shared = sharedPairs(records);
   const sharedKeys = new Set(shared.map(([key]) => key));
