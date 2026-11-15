@@ -243,8 +243,9 @@ export function created(result: Pick<ImageInfo, "name" | "template" | "mcp" | "e
 
 /**
  * A start, said of the image as it was last saved. `row`, the image as listed
- * once it answers, adds the script every start files in and the older-MCP
- * warning; the pids, the endpoint and the time taken are not said.
+ * before or after the start, which changes neither, adds the script every
+ * start files in and the older-MCP warning; the pids, the endpoint and the
+ * time taken are not said.
  */
 export function started(result: Pick<StartResult, "name" | "display">, row?: ImageInfo): ToolAnswer {
   const older = row === undefined ? undefined : olderMcp(row);
