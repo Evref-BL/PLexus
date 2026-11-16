@@ -1,8 +1,10 @@
 /**
  * The answers of the image tools, as plain text for a model: what happened,
- * then what an agent acts on, in the layout MCP's own tools write. Both MCP
- * servers that serve the image tools answer through this, so the same call
- * reads the same in either; a server extends an answer before rendering it.
+ * then what an agent acts on, in the layout MCP's own tools write, except that
+ * a list record says every field, even one all records share, where MCP says
+ * that once beside the label. Both MCP servers that serve the image tools
+ * answer through this, so the same call reads the same in either; a server
+ * extends an answer before rendering it.
  */
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import { defaultPharoMcpVersion } from "../config/pharoMcpVersion.js";
