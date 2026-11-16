@@ -466,6 +466,45 @@ describe("callFailed", () => {
     }
   });
 
+  it("names the tool the image lists that the unknown one means, when one alone fits", async () => {
+    const notFound = forwardFailure("MCP error -32601: Method not found", { kind: "answered", rpcCode: -32601 });
+    const listedBy380 = ["class_search", "image_evaluate", "method_compile", "method_search", "test_run", "tool_search"];
+    const listedByMain = ["class_search", "evaluate", "method_compile", "test_run", "tool_search"];
+    const refusalOf = async (tool: string, listed: readonly string[], found = runningRow("p13", { mcp: pinned })) => {
+      const answer = await callFailed("p13", tool, notFound, rowIs(found), listed);
+      return answer === undefined ? undefined : render(answer);
+    };
+
+    expect(await refusalOf("evaluate", listedBy380)).toBe(
+      "Image p13 answered that it has no tool evaluate, but it lists image_evaluate: call that instead.",
+    );
+    expect(await refusalOf("eval", listedBy380)).toBe(
+      "Image p13 answered that it has no tool eval, but it lists image_evaluate: call that instead.",
+    );
+    expect(await refusalOf("image_evaluate", listedByMain)).toBe(
+      "Image p13 answered that it has no tool image_evaluate, but it lists evaluate: call that instead.",
+    );
+    expect(await refusalOf("evaluate", listedBy380, runningRow("p13", { mcp: { source: "pin", version: "3.7.0" } }))).toBe(
+      [
+        "Image p13 answered that it has no tool evaluate, but it lists image_evaluate: call that instead.",
+        `Warning: Image p13 holds Pharo MCP 3.7.0, and images are created with ${defaultPharoMcpVersion} now, so its tools may differ from the current ones. Recreating it gives it the current MCP.`,
+      ].join("\n"),
+    );
+    // Several fit, none does, a fragment inside a word, or the image lists
+    // the very name it refused: the refusal stays as it was.
+    for (const [tool, listed] of [
+      ["search", listedBy380],
+      ["run_tests", listedBy380],
+      ["valuate", listedBy380],
+      ["evaluate", ["evaluate", ...listedBy380]],
+      ["evaluate", []],
+    ] as const) {
+      expect(await refusalOf(tool, listed), tool).toBe(
+        `Image p13 answered that it has no tool ${tool}: tool_search finds the tools it has.`,
+      );
+    }
+  });
+
   it("says an image that stopped before answering starts as it was last saved, whatever broke", async () => {
     for (const kind of [
       { kind: "closed" },

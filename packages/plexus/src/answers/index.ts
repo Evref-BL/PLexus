@@ -279,13 +279,17 @@ const methodNotFound = -32601;
  * error, or nothing for a call its caller cancelled, which is answered
  * nothing. An answer the image gave passes as it is. `rowOf` is asked for the
  * image as listed only when the text depends on it: whether it still runs, or
- * which MCP it holds. A `rowOf` that rejects leaves both unknown.
+ * which MCP it holds. A `rowOf` that rejects leaves both unknown. `listed`,
+ * the names of the tools the image listed that a call reaches, lets a tool
+ * it does not have be answered with the listed one the call most likely
+ * meant.
  */
 export async function callFailed(
   image: string,
   tool: string,
   error: unknown,
   rowOf: () => Promise<ImageInfo | undefined>,
+  listed: readonly string[] = [],
 ): Promise<ToolAnswer | undefined> {
   const failure = (error instanceof Error ? error : new Error(String(error))) as Error & {
     kind?: ForwardError["kind"];
@@ -302,7 +306,7 @@ export async function callFailed(
 
   const row = await rowOf().catch(() => undefined);
   if (kind === "answered") {
-    return noSuchTool(image, tool, row);
+    return noSuchTool(image, tool, row, listed);
   }
   if (row === undefined) {
     return said(texts.didNotAnswer(image, tool, withoutFinalPeriod(failure.message)));
@@ -324,9 +328,33 @@ export async function callFailed(
   }
 }
 
-function noSuchTool(image: string, tool: string, row: ImageInfo | undefined): ToolAnswer {
+function noSuchTool(
+  image: string,
+  tool: string,
+  row: ImageInfo | undefined,
+  listed: readonly string[],
+): ToolAnswer {
   const older = row === undefined ? undefined : olderMcp(row);
-  return said(texts.noSuchTool(image, tool), older === undefined ? [] : [older]);
+  return said(texts.noSuchTool(image, tool, meantTool(tool, listed)), older === undefined ? [] : [older]);
+}
+
+/**
+ * The listed tool an agent asking for `tool` means: the one listed name that
+ * holds the asked one, or that the asked one holds, from the start of one of
+ * its words, as image_evaluate and evaluate hold each other across an MCP
+ * release. Several such names, or a listing that holds the asked name, which
+ * the image has just denied having, name none.
+ */
+function meantTool(tool: string, listed: readonly string[]): string | undefined {
+  if (listed.includes(tool)) {
+    return undefined;
+  }
+  const fits = listed.filter((name) => holds(name, tool) || holds(tool, name));
+  return fits.length === 1 ? fits[0] : undefined;
+}
+
+function holds(name: string, part: string): boolean {
+  return name.startsWith(part) || name.includes(`_${part}`);
 }
 
 function secondsOf(waitedMs: number | undefined): number {

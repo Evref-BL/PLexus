@@ -431,6 +431,32 @@ describe("plexus mcp", () => {
     }
   });
 
+  it("names the tool an image lists for one it does not have", async () => {
+    const notFound = forwardFailure("MCP error -32601: Method not found", { kind: "answered", rpcCode: -32601 });
+    const { client, call } = await connect(
+      new FakeImages([row("eval", { port: 7001 }), row("p13", { port: 7002 })]),
+      {
+        "http://127.0.0.1:7001/": [tool("evaluate"), tool("class_search")],
+        "http://127.0.0.1:7002/": [tool("image_evaluate"), tool("class_search"), tool("image_list")],
+      },
+      async (endpoint, name) => {
+        if (endpoint.url === "http://127.0.0.1:7002/" && name !== "image_evaluate") {
+          throw notFound;
+        }
+        return { content: [{ type: "text", text: `${name} answered` }] };
+      },
+    );
+
+    await client.listTools();
+    expect(textOf(await call("evaluate", { image: "p13", code: "3 + 4" }))).toBe(
+      "Image p13 answered that it has no tool evaluate, but it lists image_evaluate: call that instead.",
+    );
+    // image_list is this server's own, which no forwarded call reaches.
+    expect(textOf(await call("list", { image: "p13" }))).toBe(
+      "Image p13 answered that it has no tool list: tool_search finds the tools it has.",
+    );
+  });
+
   it("aborts a forwarded call the host cancels, and answers nothing for it", async () => {
     let signal: AbortSignal | undefined;
     const { client, responded } = await connect(new FakeImages([row("dev", { port: 7001 })]), {}, (_endpoint, _name, _args, options) => {

@@ -162,7 +162,11 @@ export function createPlexusMcpServer(options: PlexusMcpServerOptions): Server {
           signal: extra.signal,
         });
       };
-      return forward(images, callOn, name, args);
+      // What a call reaches of what the image listed: not the image tools,
+      // which this server answers itself.
+      const listedBy = (image: string) =>
+        [...(listedSchemas.get(image)?.keys() ?? [])].filter((each) => !imageToolNames.has(each));
+      return forward(images, callOn, listedBy, name, args);
     }
     const refusal = answers.checkArguments(imageTool, args);
     if (refusal !== undefined) {
@@ -273,11 +277,13 @@ const imageArgument: Tool["inputSchema"] = { type: "object", properties: { image
 /**
  * A call to a tool of an image: to the image it names, or, naming none, to
  * the only one that answers. An answer the image gives, an error or not,
- * passes as it is.
+ * passes as it is; a tool it does not have is answered with the one it
+ * lists, by `listedBy`, that the call most likely meant.
  */
 async function forward(
   images: ImagesApi,
   callOn: (endpoint: Endpoint, image: string, args: Record<string, unknown>) => Promise<CallToolResult>,
+  listedBy: (image: string) => readonly string[],
   name: string,
   args: Record<string, unknown>,
 ): Promise<CallToolResult> {
@@ -296,7 +302,13 @@ async function forward(
   try {
     return await callOn(target.endpoint, target.name, rest);
   } catch (error) {
-    const answer = await answers.callFailed(target.name, name, error, async () => (await images.list(target.name))[0]);
+    const answer = await answers.callFailed(
+      target.name,
+      name,
+      error,
+      async () => (await images.list(target.name))[0],
+      listedBy(target.name),
+    );
     // A cancelled call is answered nothing: the host gave up on it.
     return answer === undefined ? failure(error) : text(answers.render(answer), true);
   }
