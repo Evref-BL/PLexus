@@ -6,10 +6,11 @@
  */
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import { defaultPharoMcpVersion } from "../config/pharoMcpVersion.js";
+import { listTools } from "../forward/index.js";
 import type { ForwardError } from "../forward/jsonRpc.js";
-import { noEndpointYet } from "../images/endpoint.js";
+import { endpointOf, noEndpointYet } from "../images/endpoint.js";
 import type { StartResult } from "../images/start.js";
-import type { ImageInfo, Template } from "../types.js";
+import type { Endpoint, ImageInfo, Template } from "../types.js";
 import * as texts from "./texts.js";
 
 export * as texts from "./texts.js";
@@ -275,21 +276,29 @@ function said(summary: string, warnings: string[] = []): ToolAnswer {
 const methodNotFound = -32601;
 
 /**
+ * How long the listing of an image that has just answered waits on each of
+ * its two requests: one the image is too busy to give in that time is not
+ * worth delaying its refusal for.
+ */
+const listingWaitMs = 5_000;
+
+/**
  * What a forwarded call that failed did to the image, from `callTool`'s
  * error, or nothing for a call its caller cancelled, which is answered
  * nothing. An answer the image gave passes as it is. `rowOf` is asked for the
  * image as listed only when the text depends on it: whether it still runs, or
- * which MCP it holds. A `rowOf` that rejects leaves both unknown. `listed`,
- * the names of the tools the image listed that a call reaches, lets a tool
- * it does not have be answered with the listed one the call most likely
- * meant.
+ * which MCP it holds. A `rowOf` that rejects leaves both unknown. A tool the
+ * image answers it does not have is answered with the one it lists that the
+ * call most likely meant: `listToolsAt` lists them at the image's endpoint,
+ * asking the image itself unless given, and a listing that fails names none.
  */
 export async function callFailed(
   image: string,
   tool: string,
   error: unknown,
   rowOf: () => Promise<ImageInfo | undefined>,
-  listed: readonly string[] = [],
+  listToolsAt: (endpoint: Endpoint) => Promise<ReadonlyArray<{ name: string }>> = (endpoint) =>
+    listTools(endpoint, { timeoutMs: listingWaitMs }),
 ): Promise<ToolAnswer | undefined> {
   const failure = (error instanceof Error ? error : new Error(String(error))) as Error & {
     kind?: ForwardError["kind"];
@@ -306,7 +315,7 @@ export async function callFailed(
 
   const row = await rowOf().catch(() => undefined);
   if (kind === "answered") {
-    return noSuchTool(image, tool, row, listed);
+    return noSuchTool(image, tool, row, await listedNames(row, listToolsAt));
   }
   if (row === undefined) {
     return said(texts.didNotAnswer(image, tool, withoutFinalPeriod(failure.message)));
@@ -338,10 +347,25 @@ function noSuchTool(
   return said(texts.noSuchTool(image, tool, meantTool(tool, listed)), older === undefined ? [] : [older]);
 }
 
+/** The names of the tools the image lists now, or none when it cannot be asked or does not answer. */
+async function listedNames(
+  row: ImageInfo | undefined,
+  listToolsAt: (endpoint: Endpoint) => Promise<ReadonlyArray<{ name: string }>>,
+): Promise<string[]> {
+  if (row === undefined) {
+    return [];
+  }
+  try {
+    return (await listToolsAt(endpointOf(row))).map((each) => each.name);
+  } catch {
+    return [];
+  }
+}
+
 /**
  * The listed tool an agent asking for `tool` means: the one listed name that
- * holds the asked one, or that the asked one holds, from the start of one of
- * its words, as image_evaluate and evaluate hold each other across an MCP
+ * is the asked one with whole words put before it, or that the asked one is
+ * with words put before it, as image_evaluate and evaluate are across an MCP
  * release. Several such names, or a listing that holds the asked name, which
  * the image has just denied having, name none.
  */
@@ -349,12 +373,12 @@ function meantTool(tool: string, listed: readonly string[]): string | undefined 
   if (listed.includes(tool)) {
     return undefined;
   }
-  const fits = listed.filter((name) => holds(name, tool) || holds(tool, name));
+  const fits = listed.filter((name) => endsWithWords(name, tool) || endsWithWords(tool, name));
   return fits.length === 1 ? fits[0] : undefined;
 }
 
-function holds(name: string, part: string): boolean {
-  return name.startsWith(part) || name.includes(`_${part}`);
+function endsWithWords(name: string, last: string): boolean {
+  return name.endsWith(`_${last}`);
 }
 
 function secondsOf(waitedMs: number | undefined): number {

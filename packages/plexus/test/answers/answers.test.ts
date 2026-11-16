@@ -1,3 +1,5 @@
+import http from "node:http";
+import type { AddressInfo } from "node:net";
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import { describe, expect, it } from "vitest";
 import {
@@ -437,8 +439,13 @@ describe("callFailed", () => {
     asked.push("row");
     return found;
   };
+  // Lists no tool, and keeps the tests that pass it off the network.
+  const listsNothing = async () => {
+    asked.push("tools");
+    return [];
+  };
   const answerOf = async (error: unknown, found: ImageInfo | undefined = runningRow("p13", { mcp: pinned })) => {
-    const answer = await callFailed("p13", "image_evaluate", error, rowIs(found));
+    const answer = await callFailed("p13", "image_evaluate", error, rowIs(found), listsNothing);
     return answer === undefined ? undefined : render(answer);
   };
 
@@ -468,19 +475,29 @@ describe("callFailed", () => {
 
   it("names the tool the image lists that the unknown one means, when one alone fits", async () => {
     const notFound = forwardFailure("MCP error -32601: Method not found", { kind: "answered", rpcCode: -32601 });
-    const listedBy380 = ["class_search", "image_evaluate", "method_compile", "method_search", "test_run", "tool_search"];
+    const listedBy380 = [
+      "class_search",
+      "image_evaluate",
+      "method_compile",
+      "method_search",
+      "method_source_search",
+      "test_run",
+      "tool_search",
+    ];
     const listedByMain = ["class_search", "evaluate", "method_compile", "test_run", "tool_search"];
+    const listedAt: string[] = [];
     const refusalOf = async (tool: string, listed: readonly string[], found = runningRow("p13", { mcp: pinned })) => {
-      const answer = await callFailed("p13", tool, notFound, rowIs(found), listed);
+      const answer = await callFailed("p13", tool, notFound, rowIs(found), async (endpoint) => {
+        listedAt.push(endpoint.url);
+        return listed.map((name) => ({ name }));
+      });
       return answer === undefined ? undefined : render(answer);
     };
 
     expect(await refusalOf("evaluate", listedBy380)).toBe(
       "Image p13 answered that it has no tool evaluate, but it lists image_evaluate: call that instead.",
     );
-    expect(await refusalOf("eval", listedBy380)).toBe(
-      "Image p13 answered that it has no tool eval, but it lists image_evaluate: call that instead.",
-    );
+    expect(listedAt).toEqual(["http://127.0.0.1:7001/"]);
     expect(await refusalOf("image_evaluate", listedByMain)).toBe(
       "Image p13 answered that it has no tool image_evaluate, but it lists evaluate: call that instead.",
     );
@@ -490,18 +507,79 @@ describe("callFailed", () => {
         `Warning: Image p13 holds Pharo MCP 3.7.0, and images are created with ${defaultPharoMcpVersion} now, so its tools may differ from the current ones. Recreating it gives it the current MCP.`,
       ].join("\n"),
     );
-    // Several fit, none does, a fragment inside a word, or the image lists
-    // the very name it refused: the refusal stays as it was.
+    // Several fit, none does, the asked name is only part of a listed word
+    // (eval, valuate) or not a listed name's last words (image, source), or
+    // the image lists the very name it refused: the refusal stays as it was.
     for (const [tool, listed] of [
       ["search", listedBy380],
       ["run_tests", listedBy380],
+      ["eval", listedBy380],
       ["valuate", listedBy380],
+      ["image", listedBy380],
+      ["source", listedBy380],
       ["evaluate", ["evaluate", ...listedBy380]],
       ["evaluate", []],
     ] as const) {
       expect(await refusalOf(tool, listed), tool).toBe(
         `Image p13 answered that it has no tool ${tool}: tool_search finds the tools it has.`,
       );
+    }
+  });
+
+  it("names no tool when the image cannot be listed", async () => {
+    const notFound = forwardFailure("MCP error -32601: Method not found", { kind: "answered", rpcCode: -32601 });
+    const listing = async () => {
+      asked.push("tools");
+      return [{ name: "image_evaluate" }];
+    };
+    const refusal = "Image p13 answered that it has no tool evaluate: tool_search finds the tools it has.";
+
+    // Stopped since, or not known: there is no endpoint to ask.
+    for (const found of [row("p13"), undefined]) {
+      asked.length = 0;
+      const answer = await callFailed("p13", "evaluate", notFound, rowIs(found), listing);
+      expect(answer === undefined ? undefined : render(answer)).toBe(refusal);
+      expect(asked).toEqual(["row"]);
+    }
+    const failed = await callFailed("p13", "evaluate", notFound, rowIs(runningRow("p13", { mcp: pinned })), async () => {
+      throw new Error("MCP request timed out after 5000ms");
+    });
+    expect(failed === undefined ? undefined : render(failed)).toBe(refusal);
+  });
+
+  // As the plugin calls it: with no way to list given, the image is asked.
+  it("asks the image for its tools when given no way to list them", async () => {
+    const notFound = forwardFailure("MCP error -32601: Method not found", { kind: "answered", rpcCode: -32601 });
+    const image = http.createServer((request, response) => {
+      let body = "";
+      request.on("data", (chunk: Buffer) => {
+        body += chunk.toString("utf8");
+      });
+      request.on("end", () => {
+        const message = JSON.parse(body) as { id?: string; method: string };
+        if (message.id === undefined) {
+          response.writeHead(202).end();
+          return;
+        }
+        const result =
+          message.method === "tools/list"
+            ? { tools: [{ name: "image_evaluate", inputSchema: { type: "object" } }] }
+            : { protocolVersion: "2025-06-18", capabilities: {}, serverInfo: { name: "MCP" } };
+        response.writeHead(200, { "content-type": "application/json" });
+        response.end(JSON.stringify({ jsonrpc: "2.0", id: message.id, result }));
+      });
+    });
+    await new Promise<void>((resolve) => image.listen(0, "127.0.0.1", resolve));
+    try {
+      const url = `http://127.0.0.1:${(image.address() as AddressInfo).port}/`;
+      const found = runningRow("p13", { mcp: pinned, endpoint: { url, pid: 4242 } });
+      const answer = await callFailed("p13", "evaluate", notFound, rowIs(found));
+      expect(answer === undefined ? undefined : render(answer)).toBe(
+        "Image p13 answered that it has no tool evaluate, but it lists image_evaluate: call that instead.",
+      );
+    } finally {
+      image.closeAllConnections();
+      await new Promise((resolve) => image.close(resolve));
     }
   });
 
