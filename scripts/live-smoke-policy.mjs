@@ -2,8 +2,9 @@
  * What the live smoke may do, kept apart from doing it so that it is tested
  * without a Pharo image.
  *
- * The smoke creates, starts, lists the tools of, stops and deletes one image,
- * in a scope of its own: a scratch scope cannot name an image anyone works in.
+ * The smoke creates, starts, lists the tools of, saves and stops, starts
+ * again, stops and deletes one image, in a scope of its own: a scratch scope
+ * cannot name an image anyone works in.
  */
 
 export const scratchScopePrefix = "plexus_smoke_";
@@ -94,7 +95,41 @@ export function parseSmokeArgs(argv, context = {}) {
 
 /** The steps a run takes, in order. */
 export function smokeSteps(options) {
-  return ["create", "start", "listTools", ...(options.tool ? ["callTool"] : []), "stop", "delete"];
+  return [
+    "create",
+    "start",
+    "listTools",
+    ...(options.tool ? ["callTool"] : []),
+    "save",
+    "restart",
+    "stop",
+    "delete",
+  ];
+}
+
+/**
+ * What the save step marks the image with before a stop that saves, and what
+ * the restart step reads back: `true` only in an image that kept the mark.
+ */
+export const savedMark = {
+  set: "Smalltalk globals at: #PLexusSmokeSaved put: true",
+  read: "Smalltalk globals at: #PLexusSmokeSaved ifAbsent: [ false ]",
+};
+
+/** The tool the image evaluates with: `evaluate`, or `image_evaluate` before MCP renamed it. */
+export function evaluationToolOf(tools) {
+  const tool = tools.find((each) => each.name === "evaluate") ?? tools.find((each) => each.name === "image_evaluate");
+  if (tool === undefined) {
+    throw new Error(`The image lists no evaluation tool: ${tools.map((each) => each.name).join(", ")}`);
+  }
+  return tool.name;
+}
+
+/** A stop asked to save must say it saved. */
+export function checkSaved(result) {
+  if (result.saved !== true) {
+    throw new Error(`The stop did not say it saved: ${JSON.stringify(result)}`);
+  }
 }
 
 /**

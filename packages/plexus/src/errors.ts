@@ -13,6 +13,7 @@ export type PlexusErrorCode =
   | "create-failed"
   | "start-failed"
   | "stop-failed"
+  | "save-failed"
   | "launcher-failed";
 
 /**

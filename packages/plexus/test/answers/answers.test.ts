@@ -357,8 +357,12 @@ describe("image_create, image_start, image_stop and image_delete", () => {
     ]);
   });
 
-  it("says a stop loses what was not saved, or that nothing ran", () => {
-    expect(render(stopped({ name: "p13", killed: [4242] }))).toBe("Stopped image p13; what it had not saved is lost.");
+  it("says a stop loses what was not saved and how to save, that it saved, or that nothing ran", () => {
+    expect(render(stopped({ name: "p13", killed: [4242] }))).toBe(
+      "Stopped image p13; what it had not saved is lost. image_stop with save: true saves an image before stopping it.",
+    );
+    expect(render(stopped({ name: "p13", killed: [], saved: true }))).toBe("Saved and stopped image p13.");
+    expect(render(stopped({ name: "p13", killed: [4243], saved: true }))).toBe("Saved and stopped image p13.");
     expect(render(stopped({ name: "p13", killed: [] }))).toBe("Image p13 was not running.");
   });
 

@@ -92,8 +92,17 @@ export const imageTools: Tool[] = [
   {
     name: "image_stop",
     description:
-      "Stop an image by killing every VM that runs it. It kills without saving, so save through the image first to keep its changes.",
-    inputSchema: schema({ name: nameProperty }, ["name"]),
+      "Stop an image. By default it kills every VM that runs it without saving, and the image starts again as it was last saved. With save: true, the image saves itself and quits instead, keeping its changes. Evaluating `Smalltalk saveSession` in the image saves it without stopping it.",
+    inputSchema: schema(
+      {
+        name: nameProperty,
+        save: {
+          type: "boolean",
+          description: "true to have the image save itself and quit; false or absent kills it without saving.",
+        },
+      },
+      ["name"],
+    ),
   },
   {
     name: "image_delete",
@@ -219,7 +228,7 @@ async function answerImageTool(
       return { ...answer, summary: `${answer.summary} ${answers.texts.passImage(image)}` };
     }
     case "image_stop":
-      return answers.stopped(await images.stop(image));
+      return answers.stopped(await images.stop(image, args.save === true ? { save: true } : {}));
     case "image_delete":
       return answers.deleted(await images.delete(image));
     default: {

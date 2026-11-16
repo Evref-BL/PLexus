@@ -195,7 +195,35 @@ export function passImage(name: string): string {
 }
 
 export function stopped(name: string): string {
-  return `Stopped image ${name}; what it had not saved is lost.`;
+  return `Stopped image ${name}; what it had not saved is lost. image_stop with save: true saves an image before stopping it.`;
+}
+
+export function savedAndStopped(name: string): string {
+  return `Saved and stopped image ${name}.`;
+}
+
+// A stop asked to save, when the image did not save and quit. Each says
+// whether it still runs, and what the stop without save does.
+
+const killsInstead = `image_stop without save kills it, and ${startsAsSaved}`;
+
+export function saveTakesNoCalls(name: string, pids: readonly number[], problem: string): string {
+  return `Image ${name} runs as ${pidsText(pids)} but takes no calls: ${problem}, so it cannot save itself. image_stop without save kills ${vmsText(pids)}; ${startsAsSaved}`;
+}
+
+/** The image did not take the save, or answered it without quitting: `reason` says which. */
+export function notSaved(name: string, reason: string): string {
+  return `Image ${name} did not save: ${reason}. It still runs: ${killsInstead}`;
+}
+
+export function saveTimedOut(name: string, seconds: number, written: boolean): string {
+  return written
+    ? `Image ${name} saved, but did not stop within ${seconds} s, and still runs: ${killsInstead}`
+    : `Image ${name} did not save or stop within ${seconds} s, and still runs: ${killsInstead}`;
+}
+
+export function stoppedUnsaved(name: string): string {
+  return `Image ${name} stopped without writing its image file, so what it had not saved is lost. image_start starts it as it was last saved.`;
 }
 
 export function wasNotRunning(name: string): string {

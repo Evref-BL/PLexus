@@ -113,6 +113,19 @@ function listedTimeLimit(inputSchema: Tool["inputSchema"] | undefined): { defaul
 }
 
 /**
+ * The tool an image runs Smalltalk with, as it lists it: `evaluate`, or
+ * `image_evaluate` in an image whose MCP predates the rename. An image that
+ * lists neither has an MCP older still, which held `image_evaluate` without
+ * listing it.
+ */
+export function evaluationTool(tools: ReadonlyArray<{ name: string }>): string {
+  return (
+    tools.find((tool) => tool.name === "evaluate") ??
+    tools.find((tool) => tool.name === "image_evaluate")
+  )?.name ?? "image_evaluate";
+}
+
+/**
  * Whether an MCP server answers there. Any JSON-RPC answer to `ping` counts,
  * whatever its HTTP status: a server that wants a session first refuses the
  * ping, and refusing it is answering. A server that does not speak JSON-RPC

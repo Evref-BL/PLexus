@@ -16,7 +16,7 @@ import {
   type ImagesApi,
   type PlexusMcpServerOptions,
 } from "../../src/mcp/server.js";
-import type { CreateOptions, Endpoint, ImageInfo, StartOptions } from "../../src/types.js";
+import type { CreateOptions, Endpoint, ImageInfo, StartOptions, StopOptions } from "../../src/types.js";
 
 function row(
   name: string,
@@ -69,9 +69,9 @@ class FakeImages implements ImagesApi {
     return { name, pids: [100], endpoint: { url: "http://127.0.0.1:7001/" }, display: options?.display ?? "headless", seconds: 2 };
   }
 
-  async stop(name: string) {
-    this.calls.push(["stop", name]);
-    return { name, killed: [100] };
+  async stop(name: string, options?: StopOptions) {
+    this.calls.push(["stop", name, options]);
+    return options?.save ? { name, killed: [], saved: true as const } : { name, killed: [100] };
   }
 
   async delete(name: string) {
@@ -156,7 +156,12 @@ describe("plexus mcp", () => {
     expect(tools.map((each) => each.name)).toEqual(imageToolNames);
     expect(client.getServerCapabilities()?.tools).toEqual({ listChanged: true });
     expect(tools.find((each) => each.name === "image_start")?.description).toContain("refuses an image that is already running");
-    expect(tools.find((each) => each.name === "image_stop")?.description).toContain("without saving");
+    const imageStop = tools.find((each) => each.name === "image_stop")!;
+    expect(imageStop.description).toContain("without saving");
+    expect(imageStop.description).toContain("With save: true, the image saves itself and quits");
+    expect(imageStop.description).toContain("Evaluating `Smalltalk saveSession` in the image saves it without stopping it.");
+    expect(imageStop.inputSchema.properties).toMatchObject({ save: { type: "boolean" } });
+    expect(imageStop.inputSchema.required).toEqual(["name"]);
   });
 
   it("adds the running image's tools, its name optional while it is the only one", async () => {
@@ -322,11 +327,16 @@ describe("plexus mcp", () => {
         olderWarning,
       ].join("\n"),
     );
-    expect(textOf(await call("image_stop", { name: "dev" }))).toBe("Stopped image dev; what it had not saved is lost.");
+    expect(textOf(await call("image_stop", { name: "dev" }))).toBe(
+      "Stopped image dev; what it had not saved is lost. image_stop with save: true saves an image before stopping it.",
+    );
+    expect(textOf(await call("image_stop", { name: "old", save: true }))).toBe("Saved and stopped image old.");
     expect(textOf(await call("image_delete", { name: "dev" }))).toBe("Deleted image dev and its files.");
     expect(images.calls).toContainEqual(["create", "new", { template: "Pharo 14.0 - 64bit", category: "Official distributions" }]);
     expect(images.calls).toContainEqual(["start", "dev", { display: "interactive" }]);
     expect(images.calls).toContainEqual(["start", "old", {}]);
+    expect(images.calls).toContainEqual(["stop", "dev", {}]);
+    expect(images.calls).toContainEqual(["stop", "old", { save: true }]);
 
     for (const [tool, args, refusal] of [
       ["image_list", { name: "gone" }, "There is no image gone. image_list names the images there are; image_create makes one."],
@@ -356,6 +366,7 @@ describe("plexus mcp", () => {
         'Invalid arguments for image_start. display must be "headless" or "interactive", not "window".',
       ],
       ["image_create", { name: "new", template: 3 }, "Invalid arguments for image_create. template must be string, not integer."],
+      ["image_stop", { name: "dev", save: "yes" }, "Invalid arguments for image_stop. save must be boolean, not string."],
     ] as const) {
       const result = await call(tool, args);
       expect(result.isError, tool).toBe(true);

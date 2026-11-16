@@ -2,8 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   checkListedTools,
+  checkSaved,
   checkToolResult,
   defaultRunId,
+  evaluationToolOf,
   formatFailure,
   parseSmokeArgs,
   resolveTemplate,
@@ -68,16 +70,27 @@ test("refuses options it does not know or cannot read", () => {
   assert.throws(() => parseSmokeArgs(["--expect", "x"]), /--expect needs --tool/);
 });
 
-test("creates, starts, lists, stops and deletes, and calls a tool only when asked", () => {
-  assert.deepEqual(smokeSteps({}), ["create", "start", "listTools", "stop", "delete"]);
+test("creates, starts, lists, saves and restarts, stops and deletes, and calls a tool only when asked", () => {
+  assert.deepEqual(smokeSteps({}), ["create", "start", "listTools", "save", "restart", "stop", "delete"]);
   assert.deepEqual(smokeSteps({ tool: "class_search" }), [
     "create",
     "start",
     "listTools",
     "callTool",
+    "save",
+    "restart",
     "stop",
     "delete",
   ]);
+});
+
+test("saves through the tool the image evaluates with, and wants the stop to say it saved", () => {
+  assert.equal(evaluationToolOf([{ name: "class_search" }, { name: "evaluate" }]), "evaluate");
+  assert.equal(evaluationToolOf([{ name: "image_evaluate" }]), "image_evaluate");
+  assert.throws(() => evaluationToolOf([{ name: "class_search" }]), /lists no evaluation tool: class_search/);
+
+  checkSaved({ name: "smoke", killed: [], saved: true });
+  assert.throws(() => checkSaved({ name: "smoke", killed: [4242] }), /did not say it saved/);
 });
 
 test("finds the template behind a name the launcher suffixes", () => {

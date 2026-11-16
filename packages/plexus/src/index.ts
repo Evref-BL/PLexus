@@ -13,6 +13,7 @@ export { plexusHome } from "./home.js";
 export { Images } from "./images/index.js";
 export type { CreateResult } from "./images/create.js";
 export type { StartResult } from "./images/start.js";
+export type { StopResult } from "./images/stop.js";
 export type { LauncherPort } from "./launcher/pharoLauncherMcpClient.js";
 export type {
   CreateOptions,
@@ -21,5 +22,6 @@ export type {
   ImageInfo,
   ImagesOptions,
   StartOptions,
+  StopOptions,
   Template,
 } from "./types.js";

@@ -224,6 +224,10 @@ export function testContext(
     home,
     launcher: () => launcher,
     ping: async () => true,
+    listTools: async () => [],
+    callTool: async () => {
+      throw new Error("No image answers in this test.");
+    },
     sleep: async (ms) => {
       clock.now += ms;
     },
@@ -231,6 +235,7 @@ export function testContext(
     pollMs: 250,
     vmAppearMs: 30_000,
     stopWaitMs: 10_000,
+    saveWaitMs: 60_000,
     clock,
     ...overrides,
   };

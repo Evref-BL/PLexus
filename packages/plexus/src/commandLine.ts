@@ -60,10 +60,11 @@ const imageCommands: Record<Verb, CommandSpec> = {
     positionals: { min: 1, max: 1 },
   },
   stop: {
-    usage: "plexus image stop <name>",
-    summary: "Kill every VM running the image, without saving.",
+    usage: "plexus image stop <name> [--save]",
+    summary:
+      "Kill every VM running the image, without saving. With --save, the image saves itself and quits instead; one that does not in time is left running.",
     values: [],
-    flags: [],
+    flags: ["save"],
     positionals: { min: 1, max: 1 },
   },
   delete: {
@@ -275,7 +276,7 @@ export async function runCli(
         print(await images.start(name, startOptions(parsed, spec.usage)));
         break;
       case "stop":
-        print(await images.stop(name));
+        print(await images.stop(name, parsed.flags.has("save") ? { save: true } : {}));
         break;
       case "delete":
         print(await images.delete(name));
