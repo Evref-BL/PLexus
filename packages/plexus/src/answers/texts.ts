@@ -96,8 +96,11 @@ export function noImageRunning(tool: string): string {
 
 // What a forwarded call that failed did to the image.
 
-export function noSuchTool(name: string, tool: string): string {
-  return `Image ${name} answered that it has no tool ${tool}: tool_search finds the tools it has.`;
+/** `meant`, a tool the image lists, is the one an agent asking for `tool` most likely wants. */
+export function noSuchTool(name: string, tool: string, meant?: string): string {
+  return meant === undefined
+    ? `Image ${name} answered that it has no tool ${tool}: tool_search finds the tools it has.`
+    : `Image ${name} answered that it has no tool ${tool}, but it lists ${meant}: call that instead.`;
 }
 
 export function stoppedBeforeAnswering(name: string, tool: string): string {
