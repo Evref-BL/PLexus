@@ -105,26 +105,20 @@ describe("render", () => {
     ).toBe(['S.', "items:", '  a note="say \\"hi\\" \\\\ go" mark=it"s'].join("\n"));
   });
 
-  it("says once beside the label a field every record holds with the same value, and not for one record", () => {
+  it("gives every record all its pairs, even those every record holds alike", () => {
     const records = [
       { name: "a", pairs: [["state", "running"], ["pharo", "14.0"], ["mcp", "3.8.0"]] as [string, string][] },
-      { name: "b", pairs: [["pharo", "14.0"], ["state", "stopped"], ["mcp", "3.8.0"]] as [string, string][] },
+      { name: "b", pairs: [["state", "stopped"], ["pharo", "14.0"], ["mcp", "3.8.0"]] as [string, string][] },
+      { name: "c", pairs: [["state", "stopped"], ["pharo", "14.0"], ["mcp", "3.8.0"]] as [string, string][] },
     ];
     expect(render({ summary: "S.", warnings: [], fields: [], list: { label: "images", records } })).toBe(
-      ["S.", "images (each pharo=14.0 mcp=3.8.0):", "  a state=running", "  b state=stopped"].join("\n"),
-    );
-    expect(
-      render({ summary: "S.", warnings: [], fields: [], list: { label: "images", records: records.slice(0, 1) } }),
-    ).toBe(["S.", "images:", "  a state=running pharo=14.0 mcp=3.8.0"].join("\n"));
-  });
-
-  it("lifts a field even when the records keep only their names", () => {
-    const records = [
-      { name: "a", pairs: [["state", "stopped"]] as [string, string][] },
-      { name: "b", pairs: [["state", "stopped"]] as [string, string][] },
-    ];
-    expect(render({ summary: "S.", warnings: [], fields: [], list: { label: "images", records } })).toBe(
-      ["S.", "images (each state=stopped):", "  a", "  b"].join("\n"),
+      [
+        "S.",
+        "images:",
+        "  a state=running pharo=14.0 mcp=3.8.0",
+        "  b state=stopped pharo=14.0 mcp=3.8.0",
+        "  c state=stopped pharo=14.0 mcp=3.8.0",
+      ].join("\n"),
     );
   });
 
@@ -188,7 +182,7 @@ describe("image_templates", () => {
 });
 
 describe("image_list", () => {
-  it("says what main-1's three images are, sharing what they share", () => {
+  it("says on each of main-1's three images its own Pharo version and template, which a copied line keeps", () => {
     const answer = list([
       runningRow("eval", { pharoVersion: "140", template: nextStable, mcp: { source: "script", script: "/abs/MCP-14ae2d5.st" } }),
       runningRow("old", { pharoVersion: "140", template: nextStable, mcp: pinned }),
@@ -198,13 +192,12 @@ describe("image_list", () => {
     expect(text).toBe(
       [
         "3 images, 2 running.",
-        'images (each pharo=14.0 template="Pharo 14.0 - 64bit (next stable)"):',
-        "  eval state=running mcp=script",
-        "  old state=running mcp=3.8.0",
-        "  scratch state=stopped mcp=3.8.0",
+        "images:",
+        '  eval state=running pharo=14.0 template="Pharo 14.0 - 64bit (next stable)" mcp=script',
+        `  old state=running pharo=14.0 template="Pharo 14.0 - 64bit (next stable)" mcp=${defaultPharoMcpVersion}`,
+        `  scratch state=stopped pharo=14.0 template="Pharo 14.0 - 64bit (next stable)" mcp=${defaultPharoMcpVersion}`,
       ].join("\n"),
     );
-    expect(text).toHaveLength(186);
   });
 
   it("gives each field only when known, and the display only when a window is open", () => {
