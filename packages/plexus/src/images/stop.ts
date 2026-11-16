@@ -5,7 +5,7 @@ import { PlexusError } from "../errors.js";
 import { evaluationTool } from "../forward/index.js";
 import type { ForwardError } from "../forward/jsonRpc.js";
 import type { LauncherProcess } from "../launcher/pharoLauncherMcpClient.js";
-import type { StopOptions } from "../types.js";
+import type { Endpoint, StopOptions } from "../types.js";
 import type { ImagesContext } from "./context.js";
 import { endpointOf, noEndpointYet } from "./endpoint.js";
 import { describe } from "./list.js";
@@ -87,9 +87,10 @@ async function killAndWait(context: ImagesContext, files: ImageFiles, pids: read
 /**
  * The save is the image's own: it evaluates `saveAndQuitCode` with the tool
  * it lists for evaluating. Its VM quits in the middle of the call, so the
- * connection closing is what a save looks like; whether it saved is read from
- * the image file, whose modification time moves. A VM beside the one that
- * saved, which a stop would kill, is killed once it has.
+ * connection closing is what a save looks like, and the wait for the VM to
+ * exit starts there. Whether it saved is read from the image file, whose
+ * modification time moves. A VM beside the one that saved, which a stop
+ * would kill, is killed once it has.
  */
 async function saveAndStop(
   context: ImagesContext,
@@ -109,33 +110,11 @@ async function saveAndStop(
   const endpoint = endpointOf(row);
   const savers = endpoint.pid === undefined ? row.pids : [endpoint.pid];
   const before = modifiedAt(files.imagePath);
-  const notSaved = (reason: string) =>
-    new PlexusError("save-failed", texts.notSaved(name, reason), { pids: row.pids });
-
-  let tool: string;
-  try {
-    tool = evaluationTool(await context.listTools(endpoint));
-  } catch (error) {
-    throw notSaved(notTakenReason(error));
-  }
-
+  const asked = await askToSave(context, endpoint);
   const startedAt = context.now();
-  let answer: CallToolResult | undefined;
-  try {
-    answer = await context.callTool(endpoint, tool, { code: saveAndQuitCode }, { minimumMs: context.saveWaitMs });
-  } catch (error) {
-    const kind = (error as Partial<ForwardError>).kind;
-    // The call was not sent, or the image refused it; any other failure is
-    // what a VM that quits does to the call.
-    if (kind === "no-handshake" || kind === "refused" || kind === "answered") {
-      throw notSaved(notTakenReason(error));
-    }
-  }
-  if (answer?.isError === true) {
-    const line = firstLine(answer);
-    throw notSaved(line === undefined ? `${tool} answered an error with no text` : `${tool} answered "${line}"`);
-  }
 
+  // Whatever came of the call, a VM that has gone has stopped, so the host
+  // is looked at before an image is said to run.
   let left: number[];
   for (;;) {
     const running = vmsOn(files.imagePath, await hostProcesses(context)).map((vm) => vm.pid);
@@ -143,7 +122,10 @@ async function saveAndStop(
       left = running;
       break;
     }
-    if (context.now() - startedAt >= context.saveWaitMs) {
+    if ("notTaken" in asked) {
+      throw new PlexusError("save-failed", texts.notSaved(name, asked.notTaken), { pids: running });
+    }
+    if (context.now() - startedAt >= asked.exitWaitMs) {
       throw new PlexusError(
         "save-failed",
         texts.saveTimedOut(name, Math.round(context.saveWaitMs / 1000), modifiedAt(files.imagePath) !== before),
@@ -158,28 +140,65 @@ async function saveAndStop(
   }
   fs.rmSync(files.endpoint, { force: true });
   if (modifiedAt(files.imagePath) === before) {
-    throw new PlexusError("save-failed", texts.stoppedUnsaved(name));
+    throw new PlexusError("stopped-unsaved", texts.stoppedUnsaved(name));
   }
   return { name, killed: left, saved: true };
 }
 
-/** Why the image did not take a call it was sent, or never got. */
+/**
+ * Has the image evaluate `saveAndQuitCode`, and says what came of it: how
+ * long its VM may take to exit, or why it did not take the save. Only the
+ * connection closing, or an answer that is not an error, can come from a VM
+ * that is quitting, and it gets the whole wait. A call left unanswered for
+ * the whole wait gets no more. Anything else is the image not taking the
+ * save.
+ */
+async function askToSave(
+  context: ImagesContext,
+  endpoint: Endpoint,
+): Promise<{ exitWaitMs: number } | { notTaken: string }> {
+  let tool: string;
+  try {
+    tool = evaluationTool(await context.listTools(endpoint));
+  } catch (error) {
+    return { notTaken: notTakenReason(error) };
+  }
+  try {
+    const answer = await context.callTool(endpoint, tool, { code: saveAndQuitCode }, { minimumMs: context.saveWaitMs });
+    if (answer.isError === true) {
+      const line = firstLine(answer);
+      return { notTaken: line === undefined ? `${tool} answered an error with no text` : `${tool} answered "${line}"` };
+    }
+  } catch (error) {
+    const kind = (error as Partial<ForwardError>).kind;
+    if (kind === "timeout") {
+      return { exitWaitMs: 0 };
+    }
+    if (kind !== "closed") {
+      return { notTaken: notTakenReason(error) };
+    }
+  }
+  return { exitWaitMs: context.saveWaitMs };
+}
+
+/**
+ * Why the image did not take a call it was sent, or never got, in the words
+ * of the answers rather than the socket's or the parser's.
+ */
 function notTakenReason(error: unknown): string {
-  const failure = (error instanceof Error ? error : new Error(String(error))) as Error & {
-    kind?: ForwardError["kind"];
-    waitedMs?: number;
-  };
-  const message = failure.message.replace(/\.$/, "");
+  const failure = error as Partial<ForwardError> & { message?: unknown; waitedMs?: number };
   switch (failure.kind) {
     case "no-handshake":
     case "timeout":
       return `it did not answer within ${Math.round((failure.waitedMs ?? 0) / 1000)} s`;
     case "refused":
       return "it refused the connection";
+    case "closed":
+      return "it closed the connection";
     case "answered":
-      return `it answered ${message}`;
+      return `it answered ${String(failure.message).replace(/\.$/, "")}`;
     default:
-      return message;
+      return "it gave no answer an MCP client can read";
   }
 }
 

@@ -71,6 +71,12 @@ class FakeImages implements ImagesApi {
 
   async stop(name: string, options?: StopOptions) {
     this.calls.push(["stop", name, options]);
+    if (name === "unsaved") {
+      throw new PlexusError("stopped-unsaved", texts.stoppedUnsaved(name));
+    }
+    if (name === "unsavable") {
+      throw new PlexusError("save-failed", texts.notSaved(name, "it refused the connection"), { pids: [100] });
+    }
     return options?.save ? { name, killed: [], saved: true as const } : { name, killed: [100] };
   }
 
@@ -488,7 +494,7 @@ describe("plexus mcp", () => {
     expect(responded).toHaveLength(answeredBefore);
   });
 
-  it("says the tool list changed after a start, a stop or a delete, and only then", async () => {
+  it("says the tool list changed after a start, a stop or a delete, an image that stopped unsaved included, and only then", async () => {
     const { call, listChanged } = await connect(new FakeImages([row("dev")]));
 
     await call("image_list");
@@ -503,5 +509,10 @@ describe("plexus mcp", () => {
     await call("image_stop", { name: "dev" });
     await call("image_delete", { name: "dev" });
     expect(await listChanged()).toBe(3);
+
+    await call("image_stop", { name: "unsavable", save: true });
+    expect(await listChanged()).toBe(3);
+    expect((await call("image_stop", { name: "unsaved", save: true })).isError).toBe(true);
+    expect(await listChanged()).toBe(4);
   });
 });

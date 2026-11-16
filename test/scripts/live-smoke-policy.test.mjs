@@ -5,7 +5,6 @@ import {
   checkSaved,
   checkToolResult,
   defaultRunId,
-  evaluationToolOf,
   formatFailure,
   parseSmokeArgs,
   resolveTemplate,
@@ -84,11 +83,7 @@ test("creates, starts, lists, saves and restarts, stops and deletes, and calls a
   ]);
 });
 
-test("saves through the tool the image evaluates with, and wants the stop to say it saved", () => {
-  assert.equal(evaluationToolOf([{ name: "class_search" }, { name: "evaluate" }]), "evaluate");
-  assert.equal(evaluationToolOf([{ name: "image_evaluate" }]), "image_evaluate");
-  assert.throws(() => evaluationToolOf([{ name: "class_search" }]), /lists no evaluation tool: class_search/);
-
+test("wants a stop asked to save to say it saved", () => {
   checkSaved({ name: "smoke", killed: [], saved: true });
   assert.throws(() => checkSaved({ name: "smoke", killed: [4242] }), /did not say it saved/);
 });

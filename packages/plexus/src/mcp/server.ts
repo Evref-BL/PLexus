@@ -11,6 +11,7 @@ import {
   type Tool,
 } from "@modelcontextprotocol/sdk/types.js";
 import * as answers from "../answers/index.js";
+import { PlexusError } from "../errors.js";
 import { callTool, listTools } from "../forward/index.js";
 import { endpointOf } from "../images/endpoint.js";
 import type { Images } from "../images/index.js";
@@ -186,6 +187,10 @@ export function createPlexusMcpServer(options: PlexusMcpServerOptions): Server {
       }
       return text(answers.render(answer));
     } catch (error) {
+      // An image that stopped without saving has gone all the same.
+      if (error instanceof PlexusError && error.code === "stopped-unsaved") {
+        await server.sendToolListChanged();
+      }
       return failure(error);
     }
   });

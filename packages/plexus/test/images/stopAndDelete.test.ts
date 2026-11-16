@@ -117,16 +117,19 @@ function runningSetup() {
   writeEndpoint(fixture.dir, { port: 7001, pid: vm.pid });
   const calls: Array<{ endpoint: unknown; name: string; args: unknown; options: unknown }> = [];
   fixture.context.listTools = async () => [{ name: "class_search" }, { name: "evaluate" }];
-  const answer = (quit: { writes?: boolean; exits?: boolean }) => {
+  // The call takes `takesMs` on the clock, then fails as `failure` says: by
+  // default, the connection a quitting VM closes.
+  const answer = (quit: { writes?: boolean; exits?: boolean; takesMs?: number; failure?: Error }) => {
     fixture.context.callTool = async (endpoint, name, args, options) => {
       calls.push({ endpoint, name, args, options });
+      fixture.context.clock.now += quit.takesMs ?? 0;
       if (quit.writes) {
         writeImageFile(fixture.imagePath);
       }
       if (quit.exits) {
         fixture.launcher.processes = fixture.launcher.processes.filter((each) => each.pid !== vm.pid);
       }
-      throw forwardFailure("socket hang up", { kind: "closed" });
+      throw quit.failure ?? forwardFailure("socket hang up", { kind: "closed" });
     };
   };
   return { ...fixture, vm, calls, answer, endpointFile: path.join(fixture.dir, "plexus", "endpoint.properties") };
@@ -180,7 +183,10 @@ describe("stop with save", () => {
   it("leaves an image that does not save and quit in time running, and says what it did", async () => {
     for (const [writes, message] of [
       [false, `Image dev did not save or stop within 60 s, and still runs: ${killsInstead}`],
-      [true, `Image dev saved, but did not stop within 60 s, and still runs: ${killsInstead}`],
+      [
+        true,
+        "Image dev began writing its image file but did not stop within 60 s, and still runs: it may still be writing it, and a kill before it is done can leave the file broken. image_list shows when it has stopped.",
+      ],
     ] as const) {
       const { launcher, vm, answer, endpointFile, context } = runningSetup();
       answer({ writes });
@@ -202,14 +208,55 @@ describe("stop with save", () => {
     answer({ exits: true });
 
     await expect(stop(context, "dev", { save: true })).rejects.toMatchObject({
-      code: "save-failed",
+      code: "stopped-unsaved",
       message:
         "Image dev stopped without writing its image file, so what it had not saved is lost. image_start starts it as it was last saved.",
     });
     expect(fs.existsSync(endpointFile)).toBe(false);
   });
 
-  it("leaves the image running when it does not take the save, saying why", async () => {
+  it("waits for the VM a minute from the connection closing, and no longer for a call left unanswered", async () => {
+    const { launcher, answer, context } = runningSetup();
+    // A handshake that took most of the minute leaves the quit all of it.
+    answer({ writes: true, takesMs: 58_000 });
+    let polls = 0;
+    const sleep = context.sleep;
+    context.sleep = async (ms) => {
+      await sleep(ms);
+      if (++polls === 40) {
+        launcher.processes = [];
+      }
+    };
+    expect(await stop(context, "dev", { save: true })).toEqual({ name: "dev", killed: [], saved: true });
+    expect(context.clock.now - Date.parse("2026-11-13T12:00:00Z")).toBe(68_000);
+
+    const unanswered = runningSetup();
+    unanswered.answer({
+      takesMs: 60_000,
+      failure: forwardFailure("MCP request timed out after 60000ms", { kind: "timeout", waitedMs: 60_000 }),
+    });
+    await expect(stop(unanswered.context, "dev", { save: true })).rejects.toMatchObject({
+      code: "save-failed",
+      message: `Image dev did not save or stop within 60 s, and still runs: ${killsInstead}`,
+      details: { pids: [unanswered.vm.pid] },
+    });
+    expect(unanswered.context.clock.now - Date.parse("2026-11-13T12:00:00Z")).toBe(60_000);
+    expect(unanswered.launcher.processes).toEqual([unanswered.vm]);
+  });
+
+  it("reads a call that failed on a VM that has gone as a stop, not as a refusal", async () => {
+    const { answer, endpointFile, context } = runningSetup();
+    answer({ exits: true, failure: forwardFailure("HTTP 502 Bad Gateway", { kind: "other" }) });
+
+    await expect(stop(context, "dev", { save: true })).rejects.toMatchObject({
+      code: "stopped-unsaved",
+      message:
+        "Image dev stopped without writing its image file, so what it had not saved is lost. image_start starts it as it was last saved.",
+    });
+    expect(fs.existsSync(endpointFile)).toBe(false);
+  });
+
+  it("leaves the image running when it does not take the save, saying why at once", async () => {
     const reject = (error: Error) => async () => {
       throw error;
     };
@@ -243,6 +290,36 @@ describe("stop with save", () => {
         "it answered MCP error -32601: Method not found",
       ],
       [
+        "a listing whose connection closed",
+        (context) => {
+          context.listTools = reject(forwardFailure("socket hang up", { kind: "closed" }));
+        },
+        "it closed the connection",
+      ],
+      [
+        "a listing with no tools in it",
+        (context) => {
+          context.listTools = reject(new Error("MCP tools/list response did not include result.tools"));
+        },
+        "it gave no answer an MCP client can read",
+      ],
+      [
+        "an HTTP error status",
+        (context) => {
+          context.callTool = reject(forwardFailure("HTTP 500 Internal Server Error", { kind: "other" }));
+        },
+        "it gave no answer an MCP client can read",
+      ],
+      [
+        "an answer that is not JSON",
+        (context) => {
+          context.callTool = reject(
+            forwardFailure("MCP response was not valid JSON: Unexpected token '<'", { kind: "other" }),
+          );
+        },
+        "it gave no answer an MCP client can read",
+      ],
+      [
         "an error result",
         (context) => {
           context.callTool = async () => ({
@@ -262,6 +339,7 @@ describe("stop with save", () => {
         message: `Image dev did not save: ${reason}. It still runs: ${killsInstead}`,
         details: { pids: [vm.pid] },
       });
+      expect(context.clock.now - Date.parse("2026-11-13T12:00:00Z"), label).toBe(0);
       expect(launcher.processes, label).toEqual([vm]);
       expect(launcher.called("killProcess"), label).toEqual([]);
       expect(fs.existsSync(endpointFile), label).toBe(true);

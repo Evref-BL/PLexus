@@ -203,7 +203,7 @@ export function savedAndStopped(name: string): string {
 }
 
 // A stop asked to save, when the image did not save and quit. Each says
-// whether it still runs, and what the stop without save does.
+// whether it still runs, and what to do next.
 
 const killsInstead = `image_stop without save kills it, and ${startsAsSaved}`;
 
@@ -211,17 +211,26 @@ export function saveTakesNoCalls(name: string, pids: readonly number[], problem:
   return `Image ${name} runs as ${pidsText(pids)} but takes no calls: ${problem}, so it cannot save itself. image_stop without save kills ${vmsText(pids)}; ${startsAsSaved}`;
 }
 
-/** The image did not take the save, or answered it without quitting: `reason` says which. */
+/**
+ * The image did not take the save, and still runs: it could not be asked,
+ * refused or failed the call, or answered it with an error. `reason` says
+ * which.
+ */
 export function notSaved(name: string, reason: string): string {
   return `Image ${name} did not save: ${reason}. It still runs: ${killsInstead}`;
 }
 
+/**
+ * The image still runs after the wait. One that has written to its image
+ * file may still be writing it, which a kill would break.
+ */
 export function saveTimedOut(name: string, seconds: number, written: boolean): string {
   return written
-    ? `Image ${name} saved, but did not stop within ${seconds} s, and still runs: ${killsInstead}`
+    ? `Image ${name} began writing its image file but did not stop within ${seconds} s, and still runs: it may still be writing it, and a kill before it is done can leave the file broken. image_list shows when it has stopped.`
     : `Image ${name} did not save or stop within ${seconds} s, and still runs: ${killsInstead}`;
 }
 
+/** The image's VM has gone, and its image file was not written. */
 export function stoppedUnsaved(name: string): string {
   return `Image ${name} stopped without writing its image file, so what it had not saved is lost. image_start starts it as it was last saved.`;
 }

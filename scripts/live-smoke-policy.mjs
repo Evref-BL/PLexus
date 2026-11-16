@@ -116,15 +116,6 @@ export const savedMark = {
   read: "Smalltalk globals at: #PLexusSmokeSaved ifAbsent: [ false ]",
 };
 
-/** The tool the image evaluates with: `evaluate`, or `image_evaluate` before MCP renamed it. */
-export function evaluationToolOf(tools) {
-  const tool = tools.find((each) => each.name === "evaluate") ?? tools.find((each) => each.name === "image_evaluate");
-  if (tool === undefined) {
-    throw new Error(`The image lists no evaluation tool: ${tools.map((each) => each.name).join(", ")}`);
-  }
-  return tool.name;
-}
-
 /** A stop asked to save must say it saved. */
 export function checkSaved(result) {
   if (result.saved !== true) {

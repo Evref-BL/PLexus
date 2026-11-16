@@ -13,7 +13,10 @@ export type PlexusErrorCode =
   | "create-failed"
   | "start-failed"
   | "stop-failed"
+  // A stop asked to save: the image did not save and still runs, or its VM
+  // has gone without writing its image file.
   | "save-failed"
+  | "stopped-unsaved"
   | "launcher-failed";
 
 /**

@@ -13,12 +13,14 @@
  * `npm test`. The first run of a template builds its base, which takes
  * minutes; later runs copy it.
  */
+// The lookup forwarding uses, imported from its module so that the package
+// exports nothing more for the smoke.
+import { evaluationTool } from "../packages/plexus/dist/forward/index.js";
 import { callTool, Images, listTools } from "../packages/plexus/dist/index.js";
 import {
   checkListedTools,
   checkSaved,
   checkToolResult,
-  evaluationToolOf,
   formatFailure,
   parseSmokeArgs,
   resolveTemplate,
@@ -71,7 +73,7 @@ async function main(argv) {
     }
 
     step = "save";
-    const evaluate = evaluationToolOf(tools);
+    const evaluate = evaluationTool(tools);
     checkToolResult(await callTool(started.endpoint, evaluate, { code: savedMark.set }));
     const saved = await images.stop(options.name, { save: true });
     checkSaved(saved);
