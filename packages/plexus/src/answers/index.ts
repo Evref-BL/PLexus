@@ -1,8 +1,10 @@
 /**
  * The answers of the image tools, as plain text for a model: what happened,
- * then what an agent acts on, in the layout MCP's own tools write. Both MCP
- * servers that serve the image tools answer through this, so the same call
- * reads the same in either; a server extends an answer before rendering it.
+ * then what an agent acts on, in the layout MCP's own tools write, except that
+ * a list record says every field, even one all records share, where MCP says
+ * that once beside the label. Both MCP servers that serve the image tools
+ * answer through this, so the same call reads the same in either; a server
+ * extends an answer before rendering it.
  */
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import { defaultPharoMcpVersion } from "../config/pharoMcpVersion.js";
@@ -18,7 +20,7 @@ export * as texts from "./texts.js";
 /** A field, or a pair of a record: its key, then its value as it reads. */
 export type Pair = [key: string, value: string];
 
-/** One line of a list: what tells it from the others, bare, then its pairs. */
+/** One line of a list: what tells it from the others, bare, then all its pairs. */
 export interface ToolRecord {
   name: string;
   pairs: Pair[];
@@ -49,7 +51,7 @@ export function render(answer: ToolAnswer): string {
     lines.push(`${key}: ${value}`);
   }
   if (answer.list !== undefined && answer.list.records.length > 0) {
-    lines.push(...listLines(answer.list.label, answer.list.records));
+    lines.push(`${answer.list.label}:`, ...answer.list.records.map(recordLine));
   }
   for (const group of answer.groups ?? []) {
     lines.push(`${group.label}:`, ...group.lines.map((line) => `  ${line}`));
@@ -57,32 +59,10 @@ export function render(answer: ToolAnswer): string {
   return lines.join("\n");
 }
 
-// A field every record holds with the same value is said once, beside the
-// label. Each record keeps its name, which tells it from the others, so the
-// name is never lifted, and a record may be left with its name alone: the
-// name plays the part of the method reference that lets MCP's
-// `keysSharedByEntries:` lift every shared field.
-function listLines(label: string, records: readonly ToolRecord[]): string[] {
-  const shared = sharedPairs(records);
-  const sharedKeys = new Set(shared.map(([key]) => key));
-  const heading =
-    shared.length === 0 ? `${label}:` : `${label} (each ${shared.map(pairText).join(" ")}):`;
-  return [
-    heading,
-    ...records.map((record) =>
-      `  ${[record.name, ...record.pairs.filter(([key]) => !sharedKeys.has(key)).map(pairText)].join(" ")}`,
-    ),
-  ];
-}
-
-function sharedPairs(records: readonly ToolRecord[]): Pair[] {
-  if (records.length < 2) {
-    return [];
-  }
-  const [first, ...others] = records;
-  return first.pairs.filter(([key, value]) =>
-    others.every((record) => record.pairs.some(([otherKey, other]) => otherKey === key && other === value)),
-  );
+// A record says all its pairs, even those every record holds alike, so that a
+// line an agent copies on its own keeps everything said of that record.
+function recordLine(record: ToolRecord): string {
+  return `  ${[record.name, ...record.pairs.map(pairText)].join(" ")}`;
 }
 
 function pairText([key, value]: Pair): string {
