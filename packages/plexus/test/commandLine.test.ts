@@ -31,8 +31,8 @@ function harness(env: NodeJS.ProcessEnv = {}) {
       calls.push(["start", name, options]);
       return { name, pids: [1], endpoint: { url: "http://127.0.0.1:1/" }, display: "headless", seconds: 1 };
     },
-    stop: async (name) => {
-      calls.push(["stop", name]);
+    stop: async (name, options) => {
+      calls.push(["stop", name, options]);
       return { name, killed: [] };
     },
     delete: async (name) => {
@@ -74,6 +74,7 @@ describe("plexus", () => {
     expect(await cli.run("image", "start", "dev", "--display", "interactive", "--timeout", "90")).toBe(0);
     expect(await cli.run("image", "start", "dev")).toBe(0);
     expect(await cli.run("image", "stop", "dev")).toBe(0);
+    expect(await cli.run("image", "stop", "dev", "--save")).toBe(0);
 
     expect(cli.calls).toEqual([
       ["list", undefined],
@@ -82,7 +83,8 @@ describe("plexus", () => {
       ["create", "mcp", { template: "Pharo 14.0", category: "Official", script: "load.st", everyStart: true }],
       ["start", "dev", { display: "interactive", timeoutMs: 90_000 }],
       ["start", "dev", {}],
-      ["stop", "dev"],
+      ["stop", "dev", {}],
+      ["stop", "dev", { save: true }],
     ]);
     expect(cli.printed().slice(0, 3).map((text) => JSON.parse(text))).toEqual([[], [], []]);
   });
@@ -146,6 +148,7 @@ describe("plexus", () => {
       [["image", "start", "a", "b"], "Unexpected argument b"],
       [["image", "list", "--project-path", "."], "Unknown option --project-path"],
       [["image", "stop", "dev", "--template", "T"], "Unknown option --template"],
+      [["image", "stop", "dev", "--save=yes"], "--save takes no value"],
       [["image", "create", "dev"], "create needs --template"],
       [["image", "create", "dev", "--template"], "--template needs a value"],
       [["image", "create", "dev", "--template", "T", "--every-start=yes"], "--every-start takes no value"],

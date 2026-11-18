@@ -4,6 +4,7 @@ import type {
   ImageInfo,
   ImagesOptions,
   StartOptions,
+  StopOptions,
   Template,
 } from "../types.js";
 import { imagesContext, type ImagesContext } from "./context.js";
@@ -12,7 +13,7 @@ import { deleteImage } from "./delete.js";
 import { endpointOf } from "./endpoint.js";
 import { list } from "./list.js";
 import { start, type StartResult } from "./start.js";
-import { stop } from "./stop.js";
+import { stop, type StopResult } from "./stop.js";
 import { templates } from "./templates.js";
 
 /**
@@ -46,8 +47,9 @@ export class Images {
     return start(this.context, name, options);
   }
 
-  stop(name: string): Promise<{ name: string; killed: number[] }> {
-    return stop(this.context, name);
+  /** Kill the image's VMs, or, with `save`, have it save itself and quit. */
+  stop(name: string, options?: StopOptions): Promise<StopResult> {
+    return stop(this.context, name, options);
   }
 
   delete(name: string): Promise<{ name: string }> {

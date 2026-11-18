@@ -43,7 +43,7 @@ process, and the next create removes it.
 plexus image templates
 plexus image create <name> --template <t> [--category <c>] [--script <file> [--every-start]]
 plexus image start <name> [--display interactive] [--timeout <seconds>]
-plexus image stop <name>
+plexus image stop <name> [--save]
 plexus image delete <name>
 plexus image list [<name>]
 plexus mcp
@@ -61,9 +61,14 @@ Every command takes `--home <dir>` (`PLEXUS_HOME`) and `--scope <prefix>`
   once its MCP server does, with its pid and endpoint. It refuses an image a VM
   already runs, and fails as soon as the VM reports a failure or exits, naming
   the launcher's logs. It never creates: a missing image is refused.
-- **stop** kills every VM running the image. A kill does not save, so an agent
-  that wants the image saved saves it through the image first. An image that is
-  not running is already stopped.
+- **stop** kills every VM running the image. A kill does not save: the image
+  starts again as it was last saved. With `--save`, the image saves itself and
+  quits instead, by evaluating `Smalltalk snapshot: true andQuit: true` through
+  its MCP server, and the stop answers once its VM is gone and its image file
+  was written; an image that does not save and quit in time is left
+  running, and so is one that takes no calls. Evaluating `Smalltalk saveSession`
+  in the image saves it without stopping it. An image that is not running is
+  already stopped.
 - **delete** removes the image's directory, and refuses while a VM runs it or
   a create or a start is still at work on it.
 - **list** shows each image, whether it runs, its pids, its endpoint, its
@@ -138,6 +143,7 @@ npm run verify:env       # where the launcher was found
 npm run smoke:start-route-stop -- --template "Pharo 14.0 - 64bit"
 ```
 
-The smoke runs a real image through create, start, a tool listing, stop and
-delete, in a scratch scope of its own (`plexus_smoke_<run>`), so it never names
+The smoke runs a real image through create, start, a tool listing, a stop
+that saves, a start that finds what was saved, stop and delete, in a scratch
+scope of its own (`plexus_smoke_<run>`), so it never names
 an image anyone works in. It is not part of `npm run check`.

@@ -58,6 +58,14 @@ export interface StartOptions {
   timeoutMs?: number;
 }
 
+export interface StopOptions {
+  /**
+   * Have the image save itself and quit, through its MCP server, instead of
+   * killing it. Killing without saving unless given.
+   */
+  save?: boolean;
+}
+
 export interface ImagesOptions {
   /** `plexusHome()` unless given. */
   home?: string;

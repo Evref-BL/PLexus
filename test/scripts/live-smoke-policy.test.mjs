@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   checkListedTools,
+  checkSaved,
   checkToolResult,
   defaultRunId,
   formatFailure,
@@ -68,16 +69,23 @@ test("refuses options it does not know or cannot read", () => {
   assert.throws(() => parseSmokeArgs(["--expect", "x"]), /--expect needs --tool/);
 });
 
-test("creates, starts, lists, stops and deletes, and calls a tool only when asked", () => {
-  assert.deepEqual(smokeSteps({}), ["create", "start", "listTools", "stop", "delete"]);
+test("creates, starts, lists, saves and restarts, stops and deletes, and calls a tool only when asked", () => {
+  assert.deepEqual(smokeSteps({}), ["create", "start", "listTools", "save", "restart", "stop", "delete"]);
   assert.deepEqual(smokeSteps({ tool: "class_search" }), [
     "create",
     "start",
     "listTools",
     "callTool",
+    "save",
+    "restart",
     "stop",
     "delete",
   ]);
+});
+
+test("wants a stop asked to save to say it saved", () => {
+  checkSaved({ name: "smoke", killed: [], saved: true });
+  assert.throws(() => checkSaved({ name: "smoke", killed: [4242] }), /did not say it saved/);
 });
 
 test("finds the template behind a name the launcher suffixes", () => {

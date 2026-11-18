@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 /**
  * The live smoke: create an image, start it, list its tools through the
- * forwarding PLexus does, stop it and delete it, in a scratch scope.
+ * forwarding PLexus does, mark it and stop it with a save, start it again and
+ * read the mark back, stop it and delete it, in a scratch scope.
  *
  *   npm run smoke:start-route-stop -- [--template "Pharo 14.0 - 64bit"] [--category <c>]
  *     [--home <dir>] [--scope plexus_smoke_<id>] [--name smoke] [--timeout <seconds>]
@@ -12,13 +13,18 @@
  * `npm test`. The first run of a template builds its base, which takes
  * minutes; later runs copy it.
  */
+// The lookup forwarding uses, imported from its module so that the package
+// exports nothing more for the smoke.
+import { evaluationTool } from "../packages/plexus/dist/forward/index.js";
 import { callTool, Images, listTools } from "../packages/plexus/dist/index.js";
 import {
   checkListedTools,
+  checkSaved,
   checkToolResult,
   formatFailure,
   parseSmokeArgs,
   resolveTemplate,
+  savedMark,
   smokeSteps,
 } from "./live-smoke-policy.mjs";
 
@@ -65,6 +71,18 @@ async function main(argv) {
       );
       report(step, { tool: options.tool });
     }
+
+    step = "save";
+    const evaluate = evaluationTool(tools);
+    checkToolResult(await callTool(started.endpoint, evaluate, { code: savedMark.set }));
+    const saved = await images.stop(options.name, { save: true });
+    checkSaved(saved);
+    report(step, saved);
+
+    step = "restart";
+    const restarted = await images.start(options.name, { timeoutMs: options.timeoutMs });
+    checkToolResult(await callTool(restarted.endpoint, evaluate, { code: savedMark.read }), "true");
+    report(step, { pids: restarted.pids, seconds: restarted.seconds });
 
     if (options.keep) {
       console.log(`kept: image ${options.name} runs in scope ${options.scope}`);
