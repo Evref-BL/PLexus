@@ -49,8 +49,9 @@ plexus image list [<name>]
 plexus mcp
 ```
 
-Every command takes `--home <dir>` (`PLEXUS_HOME`) and `--scope <prefix>`
-(`PLEXUS_SCOPE`), and `--help`. Results are JSON on stdout; a refusal is
+Every command takes `--home <dir>` (`PLEXUS_HOME`), `--scope <prefix>`
+(`PLEXUS_SCOPE`), `--telemetry` (`PLEXUS_TELEMETRY`, see
+[Telemetry](#telemetry)), and `--help`. Results are JSON on stdout; a refusal is
 `{"ok":false,"code":...,"error":...}` with exit status 1.
 
 - **templates** lists the launcher's templates with their category. A name in
@@ -81,9 +82,9 @@ Without a script, an image is a copy of a **base**: its template with the MCP
 release PLexus pins loaded and saved. The first create from a template builds
 the base, which takes minutes; later creates copy it, cloning blocks where the
 filesystem can. A base is a directory of `$PLEXUS_HOME/bases` named after its
-template, category and pin. It is built under a temporary name and renamed
-when complete, so its existence is its record, and the bases of other pins are
-removed when one is built.
+template, category and pin, and whether it holds MCP's `Telemetry` group. It
+is built under a temporary name and renamed when complete, so its existence is
+its record, and the bases of other pins are removed when one is built.
 
 With `--script`, the image is built from the template and the script is filed
 in once instead, which is how an image gets MCP from a checkout or an older
@@ -111,6 +112,44 @@ among them, is an error result that says what happened and what to do. A
 forwarded call waits as long as the call's own time limit allows, and at least
 a minute; whatever the image answers passes through as it is, and a call that
 gets no answer says what became of the image.
+
+## Telemetry
+
+PLexus traces its work through the OpenTelemetry API, which records nothing
+until the program running PLexus installs an SDK:
+
+- each request forwarded to an image is a CLIENT span named after its method
+  and tool (`tools/call class_get`), with the attributes of the OpenTelemetry
+  MCP conventions, and passes its trace context to the image in the request's
+  `params._meta` (`traceparent`, `tracestate`, `baggage`);
+- making, starting, stopping and deleting an image are INTERNAL spans,
+  `plexus.image.make`, `.start`, `.stop` and `.delete`;
+- `plexus mcp` handles each request in the trace context its `_meta` carries.
+
+A span records names, outcomes and an error's kind (`error.type`), never an
+argument, a result, a message, an image's name or a path.
+
+The `plexus` command installs an SDK when the standard environment asks for an
+OTLP traces exporter: `OTEL_EXPORTER_OTLP_ENDPOINT` or
+`OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` is set, `OTEL_TRACES_EXPORTER` is unset or
+`otlp`, and `OTEL_SDK_DISABLED` is not `true`. It sends over HTTP, protobuf
+unless `OTEL_EXPORTER_OTLP_PROTOCOL` is `http/json`; it does not send over
+gRPC. Its resource is `service.name` (`plexus`), `service.version`, `os.type`
+and what `OTEL_RESOURCE_ATTRIBUTES` adds, without the host and process
+detectors. A `TRACEPARENT` in its environment is the parent of what it does.
+A command waits for its spans no longer than the export timeout, two seconds
+unless `OTEL_EXPORTER_OTLP_TIMEOUT` says otherwise, and its answer and exit
+status never depend on them. The SDK packages are optional dependencies:
+installed without them, the command runs untraced.
+
+`--telemetry`, or `PLEXUS_TELEMETRY` set to `1` or `true`, or the library's
+`telemetry` option, enrolls the images PLexus handles in OpenTelemetry:
+
+- a create without a script loads MCP's `Telemetry` group beside the rest,
+  into a base of its own; a create with a script loads what its script loads;
+- a start switches the image's MCP server to its OpenTelemetry backend when it
+  has one, and starts it as it is otherwise. The VM runs in PLexus's
+  environment, so the image reads the same `OTEL_*` variables.
 
 ## Library
 

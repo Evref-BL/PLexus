@@ -15,7 +15,7 @@ export function pharoMcpRepository(version: string) {
 }
 
 export type PrepareSource =
-  | { kind: "pin"; version: string }
+  | { kind: "pin"; version: string; telemetry?: boolean }
   | { kind: "script"; script: string };
 
 function smalltalkString(value: string): string {
@@ -41,8 +41,9 @@ function failureWriter(file: string, indent: string): string {
 
 /**
  * Get MCP into a fresh image, save it and quit. The pinned release is loaded
- * with the Metacello expression PLexus has always used; a script is filed in
- * instead.
+ * with the Metacello expression PLexus has always used, with its `Telemetry`
+ * group beside its default one when telemetry is asked for; a script is filed
+ * in instead.
  *
  * A pinned load forgets the Iceberg repositories it registered: their
  * locations name the build directory, which a base is renamed away from. A
@@ -57,7 +58,14 @@ export function prepareScript(source: PrepareSource): string {
             `  Metacello new`,
             `    githubUser: ${smalltalkString(repository.githubUser)} project: ${smalltalkString(repository.project)} commitish: ${smalltalkString(repository.commitish)} path: ${smalltalkString(repository.path)};`,
             `    baseline: ${smalltalkString(repository.baseline)};`,
-            `    load.`,
+            source.telemetry ? `    load: #( 'default' 'Telemetry' ).` : `    load.`,
+            ...(source.telemetry
+              ? [
+                  `  (Smalltalk globals at: #MCP ifAbsent: [ nil ]) ifNotNil: [ :class |`,
+                  `    (class canUnderstand: #useOpenTelemetryObservability)`,
+                  `      ifFalse: [ Error signal: 'MCP has no OpenTelemetry backend after loading its Telemetry group.' ] ].`,
+                ]
+              : []),
           ].join("\n");
         })()
       : `  ${smalltalkPath(source.script)} asFileReference fileIn.`;
@@ -94,13 +102,26 @@ ${failureWriter("status", "      ")}
 
 /**
  * Start this image's MCP server and say where it listens. The same text for
- * every image: everything it needs it finds from the image's own directory.
+ * every image, but for whether telemetry is asked: everything else it needs
+ * it finds from the image's own directory.
  *
  * Port 0 asks the system for a free port; the file names the port bound and
  * the pid that bound it, written under another name and renamed so that a
  * reader never sees half of it. It never saves the image.
+ *
+ * With telemetry, a server that has an OpenTelemetry backend is switched to
+ * it before it starts; one without is started as it is, and a backend that
+ * fails to switch leaves it so too.
  */
-export const startScript = `"Written by PLexus to start this image's MCP server. Do not edit."
+export function startScript(options: { telemetry?: boolean } = {}): string {
+  const observability = options.telemetry
+    ? [
+        `  (mcp respondsTo: #useOpenTelemetryObservability) ifTrue: [`,
+        `    [ mcp useOpenTelemetryObservability ] on: Error do: [ :error | nil ] ].`,
+        ``,
+      ].join("\n")
+    : "";
+  return `"Written by PLexus to start this image's MCP server. Do not edit."
 | dir status mcp port pid endpoint temporary |
 dir := FileLocator imageDirectory asFileReference / 'plexus'.
 status := dir / 'start-status.properties'.
@@ -116,7 +137,7 @@ status := dir / 'start-status.properties'.
   pid := [ (Smalltalk globals at: #LibC) uniqueInstance getpid ]
     on: Error do: [ :error | nil ].
   mcp := (Smalltalk globals at: #MCP) new.
-  mcp port: 0.
+${observability}  mcp port: 0.
   mcp start.
   port := mcp port.
   (port isInteger and: [ port > 0 ])
@@ -139,3 +160,4 @@ ${failureWriter("status", "      ")}
       Smalltalk exitFailure ].
 Semaphore new wait.
 `;
+}

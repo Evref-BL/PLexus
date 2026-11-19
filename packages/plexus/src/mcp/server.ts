@@ -1,6 +1,8 @@
 /**
  * `plexus mcp`: the image tools, and the tools of the images running in
- * scope, each forwarded to the image it names.
+ * scope, each forwarded to the image it names. A request's work runs in the
+ * trace context its `_meta` carries, so what it forwards continues the host's
+ * trace.
  */
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
@@ -10,11 +12,13 @@ import {
   type CallToolResult,
   type Tool,
 } from "@modelcontextprotocol/sdk/types.js";
+import { context } from "@opentelemetry/api";
 import * as answers from "../answers/index.js";
 import { PlexusError } from "../errors.js";
 import { callTool, listTools } from "../forward/index.js";
 import { endpointOf } from "../images/endpoint.js";
 import type { Images } from "../images/index.js";
+import { contextFromMeta } from "../telemetry/trace.js";
 import type { Display, Endpoint, ImageInfo } from "../types.js";
 import { plexusVersion } from "../version.js";
 
@@ -136,7 +140,14 @@ export function createPlexusMcpServer(options: PlexusMcpServerOptions): Server {
     { capabilities: { tools: { listChanged: true } } },
   );
 
-  server.setRequestHandler(ListToolsRequestSchema, async () => {
+  server.setRequestHandler(ListToolsRequestSchema, (request) =>
+    context.with(contextFromMeta(request.params?._meta), () => listAll()),
+  );
+  server.setRequestHandler(CallToolRequestSchema, (request, extra) =>
+    context.with(contextFromMeta(request.params._meta), () => call(request.params, extra.signal)),
+  );
+
+  async function listAll(): Promise<{ tools: Tool[] }> {
     const running = answering(await images.list().catch(() => []));
     const names = running.map((image) => image.name);
     const listings = await Promise.allSettled(
@@ -158,18 +169,21 @@ export function createPlexusMcpServer(options: PlexusMcpServerOptions): Server {
     });
     listedSchemas = schemas;
     return { tools: [...imageTools, ...forwarded.values()] };
-  });
+  }
 
-  server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
-    const name = request.params.name;
-    const args = (request.params.arguments ?? {}) as Record<string, unknown>;
+  async function call(
+    params: { name: string; arguments?: Record<string, unknown> },
+    signal: AbortSignal,
+  ): Promise<CallToolResult> {
+    const name = params.name;
+    const args = (params.arguments ?? {}) as Record<string, unknown>;
     const imageTool = imageTools.find((tool) => tool.name === name);
     if (imageTool === undefined) {
       const callOn = (endpoint: Endpoint, image: string, forwarded: Record<string, unknown>) => {
         const inputSchema = listedSchemas.get(image)?.get(name);
         return callToolOn(endpoint, name, forwarded, {
           ...(inputSchema === undefined ? {} : { inputSchema }),
-          signal: extra.signal,
+          signal,
         });
       };
       // Given none, the refusal of a tool the image does not have asks the
@@ -193,7 +207,7 @@ export function createPlexusMcpServer(options: PlexusMcpServerOptions): Server {
       }
       return failure(error);
     }
-  });
+  }
 
   return server;
 }

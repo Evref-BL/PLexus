@@ -63,9 +63,15 @@ describe("start", () => {
         includeRaw: true,
       },
     ]);
-    expect(fs.readFileSync(path.join(plexus, "start.st"), "utf8")).toBe(startScript);
+    expect(fs.readFileSync(path.join(plexus, "start.st"), "utf8")).toBe(startScript());
     expect(fs.existsSync(path.join(plexus, "launch.lock"))).toBe(false);
     expect(fs.existsSync(path.join(plexus, "start-status.properties"))).toBe(false);
+  });
+
+  it("writes the start script that switches to OpenTelemetry when telemetry is on", async () => {
+    const { plexus, context } = setup({ telemetry: true });
+    await start(context, "dev");
+    expect(fs.readFileSync(path.join(plexus, "start.st"), "utf8")).toBe(startScript({ telemetry: true }));
   });
 
   it("starts it interactively when asked", async () => {

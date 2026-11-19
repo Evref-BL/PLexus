@@ -5,6 +5,9 @@ import {
   type CallToolResult,
   type Tool,
 } from "@modelcontextprotocol/sdk/types.js";
+import { context, propagation, trace } from "@opentelemetry/api";
+import { AsyncLocalStorageContextManager } from "@opentelemetry/context-async-hooks";
+import { W3CTraceContextPropagator } from "@opentelemetry/core";
 import { describe, expect, it } from "vitest";
 import * as texts from "../../src/answers/texts.js";
 import { defaultPharoMcpVersion } from "../../src/config/pharoMcpVersion.js";
@@ -379,6 +382,33 @@ describe("plexus mcp", () => {
       expect(textOf(result), JSON.stringify(args)).toBe(refusal);
     }
     expect(images.calls).toEqual([]);
+  });
+
+  it("forwards a call in the trace context its _meta carries", async () => {
+    context.setGlobalContextManager(new AsyncLocalStorageContextManager().enable());
+    propagation.setGlobalPropagator(new W3CTraceContextPropagator());
+    try {
+      const parents: unknown[] = [];
+      const { client } = await connect(new FakeImages([row("dev", { port: 7001 })]), {}, async () => {
+        parents.push(trace.getSpanContext(context.active()));
+        return { content: [] };
+      });
+
+      await client.callTool({
+        name: "class_get",
+        arguments: {},
+        _meta: { traceparent: "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01" },
+      });
+      await client.callTool({ name: "class_get", arguments: {} });
+
+      expect(parents).toEqual([
+        expect.objectContaining({ traceId: "4bf92f3577b34da6a3ce929d0e0e4736", spanId: "00f067aa0ba902b7", isRemote: true }),
+        undefined,
+      ]);
+    } finally {
+      propagation.disable();
+      context.disable();
+    }
   });
 
   it("passes the schema the image listed and the host's signal to the call", async () => {

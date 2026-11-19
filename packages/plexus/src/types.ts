@@ -73,4 +73,11 @@ export interface ImagesOptions {
   scope?: string;
   /** The launcher on the home's profile unless given. */
   launcher?: LauncherPort;
+  /**
+   * Enroll the images handled in OpenTelemetry: an image made without a
+   * script loads MCP's `Telemetry` group as well, and an image started
+   * switches its MCP server to the OpenTelemetry backend when it has one.
+   * `PLEXUS_TELEMETRY` (`1` or `true`) unless given.
+   */
+  telemetry?: boolean;
 }
