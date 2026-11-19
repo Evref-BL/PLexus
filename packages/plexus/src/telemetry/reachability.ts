@@ -40,12 +40,13 @@ export function reachabilityFile(
   platform: NodeJS.Platform = process.platform,
   home: string = os.homedir(),
 ): string {
+  const paths = platform === "win32" ? path.win32 : path.posix;
   const directory =
     env.XDG_CACHE_HOME?.trim() ||
     (platform === "win32"
-      ? env.LOCALAPPDATA?.trim() || path.win32.join(home, "AppData", "Local")
-      : path.join(home, ".cache"));
-  return (platform === "win32" ? path.win32 : path.posix).join(directory, "plexus", "otel-reachability.json");
+      ? env.LOCALAPPDATA?.trim() || paths.join(home, "AppData", "Local")
+      : paths.join(home, ".cache"));
+  return paths.join(directory, "plexus", "otel-reachability.json");
 }
 
 /**
