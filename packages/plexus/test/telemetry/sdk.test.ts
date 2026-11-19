@@ -1,14 +1,25 @@
+import fs from "node:fs";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
+import os from "node:os";
+import path from "node:path";
 import { context, propagation, SpanKind, trace } from "@opentelemetry/api";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { startTelemetry, tracesExport } from "../../src/telemetry/sdk.js";
 import { inSpan } from "../../src/telemetry/trace.js";
 import { plexusVersion } from "../../src/version.js";
 
 const servers: http.Server[] = [];
+let cache: string;
+
+// What the SDK remembers of a collector goes to a cache of the test's own.
+beforeEach(() => {
+  cache = fs.mkdtempSync(path.join(os.tmpdir(), "plexus-otel-"));
+  vi.stubEnv("XDG_CACHE_HOME", cache);
+});
 
 afterEach(async () => {
+  fs.rmSync(cache, { recursive: true, force: true });
   trace.disable();
   propagation.disable();
   context.disable();

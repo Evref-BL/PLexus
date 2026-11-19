@@ -137,10 +137,26 @@ unless `OTEL_EXPORTER_OTLP_PROTOCOL` is `http/json`; it does not send over
 gRPC. Its resource is `service.name` (`plexus`), `service.version`, `os.type`
 and what `OTEL_RESOURCE_ATTRIBUTES` adds, without the host and process
 detectors. A `TRACEPARENT` in its environment is the parent of what it does.
-A command waits for its spans no longer than the export timeout, two seconds
-unless `OTEL_EXPORTER_OTLP_TIMEOUT` says otherwise, and its answer and exit
-status never depend on them. The SDK packages are optional dependencies:
-installed without them, the command runs untraced.
+The export timeout is two seconds unless `OTEL_EXPORTER_OTLP_TIMEOUT` says
+otherwise. A command waits for its spans one second at most, or the export
+timeout when it is shorter; `plexus mcp` exports its batches in the background
+with the whole export timeout. A command's answer, output and exit status never
+depend on its spans, and telemetry prints nothing. The SDK packages are
+optional dependencies: installed without them, the command runs untraced.
+
+A collector that cannot be reached is remembered, so that it costs a command
+nothing:
+
+- the state lives in `$XDG_CACHE_HOME/plexus/otel-reachability.json`, by
+  default `~/.cache/plexus/otel-reachability.json`, and
+  `%LOCALAPPDATA%\plexus\otel-reachability.json` on Windows, keyed by the
+  traces endpoint;
+- a failed export leaves the endpoint alone five minutes, doubling with each
+  failure in a row up to six hours; a successful export clears it;
+- while the endpoint is left alone, the command loads no SDK and sends
+  nothing, and a process that failed sends nothing more until then; the spans
+  of that time are dropped;
+- a state file that cannot be read or written is no state.
 
 `--telemetry`, or `PLEXUS_TELEMETRY` set to `1` or `true`, or the library's
 `telemetry` option, enrolls the images PLexus handles in OpenTelemetry:
