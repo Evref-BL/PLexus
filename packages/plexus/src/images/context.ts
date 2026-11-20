@@ -17,6 +17,8 @@ import { checkScope } from "./names.js";
 export interface ImagesContext {
   home: string;
   scope?: string;
+  /** Whether the images made and started are enrolled in OpenTelemetry. */
+  telemetry: boolean;
   launcher(): LauncherPort;
   ping(endpoint: Endpoint): Promise<boolean>;
   /** The tools an image lists, for the one a stop that saves evaluates with. */
@@ -40,6 +42,11 @@ export interface ImagesContext {
   saveWaitMs: number;
 }
 
+/** Whether `PLEXUS_TELEMETRY` asks for telemetry: `1` or `true`, in any case. */
+export function plexusTelemetry(env: NodeJS.ProcessEnv = process.env): boolean {
+  return /^(1|true)$/i.test(env.PLEXUS_TELEMETRY?.trim() ?? "");
+}
+
 /**
  * How long a stop that saves waits on each request of the image's tool
  * listing: an image that cannot list its tools in that time will not take
@@ -56,6 +63,7 @@ export function imagesContext(options: ImagesOptions = {}): ImagesContext {
   return {
     home,
     ...(scope === undefined ? {} : { scope }),
+    telemetry: options.telemetry ?? plexusTelemetry(),
     // Opening resolves the launcher installation, which an operation that
     // never reaches the launcher has no reason to pay for.
     launcher: () => (launcher ??= openLauncherPort(home)),

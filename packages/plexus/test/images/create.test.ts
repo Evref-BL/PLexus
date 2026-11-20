@@ -282,6 +282,27 @@ describe("create without a script", () => {
     expect(listing(storeRoot(home))).toEqual(["dev", `plexus-build-${process.pid}-0c0c0c0c`]);
   });
 
+  it("with telemetry, builds a base of its own that loads MCP's Telemetry group, and keeps the other", async () => {
+    const { home, launcher, context } = setup();
+    writeBase(home, key);
+    const prepared: string[] = [];
+    launcher.prepareAnswer = (input: ImageStartInput) => {
+      prepared.push(fs.readFileSync(input.script!, "utf8"));
+      fs.writeFileSync(path.join(path.dirname(input.script!), "prepare-status.properties"), "status=ok\r");
+      return ok();
+    };
+    const enrolled = { ...context, telemetry: true };
+
+    expect((await create(enrolled, "dev", { ...options })).fromBase).toBe(false);
+    expect(prepared).toHaveLength(1);
+    expect(prepared[0]).toContain("    load: #( 'default' 'Telemetry' ).");
+    expect(listing(basesRoot(home))).toEqual([key, baseKey(template.name, template.category, pin, true)].sort());
+
+    expect((await create(enrolled, "again", { ...options })).fromBase).toBe(true);
+    expect((await create(context, "plain", { ...options })).fromBase).toBe(true);
+    expect(launcher.called("createImage")).toHaveLength(1);
+  });
+
   it("removes the bases of other pins once it built one", async () => {
     const { home, context } = setup();
     writeBase(home, "pharo-13-0-64bit-0a1b2c3d-mcp-3.6.0");
@@ -432,6 +453,7 @@ describe("the base key", () => {
       /^pharo-14-0-64bit-development-version-lat-[0-9a-f]{8}-mcp-3\.7\.0$/,
     );
     expect(baseKey("T", "A", "1.0.0")).not.toBe(baseKey("T", "B", "1.0.0"));
+    expect(baseKey("T", "A", "1.0.0", true)).toBe(`${baseKey("T", "A", "1.0.0").slice(0, -"-mcp-1.0.0".length)}-telemetry-mcp-1.0.0`);
     expect(baseKey("x".repeat(80), "A", "1.0.0").split("-")[0]).toHaveLength(40);
   });
 });

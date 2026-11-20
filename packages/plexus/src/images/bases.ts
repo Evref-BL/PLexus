@@ -1,8 +1,9 @@
 /**
  * A base is a template with the pinned MCP loaded and saved, so that a create
  * copies it in seconds instead of loading MCP for minutes. It is a directory
- * of `<home>/bases` named after its template, category and pin, built under a
- * temporary name and renamed when complete: its existence is its record.
+ * of `<home>/bases` named after its template, category, pin and whether it
+ * holds MCP's `Telemetry` group, built under a temporary name and renamed when
+ * complete: its existence is its record.
  */
 import crypto from "node:crypto";
 import fs from "node:fs";
@@ -23,7 +24,7 @@ import {
 
 const baseFileName = "base";
 
-export function baseKey(template: string, category: string, pin: string): string {
+export function baseKey(template: string, category: string, pin: string, telemetry = false): string {
   const slug = template
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
@@ -35,7 +36,8 @@ export function baseKey(template: string, category: string, pin: string): string
     .update(`${category}\n${template}`)
     .digest("hex")
     .slice(0, 8);
-  return `${slug}-${hash}-mcp-${pin}`;
+  // Before the pin, which ends every key: see evictOtherPins.
+  return `${slug}-${hash}${telemetry ? "-telemetry" : ""}-mcp-${pin}`;
 }
 
 /**
@@ -49,14 +51,15 @@ export function newBuild(context: ImagesContext, name: string): ImageFiles {
 
 /**
  * The base for this template, built first when there is none. `built` says
- * whether this call built the one it answers.
+ * whether this call built the one it answers. With telemetry it is the base
+ * that holds MCP's `Telemetry` group, a base of its own.
  */
 export async function ensureBase(
   context: ImagesContext,
   template: { name: string; category: string },
   pin: string,
 ): Promise<{ dir: string; built: boolean }> {
-  const key = baseKey(template.name, template.category, pin);
+  const key = baseKey(template.name, template.category, pin, context.telemetry);
   const dir = path.join(basesRoot(context.home), key);
   const isBase = () => isFile(path.join(dir, `${baseFileName}.image`));
   if (isBase()) {
@@ -67,7 +70,7 @@ export async function ensureBase(
   try {
     const failure =
       (await createFromTemplate(context, build, template)) ??
-      (await prepare(context, build, { kind: "pin", version: pin }));
+      (await prepare(context, build, { kind: "pin", version: pin, telemetry: context.telemetry }));
     if (failure !== undefined) {
       throw new PlexusError(
         "create-failed",

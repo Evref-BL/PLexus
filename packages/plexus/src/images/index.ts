@@ -1,3 +1,5 @@
+import { SpanKind } from "@opentelemetry/api";
+import { inSpan } from "../telemetry/trace.js";
 import type {
   CreateOptions,
   Endpoint,
@@ -23,6 +25,10 @@ import { templates } from "./templates.js";
  * runs that file. Every call looks at the store and the host when it is made
  * and keeps nothing between calls, so, like `ps`, its answer is as old as the
  * call that gave it.
+ *
+ * Making, starting, stopping and deleting are each an INTERNAL span,
+ * `plexus.image.make`, `.start`, `.stop` and `.delete`, that says how it
+ * ended and nothing of the image.
  */
 export class Images {
   private readonly context: ImagesContext;
@@ -40,20 +46,26 @@ export class Images {
   }
 
   create(name: string, options: CreateOptions): Promise<CreateResult> {
-    return create(this.context, name, options);
+    return inSpan("plexus.image.make", SpanKind.INTERNAL, {}, async (span) => {
+      const created = await create(this.context, name, options);
+      span.setAttribute("plexus.image.from_base", created.fromBase);
+      return created;
+    });
   }
 
   start(name: string, options?: StartOptions): Promise<StartResult> {
-    return start(this.context, name, options);
+    return inSpan("plexus.image.start", SpanKind.INTERNAL, {}, () => start(this.context, name, options));
   }
 
   /** Kill the image's VMs, or, with `save`, have it save itself and quit. */
   stop(name: string, options?: StopOptions): Promise<StopResult> {
-    return stop(this.context, name, options);
+    return inSpan("plexus.image.stop", SpanKind.INTERNAL, { "plexus.image.save": options?.save === true }, () =>
+      stop(this.context, name, options),
+    );
   }
 
   delete(name: string): Promise<{ name: string }> {
-    return deleteImage(this.context, name);
+    return inSpan("plexus.image.delete", SpanKind.INTERNAL, {}, () => deleteImage(this.context, name));
   }
 
   /** Where a call to the image goes, or a refusal saying why none can and what to do. */

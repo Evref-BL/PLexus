@@ -67,7 +67,7 @@ export async function start(
 
     fs.rmSync(files.endpoint, { force: true });
     fs.rmSync(files.startStatus, { force: true });
-    fs.writeFileSync(files.startScript, startScript, "utf8");
+    fs.writeFileSync(files.startScript, startScript({ telemetry: context.telemetry }), "utf8");
 
     const launch = await context.launcher().startImage({
       imageName: files.diskName,

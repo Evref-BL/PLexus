@@ -4,6 +4,7 @@
  * with exit status 1, and a command line it cannot read exits with 2.
  */
 import { PlexusError } from "./errors.js";
+import { plexusTelemetry } from "./images/context.js";
 import { Images } from "./images/index.js";
 import { imageTools, runPlexusMcpServer, type ImagesApi } from "./mcp/server.js";
 import type { ImagesOptions, StartOptions } from "./types.js";
@@ -34,7 +35,7 @@ interface CommandSpec {
   positionals: { min: number; max: number };
 }
 
-const globalUsage = "[--home <dir>] [--scope <prefix>]";
+const globalUsage = "[--home <dir>] [--scope <prefix>] [--telemetry]";
 
 const imageCommands: Record<Verb, CommandSpec> = {
   templates: {
@@ -114,7 +115,7 @@ function parse(args: readonly string[], spec: CommandSpec): Parsed {
   const positionals: string[] = [];
   let help = false;
   const allowedValues = new Set(["home", "scope", ...spec.values]);
-  const allowedFlags = new Set(spec.flags);
+  const allowedFlags = new Set(["telemetry", ...spec.flags]);
 
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
@@ -167,6 +168,7 @@ function imagesOptions(parsed: Parsed, env: NodeJS.ProcessEnv): ImagesOptions {
     // An empty scope goes on to be refused: dropped, it would mean none, and
     // none reaches every image in the store.
     ...(scope === undefined ? {} : { scope }),
+    ...(parsed.flags.has("telemetry") || plexusTelemetry(env) ? { telemetry: true } : {}),
   };
 }
 
@@ -193,8 +195,11 @@ function help(): string {
     `  ${mcpCommand.usage}`,
     "",
     `Every command takes ${globalUsage}.`,
-    "  --home   where images, VMs and templates live (PLEXUS_HOME; ~/.plexus)",
-    "  --scope  a name prefix, without dashes: image dev is the directory <scope>-dev (PLEXUS_SCOPE)",
+    "  --home       where images, VMs and templates live (PLEXUS_HOME; ~/.plexus)",
+    "  --scope      a name prefix, without dashes: image dev is the directory <scope>-dev (PLEXUS_SCOPE)",
+    "  --telemetry  enroll images in OpenTelemetry: a create loads MCP's Telemetry group, and a",
+    "               start switches the image's server to it, configured by the OTEL_* environment",
+    "               (PLEXUS_TELEMETRY=1)",
     "",
     "Results are JSON on stdout. A refusal is {\"ok\":false,\"code\":...,\"error\":...} and exits 1.",
   ].join("\n");

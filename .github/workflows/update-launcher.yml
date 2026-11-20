@@ -33,7 +33,7 @@ jobs:
 
       - uses: actions/setup-node@v6
         with:
-          node-version: 22.12.0
+          node-version: 22.15.0
           package-manager-cache: false
 
       - name: Verify the published release

@@ -222,6 +222,7 @@ export function testContext(
   const clock = { now: Date.parse("2026-11-13T12:00:00Z") };
   return {
     home,
+    telemetry: false,
     launcher: () => launcher,
     ping: async () => true,
     listTools: async () => [],

@@ -99,6 +99,25 @@ describe("plexus", () => {
     ]);
   });
 
+  it("enrolls images in telemetry with --telemetry, else with PLEXUS_TELEMETRY at 1 or true", async () => {
+    const cases: Array<[string[], NodeJS.ProcessEnv, ImagesOptions]> = [
+      [["image", "list", "--telemetry"], {}, { telemetry: true }],
+      [["mcp", "--telemetry"], {}, { telemetry: true }],
+      [["image", "start", "dev"], { PLEXUS_TELEMETRY: "1" }, { telemetry: true }],
+      [["image", "create", "dev", "--template", "T"], { PLEXUS_TELEMETRY: "True" }, { telemetry: true }],
+      [["image", "list"], { PLEXUS_TELEMETRY: "0" }, {}],
+      [["image", "list"], { PLEXUS_TELEMETRY: "yes" }, {}],
+      [["image", "list"], {}, {}],
+    ];
+    for (const [argv, env, options] of cases) {
+      const cli = harness(env);
+      expect(await cli.run(...argv), argv.join(" ")).toBe(0);
+      expect(cli.opened, `${argv.join(" ")} ${JSON.stringify(env)}`).toEqual([options]);
+    }
+    const flagged = harness();
+    expect(await flagged.run("image", "list", "--telemetry=yes")).toBe(2);
+  });
+
   it("refuses an empty scope rather than reading it as none", async () => {
     const cases: Array<[string[], NodeJS.ProcessEnv]> = [
       [["image", "list", "--scope", ""], {}],

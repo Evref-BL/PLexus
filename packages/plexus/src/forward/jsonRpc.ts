@@ -1,4 +1,6 @@
 import http from "node:http";
+import { SpanKind, type Attributes } from "@opentelemetry/api";
+import { errorType, failed, identifierOrOther, inSpan, withTraceContext } from "../telemetry/trace.js";
 import { plexusVersion } from "../version.js";
 
 const protocolVersion = "2025-06-18";
@@ -18,14 +20,16 @@ export interface Session {
  * - `refused`: the connection was refused, so nothing was sent;
  * - `closed`: the connection closed after the call was sent;
  * - `cancelled`: the caller's signal aborted the request;
- * - `other`: an HTTP status, invalid JSON, or a response with no result.
+ * - `other`: an HTTP status, with `httpStatus`, invalid JSON, or a response
+ *   with no result.
  */
 export type ForwardError = Error & ForwardErrorKind;
 
 type ForwardErrorKind =
   | { kind: "answered"; rpcCode?: number }
   | { kind: "no-handshake" | "timeout"; waitedMs: number }
-  | { kind: "refused" | "closed" | "cancelled" | "other" };
+  | { kind: "refused" | "closed" | "cancelled" }
+  | { kind: "other"; httpStatus?: number };
 
 interface HttpAnswer {
   payload: unknown;
@@ -35,6 +39,10 @@ interface HttpAnswer {
 /**
  * One request, answered by its JSON-RPC response object. A JSON-RPC error is
  * thrown with the server's `error.data` in the message.
+ *
+ * The request is a CLIENT span, `<method>` or `tools/call <tool>`, and
+ * carries the active trace context in its `params._meta`: see
+ * `requestAttributes` for what the span records.
  */
 export async function request(
   url: string,
@@ -42,33 +50,105 @@ export async function request(
   params: Record<string, unknown> | undefined,
   options: { timeoutMs: number; session?: Session; signal?: AbortSignal },
 ): Promise<Record<string, unknown>> {
-  const answer = await post(
-    url,
-    {
-      jsonrpc: "2.0",
-      id: `plexus-${method}-${Date.now()}`,
-      method,
-      ...(params === undefined ? {} : { params }),
+  const id = `plexus-${method}-${Date.now()}`;
+  const tool = method === "tools/call" && typeof params?.name === "string" ? identifierOrOther(params.name) : undefined;
+  return inSpan(
+    tool === undefined ? method : `${method} ${tool}`,
+    SpanKind.CLIENT,
+    requestAttributes(url, method, id, tool, options.session),
+    async (span) => {
+      const sent = withTraceContext(params);
+      const answer = await post(
+        url,
+        {
+          jsonrpc: "2.0",
+          id,
+          method,
+          ...(sent === undefined ? {} : { params: sent }),
+        },
+        options.timeoutMs,
+        options.session,
+        options.signal,
+      );
+      const payload = answer.payload;
+      if (!isRecord(payload)) {
+        throw forwardError(new Error("MCP response was not a JSON object"), { kind: "other" });
+      }
+      if ("error" in payload) {
+        const code = isRecord(payload.error) ? payload.error.code : undefined;
+        throw forwardError(new Error(`MCP error ${jsonRpcErrorText(payload.error)}`), {
+          kind: "answered",
+          ...(typeof code === "number" ? { rpcCode: code } : {}),
+        });
+      }
+      if (!("result" in payload)) {
+        throw forwardError(new Error(`MCP ${method} response did not include a result`), { kind: "other" });
+      }
+      if (tool !== undefined && isRecord(payload.result) && payload.result.isError === true) {
+        failed(span, "tool_error");
+      }
+      return payload;
     },
-    options.timeoutMs,
-    options.session,
-    options.signal,
+    requestErrorType,
   );
-  const payload = answer.payload;
-  if (!isRecord(payload)) {
-    throw forwardError(new Error("MCP response was not a JSON object"), { kind: "other" });
+}
+
+/**
+ * What a forwarded request's span records, after the OpenTelemetry MCP
+ * conventions: the method, the tool and its operation, the session where the
+ * handshake opened one, the request's id, and the image's local address.
+ */
+function requestAttributes(
+  url: string,
+  method: string,
+  id: string,
+  tool: string | undefined,
+  session: Session = {},
+): Attributes {
+  let address: Attributes = {};
+  try {
+    const target = new URL(url);
+    address = {
+      "server.address": target.hostname.replace(/^\[(.*)\]$/, "$1"),
+      ...(target.port === "" ? {} : { "server.port": Number(target.port) }),
+    };
+  } catch {
+    // The request refuses the URL itself.
   }
-  if ("error" in payload) {
-    const code = isRecord(payload.error) ? payload.error.code : undefined;
-    throw forwardError(new Error(`MCP error ${jsonRpcErrorText(payload.error)}`), {
-      kind: "answered",
-      ...(typeof code === "number" ? { rpcCode: code } : {}),
-    });
+  return {
+    "mcp.method.name": method,
+    ...(tool === undefined ? {} : { "gen_ai.tool.name": tool, "gen_ai.operation.name": "execute_tool" }),
+    ...(session.protocolVersion === undefined ? {} : { "mcp.protocol.version": session.protocolVersion }),
+    ...(session.sessionId === undefined ? {} : { "mcp.session.id": session.sessionId }),
+    "network.transport": "tcp",
+    "network.protocol.name": "http",
+    "jsonrpc.request.id": id,
+    ...address,
+  };
+}
+
+/**
+ * A failed request's `error.type`: the JSON-RPC code an image answered, the
+ * HTTP status it answered, `timeout`, how the connection failed, or the
+ * error's class.
+ */
+function requestErrorType(error: unknown): string {
+  const failure = error as Partial<ForwardError> | undefined;
+  switch (failure?.kind) {
+    case "answered":
+      return failure.rpcCode === undefined ? "_OTHER" : String(failure.rpcCode);
+    case "timeout":
+    case "no-handshake":
+      return "timeout";
+    case "refused":
+    case "closed":
+    case "cancelled":
+      return failure.kind;
+    case "other":
+      return failure.httpStatus === undefined ? errorType(error) : String(failure.httpStatus);
+    default:
+      return errorType(error);
   }
-  if (!("result" in payload)) {
-    throw forwardError(new Error(`MCP ${method} response did not include a result`), { kind: "other" });
-  }
-  return payload;
 }
 
 /**
@@ -230,7 +310,7 @@ function post(
             reject(
               forwardError(
                 new Error(`HTTP ${status ?? "unknown"} ${response.statusMessage ?? ""}`.trim()),
-                { kind: "other" },
+                { kind: "other", ...(status === undefined ? {} : { httpStatus: status }) },
               ),
             );
             return;
