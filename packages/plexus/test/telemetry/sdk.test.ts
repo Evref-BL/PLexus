@@ -92,13 +92,14 @@ describe("the command's SDK", () => {
     await telemetry.shutdown();
   });
 
-  it("exports the command's spans under the caller's TRACEPARENT, with no host or process resource", async () => {
+  it("exports the command's spans under the caller's TRACEPARENT, naming PLexus and Node but not the host or the process", async () => {
     const { endpoint, received } = await collector();
     const traceId = "4bf92f3577b34da6a3ce929d0e0e4736";
     const parentId = "00f067aa0ba902b7";
     vi.stubEnv("OTEL_EXPORTER_OTLP_ENDPOINT", endpoint);
     vi.stubEnv("OTEL_EXPORTER_OTLP_PROTOCOL", "http/json");
-    vi.stubEnv("OTEL_RESOURCE_ATTRIBUTES", "deployment.environment.name=test");
+    vi.stubEnv("OTEL_RESOURCE_ATTRIBUTES", "deployment.environment.name=test,service.name=renamed");
+    vi.stubEnv("OTEL_SERVICE_NAME", "renamed");
     vi.stubEnv("TRACEPARENT", `00-${traceId}-${parentId}-01`);
 
     const telemetry = await startTelemetry(process.env);
@@ -120,9 +121,15 @@ describe("the command's SDK", () => {
       "service.name": "plexus",
       "service.version": plexusVersion,
       "os.type": expect.any(String),
+      "process.runtime.name": "nodejs",
+      "process.runtime.version": process.versions.node,
       "deployment.environment.name": "test",
     });
-    expect(Object.keys(resource).filter((key) => key.startsWith("host.") || key.startsWith("process."))).toEqual([]);
+    expect(
+      Object.keys(resource).filter(
+        (key) => key.startsWith("host.") || (key.startsWith("process.") && !key.startsWith("process.runtime.")),
+      ),
+    ).toEqual([]);
     expect(resourceSpans.scopeSpans[0].spans).toMatchObject([
       { name: "plexus.image.start", traceId, parentSpanId: parentId },
     ]);

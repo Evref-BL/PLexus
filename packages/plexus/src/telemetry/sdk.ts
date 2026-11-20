@@ -101,10 +101,11 @@ function positive(value: string | undefined): number | undefined {
  * endpoint and headers among them, from the process environment, as the
  * OpenTelemetry exporters do.
  *
- * The resource is `service.name`, `service.version`, `os.type` and what
- * `OTEL_RESOURCE_ATTRIBUTES` and `OTEL_SERVICE_NAME` add. The host and process
- * detectors are not used: they would send the hostname, the command line and
- * the executable's path.
+ * The resource is `service.name`, `service.version`, `os.type`, Node's version
+ * as `process.runtime.*`, and what `OTEL_RESOURCE_ATTRIBUTES` adds; the
+ * environment cannot replace these, since the programs PLexus runs with share
+ * it. The host and process detectors are not used: they would send the
+ * hostname, the command line and the executable's path.
  *
  * When the endpoint failed recently and its time to try again has not come,
  * nothing is installed and no SDK module is loaded.
@@ -132,16 +133,14 @@ export async function startTelemetry(env: NodeJS.ProcessEnv, options: TelemetryO
     ]);
     const resource = resources
       .defaultResource()
+      .merge(resources.detectResources({ detectors: [resources.envDetector] }))
       .merge(
         resources.resourceFromAttributes({
           "service.name": "plexus",
           "service.version": plexusVersion,
           "os.type": osType(),
-        }),
-      )
-      .merge(
-        resources.detectResources({
-          detectors: [resources.envDetector],
+          "process.runtime.name": "nodejs",
+          "process.runtime.version": process.versions.node,
         }),
       );
     const provider = new sdk.TracerProvider({
