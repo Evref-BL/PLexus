@@ -199,7 +199,9 @@ function help(): string {
     "  --scope      a name prefix, without dashes: image dev is the directory <scope>-dev (PLEXUS_SCOPE)",
     "  --telemetry  enroll images in OpenTelemetry: a create loads MCP's Telemetry group, and a",
     "               start switches the image's server to it, configured by the OTEL_* environment",
-    "               (PLEXUS_TELEMETRY=1)",
+    "               (PLEXUS_TELEMETRY=1). With no OTEL_* in the environment, the settings file",
+    "               ~/.config/pharo-agent/otel.env gives them, and turns this on unless",
+    "               PLEXUS_TELEMETRY is set",
     "",
     "Results are JSON on stdout. A refusal is {\"ok\":false,\"code\":...,\"error\":...} and exits 1.",
   ].join("\n");
