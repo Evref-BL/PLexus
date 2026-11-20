@@ -188,7 +188,7 @@ offers the same tools.
 
 ## Development
 
-Requires Node.js 22.12 or newer, and Pharo Launcher for anything that runs an
+Requires Node.js 22.15 or newer, and Pharo Launcher for anything that runs an
 image.
 
 ```sh

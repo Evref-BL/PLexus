@@ -16,7 +16,7 @@
     "packages/plexus"
   ],
   "engines": {
-    "node": ">=22.12.0"
+    "node": ">=22.15.0"
   },
   "scripts": {
     "check": "npm run typecheck && npm run build && npm run typecheck:scripts && npm test",
@@ -32,7 +32,7 @@
     "verify:env": "node scripts/verify-environment.mjs"
   },
   "devDependencies": {
-    "@types/node": "^22.12.0",
+    "@types/node": "^22.15.0",
     "@vitest/coverage-v8": "^4.0.0",
     "typescript": "^5.9.0",
     "vitest": "^4.0.0"
