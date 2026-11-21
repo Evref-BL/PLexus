@@ -124,10 +124,16 @@ until the program running PLexus installs an SDK:
   `params._meta` (`traceparent`, `tracestate`, `baggage`);
 - making, starting, stopping and deleting an image are INTERNAL spans,
   `plexus.image.make`, `.start`, `.stop` and `.delete`;
-- `plexus mcp` handles each request in the trace context its `_meta` carries.
+- each tool call `plexus mcp` serves is a SERVER span, `tools/call <tool>`,
+  child of the trace context its `_meta` carries, with `session.id` (random,
+  one per server process, so one per host connection), the host's
+  `clientInfo` as `plexus.client.name` and `.version`, and the names of the
+  arguments given (`plexus.argument.names`) and of those an image tool does
+  not take (`plexus.argument.unknown_names`); an error answer fails it as
+  `tool_error`.
 
 A span records names, outcomes and an error's kind (`error.type`), never an
-argument, a result, a message, an image's name or a path.
+argument, a result, a message, an image's name, a path or an address.
 
 The `plexus` command installs an SDK when the standard environment asks for an
 OTLP traces exporter: `OTEL_EXPORTER_OTLP_ENDPOINT` or
@@ -138,9 +144,12 @@ gRPC. Its resource is `service.name` (`plexus`), `service.version`, `os.type`
 and what `OTEL_RESOURCE_ATTRIBUTES` adds, without the host and process
 detectors. A `TRACEPARENT` in its environment is the parent of what it does.
 The export timeout is two seconds unless `OTEL_EXPORTER_OTLP_TIMEOUT` says
-otherwise. A command waits for its spans one second at most, or the export
-timeout when it is shorter; `plexus mcp` exports its batches in the background
-with the whole export timeout. A command's answer, output and exit status never
+otherwise, and `OTEL_BSP_SCHEDULE_DELAY`, `OTEL_BSP_MAX_QUEUE_SIZE` and
+`OTEL_BSP_MAX_EXPORT_BATCH_SIZE` shape its batches. A command waits for its
+spans one second at most, or the export timeout when it is shorter;
+`plexus mcp` exports its batches in the background with the whole export
+timeout, and sends what is left, within that second, when its input closes or
+SIGTERM or SIGINT ends it. A command's answer, output and exit status never
 depend on its spans, and telemetry prints nothing. The SDK packages are
 optional dependencies: installed without them, the command runs untraced.
 

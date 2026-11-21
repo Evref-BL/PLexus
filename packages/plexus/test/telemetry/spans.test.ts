@@ -147,9 +147,6 @@ describe("a forwarded request with an SDK", () => {
       "mcp.session.id": "session-1",
       "network.transport": "tcp",
       "network.protocol.name": "http",
-      "jsonrpc.request.id": expect.stringMatching(/^plexus-tools\/call-\d+$/),
-      "server.address": "127.0.0.1",
-      "server.port": server.port,
     });
 
     const call = server.received.find((each) => each.method === "tools/call")!;

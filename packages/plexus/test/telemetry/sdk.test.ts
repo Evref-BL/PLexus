@@ -58,16 +58,30 @@ describe("what the environment asks of traces", () => {
   const endpoint = { OTEL_EXPORTER_OTLP_ENDPOINT: "http://localhost:4318" };
 
   it("is an OTLP export over HTTP once an endpoint is set, protobuf and two seconds unless told otherwise", () => {
-    expect(tracesExport(endpoint)).toEqual({ protocol: "http/protobuf", timeoutMs: 2_000 });
+    expect(tracesExport(endpoint)).toEqual({ protocol: "http/protobuf", timeoutMs: 2_000, batch: {} });
     expect(tracesExport({ OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: "http://localhost:4318/v1/traces", OTEL_TRACES_EXPORTER: "otlp" })).toEqual({
       protocol: "http/protobuf",
       timeoutMs: 2_000,
+      batch: {},
     });
     expect(tracesExport({ ...endpoint, OTEL_EXPORTER_OTLP_PROTOCOL: "http/json", OTEL_EXPORTER_OTLP_TIMEOUT: "500" })).toEqual({
       protocol: "http/json",
       timeoutMs: 500,
+      batch: {},
     });
     expect(tracesExport({ ...endpoint, OTEL_EXPORTER_OTLP_TIMEOUT: "soon" })?.timeoutMs).toBe(2_000);
+  });
+
+  it("carries the batch settings, which SDK 3's batch processor does not read from the environment itself", () => {
+    expect(
+      tracesExport({
+        ...endpoint,
+        OTEL_BSP_SCHEDULE_DELAY: "1000",
+        OTEL_BSP_MAX_QUEUE_SIZE: "64",
+        OTEL_BSP_MAX_EXPORT_BATCH_SIZE: "16",
+      })?.batch,
+    ).toEqual({ scheduledDelayMillis: 1_000, maxQueueSize: 64, maxExportBatchSize: 16 });
+    expect(tracesExport({ ...endpoint, OTEL_BSP_SCHEDULE_DELAY: "soon" })?.batch).toEqual({});
   });
 
   it("is nothing without an endpoint, when disabled, for another exporter, or over gRPC", () => {

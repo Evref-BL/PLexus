@@ -55,7 +55,7 @@ export async function request(
   return inSpan(
     tool === undefined ? method : `${method} ${tool}`,
     SpanKind.CLIENT,
-    requestAttributes(url, method, id, tool, options.session),
+    requestAttributes(method, tool, options.session),
     async (span) => {
       const sent = withTraceContext(params);
       const answer = await post(
@@ -95,26 +95,12 @@ export async function request(
 
 /**
  * What a forwarded request's span records, after the OpenTelemetry MCP
- * conventions: the method, the tool and its operation, the session where the
- * handshake opened one, the request's id, and the image's local address.
+ * conventions: the method, the tool and its operation, and the session where
+ * the handshake opened one. Not the request's id or the image's address,
+ * which the field telemetry keeps nothing of: a tool sends only what it would
+ * keep.
  */
-function requestAttributes(
-  url: string,
-  method: string,
-  id: string,
-  tool: string | undefined,
-  session: Session = {},
-): Attributes {
-  let address: Attributes = {};
-  try {
-    const target = new URL(url);
-    address = {
-      "server.address": target.hostname.replace(/^\[(.*)\]$/, "$1"),
-      ...(target.port === "" ? {} : { "server.port": Number(target.port) }),
-    };
-  } catch {
-    // The request refuses the URL itself.
-  }
+function requestAttributes(method: string, tool: string | undefined, session: Session = {}): Attributes {
   return {
     "mcp.method.name": method,
     ...(tool === undefined ? {} : { "gen_ai.tool.name": tool, "gen_ai.operation.name": "execute_tool" }),
@@ -122,8 +108,6 @@ function requestAttributes(
     ...(session.sessionId === undefined ? {} : { "mcp.session.id": session.sessionId }),
     "network.transport": "tcp",
     "network.protocol.name": "http",
-    "jsonrpc.request.id": id,
-    ...address,
   };
 }
 

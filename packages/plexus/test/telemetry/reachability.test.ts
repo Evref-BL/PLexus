@@ -264,15 +264,15 @@ describe("the command's SDK and an unreachable collector", () => {
   });
 
   it("waits a second at most at exit, and gives a long-lived process's batches the whole export timeout", () => {
-    expect(exportTimings({ protocol: "http/protobuf", timeoutMs: 2_000 })).toEqual({
+    expect(exportTimings({ protocol: "http/protobuf", timeoutMs: 2_000, batch: {} })).toEqual({
       exportTimeoutMs: 1_000,
       exitWaitMs: 1_000,
     });
-    expect(exportTimings({ protocol: "http/protobuf", timeoutMs: 2_000 }, true)).toEqual({
+    expect(exportTimings({ protocol: "http/protobuf", timeoutMs: 2_000, batch: {} }, true)).toEqual({
       exportTimeoutMs: 2_000,
       exitWaitMs: 1_000,
     });
-    expect(exportTimings({ protocol: "http/protobuf", timeoutMs: 200 }, true)).toEqual({
+    expect(exportTimings({ protocol: "http/protobuf", timeoutMs: 200, batch: {} }, true)).toEqual({
       exportTimeoutMs: 200,
       exitWaitMs: 200,
     });

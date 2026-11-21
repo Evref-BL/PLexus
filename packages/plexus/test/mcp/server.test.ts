@@ -5,9 +5,10 @@ import {
   type CallToolResult,
   type Tool,
 } from "@modelcontextprotocol/sdk/types.js";
-import { context, propagation, trace } from "@opentelemetry/api";
+import { context, propagation, SpanKind, SpanStatusCode, trace } from "@opentelemetry/api";
 import { AsyncLocalStorageContextManager } from "@opentelemetry/context-async-hooks";
 import { W3CTraceContextPropagator } from "@opentelemetry/core";
+import { InMemorySpanExporter, SimpleSpanProcessor, TracerProvider } from "@opentelemetry/sdk-trace";
 import { describe, expect, it } from "vitest";
 import * as texts from "../../src/answers/texts.js";
 import { defaultPharoMcpVersion } from "../../src/config/pharoMcpVersion.js";
@@ -390,7 +391,10 @@ describe("plexus mcp", () => {
     try {
       const parents: unknown[] = [];
       const { client } = await connect(new FakeImages([row("dev", { port: 7001 })]), {}, async () => {
-        parents.push(trace.getSpanContext(context.active()));
+        // Without an SDK the server's span records nothing and passes the
+        // parent it was given on, or an invalid context for none.
+        const parent = trace.getSpanContext(context.active());
+        parents.push(parent !== undefined && trace.isSpanContextValid(parent) ? parent : undefined);
         return { content: [] };
       });
 
@@ -406,6 +410,54 @@ describe("plexus mcp", () => {
         undefined,
       ]);
     } finally {
+      propagation.disable();
+      context.disable();
+    }
+  });
+
+  it("records each call it serves as a SERVER span: the tool, argument names, session and host, never a value", async () => {
+    const exporter = new InMemorySpanExporter();
+    context.setGlobalContextManager(new AsyncLocalStorageContextManager().enable());
+    propagation.setGlobalPropagator(new W3CTraceContextPropagator());
+    trace.setGlobalTracerProvider(new TracerProvider({ spanProcessors: [new SimpleSpanProcessor({ exporter })] }));
+    try {
+      const { client } = await connect(new FakeImages([row("dev", { port: 7001 })]), {}, async () => ({
+        content: [{ type: "text", text: "no such class" }],
+        isError: true,
+      }));
+      await client.callTool({
+        name: "class_get",
+        arguments: { name: "SecretClass" },
+        _meta: { traceparent: "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01" },
+      });
+      await client.callTool({ name: "image_list", arguments: { name: "dev", secretFlag: "/Users/ada" } });
+      const second = await connect(new FakeImages([row("dev", { port: 7001 })]));
+      await second.client.callTool({ name: "image_list", arguments: {} });
+
+      const served = exporter.getFinishedSpans().filter((span) => span.kind === SpanKind.SERVER);
+      expect(served.map((span) => span.name)).toEqual(["tools/call class_get", "tools/call image_list", "tools/call image_list"]);
+      const [forwarded, refused, other] = served;
+      expect(forwarded.spanContext().traceId).toBe("4bf92f3577b34da6a3ce929d0e0e4736");
+      expect(forwarded.parentSpanContext?.spanId).toBe("00f067aa0ba902b7");
+      expect(forwarded.attributes).toEqual({
+        "mcp.method.name": "tools/call",
+        "gen_ai.operation.name": "execute_tool",
+        "gen_ai.tool.name": "class_get",
+        "network.transport": "pipe",
+        "session.id": expect.stringMatching(/^[0-9a-f-]{36}$/),
+        "plexus.client.name": "test",
+        "plexus.client.version": "1.0.0",
+        "plexus.argument.names": ["name"],
+        "error.type": "tool_error",
+      });
+      expect(forwarded.status).toEqual({ code: SpanStatusCode.ERROR });
+      expect(refused.attributes["plexus.argument.names"]).toEqual(["name", "secretFlag"]);
+      expect(refused.attributes["plexus.argument.unknown_names"]).toEqual(["secretFlag"]);
+      expect(refused.attributes["session.id"]).toBe(forwarded.attributes["session.id"]);
+      expect(other.attributes["session.id"]).not.toBe(forwarded.attributes["session.id"]);
+      expect(JSON.stringify(served.map((span) => span.attributes))).not.toMatch(/SecretClass|\/Users\/ada|dev/);
+    } finally {
+      trace.disable();
       propagation.disable();
       context.disable();
     }

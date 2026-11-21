@@ -12,13 +12,21 @@ import {
   type CallToolResult,
   type Tool,
 } from "@modelcontextprotocol/sdk/types.js";
-import { context } from "@opentelemetry/api";
+import { randomUUID } from "node:crypto";
+import { context, SpanKind } from "@opentelemetry/api";
 import * as answers from "../answers/index.js";
 import { PlexusError } from "../errors.js";
 import { callTool, listTools } from "../forward/index.js";
 import { endpointOf } from "../images/endpoint.js";
 import type { Images } from "../images/index.js";
-import { contextFromMeta } from "../telemetry/trace.js";
+import {
+  argumentNames,
+  clientAttributes,
+  contextFromMeta,
+  failed,
+  identifierOrOther,
+  inSpan,
+} from "../telemetry/trace.js";
 import type { Display, Endpoint, ImageInfo } from "../types.js";
 import { plexusVersion } from "../version.js";
 
@@ -140,12 +148,56 @@ export function createPlexusMcpServer(options: PlexusMcpServerOptions): Server {
     { capabilities: { tools: { listChanged: true } } },
   );
 
+  // One host connection is one working session: what groups its calls in
+  // the field telemetry, random, and gone with the process.
+  const sessionId = randomUUID();
+
   server.setRequestHandler(ListToolsRequestSchema, (request) =>
     context.with(contextFromMeta(request.params?._meta), () => listAll()),
   );
   server.setRequestHandler(CallToolRequestSchema, (request, extra) =>
-    context.with(contextFromMeta(request.params._meta), () => call(request.params, extra.signal)),
+    context.with(contextFromMeta(request.params._meta), () =>
+      served(request.params, () => call(request.params, extra.signal)),
+    ),
   );
+
+  /**
+   * A call this server answers, as a SERVER span after the MCP conventions:
+   * the tool, the names of its arguments and those an image tool does not
+   * take, the session, and the host as its initialize request named itself.
+   * Never a value. An answer that is an error fails the span as `tool_error`.
+   */
+  function served(
+    params: { name: string; arguments?: Record<string, unknown> },
+    run: () => Promise<CallToolResult>,
+  ): Promise<CallToolResult> {
+    const tool = identifierOrOther(params.name);
+    const args = (params.arguments ?? {}) as Record<string, unknown>;
+    const names = argumentNames(args);
+    const declared = imageTools.find((each) => each.name === params.name)?.inputSchema.properties;
+    const unknown = declared === undefined ? [] : names.filter((name) => !(name in declared));
+    return inSpan(
+      `tools/call ${tool}`,
+      SpanKind.SERVER,
+      {
+        "mcp.method.name": "tools/call",
+        "gen_ai.operation.name": "execute_tool",
+        "gen_ai.tool.name": tool,
+        "network.transport": "pipe",
+        "session.id": sessionId,
+        ...clientAttributes(server.getClientVersion()),
+        ...(names.length === 0 ? {} : { "plexus.argument.names": names }),
+        ...(unknown.length === 0 ? {} : { "plexus.argument.unknown_names": unknown }),
+      },
+      async (span) => {
+        const result = await run();
+        if (result.isError) {
+          failed(span, "tool_error");
+        }
+        return result;
+      },
+    );
+  }
 
   async function listAll(): Promise<{ tools: Tool[] }> {
     const running = answering(await images.list().catch(() => []));
