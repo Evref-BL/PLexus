@@ -27,7 +27,7 @@ import { templates } from "./templates.js";
  * call that gave it.
  *
  * Making, starting, stopping and deleting are each an INTERNAL span,
- * `plexus.image.make`, `.start`, `.stop` and `.delete`, that says how it
+ * `plexus.image.create`, `.start`, `.stop` and `.delete`, that says how it
  * ended and nothing of the image.
  */
 export class Images {
@@ -46,9 +46,9 @@ export class Images {
   }
 
   create(name: string, options: CreateOptions): Promise<CreateResult> {
-    return inSpan("plexus.image.make", SpanKind.INTERNAL, {}, async (span) => {
-      const created = await create(this.context, name, options);
-      span.setAttribute("plexus.image.from_base", created.fromBase);
+    return inSpan("plexus.image.create", SpanKind.INTERNAL, {}, async (span) => {
+      const { fromBase, ...created } = await create(this.context, name, options);
+      span.setAttribute("plexus.image.from_base", fromBase);
       return created;
     });
   }

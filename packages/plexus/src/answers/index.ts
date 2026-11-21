@@ -2,17 +2,15 @@
  * The answers of the image tools, as plain text for a model: what happened,
  * then what an agent acts on, in the layout MCP's own tools write, except that
  * a list record says every field, even one all records share, where MCP says
- * that once beside the label. Both MCP servers that serve the image tools
- * answer through this, so the same call reads the same in either; a server
- * extends an answer before rendering it.
+ * that once beside the label. `plexus mcp` extends an answer before
+ * rendering it.
  */
-import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import { defaultPharoMcpVersion } from "../config/pharoMcpVersion.js";
 import { listTools } from "../forward/index.js";
 import type { ForwardError } from "../forward/jsonRpc.js";
-import { endpointOf, noEndpointYet } from "../images/endpoint.js";
+import { endpointOf } from "../images/endpoint.js";
 import type { StartResult } from "../images/start.js";
-import type { Endpoint, ImageInfo, Template } from "../types.js";
+import type { Endpoint, ImageInfo, ImageState, ImageTool, Template } from "../types.js";
 import * as texts from "./texts.js";
 
 export * as texts from "./texts.js";
@@ -79,25 +77,9 @@ function inlineValue(value: string): string {
 
 // The facts of an image.
 
-export type ImageState = "creating" | "stopped" | "starting" | "running";
-
-/**
- * A create still making the image wins whatever VM runs it: a script
- * create's own VM runs the image it prepares.
- */
-export function state(row: Pick<ImageInfo, "running" | "building" | "endpointProblem">): ImageState {
-  if (row.building) {
-    return "creating";
-  }
-  if (!row.running) {
-    return "stopped";
-  }
-  return row.endpointProblem === noEndpointYet ? "starting" : "running";
-}
-
-/** The Pharo version as Pharo says it: "140" is 14.0 and "61" is 6.1; anything else as it is. */
-export function pharoVersion(raw: string): string {
-  return /^\d{2,3}$/.test(raw) ? `${raw.slice(0, -1)}.${raw.slice(-1)}` : raw;
+/** The script every start files in, for an image that has one. */
+function everyStartScript(row: Pick<ImageInfo, "mcp">): string | undefined {
+  return row.mcp?.source === "script" && row.mcp.everyStart ? row.mcp.script : undefined;
 }
 
 /** Said of an image pinned to an MCP other than the one images are created with now. */
@@ -109,8 +91,8 @@ export function olderMcp(row: Pick<ImageInfo, "name" | "mcp">): string | undefin
 
 function warningsOf(row: ImageInfo): string[] {
   const warnings: string[] = [];
-  if (state(row) === "running" && row.endpoint === undefined && row.endpointProblem !== undefined) {
-    warnings.push(texts.takesNoCalls(row.name, row.pids, row.endpointProblem));
+  if (row.state === "unreachable") {
+    warnings.push(texts.takesNoCalls(row.name, row.pids, row.endpointProblem ?? "it wrote no endpoint"));
   }
   const older = olderMcp(row);
   if (older !== undefined) {
@@ -151,7 +133,7 @@ export function list(rows: readonly ImageInfo[], more?: (row: ImageInfo) => Pair
     return { summary: texts.noImages(), warnings: [], fields: [] };
   }
   return {
-    summary: texts.imagesSummary(rows.length, rows.filter((row) => state(row) === "running").length),
+    summary: texts.imagesSummary(rows.length, rows.filter((row) => row.state === "running" || row.state === "unreachable").length),
     warnings: rows.flatMap(warningsOf),
     fields: [],
     list: {
@@ -163,8 +145,8 @@ export function list(rows: readonly ImageInfo[], more?: (row: ImageInfo) => Pair
 
 function recordPairs(row: ImageInfo): Pair[] {
   return [
-    ["state", state(row)],
-    ...known("pharo", row.pharoVersion === undefined ? undefined : pharoVersion(row.pharoVersion)),
+    ["state", row.state],
+    ...known("pharo", row.pharoVersion),
     ...known("template", row.template),
     ...known("mcp", row.mcp === undefined ? undefined : row.mcp.source === "pin" ? row.mcp.version : "script"),
     ...(row.display === "interactive" ? [["display", "interactive"] as Pair] : []),
@@ -178,12 +160,14 @@ export function image(row: ImageInfo): ToolAnswer {
     stopped: texts.imageStopped(row.name),
     starting: texts.imageStarting(row.name),
     running: texts.imageRunning(row.name, row.display === "interactive"),
+    // The warning says why it takes no calls.
+    unreachable: texts.imageRunning(row.name, row.display === "interactive"),
   };
   return {
-    summary: summaries[state(row)],
+    summary: summaries[row.state],
     warnings: warningsOf(row),
     fields: [
-      ...known("pharo", row.pharoVersion === undefined ? undefined : pharoVersion(row.pharoVersion)),
+      ...known("pharo", row.pharoVersion),
       ...known("template", row.template),
       ...known(
         "mcp",
@@ -193,18 +177,18 @@ export function image(row: ImageInfo): ToolAnswer {
             ? row.mcp.version
             : `script ${row.mcp.script}`,
       ),
-      ...known("every start", row.everyStart),
+      ...known("every start", everyStartScript(row)),
       ["path", row.path],
     ],
   };
 }
 
-export function created(result: Pick<ImageInfo, "name" | "template" | "mcp" | "everyStart">): ToolAnswer {
+export function created(result: Pick<ImageInfo, "name" | "template" | "mcp">): ToolAnswer {
   return {
     summary: texts.created(result.name, {
       ...(result.template === undefined ? {} : { template: result.template }),
       ...(result.mcp?.source === "script"
-        ? { script: result.mcp.script, everyStart: result.everyStart !== undefined }
+        ? { script: result.mcp.script, everyStart: result.mcp.everyStart === true }
         : {}),
     }),
     warnings: [],
@@ -220,10 +204,11 @@ export function created(result: Pick<ImageInfo, "name" | "template" | "mcp" | "e
  */
 export function started(result: Pick<StartResult, "name" | "display">, row?: ImageInfo): ToolAnswer {
   const older = row === undefined ? undefined : olderMcp(row);
+  const everyStart = row === undefined ? undefined : everyStartScript(row);
   return {
     summary: texts.started(result.name, {
       interactive: result.display === "interactive",
-      ...(row?.everyStart === undefined ? {} : { everyStart: row.everyStart }),
+      ...(everyStart === undefined ? {} : { everyStart }),
     }),
     warnings: older === undefined ? [] : [older],
     fields: [],
@@ -388,7 +373,7 @@ interface PropertySchema {
  * accept when it accepts no other.
  */
 export function checkArguments(
-  tool: Pick<Tool, "name" | "inputSchema">,
+  tool: Pick<ImageTool, "name" | "inputSchema">,
   args: Record<string, unknown> | undefined,
 ): string | undefined {
   const given = args ?? {};

@@ -1,13 +1,12 @@
 import fs from "node:fs";
-import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import * as texts from "../answers/texts.js";
 import { PlexusError } from "../errors.js";
 import { evaluationTool } from "../forward/index.js";
 import type { ForwardError } from "../forward/jsonRpc.js";
 import type { LauncherProcess } from "../launcher/pharoLauncherMcpClient.js";
-import type { Endpoint, StopOptions } from "../types.js";
+import type { Endpoint, ImageToolResult, StopOptions } from "../types.js";
 import type { ImagesContext } from "./context.js";
-import { endpointOf, noEndpointYet } from "./endpoint.js";
+import { endpointOf } from "./endpoint.js";
 import { describe } from "./list.js";
 import { hostProcesses, killFailureLines, killVms, vmsOn } from "./processes.js";
 import { exists, imageFiles, noSuchImage, type ImageFiles } from "./store.js";
@@ -85,7 +84,7 @@ async function killAndWait(context: ImagesContext, files: ImageFiles, pids: read
 }
 
 /**
- * The save is the image's own: it evaluates `saveAndQuitCode` with the tool
+ * The one call PLexus makes to an image's own tools. The save is the image's own: it evaluates `saveAndQuitCode` with the tool
  * it lists for evaluating. Its VM quits in the middle of the call, so the
  * connection closing is what a save looks like, and the wait for the VM to
  * exit starts there. Whether it saved is read from the image file, whose
@@ -99,7 +98,7 @@ async function saveAndStop(
 ): Promise<StopResult> {
   const name = files.name;
   const row = describe(files, processes);
-  if (row.endpoint === undefined && !row.building && row.endpointProblem !== noEndpointYet) {
+  if (row.state === "unreachable") {
     throw new PlexusError(
       "save-failed",
       texts.saveTakesNoCalls(name, row.pids, row.endpointProblem ?? "it wrote no endpoint"),
@@ -157,11 +156,14 @@ async function askToSave(
   context: ImagesContext,
   endpoint: Endpoint,
 ): Promise<{ exitWaitMs: number } | { notTaken: string }> {
-  let tool: string;
+  let tool: string | undefined;
   try {
     tool = evaluationTool(await context.listTools(endpoint));
   } catch (error) {
     return { notTaken: notTakenReason(error) };
+  }
+  if (tool === undefined) {
+    return { notTaken: "it lists no evaluate tool, so it cannot save" };
   }
   try {
     const answer = await context.callTool(endpoint, tool, { code: saveAndQuitCode }, { minimumMs: context.saveWaitMs });
@@ -203,9 +205,9 @@ function notTakenReason(error: unknown): string {
 }
 
 /** The first line of a tool's text answer, or nothing for an answer with no text. */
-function firstLine(result: CallToolResult): string | undefined {
+function firstLine(result: ImageToolResult): string | undefined {
   const part = result.content.find((each) => each.type === "text");
-  const line = part?.type === "text" ? part.text.trim().split(/\r\n|\n|\r/)[0].trim() : "";
+  const line = typeof part?.text === "string" ? part.text.trim().split(/\r\n|\n|\r/)[0].trim() : "";
   return line === "" ? undefined : line;
 }
 

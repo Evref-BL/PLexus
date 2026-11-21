@@ -54,6 +54,27 @@ export interface PlexusMcpServerOptions {
   ) => Promise<CallToolResult>;
 }
 
+/**
+ * What a host reads at session start, beside the tool names, before it defers
+ * the rest: it decides whether these tools are searched for at all. It names
+ * only PLexus's own tools, since an image's come from the MCP it holds.
+ */
+export const serverInstructions = `Live Pharo images for this project: reading and changing code, running tests,
+searching and critiquing it.
+
+Search these tools for any Pharo, Smalltalk, Tonel or .st work. image_list
+says which images this project has and which are running, as of the call.
+Start an image with image_start before calling its tools; a project with no
+image needs image_templates and image_create first. A running image lists its
+common tools here, and its own search tools find the rest.
+
+An image takes one writer: image_create a new one for each new subject or
+parallel agent rather than share one, named like a branch
+(pretty-print-formatter, not p15). A running image may be another session's.
+A call to an image's tool names the image, and may leave it out while only
+one runs. image_stop kills an image without saving it; with save: true, the
+image saves itself and quits.`;
+
 const nameProperty = { type: "string", description: "The image's name." } as const;
 
 function schema(
@@ -137,15 +158,16 @@ type ListedSchemas = Map<string, Map<string, Tool["inputSchema"]>>;
 
 export function createPlexusMcpServer(options: PlexusMcpServerOptions): Server {
   const images = options.images;
-  const listToolsOf = options.listTools ?? ((endpoint: Endpoint) => listTools(endpoint));
-  const callToolOn = options.callTool ?? callTool;
+  // The forwarding answers what the image sent, which is what the protocol says.
+  const listToolsOf = options.listTools ?? ((endpoint: Endpoint) => listTools(endpoint) as Promise<Tool[]>);
+  const callToolOn = options.callTool ?? (callTool as NonNullable<PlexusMcpServerOptions["callTool"]>);
   // From the last tools/list, so that a call waits as long as the schema the
   // image listed for its tool allows.
   let listedSchemas: ListedSchemas = new Map();
 
   const server = new Server(
     { name: "plexus", version: plexusVersion },
-    { capabilities: { tools: { listChanged: true } } },
+    { capabilities: { tools: { listChanged: true } }, instructions: serverInstructions },
   );
 
   // One host connection is one working session: what groups its calls in

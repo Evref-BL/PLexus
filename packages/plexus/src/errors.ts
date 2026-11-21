@@ -6,6 +6,10 @@ export type PlexusErrorCode =
   | "being-started"
   | "building"
   | "not-running"
+  // A start of this PLexus launched the image, and its server has not said
+  // where it answers yet: asking again shortly will do.
+  | "starting"
+  // A VM runs the image and it takes no calls through PLexus.
   | "no-endpoint"
   | "unknown-template"
   | "ambiguous-template"

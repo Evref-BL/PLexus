@@ -3,8 +3,6 @@
  * semver. `packageExports.test.ts` holds the list, so a name added here is a
  * decision written down there.
  */
-export * as imageToolAnswers from "./answers/index.js";
-export type { ToolAnswer } from "./answers/index.js";
 export { defaultPharoMcpVersion } from "./config/pharoMcpVersion.js";
 export { PlexusError, type PlexusErrorCode } from "./errors.js";
 export { callTool, listTools } from "./forward/index.js";
@@ -14,13 +12,15 @@ export { Images } from "./images/index.js";
 export type { CreateResult } from "./images/create.js";
 export type { StartResult } from "./images/start.js";
 export type { StopResult } from "./images/stop.js";
-export type { LauncherPort } from "./launcher/pharoLauncherMcpClient.js";
 export type {
   CreateOptions,
   Display,
   Endpoint,
   ImageInfo,
+  ImageState,
   ImagesOptions,
+  ImageTool,
+  ImageToolResult,
   StartOptions,
   StopOptions,
   Template,

@@ -30,7 +30,10 @@ import {
   type McpSource,
 } from "./store.js";
 
-export type CreateResult = ImageInfo & { fromBase: boolean; seconds: number };
+export type CreateResult = ImageInfo & { seconds: number };
+
+/** A create's result, and whether the image was copied from a base that was already there, which only its span says. */
+export type Created = CreateResult & { fromBase: boolean };
 
 // A create runs at most two long launcher commands, one making the image from
 // its template and one preparing it. A building marker older than that
@@ -46,7 +49,7 @@ export async function create(
   context: ImagesContext,
   name: string,
   options: CreateOptions,
-): Promise<CreateResult> {
+): Promise<Created> {
   const startedAt = context.now();
   const files = imageFiles(context, name);
   if (exists(files.dir)) {

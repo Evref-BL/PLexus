@@ -1,12 +1,15 @@
 import os from "node:os";
 import path from "node:path";
 
-/** Where PLexus keeps everything: `$PLEXUS_HOME`, or `~/.plexus`. */
+/** Where the `plexus` command keeps everything: `$PLEXUS_HOME`, or `~/.plexus`. */
 export function plexusHome(env: NodeJS.ProcessEnv = process.env): string {
   const configured = env.PLEXUS_HOME;
-  return configured
-    ? path.resolve(configured)
-    : path.join(os.homedir(), ".plexus");
+  return configured ? path.resolve(configured) : defaultHome();
+}
+
+/** Where an `Images` given no home keeps everything. */
+export function defaultHome(): string {
+  return path.join(os.homedir(), ".plexus");
 }
 
 /** The one Pharo Launcher profile: its images, VMs and templates. */

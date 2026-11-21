@@ -12,7 +12,7 @@ import type { Display, Endpoint, StartOptions } from "../types.js";
 import { readClaim, takeClaim, type ClaimHolder, type ClaimState } from "./claims.js";
 import type { ImagesContext } from "./context.js";
 import { buildingState, stillBuilding } from "./create.js";
-import { noEndpointYet, observeEndpoint } from "./endpoint.js";
+import { observeEndpoint } from "./endpoint.js";
 import { hostProcesses, killFailureLines, killVms, vmsOn } from "./processes.js";
 import { startScript } from "./scripts.js";
 import {
@@ -128,7 +128,7 @@ function alreadyRunning(files: ImageFiles, vms: readonly LauncherProcess[]): Ple
   const message =
     "endpoint" in observed
       ? texts.alreadyRunning(files.name)
-      : observed.problem === noEndpointYet
+      : "starting" in observed
         ? texts.starting(files.name, pids)
         : texts.takesNoCalls(files.name, pids, observed.problem);
   return new PlexusError(

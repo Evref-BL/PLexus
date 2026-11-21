@@ -30,16 +30,16 @@ describe("list", () => {
     fs.mkdirSync(launcher.imageDir("Scope-incomplete"), { recursive: true });
 
     const scoped = await list(testContext(home, launcher, { scope: "Scope" }));
-    expect(scoped.map((image) => [image.name, image.diskName])).toEqual([
-      ["dev", "Scope-dev"],
-      ["mcp-eval", "Scope-mcp-eval"],
+    expect(scoped.map((image) => [image.name, image.path])).toEqual([
+      ["dev", imagePath(launcher, "Scope-dev")],
+      ["mcp-eval", imagePath(launcher, "Scope-mcp-eval")],
     ]);
     expect(scoped[0]).toMatchObject({
-      path: imagePath(launcher, "Scope-dev"),
+      state: "stopped",
       running: false,
       pids: [],
       template: "Pharo 14.0 - 64bit",
-      pharoVersion: "140",
+      pharoVersion: "14.0",
     });
     expect(scoped[0].endpointProblem).toBeUndefined();
 
@@ -77,13 +77,10 @@ describe("list", () => {
     fs.writeFileSync(path.join(plexus("scripted"), "building"), "");
 
     const [pinned, scripted] = await list(testContext(home, launcher));
-    expect(pinned).toMatchObject({ mcp: { source: "pin", version: "3.6.0" } });
-    expect(pinned.everyStart).toBeUndefined();
-    expect(pinned.building).toBeUndefined();
+    expect(pinned).toMatchObject({ state: "stopped", mcp: { source: "pin", version: "3.6.0" } });
     expect(scripted).toMatchObject({
-      mcp: { source: "script", script: "/work/load=mcp.st" },
-      everyStart: "/work/load=mcp.st",
-      building: true,
+      state: "creating",
+      mcp: { source: "script", script: "/work/load=mcp.st", everyStart: true },
     });
   });
 
@@ -130,6 +127,7 @@ describe("list", () => {
         writeEndpoint(dir, { port: 7001, pid: vm.pid });
       });
       expect(row.endpoint).toEqual({ url: "http://127.0.0.1:7001/", pid: row.pids[0] });
+      expect(row.state).toBe("running");
       expect(row.endpointProblem).toBeUndefined();
     });
 
@@ -139,6 +137,7 @@ describe("list", () => {
         writeEndpoint(dir, { port: 7001, pid: 999 });
       });
       expect(row.endpoint).toBeUndefined();
+      expect(row.state).toBe("unreachable");
       expect(row.endpointProblem).toBe("the endpoint names pid 999, which does not run this image");
     });
 
@@ -161,12 +160,14 @@ describe("list", () => {
       const notYet = await observe((launcher, dir) => {
         launcher.run(imagePath(launcher, "dev"), { script: path.join(dir, "plexus", "start.st") });
       });
-      expect(notYet.endpointProblem).toBe("no endpoint written yet");
+      expect(notYet.state).toBe("starting");
+      expect(notYet.endpointProblem).toBeUndefined();
 
       // A VM another tool or an older PLexus started will never write one.
       const never = await observe((launcher) => {
         launcher.run(imagePath(launcher, "dev"), { script: "/old/.plexus/scripts/start-dev.st" });
       });
+      expect(never.state).toBe("unreachable");
       expect(never.endpointProblem).toBe("not started by this PLexus");
 
       const malformed = await observe((launcher, dir) => {
@@ -179,6 +180,7 @@ describe("list", () => {
 
     it("is not looked at while nothing runs the image", async () => {
       const row = await observe((_launcher, dir) => writeEndpoint(dir, { port: 7001, pid: 1 }));
+      expect(row.state).toBe("stopped");
       expect(row.endpoint).toBeUndefined();
       expect(row.endpointProblem).toBeUndefined();
     });

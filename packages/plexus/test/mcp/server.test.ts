@@ -29,12 +29,12 @@ function row(
   const running = state.running ?? state.port !== undefined;
   return {
     name,
-    diskName: `Scope-${name}`,
     path: `/home/.plexus/profiles/images/Scope-${name}/Scope-${name}.image`,
+    state: !running ? "stopped" : state.port !== undefined ? "running" : state.problem === undefined ? "starting" : "unreachable",
     running,
     pids: running ? [100] : [],
     ...(state.port === undefined ? {} : { endpoint: { url: `http://127.0.0.1:${state.port}/`, pid: 100 } }),
-    ...(running && state.port === undefined ? { endpointProblem: state.problem ?? "no endpoint written yet" } : {}),
+    ...(running && state.port === undefined && state.problem !== undefined ? { endpointProblem: state.problem } : {}),
     ...state.fields,
   };
 }
@@ -62,7 +62,7 @@ class FakeImages implements ImagesApi {
 
   async create(name: string, options: CreateOptions) {
     this.calls.push(["create", name, options]);
-    return { ...row(name, { fields: { template: options.template } }), fromBase: true, seconds: 1 };
+    return { ...row(name, { fields: { template: options.template } }), seconds: 1 };
   }
 
   async start(name: string, options?: StartOptions) {
@@ -165,6 +165,8 @@ describe("plexus mcp", () => {
     const { tools } = await client.listTools();
     expect(tools.map((each) => each.name)).toEqual(imageToolNames);
     expect(client.getServerCapabilities()?.tools).toEqual({ listChanged: true });
+    expect(client.getInstructions()).toContain("Search these tools for any Pharo, Smalltalk, Tonel or .st work.");
+    expect(client.getInstructions()).toContain("may leave it out while only\none runs");
     expect(tools.find((each) => each.name === "image_start")?.description).toContain("refuses an image that is already running");
     const imageStop = tools.find((each) => each.name === "image_stop")!;
     expect(imageStop.description).toContain("without saving");
@@ -298,8 +300,8 @@ describe("plexus mcp", () => {
   it("answers the image tools in plain text, refusals as their message", async () => {
     const older = { source: "pin", version: "3.7.0" } as const;
     const images = new FakeImages([
-      row("dev", { fields: { template: "Pharo 14.0 - 64bit", pharoVersion: "140", mcp: { source: "pin", version: defaultPharoMcpVersion } } }),
-      row("old", { port: 7001, fields: { template: "Pharo 13.0 - 64bit", pharoVersion: "130", mcp: older, everyStart: "/abs/load.st" } }),
+      row("dev", { fields: { template: "Pharo 14.0 - 64bit", pharoVersion: "14.0", mcp: { source: "pin", version: defaultPharoMcpVersion } } }),
+      row("old", { port: 7001, fields: { template: "Pharo 13.0 - 64bit", pharoVersion: "13.0", mcp: older } }),
     ]);
     const { call } = await connect(images);
     const olderWarning = `Warning: Image old holds Pharo MCP 3.7.0, and images are created with ${defaultPharoMcpVersion} now, so its tools may differ from the current ones. Recreating it gives it the current MCP.`;
@@ -333,7 +335,7 @@ describe("plexus mcp", () => {
     );
     expect(textOf(await call("image_start", { name: "old" }))).toBe(
       [
-        'Started image old as it was last saved, with /abs/load.st filed in again. Pass image: "old" to its tools while another image runs.',
+        'Started image old as it was last saved. Pass image: "old" to its tools while another image runs.',
         olderWarning,
       ].join("\n"),
     );

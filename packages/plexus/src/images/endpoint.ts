@@ -10,13 +10,13 @@ import type { Endpoint, ImageInfo } from "../types.js";
 import type { ImageFiles } from "./store.js";
 
 /**
- * The endpoint problem of an image a start of this PLexus launched, whose
- * server has not written where it answers yet: it is starting, and will.
+ * Where a running image answers; or that a start of this PLexus launched it
+ * and its server has not written where yet, so it is starting and will; or
+ * why it takes no calls.
  */
-export const noEndpointYet = "no endpoint written yet";
-
 export type EndpointObservation =
   | { endpoint: Endpoint }
+  | { starting: true }
   | { problem: string };
 
 /**
@@ -36,7 +36,7 @@ export function observeEndpoint(
     // endpoint soon; any other VM on the image never will, so waiting is
     // not the answer for it.
     return vms.some((vm) => namesStartScript(vm, files))
-      ? { problem: noEndpointYet }
+      ? { starting: true }
       : { problem: "not started by this PLexus" };
   }
 
@@ -69,23 +69,29 @@ export function observeEndpoint(
  * the create.
  */
 export function endpointOf(row: ImageInfo): Endpoint {
-  if (row.building) {
-    throw new PlexusError("building", texts.stillBuilding(row.name));
+  switch (row.state) {
+    case "creating":
+      throw new PlexusError("building", texts.stillBuilding(row.name));
+    case "stopped":
+      throw new PlexusError("not-running", texts.notRunning(row.name));
+    case "starting":
+      throw new PlexusError("starting", texts.starting(row.name, row.pids), { pids: row.pids });
+    case "unreachable":
+      throw new PlexusError(
+        "no-endpoint",
+        texts.takesNoCalls(row.name, row.pids, row.endpointProblem ?? "it wrote no endpoint"),
+        { pids: row.pids },
+      );
+    case "running":
+      if (row.endpoint !== undefined) {
+        return row.endpoint;
+      }
+      throw new PlexusError(
+        "no-endpoint",
+        texts.takesNoCalls(row.name, row.pids, "it wrote no endpoint"),
+        { pids: row.pids },
+      );
   }
-  if (!row.running) {
-    throw new PlexusError("not-running", texts.notRunning(row.name));
-  }
-  if (row.endpoint !== undefined) {
-    return row.endpoint;
-  }
-  const problem = row.endpointProblem ?? "it wrote no endpoint";
-  throw new PlexusError(
-    "no-endpoint",
-    problem === noEndpointYet
-      ? texts.starting(row.name, row.pids)
-      : texts.takesNoCalls(row.name, row.pids, problem),
-    { pids: row.pids },
-  );
 }
 
 export function endpointUrl(handoff: EndpointHandoff): string {

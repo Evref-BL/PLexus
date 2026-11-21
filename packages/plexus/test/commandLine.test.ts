@@ -25,7 +25,7 @@ function harness(env: NodeJS.ProcessEnv = {}) {
     },
     create: async (name, options) => {
       calls.push(["create", name, options]);
-      return { name, diskName: name, path: "/x", running: false, pids: [], fromBase: true, seconds: 1 };
+      return { name, path: "/x", state: "stopped", running: false, pids: [], seconds: 1 };
     },
     start: async (name, options) => {
       calls.push(["start", name, options]);
@@ -204,11 +204,30 @@ describe("plexus", () => {
 
     const start = harness();
     expect(await start.run("image", "start", "--help")).toBe(0);
-    expect(start.stdout()).toMatch(/^Usage: plexus image start <name> \[--display interactive\] \[--timeout <seconds>\] \[--home <dir>\] \[--scope <prefix>\]/);
+    expect(start.stdout()).toMatch(/^Usage: plexus image start <name> \[--display interactive\] \[--timeout <seconds>\] \[--home <dir>\] \[--scope <prefix> \| --project <dir>\]/);
 
     const bare = harness();
     expect(await bare.run()).toBe(2);
     expect(bare.stderr()).toContain("Usage:");
+  });
+
+  it("takes the scope from the project's directory name when neither --scope nor PLEXUS_SCOPE gives one", async () => {
+    const cli = harness();
+    await cli.run("mcp", "--project", "/work/Pharo4Agents");
+    await cli.run("image", "list", "--project=/work/my app (2)/");
+    await cli.run("image", "list", "--project", "/work/--");
+    await cli.run("image", "list", "--project", "/work/Pharo4Agents", "--scope", "Other");
+    await cli.run("image", "list");
+    const env = harness({ PLEXUS_SCOPE: "EnvScope" });
+    await env.run("mcp", "--project", "/work/Pharo4Agents");
+    expect(cli.opened).toEqual([
+      { scope: "Pharo4Agents" },
+      { scope: "my_app_2" },
+      { scope: "default" },
+      { scope: "Other" },
+      {},
+    ]);
+    expect(env.opened).toEqual([{ scope: "EnvScope" }]);
   });
 
   it("serves MCP in the scope given at launch", async () => {

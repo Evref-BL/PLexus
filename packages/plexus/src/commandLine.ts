@@ -4,8 +4,8 @@
  * with exit status 1, and a command line it cannot read exits with 2.
  */
 import { PlexusError } from "./errors.js";
-import { plexusTelemetry } from "./images/context.js";
 import { Images } from "./images/index.js";
+import { scopeOfProject } from "./images/names.js";
 import { imageTools, runPlexusMcpServer, type ImagesApi } from "./mcp/server.js";
 import type { ImagesOptions, StartOptions } from "./types.js";
 
@@ -35,7 +35,7 @@ interface CommandSpec {
   positionals: { min: number; max: number };
 }
 
-const globalUsage = "[--home <dir>] [--scope <prefix>] [--telemetry]";
+const globalUsage = "[--home <dir>] [--scope <prefix> | --project <dir>] [--telemetry]";
 
 const imageCommands: Record<Verb, CommandSpec> = {
   templates: {
@@ -63,7 +63,7 @@ const imageCommands: Record<Verb, CommandSpec> = {
   stop: {
     usage: "plexus image stop <name> [--save]",
     summary:
-      "Kill every VM running the image, without saving. With --save, the image saves itself and quits instead; one that does not in time is left running.",
+      "Kill every VM running the image, without saving. With --save, the image saves itself and quits instead, through its own evaluate tool, the one call PLexus makes to an image's tools; one that does not in time is left running, and one that lists no evaluate tool cannot save.",
     values: [],
     flags: ["save"],
     positionals: { min: 1, max: 1 },
@@ -87,7 +87,7 @@ const imageCommands: Record<Verb, CommandSpec> = {
 const mcpCommand: CommandSpec = {
   usage: "plexus mcp",
   summary:
-    "Serve the image tools and the running images' own tools over stdio, in the scope given at launch.",
+    "Serve the image tools and the running images' own tools over stdio, in the scope given at launch. A host passes --project <its project directory>.",
   values: [],
   flags: [],
   positionals: { min: 0, max: 0 },
@@ -114,7 +114,7 @@ function parse(args: readonly string[], spec: CommandSpec): Parsed {
   const flags = new Set<string>();
   const positionals: string[] = [];
   let help = false;
-  const allowedValues = new Set(["home", "scope", ...spec.values]);
+  const allowedValues = new Set(["home", "scope", "project", ...spec.values]);
   const allowedFlags = new Set(["telemetry", ...spec.flags]);
 
   for (let index = 0; index < args.length; index += 1) {
@@ -160,9 +160,16 @@ function splitOption(option: string): [string, string | undefined] {
   return equals < 0 ? [option, undefined] : [option.slice(0, equals), option.slice(equals + 1)];
 }
 
+/** Whether `PLEXUS_TELEMETRY` asks for telemetry: `1` or `true`, in any case. */
+function plexusTelemetry(env: NodeJS.ProcessEnv): boolean {
+  return /^(1|true)$/i.test(env.PLEXUS_TELEMETRY?.trim() ?? "");
+}
+
 function imagesOptions(parsed: Parsed, env: NodeJS.ProcessEnv): ImagesOptions {
   const home = parsed.values.get("home") ?? env.PLEXUS_HOME;
-  const scope = parsed.values.get("scope") ?? env.PLEXUS_SCOPE;
+  const project = parsed.values.get("project");
+  const scope =
+    parsed.values.get("scope") ?? env.PLEXUS_SCOPE ?? (project === undefined ? undefined : scopeOfProject(project));
   return {
     ...(home ? { home } : {}),
     // An empty scope goes on to be refused: dropped, it would mean none, and
@@ -196,7 +203,9 @@ function help(): string {
     "",
     `Every command takes ${globalUsage}.`,
     "  --home       where images, VMs and templates live (PLEXUS_HOME; ~/.plexus)",
-    "  --scope      a name prefix, without dashes: image dev is the directory <scope>-dev (PLEXUS_SCOPE)",
+    "  --scope      a name prefix, without dashes: image dev is the directory <scope>-dev (PLEXUS_SCOPE).",
+    "               Without one, an image is named by its directory and every image is reached",
+    "  --project    the scope is this directory's name, unless --scope or PLEXUS_SCOPE gives one",
     "  --telemetry  enroll images in OpenTelemetry: a create loads MCP's Telemetry group, and a",
     "               start switches the image's server to it, configured by the OTEL_* environment",
     "               (PLEXUS_TELEMETRY=1). With no OTEL_* in the environment, the settings file",
