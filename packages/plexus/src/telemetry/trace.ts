@@ -24,6 +24,30 @@ export function identifierOrOther(name: string): string {
   return identifier.test(name) ? name : "_OTHER";
 }
 
+/** The names of a call's arguments that look like identifiers, never their values. */
+export function argumentNames(args: Record<string, unknown>): string[] {
+  return Object.keys(args).filter((name) => identifier.test(name));
+}
+
+// A client names itself as a product does, and gives a version that starts
+// with a digit.
+const clientNamePattern = /^[A-Za-z][A-Za-z0-9 ._-]{0,63}$/;
+const clientVersionPattern = /^\d[0-9A-Za-z.+-]{0,63}$/;
+
+/**
+ * Which agent host called, and which version of it, as its initialize
+ * request named itself: each kept only when it reads as a product name or a
+ * version.
+ */
+export function clientAttributes(client: { name?: unknown; version?: unknown } | undefined): Attributes {
+  const name = client?.name;
+  const version = client?.version;
+  return {
+    ...(typeof name === "string" && clientNamePattern.test(name) ? { "plexus.client.name": name } : {}),
+    ...(typeof version === "string" && clientVersionPattern.test(version) ? { "plexus.client.version": version } : {}),
+  };
+}
+
 /** Marks the span failed: status ERROR, with no description, and `error.type`. */
 export function failed(span: Span, type: string): void {
   span.setAttribute("error.type", type);

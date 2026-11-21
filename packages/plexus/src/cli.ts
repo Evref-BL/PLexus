@@ -13,6 +13,14 @@ const telemetry = await startTelemetry(process.env, { longLived: argv[0] === "mc
 // Once nothing is left to do: after a command, or when `plexus mcp`'s host
 // closes its input.
 process.once("beforeExit", () => void telemetry.shutdown());
+// A host often ends its server with a signal rather than by closing its
+// input, and a signal ends the process before beforeExit: send what is left,
+// within the bound shutdown keeps, then exit as the signal would have.
+for (const [signal, code] of [["SIGTERM", 143], ["SIGINT", 130]] as const) {
+  process.once(signal, () => {
+    void telemetry.shutdown().finally(() => process.exit(code));
+  });
+}
 
 telemetry
   .within(() =>

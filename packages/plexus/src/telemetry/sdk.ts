@@ -55,6 +55,15 @@ export function exportTimings(traces: TracesExport, longLived = false): { export
 export interface TracesExport {
   protocol: "http/protobuf" | "http/json";
   timeoutMs: number;
+  /** The `OTEL_BSP_*` settings the environment gives, which the SDK's batch processor does not read itself. */
+  batch: BatchSettings;
+}
+
+/** How the batch processor groups spans, as `OTEL_BSP_SCHEDULE_DELAY`, `OTEL_BSP_MAX_QUEUE_SIZE` and `OTEL_BSP_MAX_EXPORT_BATCH_SIZE` set it. */
+export interface BatchSettings {
+  scheduledDelayMillis?: number;
+  maxQueueSize?: number;
+  maxExportBatchSize?: number;
 }
 
 /**
@@ -87,7 +96,23 @@ export function tracesExport(env: NodeJS.ProcessEnv): TracesExport | undefined {
   }
   const timeoutMs =
     positive(env.OTEL_EXPORTER_OTLP_TRACES_TIMEOUT) ?? positive(env.OTEL_EXPORTER_OTLP_TIMEOUT) ?? defaultTimeoutMs;
-  return { protocol, timeoutMs };
+  return { protocol, timeoutMs, batch: batchSettings(env) };
+}
+
+/**
+ * The batch settings the environment gives. SDK 3's `BatchSpanProcessor`
+ * reads only its options, so without this a participant's
+ * `OTEL_BSP_SCHEDULE_DELAY` would reach the images and not PLexus.
+ */
+export function batchSettings(env: NodeJS.ProcessEnv): BatchSettings {
+  const settings: BatchSettings = {};
+  const delay = positive(env.OTEL_BSP_SCHEDULE_DELAY);
+  const queue = positive(env.OTEL_BSP_MAX_QUEUE_SIZE);
+  const batch = positive(env.OTEL_BSP_MAX_EXPORT_BATCH_SIZE);
+  if (delay !== undefined) settings.scheduledDelayMillis = delay;
+  if (queue !== undefined) settings.maxQueueSize = queue;
+  if (batch !== undefined) settings.maxExportBatchSize = batch;
+  return settings;
 }
 
 function positive(value: string | undefined): number | undefined {
@@ -147,6 +172,7 @@ export async function startTelemetry(env: NodeJS.ProcessEnv, options: TelemetryO
       resource,
       spanProcessors: [
         new sdk.BatchSpanProcessor({
+          ...traces.batch,
           exporter: new GuardedExporter(
             new exporters.OTLPTraceExporter({ timeoutMillis: exportTimeoutMs }),
             reachability,
