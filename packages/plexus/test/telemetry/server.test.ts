@@ -71,7 +71,8 @@ async function servingOneCall(endpoint: string, delayMs: number): Promise<ChildP
 const ended = (child: ChildProcess) => new Promise<number | null>((resolve) => child.on("close", (code) => resolve(code)));
 
 describe("plexus mcp's telemetry", () => {
-  it("sends its spans before a host's SIGTERM ends it", async () => {
+  // Windows has no signal to handle: killing a process there ends it outright.
+  it.skipIf(process.platform === "win32")("sends its spans before a host's SIGTERM ends it", async () => {
     const { endpoint, bodies } = await receiver();
     // A delay no test waits out: only the flush on the signal can send.
     const child = await servingOneCall(endpoint, 60_000);
