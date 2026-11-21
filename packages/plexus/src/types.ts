@@ -1,5 +1,3 @@
-import type { LauncherPort } from "./launcher/pharoLauncherMcpClient.js";
-
 export type Display = "headless" | "interactive";
 
 /** An MCP server an image runs: `http://127.0.0.1:<port><path>`. */
@@ -16,30 +14,42 @@ export interface Template {
   ambiguous?: true;
 }
 
+/**
+ * What an image is doing, as observed when asked:
+ *
+ * - `creating`: a create is still preparing it, whatever VM runs it.
+ * - `stopped`: no VM runs it.
+ * - `starting`: a start of this PLexus launched it, and its MCP server has
+ *   not said where it answers yet.
+ * - `running`: it takes calls at its `endpoint`.
+ * - `unreachable`: a VM runs it and it takes no calls through PLexus;
+ *   `endpointProblem` says why.
+ */
+export type ImageState = "creating" | "stopped" | "starting" | "running" | "unreachable";
+
 /** One image, as observed when asked. */
 export interface ImageInfo {
   /** The name the caller uses, without the scope. */
   name: string;
-  /** Its directory and file base name in the store. */
-  diskName: string;
-  /** The absolute path of `<diskName>.image`. */
+  /** The absolute path of its image file. */
   path: string;
-  /** A VM runs this image file now. */
+  state: ImageState;
+  /** A VM runs this image file now, whatever its state. */
   running: boolean;
   pids: number[];
   display?: Display;
   /** Only when it belongs to a VM running this image. */
   endpoint?: Endpoint;
-  /** Why a running image has no endpoint. */
+  /** Why an `unreachable` image takes no calls, in words for a person. */
   endpointProblem?: string;
-  /** A create is still preparing it. */
-  building?: true;
   template?: string;
+  /** As Pharo says it: `14.0`. */
   pharoVersion?: string;
-  /** How MCP got into it: the pinned release, or a script. */
-  mcp?: { source: "pin"; version: string } | { source: "script"; script: string };
-  /** The script every start files in before MCP starts. */
-  everyStart?: string;
+  /**
+   * How MCP got into it: the pinned release, or a script, which every start
+   * files in again when `everyStart` says so.
+   */
+  mcp?: { source: "pin"; version: string } | { source: "script"; script: string; everyStart?: true };
 }
 
 export interface CreateOptions {
@@ -66,18 +76,37 @@ export interface StopOptions {
   save?: boolean;
 }
 
+/** The library reads no environment: what the command takes from it, a program passes here. */
 export interface ImagesOptions {
-  /** `plexusHome()` unless given. */
+  /** `~/.plexus` unless given; `plexusHome()` is where the `plexus` command keeps them. */
   home?: string;
-  /** A name prefix, without dashes: image `dev` is the directory `<scope>-dev`. */
+  /**
+   * A name prefix, without dashes: image `dev` is the directory `<scope>-dev`.
+   * Without one, an image is named by its directory, so `shop-dev` is image
+   * `dev` of scope `shop`, and every image in the store is reached.
+   */
   scope?: string;
-  /** The launcher on the home's profile unless given. */
-  launcher?: LauncherPort;
   /**
    * Enroll the images handled in OpenTelemetry: an image made without a
    * script loads MCP's `Telemetry` group as well, and an image started
    * switches its MCP server to the OpenTelemetry backend when it has one.
-   * `PLEXUS_TELEMETRY` (`1` or `true`) unless given.
+   * Off unless given.
    */
   telemetry?: boolean;
+}
+
+/** A tool an image lists, as the protocol sends it. */
+export interface ImageTool {
+  name: string;
+  description?: string;
+  inputSchema: { type: "object"; properties?: Record<string, unknown>; required?: string[]; [key: string]: unknown };
+  [key: string]: unknown;
+}
+
+/** An image tool's answer, as the protocol sends it. */
+export interface ImageToolResult {
+  content: Array<{ type: string; [key: string]: unknown }>;
+  isError?: boolean;
+  structuredContent?: Record<string, unknown>;
+  [key: string]: unknown;
 }

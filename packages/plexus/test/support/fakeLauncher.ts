@@ -11,6 +11,8 @@ import type {
 import { afterEach } from "vitest";
 import { storeRoot } from "../../src/home.js";
 import type { ImagesContext } from "../../src/images/context.js";
+import type { InternalImagesOptions } from "../../src/images/context.js";
+import { Images } from "../../src/images/index.js";
 import type { LauncherPort } from "../../src/launcher/pharoLauncherMcpClient.js";
 
 const tempDirs: string[] = [];
@@ -240,4 +242,9 @@ export function testContext(
     clock,
     ...overrides,
   };
+}
+
+/** An `Images` on a fake launcher: the launcher is not a public option, so tests pass it through the internal type. */
+export function imagesWith(options: InternalImagesOptions): Images {
+  return new Images(options);
 }

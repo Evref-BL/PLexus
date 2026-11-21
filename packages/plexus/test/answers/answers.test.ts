@@ -10,10 +10,8 @@ import {
   image,
   list,
   olderMcp,
-  pharoVersion,
   render,
   started,
-  state,
   stopped,
   templates,
 } from "../../src/answers/index.js";
@@ -26,8 +24,8 @@ const nextStable = "Pharo 14.0 - 64bit (next stable)";
 function row(name: string, fields: Partial<ImageInfo> = {}): ImageInfo {
   return {
     name,
-    diskName: `plexus_image-${name}`,
     path: `/Users/me/.plexus/profiles/images/plexus_image-${name}/plexus_image-${name}.image`,
+    state: "stopped",
     running: false,
     pids: [],
     ...fields,
@@ -36,6 +34,7 @@ function row(name: string, fields: Partial<ImageInfo> = {}): ImageInfo {
 
 function runningRow(name: string, fields: Partial<ImageInfo> = {}): ImageInfo {
   return row(name, {
+    state: "running",
     running: true,
     pids: [4242],
     display: "headless",
@@ -128,24 +127,6 @@ describe("render", () => {
 });
 
 describe("the facts of an image", () => {
-  it("reads a Pharo version as Pharo says it", () => {
-    expect(pharoVersion("140")).toBe("14.0");
-    expect(pharoVersion("61")).toBe("6.1");
-    expect(pharoVersion("x")).toBe("x");
-    expect(pharoVersion("1400")).toBe("1400");
-  });
-
-  it("says creating whatever runs it, then stopped, starting or running", () => {
-    expect(state(row("a", { building: true }))).toBe("creating");
-    expect(
-      state(row("a", { running: true, building: true, endpointProblem: "not started by this PLexus" })),
-    ).toBe("creating");
-    expect(state(row("a"))).toBe("stopped");
-    expect(state(row("a", { running: true, endpointProblem: "no endpoint written yet" }))).toBe("starting");
-    expect(state(runningRow("a"))).toBe("running");
-    expect(state(row("a", { running: true, endpointProblem: "not started by this PLexus" }))).toBe("running");
-  });
-
   it("warns of an image pinned to another MCP than the current one, not of a script's", () => {
     expect(olderMcp(row("old", { mcp: { source: "pin", version: "3.7.0" } }))).toBe(
       `Image old holds Pharo MCP 3.7.0, and images are created with ${defaultPharoMcpVersion} now, so its tools may differ from the current ones. Recreating it gives it the current MCP.`,
@@ -184,9 +165,9 @@ describe("image_templates", () => {
 describe("image_list", () => {
   it("says on each of main-1's three images its own Pharo version and template, which a copied line keeps", () => {
     const answer = list([
-      runningRow("eval", { pharoVersion: "140", template: nextStable, mcp: { source: "script", script: "/abs/MCP-14ae2d5.st" } }),
-      runningRow("old", { pharoVersion: "140", template: nextStable, mcp: pinned }),
-      row("scratch", { pharoVersion: "140", template: nextStable, mcp: pinned }),
+      runningRow("eval", { pharoVersion: "14.0", template: nextStable, mcp: { source: "script", script: "/abs/MCP-14ae2d5.st" } }),
+      runningRow("old", { pharoVersion: "14.0", template: nextStable, mcp: pinned }),
+      row("scratch", { pharoVersion: "14.0", template: nextStable, mcp: pinned }),
     ]);
     const text = render(answer);
     expect(text).toBe(
@@ -204,7 +185,7 @@ describe("image_list", () => {
     expect(
       render(
         list([
-          runningRow("dev", { display: "interactive", pharoVersion: "130", template: "Pharo 13.0 - 64bit", mcp: pinned }),
+          runningRow("dev", { display: "interactive", pharoVersion: "13.0", template: "Pharo 13.0 - 64bit", mcp: pinned }),
           row("bare"),
         ]),
       ),
@@ -221,7 +202,7 @@ describe("image_list", () => {
   it("warns of an image that takes no calls and of an older MCP, in record order", () => {
     const text = render(
       list([
-        row("legacy", { running: true, pids: [5120], endpointProblem: "not started by this PLexus" }),
+        row("legacy", { state: "unreachable", running: true, pids: [5120], endpointProblem: "not started by this PLexus" }),
         row("old", { mcp: { source: "pin", version: "3.7.0" } }),
       ]),
     );
@@ -234,11 +215,11 @@ describe("image_list", () => {
 
   it("warns of neither a starting image nor one a create runs", () => {
     const answer = list([
-      row("dev", { running: true, pids: [4242], endpointProblem: "no endpoint written yet" }),
+      row("dev", { state: "starting", running: true, pids: [4242] }),
       row("spike", {
+        state: "creating",
         running: true,
         pids: [4243],
-        building: true,
         endpointProblem: "not started by this PLexus",
       }),
     ]);
@@ -260,7 +241,7 @@ describe("image_list", () => {
   });
 
   it("describes a named image alone, with its path", () => {
-    expect(render(image(runningRow("spike", { pharoVersion: "140", template: nextStable, mcp: pinned })))).toBe(
+    expect(render(image(runningRow("spike", { pharoVersion: "14.0", template: nextStable, mcp: pinned })))).toBe(
       [
         "Image spike is running.",
         "pharo: 14.0",
@@ -275,29 +256,28 @@ describe("image_list", () => {
     expect(image(runningRow("spike", { display: "interactive" })).summary).toBe(
       "Image spike is running, with its window open.",
     );
-    expect(image(row("spike", { running: true, pids: [4242], endpointProblem: "no endpoint written yet" })).summary).toBe(
+    expect(image(row("spike", { state: "starting", running: true, pids: [4242] })).summary).toBe(
       "Image spike is starting: its MCP server does not answer yet.",
     );
-    expect(image(row("spike", { building: true })).summary).toBe("Image spike is being created.");
+    expect(image(row("spike", { state: "creating" })).summary).toBe("Image spike is being created.");
     expect(
       render(
         image(
           row("scratch", {
-            mcp: { source: "script", script: "/abs/MCP-14ae2d5.st" },
-            everyStart: "/abs/load.st",
+            mcp: { source: "script", script: "/abs/load.st", everyStart: true },
           }),
         ),
       ),
     ).toBe(
       [
         "Image scratch is not running.",
-        "mcp: script /abs/MCP-14ae2d5.st",
+        "mcp: script /abs/load.st",
         "every start: /abs/load.st",
         "path: /Users/me/.plexus/profiles/images/plexus_image-scratch/plexus_image-scratch.image",
       ].join("\n"),
     );
     expect(
-      image(row("legacy", { running: true, pids: [5120], endpointProblem: "not started by this PLexus" })).warnings,
+      image(row("legacy", { state: "unreachable", running: true, pids: [5120], endpointProblem: "not started by this PLexus" })).warnings,
     ).toEqual([
       "Image legacy runs as pid 5120 but takes no calls: not started by this PLexus. image_stop kills that VM without saving; image_start then starts it as it was last saved.",
     ]);
@@ -320,8 +300,7 @@ describe("image_create, image_start, image_stop and image_delete", () => {
       created(
         row("mine", {
           template: "Pharo 14.0 - 64bit (stable)",
-          mcp: { source: "script", script: "/abs/load-my-mcp.st" },
-          everyStart: "/abs/load-my-mcp.st",
+          mcp: { source: "script", script: "/abs/load-my-mcp.st", everyStart: true },
         }),
       ).summary,
     ).toBe(
@@ -339,10 +318,10 @@ describe("image_create, image_start, image_stop and image_delete", () => {
     expect(started({ name: "p13", display: "interactive" }).summary).toBe(
       "Started image p13 as it was last saved, with its window open.",
     );
-    expect(started({ name: "mine", display: "headless" }, row("mine", { everyStart: "/abs/load.st" })).summary).toBe(
+    expect(started({ name: "mine", display: "headless" }, row("mine", { mcp: { source: "script", script: "/abs/load.st", everyStart: true } })).summary).toBe(
       "Started image mine as it was last saved, with /abs/load.st filed in again.",
     );
-    expect(started({ name: "mine", display: "interactive" }, row("mine", { everyStart: "/abs/load.st" })).summary).toBe(
+    expect(started({ name: "mine", display: "interactive" }, row("mine", { mcp: { source: "script", script: "/abs/load.st", everyStart: true } })).summary).toBe(
       "Started image mine as it was last saved, with its window open and /abs/load.st filed in again.",
     );
     expect(started({ name: "old", display: "headless" }, row("old", { mcp: { source: "pin", version: "3.7.0" } })).warnings).toEqual([

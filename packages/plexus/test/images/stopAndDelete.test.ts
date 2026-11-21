@@ -154,14 +154,24 @@ describe("stop with save", () => {
   });
 
   it("evaluates with image_evaluate in an image whose MCP predates the rename", async () => {
-    for (const listed of [[{ name: "image_evaluate" }], []]) {
-      const { calls, answer, context } = runningSetup();
-      context.listTools = async () => listed;
-      answer({ writes: true, exits: true });
+    const { calls, answer, context } = runningSetup();
+    context.listTools = async () => [{ name: "image_evaluate" }];
+    answer({ writes: true, exits: true });
 
-      expect((await stop(context, "dev", { save: true })).saved).toBe(true);
-      expect(calls.map((call) => call.name)).toEqual(["image_evaluate"]);
-    }
+    expect((await stop(context, "dev", { save: true })).saved).toBe(true);
+    expect(calls.map((call) => call.name)).toEqual(["image_evaluate"]);
+  });
+
+  it("says an image that lists no evaluate tool cannot save, and leaves it running", async () => {
+    const { launcher, calls, context } = runningSetup();
+    context.listTools = async () => [{ name: "class_get" }];
+
+    await expect(stop(context, "dev", { save: true })).rejects.toMatchObject({
+      code: "save-failed",
+      message: "Image dev did not save: it lists no evaluate tool, so it cannot save. It still runs: image_stop without save kills it, and image_start then starts it as it was last saved.",
+    });
+    expect(calls).toEqual([]);
+    expect(launcher.called("killProcess")).toEqual([]);
   });
 
   it("waits for the VM to quit once the connection has closed", async () => {
@@ -364,7 +374,7 @@ describe("stop with save", () => {
     launcher.processes = [];
     const starting = launcher.run(imagePath, { script: path.join(dir, "plexus", "start.st") });
     await expect(stop(context, "dev", { save: true })).rejects.toMatchObject({
-      code: "no-endpoint",
+      code: "starting",
       message: `Image dev is starting as pid ${starting.pid}: its MCP server does not answer yet. Call it again once image_list shows it running.`,
     });
     expect(listed).toEqual([]);

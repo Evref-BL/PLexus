@@ -16,7 +16,7 @@
 // The lookup forwarding uses, imported from its module so that the package
 // exports nothing more for the smoke.
 import { evaluationTool } from "../packages/plexus/dist/forward/index.js";
-import { callTool, Images, listTools } from "../packages/plexus/dist/index.js";
+import { callTool, Images, listTools, plexusHome } from "../packages/plexus/dist/index.js";
 import {
   checkListedTools,
   checkSaved,
@@ -37,10 +37,8 @@ async function main(argv) {
     return 2;
   }
 
-  const images = new Images({
-    ...(options.home === undefined ? {} : { home: options.home }),
-    scope: options.scope,
-  });
+  // The store the plexus command uses, PLEXUS_HOME included, unless given.
+  const images = new Images({ home: options.home ?? plexusHome(), scope: options.scope });
   const report = (step, value) => console.log(`${step}: ${JSON.stringify(value)}`);
   console.log(`smoke: ${smokeSteps(options).join(", ")} in scope ${options.scope}`);
 
@@ -52,7 +50,7 @@ async function main(argv) {
     step = "create";
     const image = await images.create(options.name, { template: template.name, category: template.category });
     created = true;
-    report(step, { template: template.name, fromBase: image.fromBase, seconds: image.seconds });
+    report(step, { template: template.name, seconds: image.seconds });
 
     step = "start";
     const started = await images.start(options.name, { timeoutMs: options.timeoutMs });
@@ -74,6 +72,9 @@ async function main(argv) {
 
     step = "save";
     const evaluate = evaluationTool(tools);
+    if (evaluate === undefined) {
+      throw new Error("the image lists no evaluate tool");
+    }
     checkToolResult(await callTool(started.endpoint, evaluate, { code: savedMark.set }));
     const saved = await images.stop(options.name, { save: true });
     checkSaved(saved);

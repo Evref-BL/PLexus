@@ -2,9 +2,9 @@ import fs from "node:fs";
 import path from "node:path";
 import { storeRoot } from "../home.js";
 import type { LauncherProcess } from "../launcher/pharoLauncherMcpClient.js";
-import type { ImageInfo } from "../types.js";
+import type { ImageInfo, ImageState } from "../types.js";
 import type { ImagesContext } from "./context.js";
-import { observeEndpoint } from "./endpoint.js";
+import { observeEndpoint, type EndpointObservation } from "./endpoint.js";
 import { nameOfDisk } from "./names.js";
 import { displayOf, hostProcesses, vmsOn } from "./processes.js";
 import {
@@ -55,24 +55,41 @@ export function describe(files: ImageFiles, processes: readonly LauncherProcess[
   const template = originTemplate(files.dir) ?? created?.template;
   const pharoVersion = readFirstLine(path.join(files.dir, "pharo.version"));
   const mcp = mcpSourceOf(created?.mcp);
-  const everyStart = readFirstLine(files.onStart);
+  const everyStart = readFirstLine(files.onStart) !== undefined;
   const observed = vms.length > 0 ? observeEndpoint(files, vms) : undefined;
 
   return {
     name: files.name,
-    diskName: files.diskName,
     path: files.imagePath,
+    state: stateOf(fs.existsSync(files.building), observed),
     running: vms.length > 0,
     pids: vms.map((vm) => vm.pid),
     ...(vms.length > 0 ? { display: displayOf(vms[0]) } : {}),
     ...(observed && "endpoint" in observed ? { endpoint: observed.endpoint } : {}),
     ...(observed && "problem" in observed ? { endpointProblem: observed.problem } : {}),
-    ...(fs.existsSync(files.building) ? { building: true as const } : {}),
     ...(template === undefined ? {} : { template }),
-    ...(pharoVersion === undefined ? {} : { pharoVersion }),
-    ...(mcp === undefined ? {} : { mcp }),
-    ...(everyStart === undefined ? {} : { everyStart }),
+    ...(pharoVersion === undefined ? {} : { pharoVersion: pharoVersionOf(pharoVersion) }),
+    ...(mcp === undefined ? {} : { mcp: mcp.source === "script" && everyStart ? { ...mcp, everyStart: true } : mcp }),
   };
+}
+
+/**
+ * A create still making the image wins whatever VM runs it: a script
+ * create's own VM runs the image it prepares.
+ */
+function stateOf(building: boolean, observed: EndpointObservation | undefined): ImageState {
+  if (building) {
+    return "creating";
+  }
+  if (observed === undefined) {
+    return "stopped";
+  }
+  return "endpoint" in observed ? "running" : "starting" in observed ? "starting" : "unreachable";
+}
+
+/** The Pharo version as Pharo says it: "140" is 14.0 and "61" is 6.1; anything else as it is. */
+function pharoVersionOf(raw: string): string {
+  return /^\d{2,3}$/.test(raw) ? `${raw.slice(0, -1)}.${raw.slice(-1)}` : raw;
 }
 
 // The launcher records the template an image came from in its metadata.

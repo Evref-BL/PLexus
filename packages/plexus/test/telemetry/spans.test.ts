@@ -10,8 +10,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { callTool, listTools } from "../../src/forward/index.js";
 import { request } from "../../src/forward/jsonRpc.js";
 import { storeRoot } from "../../src/home.js";
-import { Images } from "../../src/images/index.js";
-import { FakeLauncher, tempHome, writeLauncherImage } from "../support/fakeLauncher.js";
+import { FakeLauncher, imagesWith, tempHome, writeLauncherImage } from "../support/fakeLauncher.js";
 
 const exporter = new InMemorySpanExporter();
 
@@ -215,7 +214,7 @@ describe("a forwarded request with an SDK", () => {
       exporter.reset();
       const server = await fakeMcpServer((method) => (method === "tools/call" ? reply : standardAnswer(method)));
 
-      await callTool({ url: server.url }, "class_get", { name: "SecretClass" }, { timeoutMs: 200 }).catch(() => undefined);
+      await callTool({ url: server.url }, "class_get", { name: "SecretClass" }, { minimumMs: 200 }).catch(() => undefined);
 
       const span = spanNamed("tools/call class_get");
       expect(span.status, type).toEqual({ code: SpanStatusCode.ERROR });
@@ -232,13 +231,19 @@ describe("the image verbs with an SDK", () => {
     const home = tempHome();
     const launcher = new FakeLauncher(home);
     writeLauncherImage(path.join(storeRoot(home), "Secret-dev"), "Secret-dev");
-    const images = new Images({ home, scope: "Secret", launcher });
+    const images = imagesWith({ home, scope: "Secret", launcher });
 
+    await images.create("dev", { template: "Pharo 14.0 - 64bit", category: "Official" }).catch(() => undefined);
     await images.delete("dev");
     await images.delete("dev").catch(() => undefined);
     await images.stop("dev").catch(() => undefined);
 
-    const [deleted, refused, stopped] = exporter.getFinishedSpans();
+    const [taken, deleted, refused, stopped] = exporter.getFinishedSpans();
+    expect([taken.name, taken.kind, taken.attributes]).toEqual([
+      "plexus.image.create",
+      SpanKind.INTERNAL,
+      { "error.type": "image-exists" },
+    ]);
     expect([deleted.name, deleted.kind, deleted.status.code]).toEqual([
       "plexus.image.delete",
       SpanKind.INTERNAL,

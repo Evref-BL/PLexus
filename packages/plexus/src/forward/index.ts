@@ -2,8 +2,7 @@
  * Forwarding: one JSON-RPC request to an image's endpoint per call. Nothing
  * is cached, so nothing can name an image that has since stopped.
  */
-import type { CallToolResult, Tool } from "@modelcontextprotocol/sdk/types.js";
-import type { Endpoint } from "../types.js";
+import type { Endpoint, ImageTool, ImageToolResult } from "../types.js";
 import { initialize, request } from "./jsonRpc.js";
 
 const defaultTimeoutMs = 60_000;
@@ -17,7 +16,7 @@ const longestWaitMs = 2 ** 31 - 1;
 export async function listTools(
   endpoint: Endpoint,
   options: { timeoutMs?: number } = {},
-): Promise<Tool[]> {
+): Promise<ImageTool[]> {
   const timeoutMs = options.timeoutMs ?? defaultTimeoutMs;
   const session = await initialize(endpoint.url, timeoutMs);
   const response = await request(endpoint.url, "tools/list", undefined, {
@@ -32,14 +31,8 @@ export async function listTools(
 }
 
 export interface CallToolOptions {
-  /**
-   * One wait for each of the two requests, in place of the waits below. A
-   * handshake that times out under it is passed over, and the call is still
-   * sent.
-   */
-  timeoutMs?: number;
   /** The schema the image listed for the tool: its `timeoutSeconds` gives the call's limit and the most it may be. */
-  inputSchema?: Tool["inputSchema"];
+  inputSchema?: ImageTool["inputSchema"];
   /** What the handshake waits, and the least the call waits: 60000 unless given. */
   minimumMs?: number;
   /** Aborting it destroys the request in flight, and the call rejects as cancelled. */
@@ -49,9 +42,8 @@ export interface CallToolOptions {
 /**
  * One call, answered by the tool's result as the image sent it. The call
  * waits longer than any limit the image keeps itself, so that its own answer
- * to a call it stopped arrives first: see `callWaitMs`. Unless `timeoutMs` is
- * given, a handshake the image does not answer fails the call before it is
- * sent.
+ * to a call it stopped arrives first: see `callWaitMs`. A handshake the image
+ * does not answer fails the call before it is sent.
  *
  * It rejects with a `ForwardError`, whose `kind` says whether the image
  * answered, never got the call, or got it and gave no answer.
@@ -61,10 +53,10 @@ export async function callTool(
   name: string,
   args: Record<string, unknown> = {},
   options: CallToolOptions = {},
-): Promise<CallToolResult> {
-  const handshakeMs = options.timeoutMs ?? Math.min(options.minimumMs ?? defaultTimeoutMs, longestWaitMs);
+): Promise<ImageToolResult> {
+  const handshakeMs = Math.min(options.minimumMs ?? defaultTimeoutMs, longestWaitMs);
   const session = await initialize(endpoint.url, handshakeMs, {
-    failOnTimeout: options.timeoutMs === undefined,
+    failOnTimeout: true,
     ...(options.signal === undefined ? {} : { signal: options.signal }),
   });
   const response = await request(
@@ -72,12 +64,12 @@ export async function callTool(
     "tools/call",
     { name, arguments: args },
     {
-      timeoutMs: options.timeoutMs ?? callWaitMs(args, options),
+      timeoutMs: callWaitMs(args, options),
       session,
       ...(options.signal === undefined ? {} : { signal: options.signal }),
     },
   );
-  return response.result as CallToolResult;
+  return response.result as ImageToolResult;
 }
 
 /**
@@ -107,22 +99,21 @@ function timeLimit(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : undefined;
 }
 
-function listedTimeLimit(inputSchema: Tool["inputSchema"] | undefined): { default?: unknown; maximum?: unknown } {
+function listedTimeLimit(inputSchema: ImageTool["inputSchema"] | undefined): { default?: unknown; maximum?: unknown } {
   const property = inputSchema?.properties?.timeoutSeconds;
   return isRecord(property) ? property : {};
 }
 
 /**
  * The tool an image runs Smalltalk with, as it lists it: `evaluate`, or
- * `image_evaluate` in an image whose MCP predates the rename. An image that
- * lists neither has an MCP older still, which held `image_evaluate` without
- * listing it.
+ * `image_evaluate` in an image whose MCP predates the rename; nothing for an
+ * image that lists neither.
  */
-export function evaluationTool(tools: ReadonlyArray<{ name: string }>): string {
+export function evaluationTool(tools: ReadonlyArray<{ name: string }>): string | undefined {
   return (
     tools.find((tool) => tool.name === "evaluate") ??
     tools.find((tool) => tool.name === "image_evaluate")
-  )?.name ?? "image_evaluate";
+  )?.name;
 }
 
 /**
@@ -169,7 +160,7 @@ async function fetchWithin(timeoutMs: number, url: string, init: RequestInit = {
   }
 }
 
-function checkedTool(value: unknown, index: number): Tool {
+function checkedTool(value: unknown, index: number): ImageTool {
   if (!isRecord(value) || typeof value.name !== "string") {
     throw new Error(`MCP tools/list returned an invalid tool at index ${index}`);
   }
@@ -178,7 +169,7 @@ function checkedTool(value: unknown, index: number): Tool {
       `MCP tools/list returned tool ${value.name} without an inputSchema object`,
     );
   }
-  return value as Tool;
+  return value as ImageTool;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

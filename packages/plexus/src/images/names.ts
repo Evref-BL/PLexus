@@ -1,3 +1,4 @@
+import path from "node:path";
 import { PlexusError } from "../errors.js";
 
 const namePattern = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
@@ -35,6 +36,22 @@ export function checkScope(scope: unknown): string | undefined {
     );
   }
   return scope;
+}
+
+/**
+ * The scope of a project: its directory's name, with each run of characters
+ * a scope cannot hold made one `_`, leading ones dropped, cut to 64 and
+ * trailing `_` dropped; `default` when nothing is left. The pharo-agent
+ * plugin named its projects' scopes this way, so their images stay theirs.
+ */
+export function scopeOfProject(directory: string): string {
+  const sanitized = path
+    .basename(path.resolve(directory))
+    .replace(/[^A-Za-z0-9._]+/g, "_")
+    .replace(/^[^A-Za-z0-9]+/, "")
+    .slice(0, 64)
+    .replace(/_+$/, "");
+  return sanitized || "default";
 }
 
 /** The directory and file base name of an image in the store. */

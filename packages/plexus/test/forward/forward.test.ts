@@ -277,29 +277,6 @@ describe("a forwarded call", () => {
     });
   });
 
-  it("waits an explicit timeoutMs for the call, whatever the call's own limit", async () => {
-    const { url } = await fakeMcpServer((request) =>
-      request.method === "tools/call"
-        ? { result: { content: [{ type: "text", text: "done" }] }, afterMs: 250 }
-        : standardAnswers(request),
-    );
-
-    expect(
-      await failureOf(callTool({ url }, "slow", { timeoutSeconds: 120 }, { timeoutMs: 100, inputSchema: testRun })),
-    ).toEqual({ message: "MCP request timed out after 100ms", kind: "timeout", waitedMs: 100 });
-  });
-
-  it("is still sent when the handshake times out under an explicit timeoutMs", async () => {
-    const { url, received } = await fakeMcpServer((request) =>
-      request.method === "initialize" ? "never" : standardAnswers(request),
-    );
-
-    expect(await callTool({ url }, "class_search", {}, { timeoutMs: 100 })).toEqual({
-      content: [{ type: "text", text: "class=MCPToolRegistry" }],
-    });
-    expect(received.map((request) => request.method)).toEqual(["initialize", "tools/call"]);
-  });
-
   it("takes a time limit longer than Node's timers keep, with no warning", async () => {
     const { url } = await fakeMcpServer(standardAnswers);
     const warnings: string[] = [];

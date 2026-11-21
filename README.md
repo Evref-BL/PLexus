@@ -17,7 +17,9 @@ forwards tool calls to a running one.
   `Proj-dev`, and only `Proj-` directories are listed, without the prefix.
   A scope holds no dash, so the first dash of a directory name ends its scope:
   `shop` never lists `shop_api-dev`, which is `shop_api`'s. PLexus stores no
-  scope: the caller passes one, and without one every image is listed.
+  scope: the caller passes one, and without one an image is named by its
+  directory, so `shop-dev` is image `dev` of `shop`, and every image is
+  listed.
 
 An image keeps what PLexus knows about it in `<image>/plexus/`, which goes
 with it:
@@ -50,9 +52,11 @@ plexus mcp
 ```
 
 Every command takes `--home <dir>` (`PLEXUS_HOME`), `--scope <prefix>`
-(`PLEXUS_SCOPE`), `--telemetry` (`PLEXUS_TELEMETRY`, see
-[Telemetry](#telemetry)), and `--help`. Results are JSON on stdout; a refusal is
-`{"ok":false,"code":...,"error":...}` with exit status 1.
+(`PLEXUS_SCOPE`), `--project <dir>`, `--telemetry` (`PLEXUS_TELEMETRY`, see
+[Telemetry](#telemetry)), and `--help`. The scope is `--scope`, else
+`PLEXUS_SCOPE`, else the name of the `--project` directory, with each run of
+characters a scope cannot hold made one `_`, else none. Results are JSON on
+stdout; a refusal is `{"ok":false,"code":...,"error":...}` with exit status 1.
 
 - **templates** lists the launcher's templates with their category. A name in
   more than one category is marked `ambiguous`, and a create from it must say
@@ -64,17 +68,24 @@ Every command takes `--home <dir>` (`PLEXUS_HOME`), `--scope <prefix>`
   the launcher's logs. It never creates: a missing image is refused.
 - **stop** kills every VM running the image. A kill does not save: the image
   starts again as it was last saved. With `--save`, the image saves itself and
-  quits instead, by evaluating `Smalltalk snapshot: true andQuit: true` through
-  its MCP server, and the stop answers once its VM is gone and its image file
-  was written; an image that does not save and quit in time is left
-  running, and so is one that takes no calls. Evaluating `Smalltalk saveSession`
+  quits instead, by evaluating `Smalltalk snapshot: true andQuit: true` with
+  the `evaluate` tool its MCP server lists (`image_evaluate` before MCP 4),
+  the one call PLexus makes to an image's own tools; the stop answers once
+  its VM is gone and its image file was written. An image that does not save
+  and quit in time is left running, and so is one that takes no calls or
+  lists no evaluate tool. Evaluating `Smalltalk saveSession`
   in the image saves it without stopping it. An image that is not running is
   already stopped.
 - **delete** removes the image's directory, and refuses while a VM runs it or
   a create or a start is still at work on it.
-- **list** shows each image, whether it runs, its pids, its endpoint, its
+- **list** shows each image, its state, its pids, its endpoint, its
   template, Pharo version and how MCP got into it. It pings nothing and writes
-  nothing.
+  nothing. The state is `creating` (a create is still at work), `stopped`,
+  `starting` (a start of this PLexus launched it and its server has not said
+  where it answers yet), `running`, or `unreachable` (a VM runs it and it
+  takes no calls through PLexus, `endpointProblem` says why). A call to a
+  starting image is refused with the code `starting`, to an unreachable one
+  with `no-endpoint`.
 
 ## MCP in an image
 
@@ -94,17 +105,19 @@ the checkout it loads from.
 
 ## `plexus mcp`
 
-A stdio MCP server for an agent host, in the scope given when it starts:
+A stdio MCP server for an agent host, in the scope given when it starts. A
+host passes its project directory, whose name is the scope:
 
 ```json
-{ "mcpServers": { "plexus": { "command": "plexus", "args": ["mcp", "--scope", "MyProject"] } } }
+{ "mcpServers": { "plexus": { "command": "plexus", "args": ["mcp", "--project", "/path/to/MyProject"] } } }
 ```
 
 It offers `image_templates`, `image_create`, `image_start`, `image_stop`,
 `image_delete` and `image_list`, followed by the tools of every image in scope
 that runs with an endpoint. Each of those takes an `image` argument naming the
 image to call; it may be left out while one image runs. After a start, a stop
-or a delete, the server tells the host its tool list changed.
+or a delete, the server tells the host its tool list changed. Its instructions tell the host to search these tools for Pharo work, and
+that an image takes one writer.
 
 Its own tools answer in plain text, for a model: what happened first, then
 what it found. A refusal, a call whose arguments break the tool's schema
@@ -123,7 +136,7 @@ until the program running PLexus installs an SDK:
   MCP conventions, and passes its trace context to the image in the request's
   `params._meta` (`traceparent`, `tracestate`, `baggage`);
 - making, starting, stopping and deleting an image are INTERNAL spans,
-  `plexus.image.make`, `.start`, `.stop` and `.delete`;
+  `plexus.image.create`, `.start`, `.stop` and `.delete`;
 - each tool call `plexus mcp` serves is a SERVER span, `tools/call <tool>`,
   child of the trace context its `_meta` carries, with `session.id` (random,
   one per server process, so one per host connection), the host's
@@ -197,12 +210,24 @@ const tools = await listTools(await images.endpoint("dev"));
 await images.stop("dev");
 ```
 
-Everything reachable from the package root is API and moves under semver.
 Refusals are `PlexusError`s whose `code` says which.
 
-`imageToolAnswers` renders the answers of `plexus mcp`'s image tools, checks
-their arguments and says what a failed forwarded call did, for a server that
-offers the same tools.
+The library reads no environment variable: `home` is `~/.plexus` and
+`telemetry` is off unless given. `plexusHome()` is where the `plexus` command
+keeps its images, `PLEXUS_HOME` included, for a program that wants the same
+store.
+
+## What semver covers
+
+- the library: everything reachable from the package root, types included;
+- the `plexus` command: its commands, options, environment variables, JSON
+  results and refusal codes;
+- `plexus mcp`'s six image tools: their names and arguments. Their answers
+  are text for a model, whose wording may change in any release.
+
+It does not cover the tools an image offers. Their names and arguments come
+from the MCP release the image holds, and a minor release of PLexus may pin a
+new MCP major, which the images it creates then hold.
 
 ## Development
 

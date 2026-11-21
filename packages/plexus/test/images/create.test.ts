@@ -59,12 +59,12 @@ describe("create without a script", () => {
     const dir = path.join(storeRoot(home), "Scope-dev");
     expect(created).toMatchObject({
       name: "dev",
-      diskName: "Scope-dev",
       path: path.join(dir, "Scope-dev.image"),
+      state: "stopped",
       running: false,
       fromBase: true,
       template: template.name,
-      pharoVersion: "140",
+      pharoVersion: "14.0",
       mcp: { source: "pin", version: pin },
     });
     expect(typeof created.seconds).toBe("number");
@@ -357,8 +357,8 @@ describe("create with a script", () => {
       fromBase: false,
       mcp: { source: "script", script: loader },
     });
-    expect(created.building).toBeUndefined();
-    expect(created.everyStart).toBeUndefined();
+    expect(created.state).toBe("stopped");
+    expect(created.mcp).toEqual({ source: "script", script: loader });
     const dir = path.join(storeRoot(home), "Scope-mcp");
     expect(listing(dir)).toEqual([
       "Pharo14.0-64bit.sources",
@@ -414,7 +414,7 @@ describe("create with a script", () => {
 
     const created = await create(context, "mcp", { ...options, script: loader, everyStart: true });
 
-    expect(created.everyStart).toBe(loader);
+    expect(created.mcp).toEqual({ source: "script", script: loader, everyStart: true });
     expect(fs.readFileSync(path.join(storeRoot(home), "mcp", "plexus", "on-start"), "utf8")).toBe(`${loader}\n`);
   });
 

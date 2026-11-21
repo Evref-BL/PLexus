@@ -1,12 +1,11 @@
 import path from "node:path";
-import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { callTool, listTools, ping, type CallToolOptions } from "../forward/index.js";
-import { plexusHome } from "../home.js";
+import { defaultHome } from "../home.js";
 import {
   openLauncherPort,
   type LauncherPort,
 } from "../launcher/pharoLauncherMcpClient.js";
-import type { Endpoint, ImagesOptions } from "../types.js";
+import type { Endpoint, ImagesOptions, ImageToolResult } from "../types.js";
 import { checkScope } from "./names.js";
 
 /**
@@ -29,7 +28,7 @@ export interface ImagesContext {
     name: string,
     args: Record<string, unknown>,
     options: CallToolOptions,
-  ): Promise<CallToolResult>;
+  ): Promise<ImageToolResult>;
   sleep(ms: number): Promise<void>;
   now(): number;
   /** How often a start or a stop asks the host again. */
@@ -42,11 +41,6 @@ export interface ImagesContext {
   saveWaitMs: number;
 }
 
-/** Whether `PLEXUS_TELEMETRY` asks for telemetry: `1` or `true`, in any case. */
-export function plexusTelemetry(env: NodeJS.ProcessEnv = process.env): boolean {
-  return /^(1|true)$/i.test(env.PLEXUS_TELEMETRY?.trim() ?? "");
-}
-
 /**
  * How long a stop that saves waits on each request of the image's tool
  * listing: an image that cannot list its tools in that time will not take
@@ -54,16 +48,25 @@ export function plexusTelemetry(env: NodeJS.ProcessEnv = process.env): boolean {
  */
 const listingWaitMs = 10_000;
 
-export function imagesContext(options: ImagesOptions = {}): ImagesContext {
+/**
+ * The options of an `Images`, with what only tests pass: a launcher that
+ * runs no Pharo. It is not exported from the package, so no program depends
+ * on pharo-launcher-mcp's types through PLexus's.
+ */
+export interface InternalImagesOptions extends ImagesOptions {
+  launcher?: LauncherPort;
+}
+
+export function imagesContext(options: InternalImagesOptions = {}): ImagesContext {
   // The launcher is handed these paths, and a VM's command line is compared
   // with them, so they are absolute whatever the caller's directory.
-  const home = options.home === undefined ? plexusHome() : path.resolve(options.home);
+  const home = options.home === undefined ? defaultHome() : path.resolve(options.home);
   const scope = checkScope(options.scope);
   let launcher = options.launcher;
   return {
     home,
     ...(scope === undefined ? {} : { scope }),
-    telemetry: options.telemetry ?? plexusTelemetry(),
+    telemetry: options.telemetry === true,
     // Opening resolves the launcher installation, which an operation that
     // never reaches the launcher has no reason to pay for.
     launcher: () => (launcher ??= openLauncherPort(home)),
