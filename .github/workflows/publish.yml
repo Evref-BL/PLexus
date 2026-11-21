@@ -75,6 +75,8 @@ jobs:
           trap 'rm -rf "$destination"' EXIT
           # Fetch the tarballs, not just the metadata: consumers install from
           # those, and they appear later than the version npm view reports.
+          # 0.18.0's took five and a half minutes, past a five-minute wait,
+          # so its consumers were never told; give it fifteen.
           for _ in {1..60}; do
             if npm pack \
               "@evref-bl/plexus@${version}" \
@@ -82,7 +84,7 @@ jobs:
               --prefer-online >/dev/null 2>&1; then
               exit 0
             fi
-            sleep 5
+            sleep 15
           done
           echo "Published PLexus tarballs did not become installable from npm." >&2
           exit 1
