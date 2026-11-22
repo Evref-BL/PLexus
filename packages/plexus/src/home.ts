@@ -22,8 +22,19 @@ export function storeRoot(home: string): string {
   return path.join(profileRoot(home), "images");
 }
 
-/** Templates with MCP loaded, copied by a create. */
+/**
+ * Templates with MCP loaded, copied by a create, which every PLexus release
+ * sharing the home keeps until none has used them for a while.
+ */
 export function basesRoot(home: string): string {
+  return path.join(legacyBasesRoot(home), "shared");
+}
+
+/**
+ * Where PLexus 0.16 to 0.20 keep their bases. Each of them removes every
+ * entry there named after a pin other than its own, which `shared` is not.
+ */
+export function legacyBasesRoot(home: string): string {
   return path.join(home, "bases");
 }
 

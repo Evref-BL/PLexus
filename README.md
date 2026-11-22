@@ -98,11 +98,22 @@ stdout; a refusal is `{"ok":false,"code":...,"error":...}` with exit status 1.
 Without a script, an image is a copy of a **base**: its template with the MCP
 release PLexus pins loaded and saved. The first create from a template builds
 the base, which takes minutes; later creates copy it, cloning blocks where the
-filesystem can. A base is a directory of `$PLEXUS_HOME/bases` named after its
-template, category and pin, and whether it holds MCP's `Telemetry` group. It
-is built under a temporary name and renamed when complete, so its existence is
-its record, and the bases of other pins are removed when one is built. A base
-forgets the Iceberg repositories its load cloned into the image's directory and
+filesystem can. A base is a directory of `$PLEXUS_HOME/bases/shared` named
+after its template, category and pin, and whether it holds MCP's `Telemetry`
+group. It is built under a temporary name and renamed when complete, so its
+existence is its record. Beside it, `<base>.used` holds when a create last
+copied it, written before the copy.
+
+Releases with other pins share the bases, as when an agent host runs an older
+PLexus beside a newer one, so a base is never removed for its pin. A create
+removes the bases no create has used for 30 days and, while the bases hold
+more than 5 GiB, the least recently used first, but never one used within the
+last day. PLexus 0.16 to 0.20 keep their bases directly in `$PLEXUS_HOME/bases`
+and remove those of other pins there, which never reaches `shared`; a base
+of the same key found there is copied in rather than built again, and left
+where it is.
+
+A base forgets the Iceberg repositories its load cloned into the image's directory and
 deletes their clones, so that a project loading MCP under another repository
 spec, a fork or a branch, clones it anew.
 

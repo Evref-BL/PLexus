@@ -131,7 +131,9 @@ ${failureWriter("status", "      ")}
  *
  * Port 0 asks the system for a free port; the file names the port bound and
  * the pid that bound it, written under another name and renamed so that a
- * reader never sees half of it. It never saves the image.
+ * reader never sees half of it. The pid is `LibC>>#getpid`'s where the image
+ * has it, else `LibC>>#currentProcessId`'s, which Pharo 10 has. It never
+ * saves the image.
  *
  * With telemetry, a server that has an OpenTelemetry backend is switched to
  * it before it starts; one without is started as it is, and a backend that
@@ -163,7 +165,12 @@ status := dir / 'start-status.properties'.
     ifFalse: [ Error signal: 'MCP is not in the image.' ].
   (Smalltalk globals at: #PLexusMCPServer ifAbsent: [ nil ])
     ifNotNil: [ :previous | [ previous stop ] on: Error do: [ :error | nil ] ].
-  pid := [ (Smalltalk globals at: #LibC) uniqueInstance getpid ]
+  pid := [
+    | libc |
+    libc := (Smalltalk globals at: #LibC) uniqueInstance.
+    (libc respondsTo: #getpid)
+      ifTrue: [ libc getpid ]
+      ifFalse: [ libc currentProcessId ] ]
     on: Error do: [ :error | nil ].
   mcp := (Smalltalk globals at: #MCP) new.
 ${observability}  mcp port: 0.
