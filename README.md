@@ -109,9 +109,8 @@ PLexus beside a newer one, so a base is never removed for its pin. A create
 removes the bases no create has used for 30 days and, while the bases hold
 more than 5 GiB, the least recently used first, but never one used within the
 last day. PLexus 0.16 to 0.20 keep their bases directly in `$PLEXUS_HOME/bases`
-and remove those of other pins there, which never reaches `shared`; a base
-of the same key found there is copied in rather than built again, and left
-where it is.
+and remove those of other pins there, which never reaches `shared`. The
+bases there are neither copied nor removed.
 
 A base forgets the Iceberg repositories its load cloned into the image's directory and
 deletes their clones, so that a project loading MCP under another repository
@@ -242,7 +241,7 @@ nothing:
 The `plexus` command reads its settings file,
 `$XDG_CONFIG_HOME/plexus/otel.env`, by default `~/.config/plexus/otel.env`,
 and `%APPDATA%\plexus\otel.env` on Windows: one `OTEL_NAME=value` per line,
-read as a dotenv file is. A line starting with `#` is a comment, and so is
+lines ending in LF, CRLF or CR, read as a dotenv file is. A line starting with `#` is a comment, and so is
 what follows a `#` that starts an unquoted value or follows a space in it; a
 value in single or double quotes is what they hold. When the file gives a
 setting, the command removes every `OTEL_*` variable it inherited and takes

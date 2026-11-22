@@ -3,7 +3,7 @@ import path from "node:path";
 import type { ImageStartInput } from "@evref-bl/pharo-launcher-mcp/launcher";
 import { describe, expect, it } from "vitest";
 import { defaultPharoMcpVersion } from "../../src/config/pharoMcpVersion.js";
-import { basesRoot, legacyBasesRoot, storeRoot, tmpRoot } from "../../src/home.js";
+import { basesRoot, storeRoot, tmpRoot } from "../../src/home.js";
 import {
   baseKey,
   basesCapBytes,
@@ -446,34 +446,16 @@ describe("create without a script", () => {
     expect(bases(home)).toEqual([key, "notes", otherPin].sort());
   });
 
-  it("copies a base that an older PLexus left in the bases directory instead of building it, and leaves theirs", async () => {
-    const { home, launcher, context } = setup();
-    const theirs = path.join(legacyBasesRoot(home), key);
-    writeLauncherImage(theirs, "base", template.name);
-    fs.writeFileSync(path.join(theirs, "base.image"), "theirs");
-    const olderPin = path.join(legacyBasesRoot(home), baseKey(template.name, template.category, "3.6.0"));
-    writeLauncherImage(olderPin, "base", template.name);
-
-    const created = await create(context, "dev", { ...options });
-
-    expect(created.fromBase).toBe(true);
-    expect(launcher.called("createImage")).toHaveLength(0);
-    expect(fs.readFileSync(path.join(storeRoot(home), "dev", "dev.image"), "utf8")).toBe("theirs");
-    expect(fs.readFileSync(path.join(basesRoot(home), key, "base.image"), "utf8")).toBe("theirs");
-    expect(fs.existsSync(path.join(theirs, "base.image"))).toBe(true);
-    expect(fs.existsSync(olderPin)).toBe(true);
-    expect(listing(tmpRoot(home))).toEqual([]);
-  });
-
   it("keeps its bases out of reach of a release that removes the bases of other pins", async () => {
     const { home, context } = setup();
     await create(context, "dev", { ...options });
 
     // What PLexus 0.16 to 0.20 do once they built a base of their pin.
+    const theirs = path.join(home, "bases");
     const theirPin = "3.8.0";
-    for (const entry of fs.readdirSync(legacyBasesRoot(home))) {
+    for (const entry of fs.readdirSync(theirs)) {
       if (/-mcp-[^/\\]+$/.test(entry) && !entry.endsWith(`-mcp-${theirPin}`)) {
-        fs.rmSync(path.join(legacyBasesRoot(home), entry), { recursive: true, force: true });
+        fs.rmSync(path.join(theirs, entry), { recursive: true, force: true });
       }
     }
 

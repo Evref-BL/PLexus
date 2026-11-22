@@ -16,7 +16,7 @@ import path from "node:path";
 import { repairCopiedImageMetadataInDirectory } from "@evref-bl/pharo-launcher-mcp/launcher";
 import * as texts from "../answers/texts.js";
 import { PlexusError } from "../errors.js";
-import { basesRoot, legacyBasesRoot, storeRoot, tmpRoot } from "../home.js";
+import { basesRoot, storeRoot, tmpRoot } from "../home.js";
 import type { ImageTelemetry } from "../types.js";
 import type { ImagesContext } from "./context.js";
 import { buildPrefix } from "./names.js";
@@ -153,7 +153,7 @@ async function ensureBaseHolding(
   const key = baseKey(template.name, template.category, pin, telemetry);
   const dir = path.join(basesRoot(context.home), key);
   const isBase = () => isFile(path.join(dir, `${baseFileName}.image`));
-  if (isBase() || adoptLegacyBase(context, key, dir)) {
+  if (isBase()) {
     used(context, key);
     evictBases(context);
     return { dir, built: false };
@@ -200,29 +200,6 @@ function used(context: ImagesContext, key: string): void {
   } catch {
     // Unstamped, the base counts as used when its directory last changed.
   }
-}
-
-/**
- * The same base as PLexus 0.16 to 0.20 left it in `<home>/bases`, copied in,
- * clones where the filesystem can, rather than built again; theirs is left
- * to them. Answers whether there is one now.
- */
-function adoptLegacyBase(context: ImagesContext, key: string, dir: string): boolean {
-  const legacy = path.join(legacyBasesRoot(context.home), key);
-  if (!isFile(path.join(legacy, `${baseFileName}.image`))) {
-    return false;
-  }
-  const assembly = ownedName(path.join(tmpRoot(context.home), `${key}-`));
-  try {
-    copyTree(legacy, assembly);
-    fs.mkdirSync(basesRoot(context.home), { recursive: true });
-    fs.renameSync(assembly, dir);
-  } catch {
-    // Gone meanwhile, or another create adopted it first.
-  } finally {
-    fs.rmSync(assembly, { recursive: true, force: true });
-  }
-  return isFile(path.join(dir, `${baseFileName}.image`));
 }
 
 /** How long a base no create has used is kept. */

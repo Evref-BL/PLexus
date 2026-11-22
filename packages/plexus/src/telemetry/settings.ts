@@ -26,7 +26,8 @@ export function settingsFile(
 const settingName = /^OTEL_[A-Z0-9_]+$/;
 
 /**
- * The OTEL_* settings a file's lines give, as a dotenv file reads. Blank
+ * The OTEL_* settings a file's lines give, as a dotenv file reads, lines
+ * ending in LF, CRLF or a lone CR, as a Pharo image writes them. Blank
  * lines and `#` comments are skipped, as is a leading `export`. A value in
  * single or double quotes is what they hold, `#` included, and may be followed
  * by a comment; any other value ends where a `#` begins it or follows
@@ -34,7 +35,7 @@ const settingName = /^OTEL_[A-Z0-9_]+$/;
  */
 export function parseSettings(text: string): Record<string, string> {
   const settings: Record<string, string> = {};
-  for (const raw of text.split(/\r?\n/)) {
+  for (const raw of text.split(/\r\n|\r|\n/)) {
     const line = raw.trim().replace(/^export\s+/, "");
     if (line === "" || line.startsWith("#")) continue;
     const equals = line.indexOf("=");

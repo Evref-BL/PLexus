@@ -41,6 +41,20 @@ describe("the telemetry settings file", () => {
     });
   });
 
+  it("reads lines ending in LF, CRLF or a lone CR, as a Pharo image writes them", () => {
+    const expected = { OTEL_EXPORTER_OTLP_ENDPOINT: "http://127.0.0.1:4318", OTEL_SERVICE_NAME: "x" };
+    for (const ending of ["\n", "\r\n", "\r"]) {
+      expect(
+        parseSettings(["# settings", "OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318", "OTEL_SERVICE_NAME=x", ""].join(ending)),
+        JSON.stringify(ending),
+      ).toEqual(expected);
+    }
+    expect(parseSettings("OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318\rOTEL_SERVICE_NAME=x\r\nOTEL_LOG_LEVEL=none\n")).toEqual({
+      ...expected,
+      OTEL_LOG_LEVEL: "none",
+    });
+  });
+
   it("reads a comment after a value as dotenv does, and keeps a # in quotes", () => {
     expect(
       parseSettings(
