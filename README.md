@@ -184,12 +184,12 @@ nothing:
 - a state file that cannot be read or written is no state.
 
 When the environment sets no `OTEL_*` variable, the `plexus` command reads
-them from the settings file the Pharo tools share, since agent hosts do not
-pass `OTEL_*` to the servers they start: `$XDG_CONFIG_HOME/pharo-agent/otel.env`,
-by default `~/.config/pharo-agent/otel.env`, and
-`%APPDATA%\pharo-agent\otel.env` on Windows, one `OTEL_NAME=value` per line.
-Settings from that file also turn `--telemetry` on, unless `PLEXUS_TELEMETRY`
-is set. Pharo MCP reads the same file; the library reads none.
+them from its settings file, since agent hosts do not pass `OTEL_*` to the
+servers they start: `$XDG_CONFIG_HOME/plexus/otel.env`, by default
+`~/.config/plexus/otel.env`, and `%APPDATA%\plexus\otel.env` on Windows, one
+`OTEL_NAME=value` per line. They join the command's environment, which the
+images it starts inherit. Settings from that file also turn `--telemetry` on,
+unless `PLEXUS_TELEMETRY` is set. The library reads no file.
 
 `--telemetry`, or `PLEXUS_TELEMETRY` set to `1` or `true`, or the library's
 `telemetry` option, enrolls the images PLexus handles in OpenTelemetry:
