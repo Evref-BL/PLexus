@@ -1,20 +1,22 @@
+import type { LauncherLaunchReport } from "@evref-bl/pharo-launcher-mcp/launcher";
 import { describe, expect, it } from "vitest";
 import { launchedVmSlot, vmRenewalHint } from "../../src/launcher/vmRenewal.js";
 
-// What macOS 27 printed for a Pharo VM from 2025, through the launcher's
-// report of the launch.
+// What macOS 27 printed for a Pharo VM from 2025.
 const staleVmOutput = [
   "[ERROR] 2026-11-13 10:02:44.000 allocateHeap (gcc3x-cointerp.c:93203):Could not allocate codeZone in the expected place (0x320000000), got 0x7000000000",
   "[ERROR] 2026-11-13 10:02:44.000 error (src/debug.c:45):Error allocating",
   "VM Error Fri Nov 13 10:02:44 2026",
 ].join("\n");
 
-const report = [
-  "Profile-scoped Pharo image launch.",
-  "image: /home/me/.plexus/profiles/images/Base/Base.image",
-  "vm: /home/me/.plexus/profiles/vms/140-x64/Pharo.app/Contents/MacOS/Pharo",
-  "vmId: 140-x64",
-].join("\n");
+const report: LauncherLaunchReport = {
+  by: "vm",
+  imagePath: "/home/me/.plexus/profiles/images/Base/Base.image",
+  displayMode: "headless",
+  vmPath: "/home/me/.plexus/profiles/vms/140-x64/Pharo.app/Contents/MacOS/Pharo",
+  vmId: "140-x64",
+  vmUpdated: false,
+};
 
 describe("a VM that cannot run an image", () => {
   it("names its slot and the repair", () => {
@@ -30,11 +32,12 @@ describe("a VM that cannot run an image", () => {
   });
 
   it("says nothing when the launch named no VM", () => {
-    expect(vmRenewalHint(staleVmOutput, "Detached Pharo image pid 42.")).toBeUndefined();
+    expect(vmRenewalHint(staleVmOutput, { by: "launcher", pid: 42 })).toBeUndefined();
+    expect(vmRenewalHint(staleVmOutput, undefined)).toBeUndefined();
   });
 
   it("says renewing will not help when the launch just installed it", () => {
-    const hint = vmRenewalHint(staleVmOutput, `${report}\nvmUpdated: true`);
+    const hint = vmRenewalHint(staleVmOutput, { ...report, vmUpdated: true });
 
     expect(hint).toContain("was installed by this launch, so it is the current one");
     expect(hint).not.toContain("Remove");
@@ -42,7 +45,7 @@ describe("a VM that cannot run an image", () => {
 
   it("finds the slot on Windows paths too", () => {
     expect(
-      launchedVmSlot("vm: C:\\Users\\me\\.plexus\\profiles\\vms\\140-x64\\Pharo.exe\nvmId: 140-x64"),
+      launchedVmSlot({ ...report, vmPath: "C:\\Users\\me\\.plexus\\profiles\\vms\\140-x64\\Pharo.exe" }),
     ).toEqual({ vmId: "140-x64", slot: "C:\\Users\\me\\.plexus\\profiles\\vms\\140-x64", installedNow: false });
   });
 });
