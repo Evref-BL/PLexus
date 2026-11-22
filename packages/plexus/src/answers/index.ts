@@ -334,8 +334,7 @@ async function listedNames(
 /**
  * The listed tool an agent asking for `tool` means: the one listed name that
  * is the asked one with whole words put before it, or that the asked one is
- * with words put before it, as image_evaluate and evaluate are across an MCP
- * release. Several such names, or a listing that holds the asked name, which
+ * with words put before it, as `image_evaluate` is `evaluate`. Several such names, or a listing that holds the asked name, which
  * the image has just denied having, name none.
  */
 function meantTool(tool: string, listed: readonly string[]): string | undefined {

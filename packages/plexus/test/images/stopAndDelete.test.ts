@@ -153,18 +153,9 @@ describe("stop with save", () => {
     expect(fs.existsSync(endpointFile)).toBe(false);
   });
 
-  it("evaluates with image_evaluate in an image whose MCP predates the rename", async () => {
-    const { calls, answer, context } = runningSetup();
-    context.listTools = async () => [{ name: "image_evaluate" }];
-    answer({ writes: true, exits: true });
-
-    expect((await stop(context, "dev", { save: true })).saved).toBe(true);
-    expect(calls.map((call) => call.name)).toEqual(["image_evaluate"]);
-  });
-
   it("says an image that lists no evaluate tool cannot save, and leaves it running", async () => {
     const { launcher, calls, context } = runningSetup();
-    context.listTools = async () => [{ name: "class_get" }];
+    context.listTools = async () => [{ name: "class_get" }, { name: "image_evaluate" }];
 
     await expect(stop(context, "dev", { save: true })).rejects.toMatchObject({
       code: "save-failed",

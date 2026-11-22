@@ -161,13 +161,16 @@ export interface ResultCodes {
 /**
  * An exporter that tells `reachability` how each export went, and fails an
  * export at once, without the network, while `reachability` does not allow
- * sending.
+ * sending. An export that has not ended `deadlineMs` after it began has
+ * failed: the OTLP exporter's own timeout does not cover a connection that
+ * is still being made, nor an answer that trickles in.
  */
 export class GuardedExporter implements SpanExporter {
   constructor(
     private readonly exporter: SpanExporter,
     private readonly reachability: Reachability,
     private readonly codes: ResultCodes,
+    private readonly deadlineMs?: number,
   ) {}
 
   export(spans: ReadableSpan[], resultCallback: (result: ExportResult) => void): void {
@@ -176,11 +179,13 @@ export class GuardedExporter implements SpanExporter {
       return;
     }
     let settled = false;
+    let deadline: NodeJS.Timeout | undefined;
     const settle = (result: ExportResult) => {
       if (settled) {
         return;
       }
       settled = true;
+      clearTimeout(deadline);
       if (result.code === this.codes.SUCCESS) {
         this.reachability.succeeded();
       } else {
@@ -190,6 +195,10 @@ export class GuardedExporter implements SpanExporter {
     };
     const failure = (error: unknown) =>
       settle({ code: this.codes.FAILED, error: error instanceof Error ? error : new Error(String(error)) });
+    if (this.deadlineMs !== undefined) {
+      deadline = setTimeout(() => failure(new Error(`no answer within ${this.deadlineMs} ms`)), this.deadlineMs);
+      deadline.unref();
+    }
     try {
       const returned: unknown = (this.exporter.export as (...args: unknown[]) => unknown)(spans, settle);
       if (returned instanceof Promise) {

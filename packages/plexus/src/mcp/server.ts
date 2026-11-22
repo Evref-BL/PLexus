@@ -286,8 +286,14 @@ export function createPlexusMcpServer(options: PlexusMcpServerOptions): Server {
   return server;
 }
 
+/** Serves over stdio, and returns once the host closes its input. */
 export async function runPlexusMcpServer(options: PlexusMcpServerOptions): Promise<void> {
+  const closed = new Promise<void>((resolve) => {
+    process.stdin.once("end", resolve);
+    process.stdin.once("close", resolve);
+  });
   await createPlexusMcpServer(options).connect(new StdioServerTransport());
+  await closed;
 }
 
 /** Runs an image tool whose arguments keep its schema, and says what it did. */

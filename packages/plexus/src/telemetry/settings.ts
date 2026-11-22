@@ -2,8 +2,7 @@
  * The settings file the Pharo tools share: `KEY=value` lines of standard
  * OTEL_* variables, read when the environment sets none. Agent hosts do not
  * pass OTEL_* to the servers they start, so a variable set in a shell never
- * reaches `plexus mcp`; the file does. The pharo-agent plugin and Pharo MCP
- * read the same file.
+ * reaches `plexus mcp`; the file does. Pharo MCP reads the same file.
  */
 import fs from "node:fs";
 import os from "node:os";
