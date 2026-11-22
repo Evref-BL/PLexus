@@ -4,12 +4,13 @@ import type { ImagesContext } from "./context.js";
 import { buildingState, stillBuilding } from "./create.js";
 import { hostProcesses, vmsOn } from "./processes.js";
 import { beingStarted, launchLockState } from "./start.js";
-import { exists, imageFiles, noSuchImage, removeDirectory } from "./store.js";
+import { exists, imageFiles, noSuchImage, removeDirectory, type ImageFiles } from "./store.js";
 
 /**
  * Remove the image's directory, complete or not, unless a VM runs it, or a
- * create or a start is still working on it. An image whose create ended
- * before it was done is removed like any other.
+ * create or a start is still working on it, and then the launcher's logs of
+ * its starts. An image whose create ended before it was done is removed like
+ * any other.
  */
 export async function deleteImage(
   context: ImagesContext,
@@ -32,5 +33,16 @@ export async function deleteImage(
     throw beingStarted(files, lock.holder);
   }
   removeDirectory(context.home, files.dir);
+  deleteLaunchLogs(context, files);
   return { name };
+}
+
+// The image is gone whatever happens to its logs: a launcher that cannot be
+// opened leaves them to the sweep of the next start.
+function deleteLaunchLogs(context: ImagesContext, files: ImageFiles): void {
+  try {
+    context.launcher().deleteLaunchLogs({ imageName: files.diskName });
+  } catch {
+    // Left for the launcher's next start.
+  }
 }

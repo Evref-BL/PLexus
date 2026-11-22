@@ -21,6 +21,7 @@ export type LauncherPort = Pick<
   PharoLauncher,
   | "createImage"
   | "startImage"
+  | "deleteLaunchLogs"
   | "listProcesses"
   | "killProcess"
   | "listTemplateCategories"
@@ -44,6 +45,7 @@ export function openLauncherPort(home: string): LauncherPort {
     createImage: (input) => longLauncher().createImage(input),
     startImage: (input) =>
       (input.detached ? quickLauncher() : longLauncher()).startImage(input),
+    deleteLaunchLogs: (input) => quickLauncher().deleteLaunchLogs(input),
     listProcesses: (input) => quickLauncher().listProcesses(input),
     killProcess: (input) => quickLauncher().killProcess(input),
     listTemplateCategories: (input) => quickLauncher().listTemplateCategories(input),

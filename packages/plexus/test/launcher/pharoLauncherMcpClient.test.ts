@@ -1,3 +1,4 @@
+import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { openPharoLauncher } from "@evref-bl/pharo-launcher-mcp/launcher";
@@ -6,8 +7,10 @@ import { plexusHome, storeRoot } from "../../src/home.js";
 import {
   launcherFailureMessage,
   launchLogPaths,
+  openLauncherPort,
 } from "../../src/launcher/pharoLauncherMcpClient.js";
 import { homeProfileEnvironment } from "../../src/launcher/pharoLauncherProfile.js";
+import { tempHome } from "../support/fakeLauncher.js";
 
 describe("the home", () => {
   it("is PLEXUS_HOME, or ~/.plexus", () => {
@@ -134,5 +137,23 @@ describe("a detached launch", () => {
       }),
     ).toEqual(["/logs/a.out.log", "/logs/a.err.log"]);
     expect(launchLogPaths({ ok: false })).toEqual([]);
+  });
+});
+
+describe("a deleted image's logs", () => {
+  it("go from the home's logs directory, and no other image's", () => {
+    const home = tempHome();
+    const logs = path.join(home, "profiles", "logs");
+    fs.mkdirSync(logs, { recursive: true });
+    fs.mkdirSync(path.join(storeRoot(home), "shop-kept"), { recursive: true });
+    const log = (image: string) => path.join(logs, `2026-11-23T10-00-00-000Z-${image}-launch.out.log`);
+    for (const image of ["shop-gone", "shop-kept"]) {
+      fs.writeFileSync(log(image), "");
+    }
+
+    openLauncherPort(home).deleteLaunchLogs({ imageName: "shop-gone" });
+
+    expect(fs.existsSync(log("shop-gone"))).toBe(false);
+    expect(fs.existsSync(log("shop-kept"))).toBe(true);
   });
 });
