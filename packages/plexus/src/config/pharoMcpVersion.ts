@@ -5,4 +5,4 @@
  * It is a module of its own because the release workflows read and rewrite
  * it here.
  */
-export const defaultPharoMcpVersion = "4.2.1";
+export const defaultPharoMcpVersion = "4.3.0";
