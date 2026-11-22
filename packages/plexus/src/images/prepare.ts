@@ -21,7 +21,6 @@ export async function createFromTemplate(
     templateName: template.name,
     templateCategory: template.category,
     newImageName: files.diskName,
-    noLaunch: true,
   });
   return result.ok ? undefined : launcherFailureMessage("createImage", result);
 }

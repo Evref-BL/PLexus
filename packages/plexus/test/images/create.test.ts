@@ -107,8 +107,8 @@ describe("create without a script", () => {
     expect(createImage).toMatchObject({
       templateName: template.name,
       templateCategory: template.category,
-      noLaunch: true,
     });
+    expect(createImage).not.toHaveProperty("noLaunch");
     const buildName = createImage.newImageName as string;
     expect(buildName).toMatch(new RegExp(`^plexus-build-${process.pid}-[0-9a-f]{8}$`));
     expect(launcher.called("startImage")).toEqual([
@@ -362,7 +362,6 @@ describe("create with a script", () => {
     const created = await create(context, "mcp", { ...options, script: loader });
 
     const [createImage] = launcher.called("createImage") as Array<Record<string, unknown>>;
-    expect(createImage).toMatchObject({ noLaunch: true });
     expect(createImage.newImageName).toMatch(new RegExp(`^plexus-build-${process.pid}-[0-9a-f]{8}$`));
     expect(launcher.called("startImage")).toEqual([
       expect.objectContaining({
