@@ -212,11 +212,11 @@ export function started(result: Pick<StartResult, "name" | "display">, row?: Ima
   };
 }
 
-export function stopped(result: { name: string; killed: readonly number[]; saved?: boolean }): ToolAnswer {
+export function stopped(result: { name: string; killed: readonly number[]; quit?: boolean; saved?: boolean }): ToolAnswer {
   return {
     summary: result.saved
       ? texts.savedAndStopped(result.name)
-      : result.killed.length > 0
+      : result.quit === true || result.killed.length > 0
         ? texts.stopped(result.name)
         : texts.wasNotRunning(result.name),
     warnings: [],

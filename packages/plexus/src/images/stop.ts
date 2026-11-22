@@ -13,8 +13,10 @@ import { exists, imageFiles, noSuchImage, type ImageFiles } from "./store.js";
 
 export interface StopResult {
   name: string;
-  /** The VMs killed: every one that ran the image, or, after a save, those left beside the one that saved. */
+  /** The VMs killed: those left after the image quit or saved, or every one that ran it when it did neither. */
   killed: number[];
+  /** The image quit without saving when asked. */
+  quit?: true;
   /** The image saved itself and quit. */
   saved?: true;
 }
@@ -23,10 +25,26 @@ export interface StopResult {
 const saveAndQuitCode = "Smalltalk snapshot: true andQuit: true";
 
 /**
- * Kill every VM running the image, which does not save; or, asked to save,
- * have the image save itself and quit through its MCP server, and wait until
- * its VM is gone and its image file was written. An image that does not save
- * and quit in time is left running. Not running is not an error.
+ * What an image evaluates to quit without saving. Quitting runs what the
+ * image does before it goes, such as sending the telemetry it still holds,
+ * which a kill skips.
+ */
+const quitCode = "Smalltalk snapshot: false andQuit: true";
+
+/**
+ * How long a stop that does not save waits for the image to take the quit.
+ * An image too busy to answer in that time is killed: a stop is often what
+ * ends one that hangs.
+ */
+const quitAskMs = 2_000;
+
+/**
+ * Stop the image without saving: it is asked to quit through its MCP server,
+ * and every VM still running it after `quitWaitMs` is killed, as is one that
+ * takes no calls. Asked to save, have the image save itself and quit through
+ * its MCP server, and wait until its VM is gone and its image file was
+ * written; an image that does not save and quit in time is left running. Not
+ * running is not an error.
  */
 export async function stop(
   context: ImagesContext,
@@ -46,9 +64,65 @@ export async function stop(
     return saveAndStop(context, files, processes);
   }
 
-  await killAndWait(context, files, pids);
+  const quitters = await askToQuit(context, files, processes);
+  const left = quitters === undefined ? pids : await vmsLeftAfterQuit(context, files, quitters);
+  if (left.length > 0) {
+    await killAndWait(context, files, left);
+  }
   fs.rmSync(files.endpoint, { force: true });
-  return { name, killed: pids };
+  return { name, killed: left, ...(quitters !== undefined && left.length < pids.length ? { quit: true as const } : {}) };
+}
+
+/**
+ * Has the image evaluate `quitCode`, and answers the VMs that took it, or
+ * nothing when the image was not asked or did not take it. The connection
+ * closing, an answer that is not an error, or no answer in time may each come
+ * from a VM that is quitting; a call the image never got, or an error it
+ * answered, did not quit it. Only an image that runs and wrote its endpoint is
+ * asked.
+ */
+async function askToQuit(
+  context: ImagesContext,
+  files: ImageFiles,
+  processes: readonly LauncherProcess[],
+): Promise<number[] | undefined> {
+  const row = describe(files, processes);
+  if (row.state !== "running" || row.endpoint === undefined) {
+    return undefined;
+  }
+  const endpoint = row.endpoint;
+  try {
+    const answer = await context.callTool(endpoint, "evaluate", { code: quitCode }, { minimumMs: quitAskMs });
+    if (answer.isError === true) {
+      return undefined;
+    }
+  } catch (error) {
+    const kind = (error as Partial<ForwardError>).kind;
+    if (kind !== "closed" && kind !== "timeout") {
+      return undefined;
+    }
+  }
+  return endpoint.pid === undefined ? row.pids : [endpoint.pid];
+}
+
+/**
+ * Waits up to `quitWaitMs` for the VMs that took the quit to go, and answers
+ * the VMs that still run the image then: those beside them, and those that
+ * took it but did not go.
+ */
+async function vmsLeftAfterQuit(
+  context: ImagesContext,
+  files: ImageFiles,
+  quitters: readonly number[],
+): Promise<number[]> {
+  const startedAt = context.now();
+  for (;;) {
+    const running = vmsOn(files.imagePath, await hostProcesses(context)).map((vm) => vm.pid);
+    if (!running.some((pid) => quitters.includes(pid)) || context.now() - startedAt >= context.quitWaitMs) {
+      return running;
+    }
+    await context.sleep(context.pollMs);
+  }
 }
 
 async function killAndWait(context: ImagesContext, files: ImageFiles, pids: readonly number[]): Promise<void> {
@@ -84,7 +158,7 @@ async function killAndWait(context: ImagesContext, files: ImageFiles, pids: read
 }
 
 /**
- * The one call PLexus makes to an image's own tools. The save is the image's own: it evaluates `saveAndQuitCode` with the tool
+ * The save is the image's own: it evaluates `saveAndQuitCode` with the tool
  * it lists for evaluating. Its VM quits in the middle of the call, so the
  * connection closing is what a save looks like, and the wait for the VM to
  * exit starts there. Whether it saved is read from the image file, whose

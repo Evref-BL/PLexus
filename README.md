@@ -66,12 +66,14 @@ stdout; a refusal is `{"ok":false,"code":...,"error":...}` with exit status 1.
   once its MCP server does, with its pid and endpoint. It refuses an image a VM
   already runs, and fails as soon as the VM reports a failure or exits, naming
   the launcher's logs. It never creates: a missing image is refused.
-- **stop** kills every VM running the image. A kill does not save: the image
-  starts again as it was last saved. With `--save`, the image saves itself and
-  quits instead, by evaluating `Smalltalk snapshot: true andQuit: true` with
-  the `evaluate` tool its MCP server lists, the one call PLexus makes to an
-  image's own tools; the stop answers once
-  its VM is gone and its image file was written. An image that does not save
+- **stop** does not save: the image starts again as it was last saved. The
+  image is asked to quit, by evaluating `Smalltalk snapshot: false andQuit:
+  true` with the `evaluate` tool its MCP server lists, so that it does what it
+  does before it goes, such as sending the telemetry it still holds; every VM
+  still running it a few seconds later is killed, as is one that takes no
+  calls. With `--save`, the image saves itself and quits instead, by
+  evaluating `Smalltalk snapshot: true andQuit: true` with the same tool; the
+  stop answers once its VM is gone and its image file was written. An image that does not save
   and quit in time is left running, and so is one that takes no calls or
   lists no evaluate tool. Evaluating `Smalltalk saveSession`
   in the image saves it without stopping it. An image that is not running is

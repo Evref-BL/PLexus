@@ -70,8 +70,8 @@ export interface StartOptions {
 
 export interface StopOptions {
   /**
-   * Have the image save itself and quit, through its MCP server, instead of
-   * killing it. Killing without saving unless given.
+   * Have the image save itself and quit, through its MCP server. Unless
+   * given, it is asked to quit without saving, and killed if it does not.
    */
   save?: boolean;
 }

@@ -57,7 +57,7 @@ export class Images {
     return inSpan("plexus.image.start", SpanKind.INTERNAL, {}, () => start(this.context, name, options));
   }
 
-  /** Kill the image's VMs, or, with `save`, have it save itself and quit. */
+  /** Have the image quit without saving and kill what is left, or, with `save`, have it save itself and quit. */
   stop(name: string, options?: StopOptions): Promise<StopResult> {
     return inSpan("plexus.image.stop", SpanKind.INTERNAL, { "plexus.image.save": options?.save === true }, () =>
       stop(this.context, name, options),
