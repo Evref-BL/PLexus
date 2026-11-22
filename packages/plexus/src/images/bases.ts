@@ -8,6 +8,7 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { repairCopiedImageMetadataInDirectory } from "@evref-bl/pharo-launcher-mcp/launcher";
 import * as texts from "../answers/texts.js";
 import { PlexusError } from "../errors.js";
 import { basesRoot, storeRoot, tmpRoot } from "../home.js";
@@ -145,7 +146,7 @@ async function ensureBaseHolding(
     }
     // What the build kept about itself is not the images' to copy.
     fs.rmSync(build.plexusDir, { recursive: true, force: true });
-    renameImageFiles(build.dir, build.diskName, baseFileName);
+    renameImage(build.dir, build.diskName, baseFileName);
     fs.mkdirSync(basesRoot(context.home), { recursive: true });
     fs.renameSync(build.dir, dir);
   } catch (error) {
@@ -190,8 +191,7 @@ export function copyBase(
   const assembled = filesOfDirectory(assembly, files.name, files.diskName);
   try {
     copyTree(base, assembly);
-    renameImageFiles(assembly, baseFileName, files.diskName);
-    renameInMetaInf(path.join(assembly, "meta-inf.ston"), files.diskName);
+    renameImage(assembly, baseFileName, files.diskName);
     finish(assembled);
     moveIntoStore(assembly, files);
   } finally {
@@ -232,56 +232,16 @@ function copyTree(source: string, target: string): void {
   }
 }
 
-export function renameImageFiles(dir: string, from: string, to: string): void {
+/**
+ * Rename the image a directory holds: its files, and the path the launcher's
+ * metadata names it by, which in a copy is still the image it was copied from.
+ */
+export function renameImage(dir: string, from: string, to: string): void {
   for (const extension of [".image", ".changes"]) {
     const source = path.join(dir, `${from}${extension}`);
     if (fs.existsSync(source)) {
       fs.renameSync(source, path.join(dir, `${to}${extension}`));
     }
   }
-}
-
-const relativePath = /RelativePath\s*\[\s*((?:'(?:''|[^'])*'\s*,?\s*)+)\]/g;
-
-/**
- * The launcher finds an image's file through the path its metadata names,
- * which in a copy is still the directory it was copied from.
- */
-export function renameInMetaInf(file: string, disk: string): void {
-  let source: string;
-  try {
-    source = fs.readFileSync(file, "utf8");
-  } catch {
-    return;
-  }
-  const quoted = disk.replaceAll("'", "''");
-  const renamed = `RelativePath [ '${quoted}', '${quoted}.image' ]`;
-  const isImagePath = (parts: string): boolean => {
-    const names = [...parts.matchAll(/'((?:''|[^'])*)'/g)].map((match) =>
-      match[1].replaceAll("''", "'"),
-    );
-    const [directory, image] = names.slice(-2);
-    return names.length >= 2 && image === `${directory}.image`;
-  };
-
-  const repaired = source
-    .replace(/FileLocator\s*\{[\s\S]*?\}/g, (locator) => {
-      let changed = false;
-      const located = locator.replace(relativePath, (match, parts: string) => {
-        if (!isImagePath(parts)) {
-          return match;
-        }
-        changed = true;
-        return renamed;
-      });
-      // The path is now relative to the launcher's images, whatever it was
-      // relative to before.
-      return changed
-        ? located.replace(/#origin\s*:\s*#[A-Za-z][A-Za-z0-9_]*/g, "#origin : #launcherImagesLocation")
-        : located;
-    })
-    .replace(relativePath, (match, parts: string) => (isImagePath(parts) ? renamed : match));
-  if (repaired !== source) {
-    fs.writeFileSync(file, repaired, "utf8");
-  }
+  repairCopiedImageMetadataInDirectory(dir, from, to);
 }

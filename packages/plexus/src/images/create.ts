@@ -11,8 +11,7 @@ import {
   ensureBase,
   moveIntoStore,
   newBuild,
-  renameImageFiles,
-  renameInMetaInf,
+  renameImage,
 } from "./bases.js";
 import { claimContent, readClaim, type ClaimHolder, type ClaimState } from "./claims.js";
 import type { ImagesContext } from "./context.js";
@@ -129,8 +128,7 @@ async function buildWithScript(
     }
     fs.mkdirSync(build.plexusDir, { recursive: true });
     fs.writeFileSync(build.building, claimContent(context), "utf8");
-    renameImageFiles(build.dir, build.diskName, files.diskName);
-    renameInMetaInf(path.join(build.dir, "meta-inf.ston"), files.diskName);
+    renameImage(build.dir, build.diskName, files.diskName);
     moveIntoStore(build.dir, files);
   } catch (error) {
     removeDirectory(context.home, build.dir);

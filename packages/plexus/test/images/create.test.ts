@@ -31,12 +31,10 @@ function setup(scope?: string) {
   return { home, launcher, context };
 }
 
-/** A base as a build leaves it: the build's metadata, the image renamed. */
+/** A base as a build leaves it: the image, and the path its metadata names, renamed to base. */
 function writeBase(home: string, baseName: string, content = "image"): string {
   const dir = path.join(basesRoot(home), baseName);
-  writeLauncherImage(dir, "plexus-build-0f0f0f0f", template.name);
-  fs.renameSync(path.join(dir, "plexus-build-0f0f0f0f.image"), path.join(dir, "base.image"));
-  fs.renameSync(path.join(dir, "plexus-build-0f0f0f0f.changes"), path.join(dir, "base.changes"));
+  writeLauncherImage(dir, "base", template.name);
   fs.writeFileSync(path.join(dir, "base.image"), content);
   fs.mkdirSync(path.join(dir, "pharo-local", "iceberg"), { recursive: true });
   fs.writeFileSync(path.join(dir, "pharo-local", "iceberg", "clone.txt"), "clone");
@@ -211,6 +209,7 @@ describe("create without a script", () => {
         displayMode: "headless" as const,
         vmPath: "/vms/140-x64/Pharo",
         vmId: "140-x64",
+        vmDirectory: "/vms/140-x64",
         vmUpdated: false,
         output: {
           stdout: `${"x".repeat(600)}Loaded nothing\n`,

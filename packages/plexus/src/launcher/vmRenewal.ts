@@ -24,15 +24,9 @@ const vmFatalErrorBanner = "VM Error";
 export function launchedVmSlot(
   launch: LauncherLaunchReport | undefined,
 ): { vmId: string; slot: string; installedNow: boolean } | undefined {
-  if (launch?.by !== "vm") {
-    return undefined;
-  }
-  const { vmPath, vmId } = launch;
-  const match = new RegExp(`^(.*[\\\\/]${escapeRegExp(vmId)})[\\\\/]`).exec(vmPath);
-  if (!match) {
-    return undefined;
-  }
-  return { vmId, slot: match[1], installedNow: launch.vmUpdated };
+  return launch?.by === "vm"
+    ? { vmId: launch.vmId, slot: launch.vmDirectory, installedNow: launch.vmUpdated }
+    : undefined;
 }
 
 /**
@@ -60,8 +54,4 @@ export function vmRenewalHint(
   }
   return `The Pharo VM ${vm.vmId} stopped before its image ran, which a VM older than this system can do.`
     + ` Remove ${vm.slot} and start again: the current VM is installed in its place.`;
-}
-
-function escapeRegExp(text: string): string {
-  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }

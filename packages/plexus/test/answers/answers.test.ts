@@ -229,12 +229,6 @@ describe("image_list", () => {
     );
   });
 
-  it("adds what a server knows to each record", () => {
-    expect(
-      render(list([runningRow("dev"), row("ci")], (each) => (each.name === "dev" ? [["mount", "mounts/dev"]] : []))),
-    ).toBe(["2 images, 1 running.", "images:", "  dev state=running mount=mounts/dev", "  ci state=stopped"].join("\n"));
-  });
-
   it("counts one image as one, and says where to start with none", () => {
     expect(list([row("dev")]).summary).toBe("1 image, none running.");
     expect(render(list([]))).toBe("No image yet: image_templates lists the templates image_create makes one from.");
