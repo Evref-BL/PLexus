@@ -194,6 +194,14 @@ describe("an export to an endpoint", () => {
     expect(reachability.isOpen()).toBe(true);
   });
 
+  it("fails an export that has not ended by its deadline, and remembers the endpoint", async () => {
+    const silent: SpanExporter = { export: () => undefined, shutdown: async () => undefined };
+    const guarded = new GuardedExporter(silent, new Reachability(file, endpoint, () => start), ExportResultCode, 20);
+
+    expect((await exportOnce(guarded)).code).toBe(ExportResultCode.FAILED);
+    expect(readReachability(file)[endpoint]).toEqual({ failures: 1, retryAt: start + 5 * minutes });
+  });
+
   it("clears the endpoint's entry when it succeeds, and writes nothing when there was none", async () => {
     const other = { failures: 1, retryAt: start + minutes };
     writeReachability(file, { [endpoint]: { failures: 3, retryAt: start - 1 }, other });

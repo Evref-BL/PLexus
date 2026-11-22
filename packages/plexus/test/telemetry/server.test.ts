@@ -85,6 +85,27 @@ describe("plexus mcp's telemetry", () => {
     expect(sent).toContain("session.id");
   }, 30_000);
 
+  it("exits once its input closes, while an export still waits on a collector that never finishes answering", async () => {
+    const trickles: NodeJS.Timeout[] = [];
+    const server = http.createServer((request, response) => {
+      request.resume();
+      response.writeHead(200, { "content-type": "application/json" });
+      trickles.push(setInterval(() => response.write(" "), 100));
+    });
+    servers.push(server);
+    server.on("close", () => trickles.forEach(clearInterval));
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const child = await servingOneCall(`http://127.0.0.1:${(server.address() as AddressInfo).port}`, 100);
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    const exit = ended(child);
+    const closedAt = Date.now();
+    child.stdin!.end();
+    expect(await exit).toBe(0);
+    expect(Date.now() - closedAt).toBeLessThan(5_000);
+    trickles.forEach(clearInterval);
+    server.closeAllConnections();
+  }, 30_000);
+
   it("sends a batch after OTEL_BSP_SCHEDULE_DELAY, while it keeps serving", async () => {
     const { endpoint, bodies } = await receiver();
     const child = await servingOneCall(endpoint, 100);

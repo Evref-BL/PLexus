@@ -177,6 +177,7 @@ export async function startTelemetry(env: NodeJS.ProcessEnv, options: TelemetryO
             new exporters.OTLPTraceExporter({ timeoutMillis: exportTimeoutMs }),
             reachability,
             core.ExportResultCode,
+            exportTimeoutMs,
           ),
           exportTimeoutMillis: exportTimeoutMs,
         }),

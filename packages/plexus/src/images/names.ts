@@ -41,8 +41,7 @@ export function checkScope(scope: unknown): string | undefined {
 /**
  * The scope of a project: its directory's name, with each run of characters
  * a scope cannot hold made one `_`, leading ones dropped, cut to 64 and
- * trailing `_` dropped; `default` when nothing is left. The pharo-agent
- * plugin named its projects' scopes this way, so their images stay theirs.
+ * trailing `_` dropped; `default` when nothing is left.
  */
 export function scopeOfProject(directory: string): string {
   const sanitized = path

@@ -10,16 +10,23 @@ if (Object.keys(applySettingsFile(process.env)).length > 0 && process.env.PLEXUS
   process.env.PLEXUS_TELEMETRY = "1";
 }
 const telemetry = await startTelemetry(process.env, { longLived: argv[0] === "mcp" });
-// Once nothing is left to do: after a command, or when `plexus mcp`'s host
-// closes its input.
-process.once("beforeExit", () => void telemetry.shutdown());
-// A host often ends its server with a signal rather than by closing its
-// input, and a signal ends the process before beforeExit: send what is left,
-// within the bound shutdown keeps, then exit as the signal would have.
+
+/**
+ * Ends the process once a command is done, `plexus mcp`'s host has closed its
+ * input, or a signal came: what is left of its spans goes within the bound
+ * shutdown keeps, and it exits once stdout has taken what was written. It
+ * does not wait for the event loop to empty, which an export still connecting
+ * to a collector that does not answer would keep from happening for minutes.
+ */
+let ending = false;
+function end(code: number): void {
+  if (ending) return;
+  ending = true;
+  process.exitCode = code;
+  void telemetry.shutdown().finally(() => process.stdout.write("", () => process.exit(code)));
+}
 for (const [signal, code] of [["SIGTERM", 143], ["SIGINT", 130]] as const) {
-  process.once(signal, () => {
-    void telemetry.shutdown().finally(() => process.exit(code));
-  });
+  process.once(signal, () => end(code));
 }
 
 telemetry
@@ -30,12 +37,7 @@ telemetry
       env: process.env,
     }),
   )
-  .then(
-    (exitCode) => {
-      process.exitCode = exitCode;
-    },
-    (error: unknown) => {
-      process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
-      process.exitCode = 1;
-    },
-  );
+  .then(end, (error: unknown) => {
+    process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+    end(1);
+  });

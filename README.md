@@ -69,8 +69,8 @@ stdout; a refusal is `{"ok":false,"code":...,"error":...}` with exit status 1.
 - **stop** kills every VM running the image. A kill does not save: the image
   starts again as it was last saved. With `--save`, the image saves itself and
   quits instead, by evaluating `Smalltalk snapshot: true andQuit: true` with
-  the `evaluate` tool its MCP server lists (`image_evaluate` before MCP 4),
-  the one call PLexus makes to an image's own tools; the stop answers once
+  the `evaluate` tool its MCP server lists, the one call PLexus makes to an
+  image's own tools; the stop answers once
   its VM is gone and its image file was written. An image that does not save
   and quit in time is left running, and so is one that takes no calls or
   lists no evaluate tool. Evaluating `Smalltalk saveSession`
@@ -162,8 +162,9 @@ otherwise, and `OTEL_BSP_SCHEDULE_DELAY`, `OTEL_BSP_MAX_QUEUE_SIZE` and
 spans one second at most, or the export timeout when it is shorter;
 `plexus mcp` exports its batches in the background with the whole export
 timeout, and sends what is left, within that second, when its input closes or
-SIGTERM or SIGINT ends it. A command's answer, output and exit status never
-depend on its spans, and telemetry prints nothing. The SDK packages are
+SIGTERM or SIGINT ends it. Either then exits, whatever an export still waits
+on. A command's answer, output and exit status never depend on its spans, and
+telemetry prints nothing. The SDK packages are
 optional dependencies: installed without them, the command runs untraced.
 
 A collector that cannot be reached is remembered, so that it costs a command
@@ -174,7 +175,9 @@ nothing:
   `%LOCALAPPDATA%\plexus\otel-reachability.json` on Windows, keyed by the
   traces endpoint;
 - a failed export leaves the endpoint alone five minutes, doubling with each
-  failure in a row up to six hours; a successful export clears it;
+  failure in a row up to six hours; a successful export clears it. An export
+  that has not ended within the export timeout failed, though it may still be
+  connecting or reading a slow answer;
 - while the endpoint is left alone, the command loads no SDK and sends
   nothing, and a process that failed sends nothing more until then; the spans
   of that time are dropped;
@@ -186,8 +189,7 @@ pass `OTEL_*` to the servers they start: `$XDG_CONFIG_HOME/pharo-agent/otel.env`
 by default `~/.config/pharo-agent/otel.env`, and
 `%APPDATA%\pharo-agent\otel.env` on Windows, one `OTEL_NAME=value` per line.
 Settings from that file also turn `--telemetry` on, unless `PLEXUS_TELEMETRY`
-is set. The pharo-agent plugin and Pharo MCP read the same file; the library
-reads none.
+is set. Pharo MCP reads the same file; the library reads none.
 
 `--telemetry`, or `PLEXUS_TELEMETRY` set to `1` or `true`, or the library's
 `telemetry` option, enrolls the images PLexus handles in OpenTelemetry:

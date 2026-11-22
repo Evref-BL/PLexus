@@ -104,16 +104,9 @@ function listedTimeLimit(inputSchema: ImageTool["inputSchema"] | undefined): { d
   return isRecord(property) ? property : {};
 }
 
-/**
- * The tool an image runs Smalltalk with, as it lists it: `evaluate`, or
- * `image_evaluate` in an image whose MCP predates the rename; nothing for an
- * image that lists neither.
- */
+/** The tool an image runs Smalltalk with, `evaluate`, when it lists one. */
 export function evaluationTool(tools: ReadonlyArray<{ name: string }>): string | undefined {
-  return (
-    tools.find((tool) => tool.name === "evaluate") ??
-    tools.find((tool) => tool.name === "image_evaluate")
-  )?.name;
+  return tools.find((tool) => tool.name === "evaluate")?.name;
 }
 
 /**
