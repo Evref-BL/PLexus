@@ -5,7 +5,9 @@ import type {
   ImageCreateInput,
   ImageStartInput,
   LauncherCommandResult,
+  LauncherImage,
   LauncherProcess,
+  MadeImageResult,
   TemplateUpdateResult,
 } from "@evref-bl/pharo-launcher-mcp/launcher";
 import { afterEach } from "vitest";
@@ -39,6 +41,11 @@ export function ok<T>(data?: T, message?: string): LauncherCommandResult<T> {
   };
 }
 
+/** A create or copy that made its image. */
+export function made(): MadeImageResult {
+  return ok<{ image?: LauncherImage }>();
+}
+
 export function failed(diagnostic: string, raw?: { stdout: string; stderr: string }): LauncherCommandResult<never> {
   return {
     ok: false,
@@ -66,7 +73,7 @@ export class FakeLauncher implements LauncherPort {
   /** Pids a kill does not end. */
   immortal = new Set<number>();
   nextPid = 4_000;
-  createAnswer?: Answer<ImageCreateInput>;
+  createAnswer?: (input: ImageCreateInput) => MadeImageResult | Promise<MadeImageResult>;
   prepareAnswer?: Answer<ImageStartInput>;
   launchAnswer?: Answer<ImageStartInput>;
 
@@ -92,13 +99,13 @@ export class FakeLauncher implements LauncherPort {
     return vm;
   }
 
-  async createImage(input: ImageCreateInput): Promise<LauncherCommandResult> {
+  async createImage(input: ImageCreateInput): Promise<MadeImageResult> {
     this.calls.push({ method: "createImage", input });
     if (this.createAnswer) {
       return this.createAnswer(input);
     }
     writeLauncherImage(this.imageDir(input.newImageName), input.newImageName, input.templateName);
-    return ok();
+    return made();
   }
 
   async startImage(input: ImageStartInput): Promise<LauncherCommandResult> {

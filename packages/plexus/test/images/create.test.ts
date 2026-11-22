@@ -11,6 +11,7 @@ import { plexusVersion } from "../../src/version.js";
 import {
   failed,
   FakeLauncher,
+  made,
   ok,
   tempHome,
   testContext,
@@ -403,7 +404,7 @@ describe("create with a script", () => {
       writeLauncherImage(launcher.imageDir(input.newImageName), input.newImageName);
       writeLauncherImage(launcher.imageDir("mcp"), "mcp");
       fs.writeFileSync(path.join(launcher.imageDir("mcp"), "mcp.image"), "theirs");
-      return ok();
+      return made();
     };
 
     await expect(create(context, "mcp", { ...options, script: script(home) })).rejects.toMatchObject({
