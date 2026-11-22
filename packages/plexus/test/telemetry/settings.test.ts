@@ -21,12 +21,12 @@ function fileHolding(text: string): string {
   return file;
 }
 
-describe("the settings file the Pharo tools share", () => {
-  it("is where the plugin and Pharo MCP look", () => {
-    expect(settingsFile({ XDG_CONFIG_HOME: "/config" }, "linux", "/home/ada")).toBe("/config/pharo-agent/otel.env");
-    expect(settingsFile({ XDG_CONFIG_HOME: "relative" }, "darwin", "/Users/ada")).toBe("/Users/ada/.config/pharo-agent/otel.env");
+describe("the telemetry settings file", () => {
+  it("is PLexus's own, in the configuration directory", () => {
+    expect(settingsFile({ XDG_CONFIG_HOME: "/config" }, "linux", "/home/ada")).toBe("/config/plexus/otel.env");
+    expect(settingsFile({ XDG_CONFIG_HOME: "relative" }, "darwin", "/Users/ada")).toBe("/Users/ada/.config/plexus/otel.env");
     expect(settingsFile({ APPDATA: "C:\\Users\\Ada\\AppData\\Roaming" }, "win32", "C:\\Users\\Ada")).toBe(
-      "C:\\Users\\Ada\\AppData\\Roaming\\pharo-agent\\otel.env",
+      "C:\\Users\\Ada\\AppData\\Roaming\\plexus\\otel.env",
     );
   });
 
@@ -72,9 +72,9 @@ describe("the plexus command", () => {
       const config = fs.mkdtempSync(path.join(os.tmpdir(), "plexus-config-"));
       const home = fs.mkdtempSync(path.join(os.tmpdir(), "plexus-home-"));
       directories.push(config, home);
-      fs.mkdirSync(path.join(config, "pharo-agent"));
+      fs.mkdirSync(path.join(config, "plexus"));
       fs.writeFileSync(
-        path.join(config, "pharo-agent", "otel.env"),
+        path.join(config, "plexus", "otel.env"),
         `OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:${(server.address() as AddressInfo).port}\nOTEL_EXPORTER_OTLP_PROTOCOL=http/json\n`,
       );
       const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith("OTEL_") && key !== "PLEXUS_TELEMETRY"));

@@ -231,8 +231,8 @@ describe("image_list", () => {
 
   it("adds what a server knows to each record", () => {
     expect(
-      render(list([runningRow("dev"), row("ci")], (each) => (each.name === "dev" ? [["mount", ".pharo-agent/mounts/dev"]] : []))),
-    ).toBe(["2 images, 1 running.", "images:", "  dev state=running mount=.pharo-agent/mounts/dev", "  ci state=stopped"].join("\n"));
+      render(list([runningRow("dev"), row("ci")], (each) => (each.name === "dev" ? [["mount", "mounts/dev"]] : []))),
+    ).toBe(["2 images, 1 running.", "images:", "  dev state=running mount=mounts/dev", "  ci state=stopped"].join("\n"));
   });
 
   it("counts one image as one, and says where to start with none", () => {
@@ -378,8 +378,8 @@ describe("checkArguments", () => {
     expect(checkArguments(forwarded, { pattern: "Eval*" })).toBeUndefined();
   });
 
-  it("takes each server's own schema: the plugin's start needs no name, and its stop takes all", () => {
-    const pluginStart: Pick<Tool, "name" | "inputSchema"> = {
+  it("checks against the schema it is given: a start that needs no name, a stop that takes all", () => {
+    const start: Pick<Tool, "name" | "inputSchema"> = {
       name: "image_start",
       inputSchema: {
         type: "object",
@@ -387,7 +387,7 @@ describe("checkArguments", () => {
         additionalProperties: false,
       },
     };
-    const pluginStop: Pick<Tool, "name" | "inputSchema"> = {
+    const stop: Pick<Tool, "name" | "inputSchema"> = {
       name: "image_stop",
       inputSchema: {
         type: "object",
@@ -395,10 +395,10 @@ describe("checkArguments", () => {
         additionalProperties: false,
       },
     };
-    expect(checkArguments(pluginStart, {})).toBeUndefined();
-    expect(checkArguments(pluginStop, {})).toBeUndefined();
-    expect(checkArguments(pluginStop, { all: true })).toBeUndefined();
-    expect(checkArguments(pluginStop, { all: "yes" })).toBe(
+    expect(checkArguments(start, {})).toBeUndefined();
+    expect(checkArguments(stop, {})).toBeUndefined();
+    expect(checkArguments(stop, { all: true })).toBeUndefined();
+    expect(checkArguments(stop, { all: "yes" })).toBe(
       "Invalid arguments for image_stop. all must be boolean, not string.",
     );
   });
@@ -523,7 +523,6 @@ describe("callFailed", () => {
     expect(failed === undefined ? undefined : render(failed)).toBe(refusal);
   });
 
-  // As the plugin calls it: with no way to list given, the image is asked.
   it("asks the image for its tools when given no way to list them", async () => {
     const notFound = forwardFailure("MCP error -32601: Method not found", { kind: "answered", rpcCode: -32601 });
     const image = http.createServer((request, response) => {

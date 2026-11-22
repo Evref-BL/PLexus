@@ -1,8 +1,9 @@
 /**
- * The settings file the Pharo tools share: `KEY=value` lines of standard
- * OTEL_* variables, read when the environment sets none. Agent hosts do not
- * pass OTEL_* to the servers they start, so a variable set in a shell never
- * reaches `plexus mcp`; the file does. Pharo MCP reads the same file.
+ * PLexus's telemetry settings file: `KEY=value` lines of standard OTEL_*
+ * variables, read when the environment sets none. Agent hosts do not pass
+ * OTEL_* to the servers they start, so a variable set in a shell never
+ * reaches `plexus mcp`; the file does. Applied to the process's environment,
+ * they reach the images it starts too, which read only their environment.
  */
 import fs from "node:fs";
 import os from "node:os";
@@ -16,9 +17,9 @@ export function settingsFile(
 ): string {
   const paths = platform === "win32" ? path.win32 : path.posix;
   const xdg = env.XDG_CONFIG_HOME;
-  if (xdg && paths.isAbsolute(xdg)) return paths.join(xdg, "pharo-agent", "otel.env");
-  if (platform === "win32" && env.APPDATA) return paths.join(env.APPDATA, "pharo-agent", "otel.env");
-  return paths.join(home, ".config", "pharo-agent", "otel.env");
+  if (xdg && paths.isAbsolute(xdg)) return paths.join(xdg, "plexus", "otel.env");
+  if (platform === "win32" && env.APPDATA) return paths.join(env.APPDATA, "plexus", "otel.env");
+  return paths.join(home, ".config", "plexus", "otel.env");
 }
 
 const settingName = /^OTEL_[A-Z0-9_]+$/;
