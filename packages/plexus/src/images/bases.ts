@@ -50,11 +50,23 @@ export function newBuild(context: ImagesContext, name: string): ImageFiles {
 }
 
 /**
+ * How long a telemetry base that failed to build is not tried again, while
+ * creates copy the base without it. Trying loads MCP and its `Telemetry`
+ * group from the network, minutes that the create waits; whatever failed,
+ * an offline machine or a group that does not load on that Pharo, rarely
+ * mends within the hour. A day keeps that cost to one create a day, and a new
+ * pin, which may fix the load, is tried at once.
+ */
+export const failedTelemetryBaseRetryMs = 24 * 60 * 60_000;
+
+/**
  * The base for this template, built first when there is none. `built` says
  * whether this call built the one it answers. With telemetry it is the base
  * that holds MCP's `Telemetry` group, a base of its own, unless that one
  * cannot be built: telemetry never fails a create, so the base without it
- * serves, and the image is not traced.
+ * serves, and the image is not traced. A telemetry base that failed while
+ * the plain one served is remembered, and not tried again until
+ * `failedTelemetryBaseRetryMs` has passed.
  */
 export async function ensureBase(
   context: ImagesContext,
@@ -64,10 +76,46 @@ export async function ensureBase(
   if (!context.telemetry) {
     return ensureBaseHolding(context, template, pin, false);
   }
-  try {
-    return await ensureBaseHolding(context, template, pin, true);
-  } catch {
+  const failure = failureRecord(context.home, baseKey(template.name, template.category, pin, true));
+  const failedAt = readFailure(failure);
+  if (failedAt !== undefined && context.now() - failedAt < failedTelemetryBaseRetryMs) {
     return ensureBaseHolding(context, template, pin, false);
+  }
+  try {
+    const base = await ensureBaseHolding(context, template, pin, true);
+    fs.rmSync(failure, { force: true });
+    return base;
+  } catch {
+    const base = await ensureBaseHolding(context, template, pin, false);
+    writeFailure(failure, context.now());
+    return base;
+  }
+}
+
+/**
+ * Where a base's failure to build is recorded: a file beside the bases whose
+ * name ends with the pin, as a base's does, so that it goes with the other
+ * bases of its pin.
+ */
+function failureRecord(home: string, key: string): string {
+  return path.join(basesRoot(home), key.replace(/-mcp-([^/\\]+)$/, "-failed-mcp-$1"));
+}
+
+function readFailure(file: string): number | undefined {
+  try {
+    const at = Number(fs.readFileSync(file, "utf8").trim());
+    return Number.isFinite(at) ? at : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function writeFailure(file: string, at: number): void {
+  try {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, `${at}\n`, "utf8");
+  } catch {
+    // Not remembered: the next create tries again.
   }
 }
 

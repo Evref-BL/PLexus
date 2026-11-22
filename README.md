@@ -134,16 +134,27 @@ until the program running PLexus installs an SDK:
 - each request forwarded to an image is a CLIENT span named after its method
   and tool (`tools/call class_get`), with the attributes of the OpenTelemetry
   MCP conventions, and passes its trace context to the image in the request's
-  `params._meta` (`traceparent`, `tracestate`, `baggage`);
+  `params._meta` (`traceparent`, `tracestate`, `baggage`); a request a call
+  of `plexus mcp` forwards carries that call's `session.id` in its baggage;
 - making, starting, stopping and deleting an image are INTERNAL spans,
   `plexus.image.create`, `.start`, `.stop` and `.delete`;
 - each tool call `plexus mcp` serves is a SERVER span, `tools/call <tool>`,
-  child of the trace context its `_meta` carries, with `session.id` (random,
-  one per server process, so one per host connection), the host's
-  `clientInfo` as `plexus.client.name` and `.version`, and the names of the
-  arguments given (`plexus.argument.names`) and of those an image tool does
-  not take (`plexus.argument.unknown_names`); an error answer fails it as
-  `tool_error`.
+  child of the trace context its `_meta` carries, with `session.id`,
+  `plexus.call.index`, `plexus.call.forwarded`, the host's `clientInfo` as
+  `plexus.client.name` and `.version`, and the names of the arguments given
+  (`plexus.argument.names`) and of those an image tool does not take
+  (`plexus.argument.unknown_names`); an error answer fails it as
+  `tool_error`:
+  - `session.id` is random, kept by the server process, and renewed when a
+    call comes after 30 minutes in which no call ran;
+  - `plexus.call.index` is the call's place in its session, from 1;
+  - `plexus.call.forwarded` is true for a call to an image's tool, false for
+    one of the image tools;
+  - `plexus.error.code` says why `plexus mcp` answered an error of its own,
+    before any image saw the call: `invalid-arguments`, `no-image-running`,
+    `several-images` (the call must name one), `none-takes-calls`, the
+    `code` an image tool's refusal carries, as the command's do, or
+    `_OTHER`.
 
 A span records names, outcomes and an error's kind (`error.type`), never an
 argument, a result, a message, an image's name, a path or an address.
@@ -196,11 +207,14 @@ unless `PLEXUS_TELEMETRY` is set. The library reads no file.
 
 - a create without a script loads MCP's `Telemetry` group beside the rest,
   into a base of its own; when that base cannot be built, offline for one,
-  the create copies the base without it, and the image is not traced. A
-  create with a script loads what its script loads;
+  the create copies the base without it, and the image is not traced. Creates
+  then copy the base without it for a day before trying again, or until the
+  pin changes. A create with a script loads what its script loads;
 - a start switches the image's MCP server to its OpenTelemetry backend when it
   has one, and starts it as it is otherwise. The VM runs in PLexus's
-  environment, so the image reads the same `OTEL_*` variables.
+  environment, so the image reads the same `OTEL_*` variables. The `plexus`
+  command sets `OTEL_LOG_LEVEL` to `none` there unless it is set, so that the
+  image's OpenTelemetry SDK writes nothing to the VM's output.
 
 ## Library
 

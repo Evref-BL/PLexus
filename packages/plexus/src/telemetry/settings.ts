@@ -67,3 +67,14 @@ export function applySettingsFile(
   Object.assign(env, settings);
   return settings;
 }
+
+/**
+ * Turns the OpenTelemetry SDK's own diagnostics off for the images PLexus
+ * starts, unless the environment sets a level: they run in this environment,
+ * and opentelemetry-pharo writes its diagnostics to the VM's standard output,
+ * as `OTEL_LOG_LEVEL` allows. Applied after the settings file, so that a
+ * level the file sets is the one kept.
+ */
+export function quietImageDiagnostics(env: NodeJS.ProcessEnv = process.env): void {
+  env.OTEL_LOG_LEVEL ??= "none";
+}

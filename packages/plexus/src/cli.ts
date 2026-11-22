@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { runCli } from "./commandLine.js";
 import { startTelemetry } from "./telemetry/sdk.js";
-import { applySettingsFile } from "./telemetry/settings.js";
+import { applySettingsFile, quietImageDiagnostics } from "./telemetry/settings.js";
 
 const argv = process.argv.slice(2);
 // Joining the tools' telemetry writes the settings file; it enrolls the
@@ -9,6 +9,7 @@ const argv = process.argv.slice(2);
 if (Object.keys(applySettingsFile(process.env)).length > 0 && process.env.PLEXUS_TELEMETRY === undefined) {
   process.env.PLEXUS_TELEMETRY = "1";
 }
+quietImageDiagnostics(process.env);
 const telemetry = await startTelemetry(process.env, { longLived: argv[0] === "mcp" });
 
 /**

@@ -15,7 +15,7 @@ import {
 import { randomUUID } from "node:crypto";
 import { context, SpanKind } from "@opentelemetry/api";
 import * as answers from "../answers/index.js";
-import { PlexusError } from "../errors.js";
+import { PlexusError, type PlexusErrorCode } from "../errors.js";
 import { callTool, listTools } from "../forward/index.js";
 import { endpointOf } from "../images/endpoint.js";
 import type { Images } from "../images/index.js";
@@ -26,6 +26,7 @@ import {
   failed,
   identifierOrOther,
   inSpan,
+  withBaggageEntry,
 } from "../telemetry/trace.js";
 import type { Display, Endpoint, ImageInfo } from "../types.js";
 import { plexusVersion } from "../version.js";
@@ -45,6 +46,8 @@ export interface ForwardOptions {
 
 export interface PlexusMcpServerOptions {
   images: ImagesApi;
+  /** The clock a working session's idle time is kept by. */
+  now?: () => number;
   listTools?: (endpoint: Endpoint) => Promise<Tool[]>;
   callTool?: (
     endpoint: Endpoint,
@@ -156,6 +159,39 @@ const imageToolNames = new Set(imageTools.map((tool) => tool.name));
 /** The input schemas each image listed, by image, then by tool. */
 type ListedSchemas = Map<string, Map<string, Tool["inputSchema"]>>;
 
+/**
+ * Why this server answered a call with an error of its own, before any image
+ * saw the call: a refusal of its arguments, of the image it names or of the
+ * images it could go to, or the failure of one of its own tools, by its
+ * PlexusError code, or `_OTHER` for any other error.
+ */
+export type RefusalCode =
+  | PlexusErrorCode
+  | "invalid-arguments"
+  | "no-image-running"
+  | "several-images"
+  | "none-takes-calls"
+  | "_OTHER";
+
+/** A refusal with its code, which only the call's span records. */
+class Refusal extends Error {
+  constructor(
+    readonly code: RefusalCode,
+    message: string,
+  ) {
+    super(message);
+  }
+}
+
+/** A call's answer, and the code of the refusal it is, when this server refused it. */
+interface Answered {
+  result: CallToolResult;
+  refusal?: RefusalCode;
+}
+
+/** How long a working session lasts without a call before the next one opens another. */
+export const sessionIdleMs = 30 * 60_000;
+
 export function createPlexusMcpServer(options: PlexusMcpServerOptions): Server {
   const images = options.images;
   // The forwarding answers what the image sent, which is what the protocol says.
@@ -170,9 +206,27 @@ export function createPlexusMcpServer(options: PlexusMcpServerOptions): Server {
     { capabilities: { tools: { listChanged: true } }, instructions: serverInstructions },
   );
 
-  // One host connection is one working session: what groups its calls in
-  // the field telemetry, random, and gone with the process.
-  const sessionId = randomUUID();
+  // A working session groups a host connection's calls: random, renewed
+  // after sessionIdleMs without a call, and gone with the process.
+  const now = options.now ?? Date.now;
+  let session = { id: randomUUID(), calls: 0, running: 0, lastActive: now() };
+
+  /** The session a call starts in, and its place there, from 1. */
+  function callStarted(): { session: typeof session; index: number } {
+    const at = now();
+    if (session.running === 0 && at - session.lastActive >= sessionIdleMs) {
+      session = { id: randomUUID(), calls: 0, running: 0, lastActive: at };
+    }
+    session.calls += 1;
+    session.running += 1;
+    session.lastActive = at;
+    return { session, index: session.calls };
+  }
+
+  function callEnded(ended: typeof session): void {
+    ended.running -= 1;
+    ended.lastActive = now();
+  }
 
   server.setRequestHandler(ListToolsRequestSchema, (request) =>
     context.with(contextFromMeta(request.params?._meta), () => listAll()),
@@ -186,39 +240,52 @@ export function createPlexusMcpServer(options: PlexusMcpServerOptions): Server {
   /**
    * A call this server answers, as a SERVER span after the MCP conventions:
    * the tool, the names of its arguments and those an image tool does not
-   * take, the session, and the host as its initialize request named itself.
-   * Never a value. An answer that is an error fails the span as `tool_error`.
+   * take, the session and the call's place in it, whether the tool is an
+   * image's, and the host as its initialize request named itself. Never a
+   * value. An answer that is an error fails the span as `tool_error`, and a
+   * refusal of this server's own says its code. What the call forwards
+   * carries the session in its baggage.
    */
   function served(
     params: { name: string; arguments?: Record<string, unknown> },
-    run: () => Promise<CallToolResult>,
+    run: () => Promise<Answered>,
   ): Promise<CallToolResult> {
     const tool = identifierOrOther(params.name);
     const args = (params.arguments ?? {}) as Record<string, unknown>;
     const names = argumentNames(args);
     const declared = imageTools.find((each) => each.name === params.name)?.inputSchema.properties;
     const unknown = declared === undefined ? [] : names.filter((name) => !(name in declared));
-    return inSpan(
-      `tools/call ${tool}`,
-      SpanKind.SERVER,
-      {
-        "mcp.method.name": "tools/call",
-        "gen_ai.operation.name": "execute_tool",
-        "gen_ai.tool.name": tool,
-        "network.transport": "pipe",
-        "session.id": sessionId,
-        ...clientAttributes(server.getClientVersion()),
-        ...(names.length === 0 ? {} : { "plexus.argument.names": names }),
-        ...(unknown.length === 0 ? {} : { "plexus.argument.unknown_names": unknown }),
-      },
-      async (span) => {
-        const result = await run();
-        if (result.isError) {
-          failed(span, "tool_error");
-        }
-        return result;
-      },
-    );
+    const call = callStarted();
+    return context
+      .with(withBaggageEntry(context.active(), "session.id", call.session.id), () =>
+        inSpan(
+          `tools/call ${tool}`,
+          SpanKind.SERVER,
+          {
+            "mcp.method.name": "tools/call",
+            "gen_ai.operation.name": "execute_tool",
+            "gen_ai.tool.name": tool,
+            "network.transport": "pipe",
+            "session.id": call.session.id,
+            "plexus.call.index": call.index,
+            "plexus.call.forwarded": !imageToolNames.has(params.name),
+            ...clientAttributes(server.getClientVersion()),
+            ...(names.length === 0 ? {} : { "plexus.argument.names": names }),
+            ...(unknown.length === 0 ? {} : { "plexus.argument.unknown_names": unknown }),
+          },
+          async (span) => {
+            const { result, refusal } = await run();
+            if (refusal !== undefined) {
+              span.setAttribute("plexus.error.code", refusal);
+            }
+            if (result.isError) {
+              failed(span, "tool_error");
+            }
+            return result;
+          },
+        ),
+      )
+      .finally(() => callEnded(call.session));
   }
 
   async function listAll(): Promise<{ tools: Tool[] }> {
@@ -248,7 +315,7 @@ export function createPlexusMcpServer(options: PlexusMcpServerOptions): Server {
   async function call(
     params: { name: string; arguments?: Record<string, unknown> },
     signal: AbortSignal,
-  ): Promise<CallToolResult> {
+  ): Promise<Answered> {
     const name = params.name;
     const args = (params.arguments ?? {}) as Record<string, unknown>;
     const imageTool = imageTools.find((tool) => tool.name === name);
@@ -266,20 +333,20 @@ export function createPlexusMcpServer(options: PlexusMcpServerOptions): Server {
     }
     const refusal = answers.checkArguments(imageTool, args);
     if (refusal !== undefined) {
-      return text(refusal, true);
+      return { result: text(refusal, true), refusal: "invalid-arguments" };
     }
     try {
       const answer = await answerImageTool(images, name, args);
       if (name === "image_start" || name === "image_stop" || name === "image_delete") {
         await server.sendToolListChanged();
       }
-      return text(answers.render(answer));
+      return { result: text(answers.render(answer)) };
     } catch (error) {
       // An image that stopped without saving has gone all the same.
       if (error instanceof PlexusError && error.code === "stopped-unsaved") {
         await server.sendToolListChanged();
       }
-      return failure(error);
+      return refused(error);
     }
   }
 
@@ -392,21 +459,21 @@ async function forward(
   listToolsAt: PlexusMcpServerOptions["listTools"],
   name: string,
   args: Record<string, unknown>,
-): Promise<CallToolResult> {
+): Promise<Answered> {
   const { image, ...rest } = args;
   const refusal = answers.checkArguments({ name, inputSchema: imageArgument }, image === undefined ? {} : { image });
   if (refusal !== undefined) {
-    return text(refusal, true);
+    return { result: text(refusal, true), refusal: "invalid-arguments" };
   }
 
   let target: Reachable;
   try {
     target = image === undefined ? await onlyAnswering(images, name) : await named(images, image as string);
   } catch (error) {
-    return failure(error);
+    return refused(error);
   }
   try {
-    return await callOn(target.endpoint, target.name, rest);
+    return { result: await callOn(target.endpoint, target.name, rest) };
   } catch (error) {
     const answer = await answers.callFailed(
       target.name,
@@ -416,7 +483,7 @@ async function forward(
       listToolsAt,
     );
     // A cancelled call is answered nothing: the host gave up on it.
-    return answer === undefined ? failure(error) : text(answers.render(answer), true);
+    return { result: answer === undefined ? failure(error) : text(answers.render(answer), true) };
   }
 }
 
@@ -433,16 +500,24 @@ async function onlyAnswering(images: ImagesApi, tool: string): Promise<Reachable
     return reachable[0];
   }
   if (reachable.length > 1) {
-    throw new Error(answers.texts.severalAnswer(reachable.map((each) => each.name)));
+    throw new Refusal("several-images", answers.texts.severalAnswer(reachable.map((each) => each.name)));
   }
   const running = rows.filter((row) => row.running);
   if (running.length === 1) {
     return { name: running[0].name, endpoint: endpointOf(running[0]) };
   }
   if (running.length > 1) {
-    throw new Error(answers.texts.noneTakesCalls(running.map((row) => row.name)));
+    throw new Refusal("none-takes-calls", answers.texts.noneTakesCalls(running.map((row) => row.name)));
   }
-  throw new Error(answers.texts.noImageRunning(tool));
+  throw new Refusal("no-image-running", answers.texts.noImageRunning(tool));
+}
+
+/** A refusal of this server's own: its message as the answer, and its code. */
+function refused(error: unknown): Answered {
+  return {
+    result: failure(error),
+    refusal: error instanceof PlexusError || error instanceof Refusal ? error.code : "_OTHER",
+  };
 }
 
 /** A refusal is its message alone: what happened and what to do. */

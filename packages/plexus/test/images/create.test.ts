@@ -4,7 +4,7 @@ import type { ImageStartInput } from "@evref-bl/pharo-launcher-mcp/launcher";
 import { describe, expect, it } from "vitest";
 import { defaultPharoMcpVersion } from "../../src/config/pharoMcpVersion.js";
 import { basesRoot, storeRoot, tmpRoot } from "../../src/home.js";
-import { baseKey } from "../../src/images/bases.js";
+import { baseKey, failedTelemetryBaseRetryMs } from "../../src/images/bases.js";
 import { create } from "../../src/images/create.js";
 import { readProperties } from "../../src/images/store.js";
 import { plexusVersion } from "../../src/version.js";
@@ -22,6 +22,7 @@ const template = { name: "Pharo 14.0 - 64bit", category: "Official distributions
 const options = { template: template.name, category: template.category };
 const pin = defaultPharoMcpVersion;
 const key = baseKey(template.name, template.category, pin);
+const failedTelemetryKey = baseKey(template.name, template.category, pin, true).replace(/-mcp-/, "-failed-mcp-");
 
 function setup(scope?: string) {
   const home = tempHome();
@@ -323,7 +324,43 @@ describe("create without a script", () => {
     const created = await create({ ...context, telemetry: true }, "dev", { ...options });
     expect(created).toMatchObject({ name: "dev", state: "stopped", fromBase: true });
     expect(fs.existsSync(created.path)).toBe(true);
-    expect(listing(basesRoot(home))).toEqual([key]);
+    expect(listing(basesRoot(home))).toEqual([key, failedTelemetryKey].sort());
+  });
+
+  it("with telemetry, copies the base without it for a day after the base with it failed, then tries again", async () => {
+    const { home, launcher, context } = setup();
+    writeBase(home, key);
+    const failing = (input: ImageStartInput) => {
+      fs.writeFileSync(path.join(path.dirname(input.script!), "prepare-status.properties"), "status=failed\rmessage=offline\r");
+      return failed("exit 1");
+    };
+    launcher.prepareAnswer = failing;
+    const enrolled = { ...context, telemetry: true };
+
+    await create(enrolled, "first", { ...options });
+    expect(launcher.called("createImage")).toHaveLength(1);
+
+    context.clock.now += failedTelemetryBaseRetryMs - 1;
+    expect((await create(enrolled, "second", { ...options })).fromBase).toBe(true);
+    expect(launcher.called("createImage")).toHaveLength(1);
+
+    context.clock.now += 1;
+    launcher.prepareAnswer = undefined;
+    expect((await create(enrolled, "third", { ...options })).fromBase).toBe(false);
+    expect(launcher.called("createImage")).toHaveLength(2);
+    expect(listing(basesRoot(home))).toEqual([key, baseKey(template.name, template.category, pin, true)].sort());
+  });
+
+  it("with telemetry, tries the base with it at once for a new pin, and remembers nothing when no base could be had", async () => {
+    const { home, launcher, context } = setup();
+    fs.mkdirSync(basesRoot(home), { recursive: true });
+    fs.writeFileSync(path.join(basesRoot(home), `${failedTelemetryKey.slice(0, -pin.length)}0.0.1`), `${context.clock.now}\n`);
+    launcher.createAnswer = () => failed("no template");
+
+    await expect(create({ ...context, telemetry: true }, "dev", { ...options })).rejects.toThrow();
+
+    expect(launcher.called("createImage")).toHaveLength(2);
+    expect(listing(basesRoot(home))).not.toContain(failedTelemetryKey);
   });
 
   it("removes the bases of other pins once it built one", async () => {
