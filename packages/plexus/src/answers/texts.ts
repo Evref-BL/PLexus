@@ -1,10 +1,10 @@
 /**
  * The sentences the image tools answer with, and the library's refusals that
  * name a tool to use. A tool is named by its MCP name, `image_start`, which
- * both MCP servers serve; the `plexus` CLI says which of its commands that is.
+ * `plexus mcp` serves; the `plexus` CLI says which of its commands that is.
  *
- * Each is a function of names, pids and problems, so that the library, both
- * servers and a test double say the same words.
+ * Each is a function of names, pids and problems, so that the library, the
+ * server and a test double say the same words.
  */
 
 /** "a", "a and b", "a, b, and c". */
@@ -96,7 +96,11 @@ export function noImageRunning(tool: string): string {
 
 // What a forwarded call that failed did to the image.
 
-/** `meant`, a tool the image lists, is the one an agent asking for `tool` most likely wants. */
+/**
+ * `meant`, a tool the image lists, is the one an agent asking for `tool` most
+ * likely wants. `tool_search` is MCP's: its catalog tool, which MCP documents
+ * as finding every tool a server registers, listed or not.
+ */
 export function noSuchTool(name: string, tool: string, meant?: string): string {
   return meant === undefined
     ? `Image ${name} answered that it has no tool ${tool}: tool_search finds the tools it has.`

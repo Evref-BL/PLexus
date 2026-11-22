@@ -74,9 +74,10 @@ export async function categoryOf(context: ImagesContext, template: string): Prom
   return found[0].category;
 }
 
-// The launcher's category listing walks the whole template tree and answers
-// template names and URLs beside the groups, so the groups come from the
-// sources list it reads, and from the launcher only when that names none.
+// The launcher's category listing names every group, the HTTP listings among
+// them, which list every build of a Pharo version as a template, hundreds
+// each. So the groups come from the sources list it reads, its URL groups and
+// its cache, and from the launcher only when that names none.
 async function categories(context: ImagesContext): Promise<string[]> {
   const fromSources = sourcesListGroups(context.home);
   if (fromSources.length > 0) {

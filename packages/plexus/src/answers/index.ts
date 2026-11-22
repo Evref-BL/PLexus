@@ -124,11 +124,8 @@ export function templates(listed: readonly Template[]): ToolAnswer {
   };
 }
 
-/**
- * Every image, one record each. `more` adds pairs to an image's record, after
- * those said here.
- */
-export function list(rows: readonly ImageInfo[], more?: (row: ImageInfo) => Pair[]): ToolAnswer {
+/** Every image, one record each. */
+export function list(rows: readonly ImageInfo[]): ToolAnswer {
   if (rows.length === 0) {
     return { summary: texts.noImages(), warnings: [], fields: [] };
   }
@@ -138,7 +135,7 @@ export function list(rows: readonly ImageInfo[], more?: (row: ImageInfo) => Pair
     fields: [],
     list: {
       label: "images",
-      records: rows.map((row) => ({ name: row.name, pairs: [...recordPairs(row), ...(more?.(row) ?? [])] })),
+      records: rows.map((row) => ({ name: row.name, pairs: recordPairs(row) })),
     },
   };
 }

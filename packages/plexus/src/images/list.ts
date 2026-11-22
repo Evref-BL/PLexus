@@ -1,5 +1,10 @@
 import fs from "node:fs";
 import path from "node:path";
+import {
+  readImageDirectory,
+  readLauncherImage,
+  type LauncherImage,
+} from "@evref-bl/pharo-launcher-mcp/launcher";
 import { storeRoot } from "../home.js";
 import type { LauncherProcess } from "../launcher/pharoLauncherMcpClient.js";
 import type { ImageInfo, ImageState } from "../types.js";
@@ -52,8 +57,9 @@ function imagesInScope(context: ImagesContext): ImageFiles[] {
 export function describe(files: ImageFiles, processes: readonly LauncherProcess[]): ImageInfo {
   const vms = vmsOn(files.imagePath, processes);
   const created = readProperties(files.created);
-  const template = originTemplate(files.dir) ?? created?.template;
-  const pharoVersion = readFirstLine(path.join(files.dir, "pharo.version"));
+  const recorded = launcherRecord(files);
+  const template = recorded?.template?.name ?? created?.template;
+  const pharoVersion = recorded?.pharoVersion;
   const mcp = mcpSourceOf(created?.mcp);
   const everyStart = readFirstLine(files.onStart) !== undefined;
   const observed = vms.length > 0 ? observeEndpoint(files, vms) : undefined;
@@ -92,14 +98,11 @@ function pharoVersionOf(raw: string): string {
   return /^\d{2,3}$/.test(raw) ? `${raw.slice(0, -1)}.${raw.slice(-1)}` : raw;
 }
 
-// The launcher records the template an image came from in its metadata.
-function originTemplate(dir: string): string | undefined {
-  let metadata: string;
-  try {
-    metadata = fs.readFileSync(path.join(dir, "meta-inf.ston"), "utf8");
-  } catch {
-    return undefined;
-  }
-  const name = /#originTemplate\s*:\s*\w+\s*\{[\s\S]*?#name\s*:\s*'((?:''|[^'])*)'/.exec(metadata)?.[1];
-  return name?.replaceAll("''", "'");
+/**
+ * What the launcher records about an image, read as the launcher reads it:
+ * the template it came from and its Pharo version.
+ */
+function launcherRecord(files: ImageFiles): LauncherImage | undefined {
+  const directory = readImageDirectory(path.dirname(files.dir), files.diskName);
+  return directory.kind === "image" ? readLauncherImage(directory.image) : undefined;
 }

@@ -112,8 +112,7 @@ export function evaluationTool(tools: ReadonlyArray<{ name: string }>): string |
 /**
  * Whether an MCP server answers there. Any JSON-RPC answer to `ping` counts,
  * whatever its HTTP status: a server that wants a session first refuses the
- * ping, and refusing it is answering. A server that does not speak JSON-RPC
- * there may still answer `/health`.
+ * ping, and refusing it is answering.
  */
 export async function ping(endpoint: Endpoint, timeoutMs = 1_000): Promise<boolean> {
   try {
@@ -126,19 +125,9 @@ export async function ping(endpoint: Endpoint, timeoutMs = 1_000): Promise<boole
       body: JSON.stringify({ jsonrpc: "2.0", id: "plexus-ping", method: "ping" }),
     });
     const payload: unknown = await answer.json().catch(() => undefined);
-    if (
-      isRecord(payload) &&
-      payload.jsonrpc === "2.0" &&
-      ("result" in payload || "error" in payload)
-    ) {
-      return true;
-    }
+    return isRecord(payload) && payload.jsonrpc === "2.0" && ("result" in payload || "error" in payload);
   } catch {
     // Not listening yet.
-  }
-  try {
-    return (await fetchWithin(timeoutMs, new URL("/health", endpoint.url).href)).ok;
-  } catch {
     return false;
   }
 }

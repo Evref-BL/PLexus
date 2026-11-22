@@ -15,6 +15,7 @@ const report: LauncherLaunchReport = {
   displayMode: "headless",
   vmPath: "/home/me/.plexus/profiles/vms/140-x64/Pharo.app/Contents/MacOS/Pharo",
   vmId: "140-x64",
+  vmDirectory: "/home/me/.plexus/profiles/vms/140-x64",
   vmUpdated: false,
 };
 
@@ -43,9 +44,13 @@ describe("a VM that cannot run an image", () => {
     expect(hint).not.toContain("Remove");
   });
 
-  it("finds the slot on Windows paths too", () => {
+  it("names the slot as the launcher reports it, on Windows too", () => {
     expect(
-      launchedVmSlot({ ...report, vmPath: "C:\\Users\\me\\.plexus\\profiles\\vms\\140-x64\\Pharo.exe" }),
+      launchedVmSlot({
+        ...report,
+        vmPath: "C:\\Users\\me\\.plexus\\profiles\\vms\\140-x64\\Pharo.exe",
+        vmDirectory: "C:\\Users\\me\\.plexus\\profiles\\vms\\140-x64",
+      }),
     ).toEqual({ vmId: "140-x64", slot: "C:\\Users\\me\\.plexus\\profiles\\vms\\140-x64", installedNow: false });
   });
 });

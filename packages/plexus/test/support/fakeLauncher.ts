@@ -183,6 +183,7 @@ export function launched(pid: number, home: string): LauncherCommandResult {
       displayMode: "headless",
       vmPath: "/vms/140-x64/Pharo",
       vmId: "140-x64",
+      vmDirectory: "/vms/140-x64",
       vmUpdated: false,
       pid,
       logs: { stdout: path.join(logs, "launch.out.log"), stderr: path.join(logs, "launch.err.log") },

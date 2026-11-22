@@ -22,7 +22,7 @@ function stringsOf(file: string): string[] {
 }
 
 describe("the tools the texts name", () => {
-  it("are the image tools both servers serve", () => {
+  it("are the image tools the server serves", () => {
     const served = new Set(imageTools.map((tool) => tool.name));
     const named = new Map<string, string>();
     for (const directory of ["images", "answers", "mcp"]) {
