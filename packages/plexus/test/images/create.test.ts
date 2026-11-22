@@ -4,7 +4,14 @@ import type { ImageStartInput } from "@evref-bl/pharo-launcher-mcp/launcher";
 import { describe, expect, it } from "vitest";
 import { defaultPharoMcpVersion } from "../../src/config/pharoMcpVersion.js";
 import { basesRoot, storeRoot, tmpRoot } from "../../src/home.js";
-import { baseKey, failedTelemetryBaseRetryMs } from "../../src/images/bases.js";
+import {
+  baseKey,
+  basesCapBytes,
+  evictBases,
+  failedTelemetryBaseRetryMs,
+  recentlyUsedBaseMs,
+  unusedBaseMs,
+} from "../../src/images/bases.js";
 import { create } from "../../src/images/create.js";
 import { readProperties } from "../../src/images/store.js";
 import { plexusVersion } from "../../src/version.js";
@@ -22,7 +29,7 @@ const template = { name: "Pharo 14.0 - 64bit", category: "Official distributions
 const options = { template: template.name, category: template.category };
 const pin = defaultPharoMcpVersion;
 const key = baseKey(template.name, template.category, pin);
-const failedTelemetryKey = baseKey(template.name, template.category, pin, true).replace(/-mcp-/, "-failed-mcp-");
+const failedTelemetryKey = `${baseKey(template.name, template.category, pin, true)}.failed`;
 
 function setup(scope?: string) {
   const home = tempHome();
@@ -39,6 +46,11 @@ function writeBase(home: string, baseName: string, content = "image"): string {
   fs.mkdirSync(path.join(dir, "pharo-local", "iceberg"), { recursive: true });
   fs.writeFileSync(path.join(dir, "pharo-local", "iceberg", "clone.txt"), "clone");
   return dir;
+}
+
+/** The bases and failure records, without the stamps saying when each base was last used. */
+function bases(home: string): string[] {
+  return listing(basesRoot(home)).filter((name) => !name.endsWith(".used"));
 }
 
 function listing(dir: string): string[] {
@@ -87,7 +99,10 @@ describe("create without a script", () => {
       category: template.category,
       mcp: `pin:${pin}`,
       plexus: plexusVersion,
+      telemetry: "off",
+      "telemetry.reason": "not-asked",
     });
+    expect(created.telemetry).toEqual({ on: false, reason: "not-asked" });
     expect(listing(tmpRoot(home))).toEqual([]);
   });
 
@@ -136,6 +151,30 @@ describe("create without a script", () => {
     const second = await create(context, "other", { ...options });
     expect(second.fromBase).toBe(true);
     expect(launcher.called("createImage")).toHaveLength(1);
+  });
+
+  it("deletes the clones the preparation forgot, within the build's directory and nowhere else", async () => {
+    const { home, launcher, context } = setup();
+    const elsewhere = path.join(home, "shared", "iceberg", "Evref-BL", "MCP");
+    fs.mkdirSync(elsewhere, { recursive: true });
+    let clone = "";
+    launcher.prepareAnswer = (input: ImageStartInput) => {
+      const dir = path.dirname(path.dirname(input.script!));
+      clone = path.join(dir, "pharo-local", "iceberg", "Evref-BL", "MCP");
+      fs.mkdirSync(path.join(clone, ".git"), { recursive: true });
+      fs.writeFileSync(
+        path.join(dir, "plexus", "prepare-status.properties"),
+        `status=ok\rtelemetry=off\rclone=${clone}\rclone=${elsewhere}\rclone=${dir}\r`,
+      );
+      return ok();
+    };
+
+    await create(context, "dev", { ...options });
+
+    expect(fs.existsSync(path.join(basesRoot(home), key, "pharo-local", "iceberg", "Evref-BL", "MCP"))).toBe(false);
+    expect(fs.existsSync(path.join(storeRoot(home), "dev", "pharo-local", "iceberg", "Evref-BL", "MCP"))).toBe(false);
+    expect(fs.existsSync(path.join(basesRoot(home), key, "base.image"))).toBe(true);
+    expect(fs.existsSync(elsewhere)).toBe(true);
   });
 
   it("takes the category from the template list when none is given", async () => {
@@ -196,7 +235,7 @@ describe("create without a script", () => {
     expect(error).toMatchObject({ code: "create-failed" });
     expect((error as Error).message).toContain("Loading MCP failed: Error: Could not resolve: BaselineOfMCP");
     expect(listing(storeRoot(home))).toEqual([]);
-    expect(listing(basesRoot(home))).toEqual([]);
+    expect(bases(home)).toEqual([]);
   });
 
   it("says what the VM printed when the preparation ended without a status", async () => {
@@ -250,7 +289,7 @@ describe("create without a script", () => {
     expect(created.fromBase).toBe(false);
     expect(fs.readFileSync(path.join(storeRoot(home), "dev", "dev.image"), "utf8")).toBe("theirs");
     expect(listing(storeRoot(home))).toEqual(["dev"]);
-    expect(listing(basesRoot(home))).toEqual([key]);
+    expect(bases(home)).toEqual([key]);
   });
 
   it("removes a build that failed for any reason, and keeps nothing of it", async () => {
@@ -299,10 +338,13 @@ describe("create without a script", () => {
     };
     const enrolled = { ...context, telemetry: true };
 
-    expect((await create(enrolled, "dev", { ...options })).fromBase).toBe(false);
+    const created = await create(enrolled, "dev", { ...options });
+    expect(created.fromBase).toBe(false);
+    expect(created.telemetry).toEqual({ on: true });
+    expect(readProperties(path.join(storeRoot(home), "dev", "plexus", "created.properties"))).toMatchObject({ telemetry: "on" });
     expect(prepared).toHaveLength(1);
     expect(prepared[0]).toContain("    load: #( 'default' 'Telemetry' ).");
-    expect(listing(basesRoot(home))).toEqual([key, baseKey(template.name, template.category, pin, true)].sort());
+    expect(bases(home)).toEqual([key, baseKey(template.name, template.category, pin, true)].sort());
 
     expect((await create(enrolled, "again", { ...options })).fromBase).toBe(true);
     expect((await create(context, "plain", { ...options })).fromBase).toBe(true);
@@ -323,7 +365,19 @@ describe("create without a script", () => {
     const created = await create({ ...context, telemetry: true }, "dev", { ...options });
     expect(created).toMatchObject({ name: "dev", state: "stopped", fromBase: true });
     expect(fs.existsSync(created.path)).toBe(true);
-    expect(listing(basesRoot(home))).toEqual([key, failedTelemetryKey].sort());
+    expect(bases(home)).toEqual([key, failedTelemetryKey].sort());
+    // The failure is said, not passed over: the image records nothing, and why.
+    const said = {
+      on: false,
+      reason: "base-failed",
+      detail: "Loading MCP failed: Error: Could not resolve: BaselineOfOpenTelemetry Pharo Launcher startImage failed: exit 1",
+    };
+    expect(created.telemetry).toEqual(said);
+    expect(readProperties(path.join(storeRoot(home), "dev", "plexus", "created.properties"))).toMatchObject({
+      telemetry: "off",
+      "telemetry.reason": "base-failed",
+      "telemetry.detail": said.detail,
+    });
   });
 
   it("with telemetry, copies the base without it for a day after the base with it failed, then tries again", async () => {
@@ -340,39 +394,151 @@ describe("create without a script", () => {
     expect(launcher.called("createImage")).toHaveLength(1);
 
     context.clock.now += failedTelemetryBaseRetryMs - 1;
-    expect((await create(enrolled, "second", { ...options })).fromBase).toBe(true);
+    const second = await create(enrolled, "second", { ...options });
+    expect(second.fromBase).toBe(true);
+    expect(second.telemetry).toEqual({
+      on: false,
+      reason: "base-failed",
+      detail: "Loading MCP failed: offline Pharo Launcher startImage failed: exit 1",
+    });
     expect(launcher.called("createImage")).toHaveLength(1);
 
     context.clock.now += 1;
     launcher.prepareAnswer = undefined;
     expect((await create(enrolled, "third", { ...options })).fromBase).toBe(false);
     expect(launcher.called("createImage")).toHaveLength(2);
-    expect(listing(basesRoot(home))).toEqual([key, baseKey(template.name, template.category, pin, true)].sort());
+    expect(bases(home)).toEqual([key, baseKey(template.name, template.category, pin, true)].sort());
   });
 
   it("with telemetry, tries the base with it at once for a new pin, and remembers nothing when no base could be had", async () => {
     const { home, launcher, context } = setup();
     fs.mkdirSync(basesRoot(home), { recursive: true });
-    fs.writeFileSync(path.join(basesRoot(home), `${failedTelemetryKey.slice(0, -pin.length)}0.0.1`), `${context.clock.now}\n`);
+    fs.writeFileSync(path.join(basesRoot(home), `${baseKey(template.name, template.category, "0.0.1", true)}.failed`), `${context.clock.now}\n`);
     launcher.createAnswer = () => failed("no template");
 
     await expect(create({ ...context, telemetry: true }, "dev", { ...options })).rejects.toThrow();
 
     expect(launcher.called("createImage")).toHaveLength(2);
-    expect(listing(basesRoot(home))).not.toContain(failedTelemetryKey);
+    expect(bases(home)).not.toContain(failedTelemetryKey);
   });
 
-  it("removes the bases of other pins once it built one", async () => {
+  it("stamps a base each time a create copies it", async () => {
     const { home, context } = setup();
-    writeBase(home, "pharo-13-0-64bit-0a1b2c3d-mcp-3.6.0");
-    writeBase(home, `pharo-12-0-64bit-0a1b2c3d-mcp-${pin}`);
+    writeBase(home, key);
+    const stamp = () => fs.readFileSync(path.join(basesRoot(home), `${key}.used`), "utf8");
+
+    await create(context, "dev", { ...options });
+    expect(stamp()).toBe(`${context.clock.now}\n`);
+    context.clock.now += 60_000;
+    await create(context, "again", { ...options });
+    expect(stamp()).toBe(`${context.clock.now}\n`);
+  });
+
+  it("keeps the bases of other pins, which another PLexus sharing the home may be copying", async () => {
+    const { home, context } = setup();
+    const otherPin = baseKey(template.name, template.category, "3.6.0");
+    writeBase(home, otherPin);
+    fs.writeFileSync(path.join(basesRoot(home), `${otherPin}.used`), `${context.clock.now - 60_000}\n`);
     fs.mkdirSync(path.join(basesRoot(home), "notes"));
 
     await create(context, "dev", { ...options });
 
-    expect(listing(basesRoot(home))).toEqual(
-      [key, "notes", `pharo-12-0-64bit-0a1b2c3d-mcp-${pin}`].sort(),
-    );
+    expect(bases(home)).toEqual([key, "notes", otherPin].sort());
+  });
+
+  it("keeps its bases out of reach of a release that removes the bases of other pins", async () => {
+    const { home, context } = setup();
+    await create(context, "dev", { ...options });
+
+    // What PLexus 0.16 to 0.20 do once they built a base of their pin.
+    const theirs = path.join(home, "bases");
+    const theirPin = "3.8.0";
+    for (const entry of fs.readdirSync(theirs)) {
+      if (/-mcp-[^/\\]+$/.test(entry) && !entry.endsWith(`-mcp-${theirPin}`)) {
+        fs.rmSync(path.join(theirs, entry), { recursive: true, force: true });
+      }
+    }
+
+    expect(fs.existsSync(path.join(basesRoot(home), key, "base.image"))).toBe(true);
+  });
+});
+
+describe("evicting bases", () => {
+  const day = 24 * 60 * 60_000;
+
+  /** A base of `bytes` bytes that a create last copied `daysAgo` days ago. */
+  function baseUsed(home: string, now: number, name: string, daysAgo: number, bytes = 10): void {
+    const dir = path.join(basesRoot(home), name);
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, "base.image"), "x".repeat(bytes));
+    fs.writeFileSync(path.join(basesRoot(home), `${name}.used`), `${now - daysAgo * day}\n`);
+  }
+
+  it("removes a base no create used for thirty days, whatever its pin, and keeps the others", () => {
+    const { home, context } = setup();
+    const now = context.clock.now;
+    baseUsed(home, now, "a-mcp-1.0.0", 31);
+    baseUsed(home, now, "b-mcp-1.0.0", 29);
+    baseUsed(home, now, `c-mcp-${pin}`, 45);
+
+    evictBases(context);
+
+    expect(listing(basesRoot(home))).toEqual(["b-mcp-1.0.0", "b-mcp-1.0.0.used"]);
+    expect(unusedBaseMs).toBe(30 * day);
+  });
+
+  it("beyond the size cap, removes the least recently used first, but never one used within a day", () => {
+    const { home, context } = setup();
+    const now = context.clock.now;
+    baseUsed(home, now, "oldest", 5, 100);
+    baseUsed(home, now, "older", 3, 100);
+    baseUsed(home, now, "old", 2, 100);
+    baseUsed(home, now, "copying", 0.5, 100);
+    baseUsed(home, now, "just-built", 0, 100);
+
+    evictBases(context, { capBytes: 300 });
+    expect(bases(home)).toEqual(["copying", "just-built", "old"]);
+
+    evictBases(context, { capBytes: 50 });
+    expect(bases(home)).toEqual(["copying", "just-built"]);
+    expect(recentlyUsedBaseMs).toBe(day);
+    expect(basesCapBytes).toBe(5 * 1024 ** 3);
+  });
+
+  it("counts an unstamped base as used when its directory last changed", () => {
+    const { home, context } = setup();
+    for (const [name, daysAgo] of [["fresh", 1], ["stale", 40]] as const) {
+      const dir = path.join(basesRoot(home), name);
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(path.join(dir, "base.image"), "x");
+      const at = new Date(context.clock.now - daysAgo * day);
+      fs.utimesSync(dir, at, at);
+    }
+
+    evictBases(context);
+
+    expect(bases(home)).toEqual(["fresh"]);
+  });
+
+  it("removes a failure record once it no longer holds its base back", () => {
+    const { home, context } = setup();
+    fs.mkdirSync(basesRoot(home), { recursive: true });
+    fs.writeFileSync(path.join(basesRoot(home), "recent.failed"), `${context.clock.now - 60_000}\nwhy\n`);
+    fs.writeFileSync(path.join(basesRoot(home), "spent.failed"), `${context.clock.now - failedTelemetryBaseRetryMs}\nwhy\n`);
+
+    evictBases(context);
+
+    expect(bases(home)).toEqual(["recent.failed"]);
+  });
+
+  it("never removes the base a create is copying, which it stamped first", async () => {
+    const { home, context } = setup();
+    baseUsed(home, context.clock.now, key, 90);
+
+    await create(context, "dev", { ...options });
+    evictBases(context, { capBytes: 0 });
+
+    expect(fs.existsSync(path.join(basesRoot(home), key, "base.image"))).toBe(true);
   });
 });
 
@@ -431,7 +597,26 @@ describe("create with a script", () => {
     );
     expect(listing(path.join(dir, "plexus"))).toEqual(["created.properties"]);
     expect(listing(storeRoot(home))).toEqual(["Scope-mcp"]);
-    expect(listing(basesRoot(home))).toEqual([]);
+    expect(bases(home)).toEqual([]);
+    expect(created).not.toHaveProperty("telemetry");
+  });
+
+  it("records whether what the script loaded has MCP's OpenTelemetry backend, as the image said", async () => {
+    for (const [said, telemetry] of [
+      ["on", { on: true }],
+      ["off", { on: false, reason: "no-backend" }],
+    ] as const) {
+      const { home, launcher, context } = setup();
+      launcher.prepareAnswer = (input) => {
+        fs.writeFileSync(path.join(path.dirname(input.script!), "prepare-status.properties"), `status=ok\rtelemetry=${said}\r`);
+        return ok();
+      };
+
+      const created = await create(context, "mcp", { ...options, script: script(home) });
+
+      expect(created.telemetry).toEqual(telemetry);
+      expect(readProperties(path.join(storeRoot(home), "mcp", "plexus", "created.properties"))?.telemetry).toBe(said);
+    }
   });
 
   it("leaves alone the image of a create that took the name meanwhile", async () => {

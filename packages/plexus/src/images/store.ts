@@ -8,7 +8,7 @@ import path from "node:path";
 import * as texts from "../answers/texts.js";
 import { PlexusError } from "../errors.js";
 import { storeRoot, tmpRoot } from "../home.js";
-import type { ImageInfo } from "../types.js";
+import type { ImageInfo, ImageTelemetry, TelemetryOffReason } from "../types.js";
 import type { ImagesContext } from "./context.js";
 import { diskName } from "./names.js";
 
@@ -104,6 +104,10 @@ export function readProperties(file: string): Record<string, string> | undefined
   } catch {
     return undefined;
   }
+  return parseProperties(text);
+}
+
+export function parseProperties(text: string): Record<string, string> {
   const properties: Record<string, string> = {};
   for (const line of text.split(/\r\n|\n|\r/)) {
     const separator = line.indexOf("=");
@@ -141,7 +145,14 @@ export type McpSource = NonNullable<ImageInfo["mcp"]>;
 
 export function writeCreated(
   files: ImageFiles,
-  created: { template: string; category: string; mcp: McpSource; plexus: string; at: Date },
+  created: {
+    template: string;
+    category: string;
+    mcp: McpSource;
+    plexus: string;
+    at: Date;
+    telemetry?: ImageTelemetry;
+  },
 ): void {
   writeProperties(files.created, {
     template: created.template,
@@ -152,7 +163,41 @@ export function writeCreated(
         : `script:${created.mcp.script}`,
     plexus: created.plexus,
     created: created.at.toISOString(),
+    ...(created.telemetry === undefined ? {} : telemetryProperties(created.telemetry)),
   });
+}
+
+/** `telemetry=on`, or `telemetry=off` with `telemetry.reason` and `telemetry.detail` when known, as the start script writes them too. */
+export function telemetryProperties(telemetry: ImageTelemetry): Record<string, string> {
+  if (telemetry.on) {
+    return { telemetry: "on" };
+  }
+  return {
+    telemetry: "off",
+    ...(telemetry.reason === undefined ? {} : { "telemetry.reason": telemetry.reason }),
+    ...(telemetry.detail === undefined ? {} : { "telemetry.detail": telemetry.detail }),
+  };
+}
+
+const offReasons: readonly TelemetryOffReason[] = ["not-asked", "base-failed", "no-backend", "switch-failed"];
+
+/** What `telemetryProperties` wrote, or nothing when the properties say neither on nor off. */
+export function telemetryOf(properties: Record<string, string> | undefined): ImageTelemetry | undefined {
+  switch (properties?.telemetry) {
+    case "on":
+      return { on: true };
+    case "off": {
+      const reason = offReasons.find((each) => each === properties["telemetry.reason"]);
+      const detail = properties["telemetry.detail"];
+      return {
+        on: false,
+        ...(reason === undefined ? {} : { reason }),
+        ...(detail ? { detail } : {}),
+      };
+    }
+    default:
+      return undefined;
+  }
 }
 
 export function mcpSourceOf(value: string | undefined): McpSource | undefined {

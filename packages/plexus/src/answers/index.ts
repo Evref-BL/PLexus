@@ -1,16 +1,18 @@
 /**
  * The answers of the image tools, as plain text for a model: what happened,
- * then what an agent acts on, in the layout MCP's own tools write, except that
- * a list record says every field, even one all records share, where MCP says
- * that once beside the label. `plexus mcp` extends an answer before
- * rendering it.
+ * then what an agent acts on, in the layout MCP's own tools write, and no
+ * more. A list record says only what tells it from what is usual: the Pharo
+ * version, the template when it is not that version's usual one, MCP when it
+ * is not the pinned release; a warning that would repeat for several images
+ * is said once, naming them. `plexus mcp` extends an answer before rendering
+ * it.
  */
 import { defaultPharoMcpVersion } from "../config/pharoMcpVersion.js";
 import { listTools } from "../forward/index.js";
 import type { ForwardError } from "../forward/jsonRpc.js";
 import { endpointOf } from "../images/endpoint.js";
 import type { StartResult } from "../images/start.js";
-import type { Endpoint, ImageInfo, ImageState, ImageTool, Template } from "../types.js";
+import type { Endpoint, ImageInfo, ImageState, ImageTelemetry, ImageTool, Template } from "../types.js";
 import * as texts from "./texts.js";
 
 export * as texts from "./texts.js";
@@ -26,16 +28,16 @@ export interface ToolRecord {
 
 /**
  * An answer before it is text. `render` writes it as: the summary; one
- * `Warning:` line per warning; one `key: value` line per field; the list, a
- * `label:` line and then one record per line; and each group, a `label:` line
- * and then its lines as they are.
+ * `Warning:` line per warning; one `key: value` line per field; each list
+ * with records, a `label:` line and then one record per line; and each group,
+ * a `label:` line and then its lines as they are.
  */
 export interface ToolAnswer {
   /** What happened, in one line; it may hold several sentences. */
   summary: string;
   warnings: string[];
   fields: Pair[];
-  list?: { label: string; records: ToolRecord[] };
+  lists?: Array<{ label: string; records: ToolRecord[] }>;
   /** Lines under a label, each said as it is: names that may hold commas. */
   groups?: Array<{ label: string; lines: string[] }>;
 }
@@ -48,8 +50,10 @@ export function render(answer: ToolAnswer): string {
   for (const [key, value] of answer.fields) {
     lines.push(`${key}: ${value}`);
   }
-  if (answer.list !== undefined && answer.list.records.length > 0) {
-    lines.push(`${answer.list.label}:`, ...answer.list.records.map(recordLine));
+  for (const list of answer.lists ?? []) {
+    if (list.records.length > 0) {
+      lines.push(`${list.label}:`, ...list.records.map(recordLine));
+    }
   }
   for (const group of answer.groups ?? []) {
     lines.push(`${group.label}:`, ...group.lines.map((line) => `  ${line}`));
@@ -57,8 +61,6 @@ export function render(answer: ToolAnswer): string {
   return lines.join("\n");
 }
 
-// A record says all its pairs, even those every record holds alike, so that a
-// line an agent copies on its own keeps everything said of that record.
 function recordLine(record: ToolRecord): string {
   return `  ${[record.name, ...record.pairs.map(pairText)].join(" ")}`;
 }
@@ -84,21 +86,83 @@ function everyStartScript(row: Pick<ImageInfo, "mcp">): string | undefined {
 
 /** Said of an image pinned to an MCP other than the one images are created with now. */
 export function olderMcp(row: Pick<ImageInfo, "name" | "mcp">): string | undefined {
-  return row.mcp?.source === "pin" && row.mcp.version !== defaultPharoMcpVersion
-    ? texts.olderMcp(row.name, row.mcp.version, defaultPharoMcpVersion)
-    : undefined;
+  const version = olderPin(row);
+  return version === undefined ? undefined : texts.olderMcp([row.name], version, defaultPharoMcpVersion);
+}
+
+function olderPin(row: Pick<ImageInfo, "mcp">): string | undefined {
+  return row.mcp?.source === "pin" && row.mcp.version !== defaultPharoMcpVersion ? row.mcp.version : undefined;
+}
+
+/** One warning per problem that keeps images from taking calls, naming every image it keeps, in record order. */
+function unreachableWarnings(rows: readonly ImageInfo[]): string[] {
+  const byProblem = new Map<string, ImageInfo[]>();
+  for (const row of rows.filter((each) => each.state === "unreachable")) {
+    const problem = row.endpointProblem ?? "it wrote no endpoint";
+    byProblem.set(problem, [...(byProblem.get(problem) ?? []), row]);
+  }
+  return [...byProblem].map(([problem, held]) =>
+    held.length === 1 ? texts.takesNoCalls(held[0]!.name, held[0]!.pids, problem) : texts.takeNoCalls(held, problem),
+  );
+}
+
+/** One warning per older MCP release, naming every image that holds it, in record order. */
+function olderMcpWarnings(rows: readonly ImageInfo[]): string[] {
+  const byVersion = new Map<string, string[]>();
+  for (const row of rows) {
+    const version = olderPin(row);
+    if (version !== undefined) {
+      byVersion.set(version, [...(byVersion.get(version) ?? []), row.name]);
+    }
+  }
+  return [...byVersion].map(([version, names]) => texts.olderMcp(names, version, defaultPharoMcpVersion));
+}
+
+/** Whether a template is the one images of its Pharo version are usually made from: `Pharo 14.0 - 64bit`, with or without what follows in parentheses. */
+function usualTemplate(row: Pick<ImageInfo, "template" | "pharoVersion">): boolean {
+  if (row.template === undefined || row.pharoVersion === undefined) {
+    return false;
+  }
+  const prefix = `Pharo ${row.pharoVersion} - 64bit`;
+  return row.template === prefix || (row.template.startsWith(`${prefix} (`) && row.template.endsWith(")"));
+}
+
+/** MCP as a record says it: the version of a pin other than the current one, `script` for a script, nothing for the current pin. */
+function mcpOfRecord(row: Pick<ImageInfo, "mcp">): string | undefined {
+  if (row.mcp === undefined) {
+    return undefined;
+  }
+  return row.mcp.source === "script" ? "script" : olderPin(row);
+}
+
+/**
+ * What an answer says of telemetry, when the PLexus answering enrolls images
+ * in OpenTelemetry (`enrolled`): `telemetry: on` for an image whose server
+ * records its calls through OpenTelemetry, said otherwise when PLexus's
+ * settings name no OTLP endpoint (`endpointNamed` false) to send them to, or
+ * a warning saying why the image does not record them. Nothing otherwise,
+ * nor when nothing said.
+ */
+export interface Enrollment {
+  enrolled?: boolean;
+  endpointNamed?: boolean;
+}
+
+function telemetrySaid(
+  row: Pick<ImageInfo, "name" | "mcp"> & { telemetry?: ImageTelemetry },
+  { enrolled, endpointNamed }: Enrollment,
+): { fields: Pair[]; warnings: string[] } {
+  const telemetry = row.telemetry;
+  if (!enrolled || telemetry === undefined) {
+    return { fields: [], warnings: [] };
+  }
+  return telemetry.on
+    ? { fields: [["telemetry", endpointNamed === false ? texts.recordedNotSent() : "on"]], warnings: [] }
+    : { fields: [], warnings: [texts.recordsNothing(row.name, telemetry, row.mcp?.source !== "script")] };
 }
 
 function warningsOf(row: ImageInfo): string[] {
-  const warnings: string[] = [];
-  if (row.state === "unreachable") {
-    warnings.push(texts.takesNoCalls(row.name, row.pids, row.endpointProblem ?? "it wrote no endpoint"));
-  }
-  const older = olderMcp(row);
-  if (older !== undefined) {
-    warnings.push(older);
-  }
-  return warnings;
+  return [...unreachableWarnings([row]), ...olderMcpWarnings([row])];
 }
 
 // The answers.
@@ -124,34 +188,43 @@ export function templates(listed: readonly Template[]): ToolAnswer {
   };
 }
 
-/** Every image, one record each. */
-export function list(rows: readonly ImageInfo[]): ToolAnswer {
+/** The order the states are listed in: those that take calls, or would, first. */
+const listedStates: readonly ImageState[] = ["running", "unreachable", "starting", "creating", "stopped"];
+
+/**
+ * Every image, one short record each under its state, running ones first;
+ * enrolled, `telemetry=off` on each known not to record its calls, which
+ * naming it says the reason of.
+ */
+export function list(rows: readonly ImageInfo[], enrollment: Enrollment = {}): ToolAnswer {
   if (rows.length === 0) {
     return { summary: texts.noImages(), warnings: [], fields: [] };
   }
+  const unsent =
+    enrollment.enrolled && enrollment.endpointNamed === false && rows.some((row) => row.telemetry?.on === true);
   return {
     summary: texts.imagesSummary(rows.length, rows.filter((row) => row.state === "running" || row.state === "unreachable").length),
-    warnings: rows.flatMap(warningsOf),
+    warnings: [...unreachableWarnings(rows), ...olderMcpWarnings(rows), ...(unsent ? [texts.recordedNowhereToSend()] : [])],
     fields: [],
-    list: {
-      label: "images",
-      records: rows.map((row) => ({ name: row.name, pairs: recordPairs(row) })),
-    },
+    lists: listedStates.map((state) => ({
+      label: state,
+      records: rows.filter((row) => row.state === state).map((row) => ({ name: row.name, pairs: recordPairs(row, enrollment) })),
+    })),
   };
 }
 
-function recordPairs(row: ImageInfo): Pair[] {
+function recordPairs(row: ImageInfo, { enrolled }: Enrollment): Pair[] {
   return [
-    ["state", row.state],
     ...known("pharo", row.pharoVersion),
-    ...known("template", row.template),
-    ...known("mcp", row.mcp === undefined ? undefined : row.mcp.source === "pin" ? row.mcp.version : "script"),
+    ...known("template", usualTemplate(row) ? undefined : row.template),
+    ...known("mcp", mcpOfRecord(row)),
     ...(row.display === "interactive" ? [["display", "interactive"] as Pair] : []),
+    ...known("telemetry", enrolled && row.telemetry?.on === false ? "off" : undefined),
   ];
 }
 
 /** One image, named: only here with its path, and its script when it has one. */
-export function image(row: ImageInfo): ToolAnswer {
+export function image(row: ImageInfo, enrollment: Enrollment = {}): ToolAnswer {
   const summaries: Record<ImageState, string> = {
     creating: texts.imageCreating(row.name),
     stopped: texts.imageStopped(row.name),
@@ -160,9 +233,10 @@ export function image(row: ImageInfo): ToolAnswer {
     // The warning says why it takes no calls.
     unreachable: texts.imageRunning(row.name, row.display === "interactive"),
   };
+  const telemetry = telemetrySaid(row, enrollment);
   return {
     summary: summaries[row.state],
-    warnings: warningsOf(row),
+    warnings: [...warningsOf(row), ...telemetry.warnings],
     fields: [
       ...known("pharo", row.pharoVersion),
       ...known("template", row.template),
@@ -175,40 +249,50 @@ export function image(row: ImageInfo): ToolAnswer {
             : `script ${row.mcp.script}`,
       ),
       ...known("every start", everyStartScript(row)),
+      ...telemetry.fields,
       ["path", row.path],
     ],
   };
 }
 
-export function created(result: Pick<ImageInfo, "name" | "template" | "mcp">): ToolAnswer {
+export function created(
+  result: Pick<ImageInfo, "name" | "mcp" | "telemetry">,
+  enrollment: Enrollment = {},
+): ToolAnswer {
   return {
     summary: texts.created(result.name, {
-      ...(result.template === undefined ? {} : { template: result.template }),
       ...(result.mcp?.source === "script"
         ? { script: result.mcp.script, everyStart: result.mcp.everyStart === true }
         : {}),
     }),
-    warnings: [],
-    fields: [],
+    ...telemetrySaid(result, enrollment),
   };
 }
 
 /**
- * A start, said of the image as it was last saved. `row`, the image as listed
+ * A start, or an image that was already running. `row`, the image as listed
  * before or after the start, which changes neither, adds the script every
  * start files in and the older-MCP warning; the pids, the endpoint and the
- * time taken are not said.
+ * time taken are not said. Enrolled, it says whether the image records its
+ * calls.
  */
-export function started(result: Pick<StartResult, "name" | "display">, row?: ImageInfo): ToolAnswer {
+export function started(
+  result: Pick<StartResult, "name" | "display" | "telemetry" | "alreadyRunning">,
+  row?: ImageInfo,
+  enrollment: Enrollment = {},
+): ToolAnswer {
   const older = row === undefined ? undefined : olderMcp(row);
   const everyStart = row === undefined ? undefined : everyStartScript(row);
+  const telemetry = telemetrySaid({ name: result.name, ...(row?.mcp === undefined ? {} : { mcp: row.mcp }), ...(result.telemetry === undefined ? {} : { telemetry: result.telemetry }) }, enrollment);
   return {
-    summary: texts.started(result.name, {
-      interactive: result.display === "interactive",
-      ...(everyStart === undefined ? {} : { everyStart }),
-    }),
-    warnings: older === undefined ? [] : [older],
-    fields: [],
+    summary: result.alreadyRunning
+      ? texts.alreadyRunning(result.name, result.display === "interactive")
+      : texts.started(result.name, {
+          interactive: result.display === "interactive",
+          ...(everyStart === undefined ? {} : { everyStart }),
+        }),
+    warnings: [...(older === undefined ? [] : [older]), ...telemetry.warnings],
+    fields: telemetry.fields,
   };
 }
 
@@ -334,7 +418,7 @@ async function listedNames(
  * with words put before it, as `image_evaluate` is `evaluate`. Several such names, or a listing that holds the asked name, which
  * the image has just denied having, name none.
  */
-function meantTool(tool: string, listed: readonly string[]): string | undefined {
+export function meantTool(tool: string, listed: readonly string[]): string | undefined {
   if (listed.includes(tool)) {
     return undefined;
   }

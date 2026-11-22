@@ -4,7 +4,7 @@ import * as texts from "../answers/texts.js";
 import { defaultPharoMcpVersion } from "../config/pharoMcpVersion.js";
 import { PlexusError } from "../errors.js";
 import { longCommandTimeoutMs } from "../launcher/pharoLauncherMcpClient.js";
-import type { CreateOptions, ImageInfo } from "../types.js";
+import type { CreateOptions, ImageInfo, ImageTelemetry } from "../types.js";
 import { plexusVersion } from "../version.js";
 import {
   copyBase,
@@ -42,7 +42,8 @@ const createMaxMs = 2 * longCommandTimeoutMs + 10 * 60_000;
 /**
  * A new image with MCP in it, saved and not started. Without a script it is a
  * copy of the base for its template; with one, it is built from the template
- * and the script is filed in once.
+ * and the script is filed in once. Its record says whether a start that
+ * enrolls it in OpenTelemetry records its calls, and why not.
  */
 export async function create(
   context: ImagesContext,
@@ -69,7 +70,7 @@ export async function create(
     const base = await ensureBase(context, template, defaultPharoMcpVersion);
     fromBase = !base.built;
     copyBase(context, base.dir, files, (assembled) =>
-      recordCreation(assembled, template, { source: "pin", version: defaultPharoMcpVersion }),
+      recordCreation(assembled, template, { source: "pin", version: defaultPharoMcpVersion }, base.telemetry),
     );
   } else {
     await buildWithScript(context, files, template, script, options.everyStart === true);
@@ -139,10 +140,16 @@ async function buildWithScript(
   // refuses it while its marker names this process.
   try {
     const prepared = await prepare(context, files, { kind: "script", script });
-    if (prepared !== undefined) {
-      throw new PlexusError("create-failed", `Preparing image ${files.name} failed.\n${prepared}`);
+    if (prepared.failure !== undefined) {
+      throw new PlexusError("create-failed", `Preparing image ${files.name} failed.\n${prepared.failure}`);
     }
-    recordCreation(files, template, { source: "script", script });
+    // What the script loaded decides, whether this PLexus enrolls images or not.
+    recordCreation(
+      files,
+      template,
+      { source: "script", script },
+      prepared.telemetry === undefined ? undefined : prepared.telemetry ? { on: true } : { on: false, reason: "no-backend" },
+    );
     if (everyStart) {
       fs.writeFileSync(files.onStart, `${script}\n`, "utf8");
     }
@@ -157,6 +164,7 @@ function recordCreation(
   files: ImageFiles,
   template: { name: string; category: string },
   mcp: McpSource,
+  telemetry: ImageTelemetry | undefined,
 ): void {
   writeCreated(files, {
     template: template.name,
@@ -164,5 +172,6 @@ function recordCreation(
     mcp,
     plexus: plexusVersion,
     at: new Date(),
+    ...(telemetry === undefined ? {} : { telemetry }),
   });
 }

@@ -7,6 +7,7 @@ import { PlexusError } from "./errors.js";
 import { Images } from "./images/index.js";
 import { scopeOfProject } from "./images/names.js";
 import { imageTools, runPlexusMcpServer, type ImagesApi } from "./mcp/server.js";
+import { tracesEndpoint } from "./telemetry/reachability.js";
 import type { ImagesOptions, StartOptions } from "./types.js";
 
 export interface CliIo {
@@ -17,12 +18,16 @@ export interface CliIo {
 
 export interface CliDependencies {
   images(options: ImagesOptions): ImagesApi;
-  serveMcp(images: ImagesApi): Promise<void>;
+  /**
+   * `telemetry` says the images are enrolled in OpenTelemetry, and
+   * `endpointNamed` whether the environment names an OTLP endpoint for traces.
+   */
+  serveMcp(images: ImagesApi, telemetry: boolean, endpointNamed: boolean): Promise<void>;
 }
 
 const defaultDependencies: CliDependencies = {
   images: (options) => new Images(options),
-  serveMcp: (images) => runPlexusMcpServer({ images }),
+  serveMcp: (images, telemetry, endpointNamed) => runPlexusMcpServer({ images, telemetry, endpointNamed }),
 };
 
 type Verb = "templates" | "create" | "start" | "stop" | "delete" | "list";
@@ -208,8 +213,8 @@ function help(): string {
     "  --project    the scope is this directory's name, unless --scope or PLEXUS_SCOPE gives one",
     "  --telemetry  enroll images in OpenTelemetry: a create loads MCP's Telemetry group, and a",
     "               start switches the image's server to it, configured by the OTEL_* environment",
-    "               (PLEXUS_TELEMETRY=1). With no OTEL_* in the environment, the settings file",
-    "               ~/.config/plexus/otel.env gives them, and turns this on unless",
+    "               (PLEXUS_TELEMETRY=1). The settings file ~/.config/plexus/otel.env, when it",
+    "               gives any, replaces every OTEL_* variable inherited, and turns this on unless",
     "               PLEXUS_TELEMETRY is set",
     "",
     "Results are JSON on stdout. A refusal is {\"ok\":false,\"code\":...,\"error\":...} and exits 1.",
@@ -239,7 +244,12 @@ export async function runCli(
         io.stdout(`${commandHelp(mcpCommand)}\n`);
         return 0;
       }
-      await dependencies.serveMcp(dependencies.images(imagesOptions(parsed, io.env)));
+      const options = imagesOptions(parsed, io.env);
+      await dependencies.serveMcp(
+        dependencies.images(options),
+        options.telemetry === true,
+        tracesEndpoint(io.env) !== undefined,
+      );
       return 0;
     }
 

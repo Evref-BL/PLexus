@@ -1,9 +1,14 @@
 /**
  * A base is a template with the pinned MCP loaded and saved, so that a create
  * copies it in seconds instead of loading MCP for minutes. It is a directory
- * of `<home>/bases` named after its template, category, pin and whether it
- * holds MCP's `Telemetry` group, built under a temporary name and renamed when
- * complete: its existence is its record.
+ * of `<home>/bases/shared` named after its template, category, pin and
+ * whether it holds MCP's `Telemetry` group, built under a temporary name and
+ * renamed when complete: its existence is its record. Beside it,
+ * `<key>.used` says when a create last copied it.
+ *
+ * Releases of PLexus with other pins share the home, as when an agent host
+ * runs an older one beside a newer, so a base goes only once no create has
+ * used it for a while, whatever its pin (see `evictBases`).
  */
 import crypto from "node:crypto";
 import fs from "node:fs";
@@ -12,6 +17,7 @@ import { repairCopiedImageMetadataInDirectory } from "@evref-bl/pharo-launcher-m
 import * as texts from "../answers/texts.js";
 import { PlexusError } from "../errors.js";
 import { basesRoot, storeRoot, tmpRoot } from "../home.js";
+import type { ImageTelemetry } from "../types.js";
 import type { ImagesContext } from "./context.js";
 import { buildPrefix } from "./names.js";
 import { createFromTemplate, prepare } from "./prepare.js";
@@ -37,7 +43,7 @@ export function baseKey(template: string, category: string, pin: string, telemet
     .update(`${category}\n${template}`)
     .digest("hex")
     .slice(0, 8);
-  // Before the pin, which ends every key: see evictOtherPins.
+  // The pin ends every key, as it did when bases were removed by pin.
   return `${slug}-${hash}${telemetry ? "-telemetry" : ""}-mcp-${pin}`;
 }
 
@@ -62,59 +68,77 @@ export const failedTelemetryBaseRetryMs = 24 * 60 * 60_000;
 
 /**
  * The base for this template, built first when there is none. `built` says
- * whether this call built the one it answers. With telemetry it is the base
- * that holds MCP's `Telemetry` group, a base of its own, unless that one
+ * whether this call built the one it answers, and `telemetry` whether the
+ * images copied from it can record their calls. With telemetry it is the
+ * base that holds MCP's `Telemetry` group, a base of its own, unless that one
  * cannot be built: telemetry never fails a create, so the base without it
- * serves, and the image is not traced. A telemetry base that failed while
- * the plain one served is remembered, and not tried again until
- * `failedTelemetryBaseRetryMs` has passed.
+ * serves, and `telemetry` says why its images record nothing. A telemetry
+ * base that failed while the plain one served is remembered with why, and not
+ * tried again until `failedTelemetryBaseRetryMs` has passed.
  */
 export async function ensureBase(
   context: ImagesContext,
   template: { name: string; category: string },
   pin: string,
-): Promise<{ dir: string; built: boolean }> {
+): Promise<{ dir: string; built: boolean; telemetry: ImageTelemetry }> {
   if (!context.telemetry) {
-    return ensureBaseHolding(context, template, pin, false);
+    return { ...(await ensureBaseHolding(context, template, pin, false)), telemetry: { on: false, reason: "not-asked" } };
   }
-  const failure = failureRecord(context.home, baseKey(template.name, template.category, pin, true));
-  const failedAt = readFailure(failure);
-  if (failedAt !== undefined && context.now() - failedAt < failedTelemetryBaseRetryMs) {
-    return ensureBaseHolding(context, template, pin, false);
+  const record = failureRecord(context.home, baseKey(template.name, template.category, pin, true));
+  const failure = readFailure(record);
+  if (failure !== undefined && context.now() - failure.at < failedTelemetryBaseRetryMs) {
+    return { ...(await ensureBaseHolding(context, template, pin, false)), telemetry: baseFailed(failure.detail) };
   }
   try {
     const base = await ensureBaseHolding(context, template, pin, true);
-    fs.rmSync(failure, { force: true });
-    return base;
-  } catch {
+    fs.rmSync(record, { force: true });
+    return { ...base, telemetry: { on: true } };
+  } catch (error) {
     const base = await ensureBaseHolding(context, template, pin, false);
-    writeFailure(failure, context.now());
-    return base;
+    const detail = failureDetail(error);
+    writeFailure(record, context.now(), detail);
+    return { ...base, telemetry: baseFailed(detail) };
   }
 }
 
-/**
- * Where a base's failure to build is recorded: a file beside the bases whose
- * name ends with the pin, as a base's does, so that it goes with the other
- * bases of its pin.
- */
-function failureRecord(home: string, key: string): string {
-  return path.join(basesRoot(home), key.replace(/-mcp-([^/\\]+)$/, "-failed-mcp-$1"));
+function baseFailed(detail: string | undefined): ImageTelemetry {
+  return { on: false, reason: "base-failed", ...(detail ? { detail } : {}) };
 }
 
-function readFailure(file: string): number | undefined {
+/** The longest a failure's own words are kept: a launcher's diagnostic can run to pages. */
+const detailLength = 300;
+
+/** What a failure said, on one line, after the line saying which base failed. */
+function failureDetail(error: unknown): string {
+  const lines = (error instanceof Error ? error.message : String(error)).split(/\r?\n/);
+  const said = error instanceof PlexusError && lines.length > 1 ? lines.slice(1) : lines;
+  const text = said.join(" ").replace(/\s+/g, " ").trim();
+  return text.length > detailLength ? `${text.slice(0, detailLength)}…` : text;
+}
+
+/** Where a base's failure to build is recorded: a file beside the bases. */
+function failureRecord(home: string, key: string): string {
+  return path.join(basesRoot(home), `${key}${failedSuffix}`);
+}
+
+const failedSuffix = ".failed";
+const usedSuffix = ".used";
+
+/** When the base failed, on the record's first line, and why, on its second. */
+function readFailure(file: string): { at: number; detail?: string } | undefined {
   try {
-    const at = Number(fs.readFileSync(file, "utf8").trim());
-    return Number.isFinite(at) ? at : undefined;
+    const [first, detail] = fs.readFileSync(file, "utf8").split(/\r?\n/);
+    const at = Number(first.trim());
+    return Number.isFinite(at) ? { at, ...(detail?.trim() ? { detail: detail.trim() } : {}) } : undefined;
   } catch {
     return undefined;
   }
 }
 
-function writeFailure(file: string, at: number): void {
+function writeFailure(file: string, at: number, detail: string): void {
   try {
     fs.mkdirSync(path.dirname(file), { recursive: true });
-    fs.writeFileSync(file, `${at}\n`, "utf8");
+    fs.writeFileSync(file, `${at}\n${detail}\n`, "utf8");
   } catch {
     // Not remembered: the next create tries again.
   }
@@ -130,6 +154,8 @@ async function ensureBaseHolding(
   const dir = path.join(basesRoot(context.home), key);
   const isBase = () => isFile(path.join(dir, `${baseFileName}.image`));
   if (isBase()) {
+    used(context, key);
+    evictBases(context);
     return { dir, built: false };
   }
 
@@ -137,7 +163,7 @@ async function ensureBaseHolding(
   try {
     const failure =
       (await createFromTemplate(context, build, template)) ??
-      (await prepare(context, build, { kind: "pin", version: pin, telemetry }));
+      (await prepare(context, build, { kind: "pin", version: pin, telemetry })).failure;
     if (failure !== undefined) {
       throw new PlexusError(
         "create-failed",
@@ -155,25 +181,128 @@ async function ensureBaseHolding(
       throw error;
     }
     // Another create built the same base meanwhile, and it is as good.
+    used(context, key);
     return { dir, built: true };
   }
-  evictOtherPins(context.home, pin);
+  used(context, key);
+  evictBases(context);
   return { dir, built: true };
 }
 
-/** Bases of another pin are never used again once this one is built. */
-export function evictOtherPins(home: string, pin: string): void {
-  let entries: string[];
+/**
+ * Says that a create is copying the base now. Written before the copy, so a
+ * base being copied was used within the last day, which `evictBases` never
+ * removes.
+ */
+function used(context: ImagesContext, key: string): void {
   try {
-    entries = fs.readdirSync(basesRoot(home));
+    fs.writeFileSync(path.join(basesRoot(context.home), `${key}${usedSuffix}`), `${context.now()}\n`, "utf8");
+  } catch {
+    // Unstamped, the base counts as used when its directory last changed.
+  }
+}
+
+/** How long a base no create has used is kept. */
+export const unusedBaseMs = 30 * 24 * 60 * 60_000;
+
+/** How much the bases may hold before the least recently used go, oldest first. */
+export const basesCapBytes = 5 * 1024 ** 3;
+
+/** A base used this recently is never removed: a create may still be copying it. */
+export const recentlyUsedBaseMs = 24 * 60 * 60_000;
+
+/**
+ * Removes the bases no create has used for `unusedMs`, and, while the bases
+ * hold more than `capBytes`, the least recently used, but never one used
+ * within `recentlyUsedBaseMs`. A pin plays no part: another PLexus sharing
+ * the home may be creating from a base of its own pin. A failure record goes
+ * once it no longer holds a base back.
+ */
+export function evictBases(
+  context: ImagesContext,
+  limits: { unusedMs?: number; capBytes?: number } = {},
+): void {
+  const unusedMs = limits.unusedMs ?? unusedBaseMs;
+  const capBytes = limits.capBytes ?? basesCapBytes;
+  const root = basesRoot(context.home);
+  let entries: fs.Dirent[];
+  try {
+    entries = fs.readdirSync(root, { withFileTypes: true });
   } catch {
     return;
   }
-  for (const entry of entries) {
-    if (/-mcp-[^/\\]+$/.test(entry) && !entry.endsWith(`-mcp-${pin}`)) {
-      removeDirectory(home, path.join(basesRoot(home), entry));
+  const now = context.now();
+  const bases = entries
+    .filter((entry) => entry.isDirectory() && isFile(path.join(root, entry.name, `${baseFileName}.image`)))
+    .map((entry) => {
+      const dir = path.join(root, entry.name);
+      return { key: entry.name, dir, usedAt: lastUsed(root, entry.name), bytes: treeBytes(dir) };
+    })
+    .sort((left, right) => left.usedAt - right.usedAt);
+  let held = bases.reduce((total, base) => total + base.bytes, 0);
+  for (const base of bases) {
+    if (now - base.usedAt < recentlyUsedBaseMs) {
+      break;
+    }
+    if (now - base.usedAt >= unusedMs || held > capBytes) {
+      try {
+        removeDirectory(context.home, base.dir);
+        fs.rmSync(path.join(root, `${base.key}${usedSuffix}`), { force: true });
+        held -= base.bytes;
+      } catch {
+        // Left for a later create to remove.
+      }
     }
   }
+  for (const entry of entries) {
+    if (entry.isFile() && entry.name.endsWith(failedSuffix)) {
+      const failure = readFailure(path.join(root, entry.name));
+      if (failure === undefined || now - failure.at >= failedTelemetryBaseRetryMs) {
+        fs.rmSync(path.join(root, entry.name), { force: true });
+      }
+    }
+  }
+}
+
+/** When a create last used the base: its stamp, else when its directory last changed. */
+function lastUsed(root: string, key: string): number {
+  try {
+    const at = Number(fs.readFileSync(path.join(root, `${key}${usedSuffix}`), "utf8").trim());
+    if (Number.isFinite(at)) {
+      return at;
+    }
+  } catch {
+    // No stamp: a base this release did not copy yet.
+  }
+  try {
+    return fs.statSync(path.join(root, key)).mtimeMs;
+  } catch {
+    return 0;
+  }
+}
+
+/** The bytes a directory's files hold, links not followed. */
+function treeBytes(dir: string): number {
+  let total = 0;
+  let entries: fs.Dirent[];
+  try {
+    entries = fs.readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return 0;
+  }
+  for (const entry of entries) {
+    const file = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      total += treeBytes(file);
+    } else {
+      try {
+        total += fs.lstatSync(file).size;
+      } catch {
+        // Gone meanwhile.
+      }
+    }
+  }
+  return total;
 }
 
 /**

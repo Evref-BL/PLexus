@@ -37,6 +37,12 @@ export interface CallToolOptions {
   minimumMs?: number;
   /** Aborting it destroys the request in flight, and the call rejects as cancelled. */
   signal?: AbortSignal;
+  /**
+   * The call is meant to end the image, such as a quit: the connection
+   * closing, or no answer in time, is how it may go, and does not fail its
+   * span. The call still rejects as it would.
+   */
+  endsImage?: boolean;
 }
 
 /**
@@ -67,6 +73,7 @@ export async function callTool(
       timeoutMs: callWaitMs(args, options),
       session,
       ...(options.signal === undefined ? {} : { signal: options.signal }),
+      ...(options.endsImage ? { endsImage: true } : {}),
     },
   );
   return response.result as ImageToolResult;

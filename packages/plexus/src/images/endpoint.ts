@@ -6,16 +6,17 @@ import {
   type EndpointHandoff,
 } from "../forward/endpointHandoffFormat.js";
 import type { LauncherProcess } from "../launcher/pharoLauncherMcpClient.js";
-import type { Endpoint, ImageInfo } from "../types.js";
-import type { ImageFiles } from "./store.js";
+import type { Endpoint, ImageInfo, ImageTelemetry } from "../types.js";
+import { parseProperties, telemetryOf, type ImageFiles } from "./store.js";
 
 /**
- * Where a running image answers; or that a start of this PLexus launched it
- * and its server has not written where yet, so it is starting and will; or
- * why it takes no calls.
+ * Where a running image answers, and whether its server records its calls
+ * when its start said; or that a start of this PLexus launched it and its
+ * server has not written where yet, so it is starting and will; or why it
+ * takes no calls.
  */
 export type EndpointObservation =
-  | { endpoint: Endpoint }
+  | { endpoint: Endpoint; telemetry?: ImageTelemetry }
   | { starting: true }
   | { problem: string };
 
@@ -50,15 +51,17 @@ export function observeEndpoint(
   }
 
   const url = endpointUrl(handoff);
+  const telemetry = telemetryOf(parseProperties(text));
+  const said = telemetry === undefined ? {} : { telemetry };
   if (handoff.pid !== undefined) {
     return vms.some((vm) => vm.pid === handoff.pid)
-      ? { endpoint: { url, pid: handoff.pid } }
+      ? { endpoint: { url, pid: handoff.pid }, ...said }
       : { problem: `the endpoint names pid ${handoff.pid}, which does not run this image` };
   }
   // An image that cannot tell its pid writes none. A VM this PLexus launched
   // names the start script on its command line, and that VM is the writer.
   return vms.some((vm) => namesStartScript(vm, files))
-    ? { endpoint: { url } }
+    ? { endpoint: { url }, ...said }
     : { problem: "not started by this PLexus" };
 }
 

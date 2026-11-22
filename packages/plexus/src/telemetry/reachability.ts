@@ -1,8 +1,12 @@
 /**
  * What the `plexus` command remembers of a collector it could not reach, so
  * that an unreachable collector costs a command nothing: while an endpoint's
- * time to try again is in the future, no SDK is installed for it, and a
- * process that already failed to reach it sends nothing more until then.
+ * time to try again is in the future, a command installs no SDK for it, and a
+ * process that serves (`plexus mcp`) sends nothing to it until then.
+ *
+ * A collector on this machine is never left alone: a refused connection to
+ * it costs nothing, and one that comes back, restarted or upgraded, is sent
+ * to at once.
  *
  * The state is a JSON object in the user's cache directory, keyed by the
  * traces endpoint, whose values are `{ "failures": n, "retryAt": epochMillis }`.
@@ -66,6 +70,20 @@ export function tracesEndpoint(env: NodeJS.ProcessEnv): string | undefined {
   return `${general.endsWith("/") ? general : `${general}/`}v1/traces`;
 }
 
+/**
+ * Whether the endpoint is on this machine: its host is `localhost`, an
+ * address of 127.0.0.0/8, or `::1`.
+ */
+export function isLoopback(endpoint: string): boolean {
+  let host: string;
+  try {
+    host = new URL(endpoint).hostname;
+  } catch {
+    return false;
+  }
+  return host === "localhost" || host === "[::1]" || /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(host);
+}
+
 /** The state in `file`, or none when it is missing, unreadable or not a JSON object. */
 export function readReachability(file: string): ReachabilityState {
   try {
@@ -113,28 +131,45 @@ export function writeReachability(file: string, state: ReachabilityState): void 
   }
 }
 
-/** One endpoint's breaker: whether to send to it, and what each export says of it. */
+/**
+ * One endpoint's breaker: whether to send to it, and what each export says of
+ * it. An endpoint on this machine has none: it is always sent to, and its
+ * failures are not recorded.
+ */
 export class Reachability {
   private retryAt: number | undefined;
+  private readonly breaks: boolean;
 
   constructor(
     private readonly file: string,
     private readonly endpoint: string,
     private readonly now: () => number = Date.now,
-  ) {}
+  ) {
+    this.breaks = !isLoopback(endpoint);
+  }
 
   /** Whether the state says to leave the endpoint alone for now. */
   isOpen(): boolean {
-    const entry = readReachability(this.file)[this.endpoint];
-    return entry !== undefined && entry.retryAt > this.now();
+    return this.breaks && this.sharedRetryAt() > this.now();
   }
 
-  /** Whether this process may send now: not before the time to try again its last failure set. */
+  /**
+   * Whether this process may send now: not before the time to try again that
+   * its last failure set, nor before the one the state keeps, which another
+   * process's failure may have set since.
+   */
   allows(): boolean {
-    return this.retryAt === undefined || this.now() >= this.retryAt;
+    return !this.breaks || this.now() >= Math.max(this.retryAt ?? -Infinity, this.sharedRetryAt());
+  }
+
+  private sharedRetryAt(): number {
+    return readReachability(this.file)[this.endpoint]?.retryAt ?? -Infinity;
   }
 
   failed(): void {
+    if (!this.breaks) {
+      return;
+    }
     const state = readReachability(this.file);
     const failures = (state[this.endpoint]?.failures ?? 0) + 1;
     const retryAt = this.now() + retryDelayMs(failures);
@@ -142,6 +177,7 @@ export class Reachability {
     writeReachability(this.file, { ...state, [this.endpoint]: { failures, retryAt } });
   }
 
+  /** The endpoint answered: its entry goes, one an earlier PLexus wrote for an endpoint on this machine included. */
   succeeded(): void {
     this.retryAt = undefined;
     const state = readReachability(this.file);
@@ -163,7 +199,9 @@ export interface ResultCodes {
  * export at once, without the network, while `reachability` does not allow
  * sending. An export that has not ended `deadlineMs` after it began has
  * failed: the OTLP exporter's own timeout does not cover a connection that
- * is still being made, nor an answer that trickles in.
+ * is still being made, nor an answer that trickles in. A collector that
+ * refused the batch itself, as malformed (400) or too large (413), answered:
+ * the export failed, and the collector is reachable.
  */
 export class GuardedExporter implements SpanExporter {
   constructor(
@@ -186,7 +224,7 @@ export class GuardedExporter implements SpanExporter {
       }
       settled = true;
       clearTimeout(deadline);
-      if (result.code === this.codes.SUCCESS) {
+      if (result.code === this.codes.SUCCESS || refusedContent(result)) {
         this.reachability.succeeded();
       } else {
         this.reachability.failed();
@@ -216,4 +254,10 @@ export class GuardedExporter implements SpanExporter {
   forceFlush(): Promise<void> {
     return this.exporter.forceFlush?.() ?? Promise.resolve();
   }
+}
+
+/** Whether the collector answered that it refuses the batch, with the HTTP status the OTLP exporter gives its error as `code`. */
+function refusedContent(result: ExportResult): boolean {
+  const status = (result.error as { code?: unknown } | undefined)?.code;
+  return status === 400 || status === 413;
 }

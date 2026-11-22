@@ -92,7 +92,7 @@ async function askToQuit(
   }
   const endpoint = row.endpoint;
   try {
-    const answer = await context.callTool(endpoint, "evaluate", { code: quitCode }, { minimumMs: quitAskMs });
+    const answer = await context.callTool(endpoint, "evaluate", { code: quitCode }, { minimumMs: quitAskMs, endsImage: true });
     if (answer.isError === true) {
       return undefined;
     }
@@ -240,7 +240,7 @@ async function askToSave(
     return { notTaken: "it lists no evaluate tool, so it cannot save" };
   }
   try {
-    const answer = await context.callTool(endpoint, tool, { code: saveAndQuitCode }, { minimumMs: context.saveWaitMs });
+    const answer = await context.callTool(endpoint, tool, { code: saveAndQuitCode }, { minimumMs: context.saveWaitMs, endsImage: true });
     if (answer.isError === true) {
       const line = firstLine(answer);
       return { notTaken: line === undefined ? `${tool} answered an error with no text` : `${tool} answered "${line}"` };

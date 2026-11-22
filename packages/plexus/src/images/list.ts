@@ -7,9 +7,10 @@ import {
 } from "@evref-bl/pharo-launcher-mcp/launcher";
 import { storeRoot } from "../home.js";
 import type { LauncherProcess } from "../launcher/pharoLauncherMcpClient.js";
-import type { ImageInfo, ImageState } from "../types.js";
+import type { Endpoint, ImageInfo, ImageState, ImageTelemetry } from "../types.js";
 import type { ImagesContext } from "./context.js";
-import { observeEndpoint, type EndpointObservation } from "./endpoint.js";
+import { parseEndpointHandoff, type EndpointHandoff } from "../forward/endpointHandoffFormat.js";
+import { endpointUrl, observeEndpoint, type EndpointObservation } from "./endpoint.js";
 import { nameOfDisk } from "./names.js";
 import { displayOf, hostProcesses, vmsOn } from "./processes.js";
 import {
@@ -19,6 +20,7 @@ import {
   mcpSourceOf,
   readFirstLine,
   readProperties,
+  telemetryOf,
   type ImageFiles,
 } from "./store.js";
 
@@ -35,6 +37,74 @@ export async function list(context: ImagesContext, name?: string): Promise<Image
   }
   const processes = await hostProcesses(context);
   return images.map((files) => describe(files, processes));
+}
+
+/** Where a forwarded call goes: the image and its endpoint. */
+export interface Answering {
+  name: string;
+  endpoint: Endpoint;
+}
+
+/**
+ * The image a forwarded call goes to when the endpoint files alone can say:
+ * the image named, or, naming none, the only image whose endpoint names a
+ * live process, when that process is the VM an earlier look saw running the
+ * image (`seen`, by image name). Undefined whenever only the look `list`
+ * takes can say, refusals included. Listing the host's processes reads every
+ * process's command line, tens of milliseconds where there are many, which
+ * each call would pay; a VM keeps its pid and its endpoint while it runs.
+ */
+export function answeringFromEndpoints(
+  context: ImagesContext,
+  seen: ReadonlyMap<string, number>,
+  name?: string,
+): Answering | undefined {
+  let images: ImageFiles[];
+  try {
+    images = name === undefined ? imagesInScope(context) : [existingImage(context, name)];
+  } catch {
+    return undefined;
+  }
+  const live: Array<{ files: ImageFiles; url: string; pid: number }> = [];
+  for (const files of images) {
+    if (fs.existsSync(files.building)) {
+      if (name !== undefined) {
+        return undefined;
+      }
+      continue;
+    }
+    let text: string;
+    try {
+      text = fs.readFileSync(files.endpoint, "utf8");
+    } catch {
+      continue;
+    }
+    let handoff: EndpointHandoff;
+    try {
+      handoff = parseEndpointHandoff(text);
+    } catch {
+      return undefined;
+    }
+    if (handoff.pid === undefined) {
+      return undefined;
+    }
+    if (isAlive(handoff.pid)) {
+      live.push({ files, url: endpointUrl(handoff), pid: handoff.pid });
+    }
+  }
+  if (live.length !== 1 || seen.get(live[0].files.name) !== live[0].pid) {
+    return undefined;
+  }
+  return { name: live[0].files.name, endpoint: { url: live[0].url, pid: live[0].pid } };
+}
+
+function isAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "EPERM";
+  }
 }
 
 function imagesInScope(context: ImagesContext): ImageFiles[] {
@@ -63,6 +133,7 @@ export function describe(files: ImageFiles, processes: readonly LauncherProcess[
   const mcp = mcpSourceOf(created?.mcp);
   const everyStart = readFirstLine(files.onStart) !== undefined;
   const observed = vms.length > 0 ? observeEndpoint(files, vms) : undefined;
+  const telemetry = imageTelemetry(observed, telemetryOf(created));
 
   return {
     name: files.name,
@@ -76,7 +147,27 @@ export function describe(files: ImageFiles, processes: readonly LauncherProcess[
     ...(template === undefined ? {} : { template }),
     ...(pharoVersion === undefined ? {} : { pharoVersion: pharoVersionOf(pharoVersion) }),
     ...(mcp === undefined ? {} : { mcp: mcp.source === "script" && everyStart ? { ...mcp, everyStart: true } : mcp }),
+    ...(telemetry === undefined ? {} : { telemetry }),
   };
+}
+
+/**
+ * Whether the image records its calls: running, what its start said, else
+ * what its create said. A server with no backend to record with, in an image
+ * whose create said why it has none, is said by that reason, which says what
+ * to do.
+ */
+export function imageTelemetry(
+  observed: EndpointObservation | undefined,
+  created: ImageTelemetry | undefined,
+): ImageTelemetry | undefined {
+  const started = observed !== undefined && "endpoint" in observed ? observed.telemetry : undefined;
+  if (started === undefined) {
+    return created;
+  }
+  return !started.on && started.reason === "no-backend" && created?.on === false && created.reason !== undefined
+    ? created
+    : started;
 }
 
 /**

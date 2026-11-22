@@ -6,7 +6,7 @@
  *
  * Nothing here reaches a command's answer or its exit status: an SDK that is
  * missing, fails to load, or fails to export leaves the command as it was,
- * and nothing is printed. A collector that could not be reached is
+ * and nothing is printed. A collector elsewhere that could not be reached is
  * remembered, and left alone for a while (see `reachability.ts`).
  */
 import os from "node:os";
@@ -16,7 +16,7 @@ import { GuardedExporter, Reachability, reachabilityFile, tracesEndpoint } from 
 
 /** The SDK the command installed, or none: what to run the command in, and how to end it. */
 export interface Telemetry {
-  /** Runs the command's work under the parent `TRACEPARENT` names, when it names one. */
+  /** Runs the command's work under the parent `TRACEPARENT` names, when it names one and the process does not serve. */
   within<T>(work: () => T): T;
   /** Exports what is left, waiting no longer than a second, or the export timeout when it is shorter. */
   shutdown(): Promise<void>;
@@ -36,8 +36,11 @@ const longestExitWaitMs = 1_000;
 export interface TelemetryOptions {
   /**
    * The process serves until its input closes (`plexus mcp`): its batches go
-   * in the background with the whole export timeout. Otherwise each export
-   * is given no more than the process waits at its end.
+   * in the background with the whole export timeout, the SDK is installed
+   * even while the collector is left alone, which its exports then wait out,
+   * and its work has no parent from the environment, since each request
+   * names its own. Otherwise each export is given no more than the process
+   * waits at its end.
    */
   longLived?: boolean;
   /** Where reachability is kept, instead of the user's cache directory. */
@@ -46,10 +49,20 @@ export interface TelemetryOptions {
   now?: () => number;
 }
 
-/** How long an export may take, and how long the process waits for its spans as it ends. */
-export function exportTimings(traces: TracesExport, longLived = false): { exportTimeoutMs: number; exitWaitMs: number } {
+/**
+ * How long an export may take, when one that has not ended has failed, and
+ * how long the process waits for its spans as it ends. A command's export
+ * fails a little before the command stops waiting, so that a collector that
+ * does not answer is remembered before the process exits.
+ */
+export function exportTimings(
+  traces: TracesExport,
+  longLived = false,
+): { exportTimeoutMs: number; deadlineMs: number; exitWaitMs: number } {
   const exitWaitMs = Math.min(longestExitWaitMs, traces.timeoutMs);
-  return { exportTimeoutMs: longLived ? traces.timeoutMs : exitWaitMs, exitWaitMs };
+  return longLived
+    ? { exportTimeoutMs: traces.timeoutMs, deadlineMs: traces.timeoutMs, exitWaitMs }
+    : { exportTimeoutMs: exitWaitMs, deadlineMs: Math.max(1, Math.floor(exitWaitMs * 0.9)), exitWaitMs };
 }
 
 export interface TracesExport {
@@ -132,8 +145,10 @@ function positive(value: string | undefined): number | undefined {
  * it. The host and process detectors are not used: they would send the
  * hostname, the command line and the executable's path.
  *
- * When the endpoint failed recently and its time to try again has not come,
- * nothing is installed and no SDK module is loaded.
+ * When a collector elsewhere failed recently and its time to try again has
+ * not come, a command installs nothing and loads no SDK module; a process
+ * that serves installs the SDK all the same, so that the trace context and
+ * the session still reach its images, and sends once that time has come.
  */
 export async function startTelemetry(env: NodeJS.ProcessEnv, options: TelemetryOptions = {}): Promise<Telemetry> {
   const traces = tracesExport(env);
@@ -142,10 +157,10 @@ export async function startTelemetry(env: NodeJS.ProcessEnv, options: TelemetryO
     return none;
   }
   const reachability = new Reachability(options.reachabilityFile ?? reachabilityFile(env), endpoint, options.now);
-  if (reachability.isOpen()) {
+  if (!options.longLived && reachability.isOpen()) {
     return none;
   }
-  const { exportTimeoutMs, exitWaitMs } = exportTimings(traces, options.longLived);
+  const { exportTimeoutMs, deadlineMs, exitWaitMs } = exportTimings(traces, options.longLived);
   try {
     const [sdk, hooks, core, resources, exporters] = await Promise.all([
       import("@opentelemetry/sdk-trace"),
@@ -177,7 +192,7 @@ export async function startTelemetry(env: NodeJS.ProcessEnv, options: TelemetryO
             new exporters.OTLPTraceExporter({ timeoutMillis: exportTimeoutMs }),
             reachability,
             core.ExportResultCode,
-            exportTimeoutMs,
+            deadlineMs,
           ),
           exportTimeoutMillis: exportTimeoutMs,
         }),
@@ -191,7 +206,7 @@ export async function startTelemetry(env: NodeJS.ProcessEnv, options: TelemetryO
     );
     trace.setGlobalTracerProvider(provider);
 
-    const parent = parentFromEnvironment(env);
+    const parent = options.longLived ? ROOT_CONTEXT : parentFromEnvironment(env);
     return {
       within: (work) => context.with(parent, work),
       shutdown: () => within(exitWaitMs, provider.shutdown()),

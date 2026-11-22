@@ -16,12 +16,13 @@ import { PlexusError } from "../../src/errors.js";
 import { callWaitMs } from "../../src/forward/index.js";
 import {
   createPlexusMcpServer,
+  firstListingWaitMs,
   sessionIdleMs,
   type ForwardOptions,
   type ImagesApi,
   type PlexusMcpServerOptions,
 } from "../../src/mcp/server.js";
-import { withTraceContext } from "../../src/telemetry/trace.js";
+import { sessionOf, withTraceContext } from "../../src/telemetry/trace.js";
 import type { CreateOptions, Endpoint, ImageInfo, StartOptions, StopOptions } from "../../src/types.js";
 
 /** Records what each test's spans are, through an SDK registered as an application registers one. */
@@ -94,6 +95,9 @@ class FakeImages implements ImagesApi {
     if (name === "broken") {
       throw new PlexusError("start-failed", "Image broken exited during start.");
     }
+    if (this.rows.some((each) => each.name === name && each.state === "running")) {
+      return { name, pids: [100], endpoint: { url: "http://127.0.0.1:7001/", pid: 100 }, display: "headless" as const, seconds: 0, alreadyRunning: true as const };
+    }
     return { name, pids: [100], endpoint: { url: "http://127.0.0.1:7001/" }, display: options?.display ?? "headless", seconds: 2 };
   }
 
@@ -111,6 +115,14 @@ class FakeImages implements ImagesApi {
   async delete(name: string) {
     this.calls.push(["delete", name]);
     return { name };
+  }
+
+  /** Where a call goes without a look, as `Images` knows it from an earlier one: by default, never. */
+  known?: { name: string; endpoint: Endpoint };
+
+  answering(name?: string) {
+    this.calls.push(["answering", name]);
+    return this.known !== undefined && (name === undefined || name === this.known.name) ? this.known : undefined;
   }
 }
 
@@ -130,7 +142,6 @@ async function connect(
 ) {
   const forwarded: Forwarded[] = [];
   const server = createPlexusMcpServer({
-    ...extra,
     images,
     listTools: async (endpoint) => {
       const tools = toolsByUrl[endpoint.url];
@@ -139,6 +150,7 @@ async function connect(
       }
       return tools;
     },
+    ...extra,
     callTool: async (endpoint, name, args, options): Promise<CallToolResult> => {
       forwarded.push({ endpoint, name, args, options });
       return answer(endpoint, name, args, options);
@@ -193,7 +205,7 @@ describe("plexus mcp", () => {
     expect(client.getServerCapabilities()?.tools).toEqual({ listChanged: true });
     expect(client.getInstructions()).toContain("Search these tools for any Pharo, Smalltalk, Tonel or .st work.");
     expect(client.getInstructions()).toContain("may leave it out while only\none runs");
-    expect(tools.find((each) => each.name === "image_start")?.description).toContain("refuses an image that is already running");
+    expect(tools.find((each) => each.name === "image_start")?.description).toContain("An image already running is left as it is.");
     const imageStop = tools.find((each) => each.name === "image_stop")!;
     expect(imageStop.description).toContain("without saving");
     expect(imageStop.description).toContain("With save: true, the image saves itself and quits");
@@ -244,6 +256,75 @@ describe("plexus mcp", () => {
       { endpoint: { url: "http://127.0.0.1:7001/", pid: 100 }, name: "class_search", args: { name: "Object" } },
       { endpoint: { url: "http://127.0.0.1:7001/", pid: 100 }, name: "class_search", args: { name: "Object" } },
     ]);
+  });
+
+  it("forwards without a look where the images know the image that answers, and looks again after a failed call", async () => {
+    const images = new FakeImages([row("dev", { port: 7001 })]);
+    images.known = { name: "dev", endpoint: { url: "http://127.0.0.1:7009/", pid: 100 } };
+    let fail = false;
+    const { call, forwarded } = await connect(images, {}, async (_endpoint, name) => {
+      if (fail) {
+        throw forwardFailure("connect ECONNREFUSED 127.0.0.1:7009", { kind: "refused" });
+      }
+      return { content: [{ type: "text", text: `${name} answered` }] };
+    });
+
+    await call("class_search", { name: "Object" });
+    await call("class_search", { name: "Object", image: "dev" });
+    expect(forwarded.map((each) => each.endpoint.url)).toEqual(["http://127.0.0.1:7009/", "http://127.0.0.1:7009/"]);
+    expect(images.calls.filter(([method]) => method === "list")).toEqual([]);
+
+    fail = true;
+    await call("class_search", { name: "Object" });
+    expect(images.calls.filter(([method]) => method === "list")).toEqual([["list", "dev"]]);
+  });
+
+  it("answers a start of an image already running as no error, with no error span", async () => {
+    const recording = recordSpans();
+    try {
+      const { call } = await connect(new FakeImages([row("dev", { port: 7001 }), row("other", { port: 7002 })]));
+      const answer = await call("image_start", { name: "dev" });
+
+      expect(answer.isError).toBeUndefined();
+      expect(textOf(answer)).toBe('Image dev was already running. Pass image: "dev" to its tools while another image runs.');
+      const spans = recording.exporter.getFinishedSpans();
+      expect(spans.filter((span) => span.status.code === SpanStatusCode.ERROR)).toEqual([]);
+      expect(servedSpans(recording.exporter)[0].attributes).not.toHaveProperty("plexus.error.code");
+    } finally {
+      recording.end();
+    }
+  });
+
+  it("among several images, sends a call naming none to the only one that has the tool, and says when none has it", async () => {
+    const recording = recordSpans();
+    try {
+      const { call, forwarded } = await connect(
+        new FakeImages([row("a", { port: 7001 }), row("b", { port: 7002 })]),
+        {
+          "http://127.0.0.1:7001/": [tool("eval"), tool("image_evaluate")],
+          "http://127.0.0.1:7002/": [tool("eval"), tool("class_get")],
+        },
+      );
+
+      expect(textOf(await call("class_get", { name: "Object" }))).toBe("class_get answered");
+      expect(forwarded.map((each) => each.endpoint.url)).toEqual(["http://127.0.0.1:7002/"]);
+
+      const missing = await call("class_search");
+      expect(missing.isError).toBe(true);
+      expect(textOf(missing)).toBe("No running image (a, b) has a tool class_search: tool_search finds the tools an image has.");
+      expect(textOf(await call("evaluate"))).toBe(
+        "No running image (a, b) has a tool evaluate, but a lists image_evaluate: call that instead.",
+      );
+      expect(textOf(await call("eval"))).toBe("Several images are running (a, b): name one with the image argument.");
+      expect(forwarded).toHaveLength(1);
+
+      const [, none, , several] = servedSpans(recording.exporter);
+      expect(none.attributes).not.toHaveProperty("plexus.error.code");
+      expect(none.attributes["error.type"]).toBe("tool_error");
+      expect(several.attributes["plexus.error.code"]).toBe("several-images");
+    } finally {
+      recording.end();
+    }
   });
 
   it("passes the image's own error as it is", async () => {
@@ -339,9 +420,10 @@ describe("plexus mcp", () => {
       [
         "2 images, 1 running.",
         olderWarning,
-        "images:",
-        `  dev state=stopped pharo=14.0 template="Pharo 14.0 - 64bit" mcp=${defaultPharoMcpVersion}`,
-        '  old state=running pharo=13.0 template="Pharo 13.0 - 64bit" mcp=3.7.0',
+        "running:",
+        "  old pharo=13.0 mcp=3.7.0",
+        "stopped:",
+        "  dev pharo=14.0",
       ].join("\n"),
     );
     expect(textOf(await call("image_list", { name: "dev" }))).toBe(
@@ -355,19 +437,13 @@ describe("plexus mcp", () => {
     );
     expect(
       textOf(await call("image_create", { name: "new", template: "Pharo 14.0 - 64bit", category: "Official distributions" })),
-    ).toBe("Created image new from Pharo 14.0 - 64bit. It is not running yet; image_start starts it.");
+    ).toBe("Created image new; image_start starts it.");
     expect(textOf(await call("image_start", { name: "dev", display: "interactive" }))).toBe(
-      'Started image dev as it was last saved, with its window open. Pass image: "dev" to its tools while another image runs.',
+      'Started image dev, with its window open. Pass image: "dev" to its tools while another image runs.',
     );
-    expect(textOf(await call("image_start", { name: "old" }))).toBe(
-      [
-        'Started image old as it was last saved. Pass image: "old" to its tools while another image runs.',
-        olderWarning,
-      ].join("\n"),
-    );
-    expect(textOf(await call("image_stop", { name: "dev" }))).toBe(
-      "Stopped image dev; what it had not saved is lost. image_stop with save: true saves an image before stopping it.",
-    );
+    // Old runs already, and is the only image running, so its start says nothing of image.
+    expect(textOf(await call("image_start", { name: "old" }))).toBe(["Image old was already running.", olderWarning].join("\n"));
+    expect(textOf(await call("image_stop", { name: "dev" }))).toBe("Stopped image dev; what it had not saved is lost.");
     expect(textOf(await call("image_stop", { name: "old", save: true }))).toBe("Saved and stopped image old.");
     expect(textOf(await call("image_delete", { name: "dev" }))).toBe("Deleted image dev and its files.");
     expect(images.calls).toContainEqual(["create", "new", { template: "Pharo 14.0 - 64bit", category: "Official distributions" }]);
@@ -449,13 +525,18 @@ describe("plexus mcp", () => {
     propagation.setGlobalPropagator(new W3CTraceContextPropagator());
     trace.setGlobalTracerProvider(new TracerProvider({ spanProcessors: [new SimpleSpanProcessor({ exporter })] }));
     try {
-      const { client } = await connect(new FakeImages([row("dev", { port: 7001 })]), {}, async () => ({
-        content: [{ type: "text", text: "no such class" }],
-        isError: true,
-      }));
+      const { client } = await connect(
+        new FakeImages([row("dev", { port: 7001 })]),
+        { "http://127.0.0.1:7001/": [tool("class_get", { name: { type: "string" } })] },
+        async () => ({
+          content: [{ type: "text", text: "no such class" }],
+          isError: true,
+        }),
+      );
+      await client.listTools();
       await client.callTool({
         name: "class_get",
-        arguments: { name: "SecretClass" },
+        arguments: { name: "SecretClass", image: "dev", ghp_SecretToken: 1 },
         _meta: { traceparent: "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01" },
       });
       await client.callTool({ name: "image_list", arguments: { name: "dev", secretFlag: "/Users/ada" } });
@@ -477,11 +558,12 @@ describe("plexus mcp", () => {
         "plexus.call.forwarded": true,
         "plexus.client.name": "test",
         "plexus.client.version": "1.0.0",
-        "plexus.argument.names": ["name"],
+        "plexus.argument.names": ["name", "image"],
+        "plexus.argument.unknown_names": ["ghp_SecretToken"],
         "error.type": "tool_error",
       });
       expect(forwarded.status).toEqual({ code: SpanStatusCode.ERROR });
-      expect(refused.attributes["plexus.argument.names"]).toEqual(["name", "secretFlag"]);
+      expect(refused.attributes["plexus.argument.names"]).toEqual(["name"]);
       expect(refused.attributes["plexus.argument.unknown_names"]).toEqual(["secretFlag"]);
       expect(refused.attributes["session.id"]).toBe(forwarded.attributes["session.id"]);
       expect(refused.attributes["plexus.call.index"]).toBe(2);
@@ -495,6 +577,73 @@ describe("plexus mcp", () => {
       trace.disable();
       propagation.disable();
       context.disable();
+    }
+  });
+
+  it("learns the tools of an image a call goes to before the host listed them, waiting a little for them once answered", async () => {
+    const recording = recordSpans();
+    try {
+      const listed: string[] = [];
+      const { call, forwarded } = await connect(new FakeImages([row("dev", { port: 7001 })]), {}, undefined, {
+        listTools: async (endpoint) => {
+          listed.push(endpoint.url);
+          await new Promise((resolve) => setTimeout(resolve, 30));
+          return [tool("evaluate", { code: { type: "string" }, timeoutSeconds: { type: "integer", default: 300 } })];
+        },
+      });
+      await call("evaluate", { code: "1", made_up: true });
+      await call("evaluate", { code: "2", image: "dev" });
+
+      expect(listed).toEqual(["http://127.0.0.1:7001/"]);
+      expect(forwarded[1].options.inputSchema?.properties).toHaveProperty("timeoutSeconds");
+      const [first, second] = servedSpans(recording.exporter);
+      expect(first.attributes["plexus.argument.names"]).toEqual(["code"]);
+      expect(first.attributes["plexus.argument.unknown_names"]).toEqual(["made_up"]);
+      expect(second.attributes["plexus.argument.names"]).toEqual(["code", "image"]);
+      expect(second.attributes).not.toHaveProperty("plexus.argument.unknown_names");
+    } finally {
+      recording.end();
+    }
+  });
+
+  it("says only image of a call whose image did not list its tools in time, rather than calling the rest unknown", async () => {
+    const recording = recordSpans();
+    try {
+      const { call } = await connect(new FakeImages([row("dev", { port: 7001 })]), {}, undefined, {
+        listTools: () => new Promise<Tool[]>(() => undefined),
+      });
+      const started = Date.now();
+      expect(textOf(await call("evaluate", { code: "1", image: "dev" }))).toBe("evaluate answered");
+
+      expect(Date.now() - started).toBeLessThan(firstListingWaitMs + 1_000);
+      const [served] = servedSpans(recording.exporter);
+      expect(served.attributes["plexus.argument.names"]).toEqual(["image"]);
+      expect(served.attributes).not.toHaveProperty("plexus.argument.unknown_names");
+    } finally {
+      recording.end();
+    }
+  });
+
+  it("lists the images' tools in the session the calls run in, without counting the listing as a call", async () => {
+    const recording = recordSpans();
+    try {
+      const listedIn: string[] = [];
+      const images = new FakeImages([row("dev", { port: 7001 })]);
+      const { client } = await connect(images, {}, undefined, {
+        listTools: async () => {
+          listedIn.push(sessionOf(context.active()));
+          return [tool("class_get")];
+        },
+      });
+      await client.listTools();
+      await client.callTool({ name: "class_get", arguments: {} });
+      await client.listTools();
+
+      const [served] = servedSpans(recording.exporter);
+      expect(listedIn).toEqual([served.attributes["session.id"], served.attributes["session.id"]]);
+      expect(served.attributes["plexus.call.index"]).toBe(1);
+    } finally {
+      recording.end();
     }
   });
 

@@ -13,7 +13,7 @@ import { imagesContext, type ImagesContext } from "./context.js";
 import { create, type CreateResult } from "./create.js";
 import { deleteImage } from "./delete.js";
 import { endpointOf } from "./endpoint.js";
-import { list } from "./list.js";
+import { answeringFromEndpoints, list, type Answering } from "./list.js";
 import { start, type StartResult } from "./start.js";
 import { stop, type StopResult } from "./stop.js";
 import { templates } from "./templates.js";
@@ -22,9 +22,10 @@ import { templates } from "./templates.js";
  * Pharo images as directories and processes.
  *
  * An image exists when its directory holds its image file; it runs when a VM
- * runs that file. Every call looks at the store and the host when it is made
- * and keeps nothing between calls, so, like `ps`, its answer is as old as the
- * call that gave it.
+ * runs that file. Every call looks at the store and the host when it is made,
+ * so, like `ps`, its answer is as old as the call that gave it. Only
+ * `answering` keeps something between calls: the VM each look saw answering
+ * for an image, which it trusts while that process runs.
  *
  * Making, starting, stopping and deleting are each an INTERNAL span,
  * `plexus.image.create`, `.start`, `.stop` and `.delete`, that says how it
@@ -41,8 +42,28 @@ export class Images {
     return templates(this.context);
   }
 
-  list(name?: string): Promise<ImageInfo[]> {
-    return list(this.context, name);
+  /** The VM each look saw answering for an image, by image name. */
+  private readonly seen = new Map<string, number>();
+
+  async list(name?: string): Promise<ImageInfo[]> {
+    const rows = await list(this.context, name);
+    for (const row of rows) {
+      if (row.state === "running" && row.endpoint?.pid !== undefined) {
+        this.seen.set(row.name, row.endpoint.pid);
+      } else {
+        this.seen.delete(row.name);
+      }
+    }
+    return rows;
+  }
+
+  /**
+   * Where a forwarded call goes, when an earlier look saw the VM that
+   * answers for it and that VM still runs: the image named, or, naming
+   * none, the only image that answers. Undefined when only `list` can say.
+   */
+  answering(name?: string): Answering | undefined {
+    return answeringFromEndpoints(this.context, this.seen, name);
   }
 
   create(name: string, options: CreateOptions): Promise<CreateResult> {
@@ -70,6 +91,6 @@ export class Images {
 
   /** Where a call to the image goes, or a refusal saying why none can and what to do. */
   async endpoint(name: string): Promise<Endpoint> {
-    return endpointOf((await list(this.context, name))[0]);
+    return endpointOf((await this.list(name))[0]);
   }
 }

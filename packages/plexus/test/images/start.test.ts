@@ -73,6 +73,31 @@ describe("start", () => {
     expect(fs.readFileSync(path.join(plexus, "start.st"), "utf8")).toBe(startScript({ telemetry: true }));
   });
 
+  it("says whether the server records its calls, as the start script wrote, and why not", async () => {
+    const cases: Array<[string[], string | undefined, unknown]> = [
+      [["telemetry=on"], undefined, { on: true }],
+      [["telemetry=off", "telemetry.reason=switch-failed", "telemetry.detail=Not configured"], undefined, { on: false, reason: "switch-failed", detail: "Not configured" }],
+      // No backend in an image whose create said why: that reason says what to do.
+      [["telemetry=off", "telemetry.reason=no-backend"], "telemetry=off\ntelemetry.reason=not-asked\n", { on: false, reason: "not-asked" }],
+      [["telemetry=off", "telemetry.reason=no-backend"], undefined, { on: false, reason: "no-backend" }],
+      [[], "telemetry=on\n", { on: true }],
+    ];
+    for (const [more, created, telemetry] of cases) {
+      const { launcher, plexus, context } = setup({ telemetry: true });
+      if (created !== undefined) {
+        fs.mkdirSync(plexus, { recursive: true });
+        fs.writeFileSync(path.join(plexus, "created.properties"), created);
+      }
+      launcher.launchAnswer = (input) => {
+        const vm = launcher.run(path.join(launcher.imageDir(input.imageName), `${input.imageName}.image`), { script: input.script! });
+        writeEndpoint(launcher.imageDir(input.imageName), { port: 7001, pid: vm.pid, more });
+        return launched(vm.pid, launcher.home);
+      };
+
+      expect((await start(context, "dev")).telemetry, more.join(" ")).toEqual(telemetry);
+    }
+  });
+
   it("starts it interactively when asked", async () => {
     const { launcher, context } = setup();
     expect((await start(context, "dev", { display: "interactive" })).display).toBe("interactive");
@@ -186,15 +211,19 @@ describe("start", () => {
     });
   });
 
-  it("refuses an image a VM already runs, naming it", async () => {
+  it("answers an image whose server already answers as it is, and launches nothing", async () => {
     const { launcher, dir, imagePath, context } = setup();
-    const vm = launcher.run(imagePath);
-    writeEndpoint(dir, { port: 7001, pid: vm.pid });
+    const vm = launcher.run(imagePath, { headless: false });
+    writeEndpoint(dir, { port: 7001, pid: vm.pid, more: ["telemetry=on"] });
 
-    await expect(start(context, "dev")).rejects.toMatchObject({
-      code: "image-running",
-      message: "Image dev is already running; its tools answer now.",
-      details: { pids: [vm.pid], endpoint: { url: "http://127.0.0.1:7001/", pid: vm.pid } },
+    expect(await start(context, "dev")).toEqual({
+      name: "dev",
+      pids: [vm.pid],
+      endpoint: { url: "http://127.0.0.1:7001/", pid: vm.pid },
+      display: "interactive",
+      seconds: 0,
+      telemetry: { on: true },
+      alreadyRunning: true,
     });
     expect(launcher.called("startImage")).toEqual([]);
   });

@@ -149,6 +149,27 @@ describe("the command's SDK", () => {
     ]);
   });
 
+  it("takes no parent from the environment in a process that serves, whose requests name their own", async () => {
+    const { endpoint, received } = await collector();
+    vi.stubEnv("OTEL_EXPORTER_OTLP_ENDPOINT", endpoint);
+    vi.stubEnv("OTEL_EXPORTER_OTLP_PROTOCOL", "http/json");
+    vi.stubEnv("TRACEPARENT", "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01");
+    vi.stubEnv("BAGGAGE", "sentry-environment=production");
+
+    const telemetry = await startTelemetry(process.env, { longLived: true });
+    const baggage = telemetry.within(() => propagation.getBaggage(context.active()));
+    await telemetry.within(() => inSpan("tools/call image_list", SpanKind.SERVER, {}, async () => undefined));
+    await telemetry.shutdown();
+
+    expect(baggage).toBeUndefined();
+    const sent = JSON.parse(received[0].body.toString("utf8")) as {
+      resourceSpans: Array<{ scopeSpans: Array<{ spans: Array<{ traceId: string; parentSpanId?: string }> }> }>;
+    };
+    const [span] = sent.resourceSpans[0].scopeSpans[0].spans;
+    expect(span.traceId).not.toBe("4bf92f3577b34da6a3ce929d0e0e4736");
+    expect(span.parentSpanId ?? "").toBe("");
+  });
+
   it("sends protobuf unless told otherwise", async () => {
     const { endpoint, received } = await collector();
     vi.stubEnv("OTEL_EXPORTER_OTLP_ENDPOINT", endpoint);

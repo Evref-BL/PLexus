@@ -41,17 +41,68 @@ describe("the telemetry settings file", () => {
     });
   });
 
-  it("is applied only to an environment without settings of its own", () => {
-    const file = fileHolding("OTEL_EXPORTER_OTLP_ENDPOINT=https://c.test\n");
-    const bare: NodeJS.ProcessEnv = {};
-    expect(applySettingsFile(bare, file)).toEqual({ OTEL_EXPORTER_OTLP_ENDPOINT: "https://c.test" });
-    expect(bare.OTEL_EXPORTER_OTLP_ENDPOINT).toBe("https://c.test");
+  it("reads lines ending in LF, CRLF or a lone CR, as a Pharo image writes them", () => {
+    const expected = { OTEL_EXPORTER_OTLP_ENDPOINT: "http://127.0.0.1:4318", OTEL_SERVICE_NAME: "x" };
+    for (const ending of ["\n", "\r\n", "\r"]) {
+      expect(
+        parseSettings(["# settings", "OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318", "OTEL_SERVICE_NAME=x", ""].join(ending)),
+        JSON.stringify(ending),
+      ).toEqual(expected);
+    }
+    expect(parseSettings("OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318\rOTEL_SERVICE_NAME=x\r\nOTEL_LOG_LEVEL=none\n")).toEqual({
+      ...expected,
+      OTEL_LOG_LEVEL: "none",
+    });
+  });
 
+  it("reads a comment after a value as dotenv does, and keeps a # in quotes", () => {
+    expect(
+      parseSettings(
+        [
+          "OTEL_TRACES_EXPORTER = otlp # trailing",
+          "OTEL_EXPORTER_OTLP_HEADERS=\"a=b # c\" # the header",
+          "OTEL_SERVICE_NAME='x#y'",
+          "OTEL_RESOURCE_ATTRIBUTES=a=b#c",
+          "OTEL_LOG_LEVEL= # none given",
+          "OTEL_EXPORTER_OTLP_PROTOCOL=\"http/json",
+        ].join("\n"),
+      ),
+    ).toEqual({
+      OTEL_TRACES_EXPORTER: "otlp",
+      OTEL_EXPORTER_OTLP_HEADERS: "a=b # c",
+      OTEL_SERVICE_NAME: "x#y",
+      OTEL_RESOURCE_ATTRIBUTES: "a=b#c",
+      OTEL_LOG_LEVEL: "",
+      OTEL_EXPORTER_OTLP_PROTOCOL: "\"http/json",
+    });
+  });
+
+  it("replaces every OTEL_* the environment inherited when it gives settings", () => {
+    const file = fileHolding("OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4701\nOTEL_EXPORTER_OTLP_PROTOCOL=http/json\n");
+    const host: NodeJS.ProcessEnv = {
+      PATH: "/bin",
+      OTEL_EXPORTER_OTLP_ENDPOINT: "https://host-collector.test",
+      OTEL_EXPORTER_OTLP_PROTOCOL: "grpc",
+      OTEL_EXPORTER_OTLP_HEADERS: "authorization=host",
+      OTEL_METRICS_EXPORTER: "otlp",
+    };
+
+    expect(applySettingsFile(host, file)).toEqual({
+      OTEL_EXPORTER_OTLP_ENDPOINT: "http://127.0.0.1:4701",
+      OTEL_EXPORTER_OTLP_PROTOCOL: "http/json",
+    });
+    expect(host).toEqual({
+      PATH: "/bin",
+      OTEL_EXPORTER_OTLP_ENDPOINT: "http://127.0.0.1:4701",
+      OTEL_EXPORTER_OTLP_PROTOCOL: "http/json",
+    });
+  });
+
+  it("leaves the environment to decide when there is no file, or one that gives no settings", () => {
     const own: NodeJS.ProcessEnv = { OTEL_SERVICE_NAME: "mine" };
-    expect(applySettingsFile(own, file)).toEqual({});
-    expect(own.OTEL_EXPORTER_OTLP_ENDPOINT).toBeUndefined();
-
-    expect(applySettingsFile({}, path.join(os.tmpdir(), "no-such-dir", "otel.env"))).toEqual({});
+    expect(applySettingsFile(own, path.join(os.tmpdir(), "no-such-dir", "otel.env"))).toEqual({});
+    expect(applySettingsFile(own, fileHolding("# left\n\nPATH=/elsewhere\n"))).toEqual({});
+    expect(own).toEqual({ OTEL_SERVICE_NAME: "mine" });
   });
 });
 
@@ -66,13 +117,18 @@ describe("the images' OpenTelemetry diagnostics", () => {
     applySettingsFile(joined, file);
     quietImageDiagnostics(joined);
     expect(joined.OTEL_LOG_LEVEL).toBe("debug");
+
+    const host: NodeJS.ProcessEnv = { OTEL_LOG_LEVEL: "debug" };
+    applySettingsFile(host, fileHolding("OTEL_EXPORTER_OTLP_ENDPOINT=https://c.test\n"));
+    quietImageDiagnostics(host);
+    expect(host.OTEL_LOG_LEVEL).toBe("none");
   });
 });
 
 const cli = fileURLToPath(new URL("../../dist/cli.js", import.meta.url));
 
 describe("the plexus command", () => {
-  it("sends its spans where the settings file says, when its environment says nothing", async () => {
+  it("sends its spans where the settings file says, whatever OTEL_* its environment inherited", async () => {
     const bodies: string[] = [];
     const server = http.createServer((request, response) => {
       let body = "";
@@ -92,9 +148,16 @@ describe("the plexus command", () => {
         `OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:${(server.address() as AddressInfo).port}\nOTEL_EXPORTER_OTLP_PROTOCOL=http/json\n`,
       );
       const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith("OTEL_") && key !== "PLEXUS_TELEMETRY"));
+      // What an agent host monitored with OpenTelemetry passes to the servers it starts.
+      const host = {
+        OTEL_EXPORTER_OTLP_ENDPOINT: "http://127.0.0.1:9",
+        OTEL_EXPORTER_OTLP_PROTOCOL: "grpc",
+        OTEL_TRACES_EXPORTER: "otlp",
+        OTEL_METRICS_EXPORTER: "otlp",
+      };
       const status = await new Promise<number | null>((resolve) => {
         const child = spawn(process.execPath, [cli, "image", "stop", "no-such-image", "--home", home], {
-          env: { ...env, XDG_CONFIG_HOME: config, XDG_CACHE_HOME: home },
+          env: { ...env, ...host, XDG_CONFIG_HOME: config, XDG_CACHE_HOME: home },
           stdio: "ignore",
         });
         child.on("close", resolve);

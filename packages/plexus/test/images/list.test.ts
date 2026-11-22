@@ -1,10 +1,12 @@
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { PlexusError } from "../../src/errors.js";
-import { list } from "../../src/images/list.js";
+import { answeringFromEndpoints, list } from "../../src/images/list.js";
 import {
   FakeLauncher,
+  imagesWith,
   tempHome,
   testContext,
   writeEndpoint,
@@ -25,6 +27,25 @@ function imagePath(launcher: FakeLauncher, disk: string): string {
 }
 
 describe("list", () => {
+  it("says whether each image records its calls: running, as its start said, else as its create did", async () => {
+    const { home, launcher } = store(["running", "stopped", "older"]);
+    const plexus = (name: string) => path.join(launcher.imageDir(name), "plexus");
+    for (const name of ["running", "stopped"]) {
+      fs.mkdirSync(plexus(name), { recursive: true });
+      fs.writeFileSync(
+        path.join(plexus(name), "created.properties"),
+        "mcp=pin:4.2.1\ntelemetry=off\ntelemetry.reason=base-failed\ntelemetry.detail=offline\n",
+      );
+    }
+    const vm = launcher.run(imagePath(launcher, "running"), { script: path.join(plexus("running"), "start.st") });
+    writeEndpoint(launcher.imageDir("running"), { port: 7001, pid: vm.pid, more: ["telemetry=on"] });
+
+    const [older, running, stopped] = await list(testContext(home, launcher));
+    expect(running.telemetry).toEqual({ on: true });
+    expect(stopped.telemetry).toEqual({ on: false, reason: "base-failed", detail: "offline" });
+    expect(older).not.toHaveProperty("telemetry");
+  });
+
   it("lists the image directories in scope, without the scope", async () => {
     const { home, launcher } = store(["Scope-dev", "Scope-mcp-eval", "Other-dev", "plexus-build-1a2b3c4d"]);
     fs.mkdirSync(launcher.imageDir("Scope-incomplete"), { recursive: true });
@@ -183,6 +204,61 @@ describe("list", () => {
       expect(row.state).toBe("stopped");
       expect(row.endpoint).toBeUndefined();
       expect(row.endpointProblem).toBeUndefined();
+    });
+  });
+
+  describe("where a forwarded call goes, from the endpoint files alone", () => {
+    /** A store whose image dev runs as a live process: this test's own. */
+    function answeringDev(names = ["dev"]) {
+      const { home, launcher } = store(names);
+      launcher.nextPid = process.pid;
+      launcher.run(imagePath(launcher, "dev"), { script: path.join(launcher.imageDir("dev"), "plexus", "start.st") });
+      writeEndpoint(launcher.imageDir("dev"), { port: 7001, pid: process.pid });
+      return { home, launcher, context: testContext(home, launcher) };
+    }
+    const dev = { name: "dev", endpoint: { url: "http://127.0.0.1:7001/", pid: process.pid } };
+
+    it("is the image whose VM an earlier look saw, while it runs, without asking the host", () => {
+      const { launcher, context } = answeringDev(["dev", "idle"]);
+      const seen = new Map([["dev", process.pid]]);
+
+      expect(answeringFromEndpoints(context, seen, "dev")).toEqual(dev);
+      expect(answeringFromEndpoints(context, seen)).toEqual(dev);
+      expect(launcher.called("listProcesses")).toHaveLength(0);
+    });
+
+    it("is left to a full look for a VM no look saw, a VM gone, another image answering, or an image being made", () => {
+      const { launcher, context } = answeringDev(["dev", "other"]);
+      expect(answeringFromEndpoints(context, new Map(), "dev")).toBeUndefined();
+
+      const seen = new Map([["dev", process.pid]]);
+      writeEndpoint(launcher.imageDir("other"), { port: 7002, pid: process.ppid });
+      expect(answeringFromEndpoints(context, seen)).toBeUndefined();
+      expect(answeringFromEndpoints(context, seen, "dev")).toEqual(dev);
+
+      fs.writeFileSync(path.join(launcher.imageDir("dev"), "plexus", "building"), "");
+      expect(answeringFromEndpoints(context, seen, "dev")).toBeUndefined();
+      fs.rmSync(path.join(launcher.imageDir("dev"), "plexus", "building"));
+
+      const gone = spawnSync(process.execPath, ["-e", ""]).pid;
+      writeEndpoint(launcher.imageDir("dev"), { port: 7001, pid: gone });
+      seen.set("dev", gone);
+      expect(answeringFromEndpoints(context, seen, "dev")).toBeUndefined();
+      expect(answeringFromEndpoints(context, seen, "missing")).toBeUndefined();
+    });
+
+    it("trusts only a VM a look of the same Images saw answering", async () => {
+      const { home, launcher } = answeringDev();
+      const images = imagesWith({ home, launcher });
+      expect(images.answering("dev")).toBeUndefined();
+
+      await images.list();
+      expect(images.answering("dev")).toEqual(dev);
+      expect(images.answering()).toEqual(dev);
+
+      launcher.processes = [];
+      await images.list("dev");
+      expect(images.answering("dev")).toBeUndefined();
     });
   });
 
