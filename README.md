@@ -195,7 +195,9 @@ is set. Pharo MCP reads the same file; the library reads none.
 `telemetry` option, enrolls the images PLexus handles in OpenTelemetry:
 
 - a create without a script loads MCP's `Telemetry` group beside the rest,
-  into a base of its own; a create with a script loads what its script loads;
+  into a base of its own; when that base cannot be built, offline for one,
+  the create copies the base without it, and the image is not traced. A
+  create with a script loads what its script loads;
 - a start switches the image's MCP server to its OpenTelemetry backend when it
   has one, and starts it as it is otherwise. The VM runs in PLexus's
   environment, so the image reads the same `OTEL_*` variables.
