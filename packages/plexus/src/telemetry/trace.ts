@@ -11,6 +11,7 @@ import {
   SpanStatusCode,
   trace,
   type Attributes,
+  type Context,
   type Span,
   type SpanKind,
 } from "@opentelemetry/api";
@@ -106,6 +107,12 @@ export function withTraceContext(
   }
   const meta = isRecord(params?._meta) ? params._meta : {};
   return { ...params, _meta: { ...meta, ...carrier } };
+}
+
+/** The context with `key` set to `value` in its baggage, beside the entries it has. */
+export function withBaggageEntry(active: Context, key: string, value: string): Context {
+  const baggage = propagation.getBaggage(active) ?? propagation.createBaggage();
+  return propagation.setBaggage(active, baggage.setEntry(key, { value }));
 }
 
 /** The trace context a request's `_meta` names, as the parent of what answers it. */

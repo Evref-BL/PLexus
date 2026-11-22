@@ -134,16 +134,27 @@ until the program running PLexus installs an SDK:
 - each request forwarded to an image is a CLIENT span named after its method
   and tool (`tools/call class_get`), with the attributes of the OpenTelemetry
   MCP conventions, and passes its trace context to the image in the request's
-  `params._meta` (`traceparent`, `tracestate`, `baggage`);
+  `params._meta` (`traceparent`, `tracestate`, `baggage`); a request a call
+  of `plexus mcp` forwards carries that call's `session.id` in its baggage;
 - making, starting, stopping and deleting an image are INTERNAL spans,
   `plexus.image.create`, `.start`, `.stop` and `.delete`;
 - each tool call `plexus mcp` serves is a SERVER span, `tools/call <tool>`,
-  child of the trace context its `_meta` carries, with `session.id` (random,
-  one per server process, so one per host connection), the host's
-  `clientInfo` as `plexus.client.name` and `.version`, and the names of the
-  arguments given (`plexus.argument.names`) and of those an image tool does
-  not take (`plexus.argument.unknown_names`); an error answer fails it as
-  `tool_error`.
+  child of the trace context its `_meta` carries, with `session.id`,
+  `plexus.call.index`, `plexus.call.forwarded`, the host's `clientInfo` as
+  `plexus.client.name` and `.version`, and the names of the arguments given
+  (`plexus.argument.names`) and of those an image tool does not take
+  (`plexus.argument.unknown_names`); an error answer fails it as
+  `tool_error`:
+  - `session.id` is random, kept by the server process, and renewed when a
+    call comes after 30 minutes in which no call ran;
+  - `plexus.call.index` is the call's place in its session, from 1;
+  - `plexus.call.forwarded` is true for a call to an image's tool, false for
+    one of the image tools;
+  - `plexus.error.code` says why `plexus mcp` answered an error of its own,
+    before any image saw the call: `invalid-arguments`, `no-image-running`,
+    `several-images` (the call must name one), `none-takes-calls`, the
+    `code` an image tool's refusal carries, as the command's do, or
+    `_OTHER`.
 
 A span records names, outcomes and an error's kind (`error.type`), never an
 argument, a result, a message, an image's name, a path or an address.

@@ -7,7 +7,7 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import { context, propagation, SpanKind, SpanStatusCode, trace } from "@opentelemetry/api";
 import { AsyncLocalStorageContextManager } from "@opentelemetry/context-async-hooks";
-import { W3CTraceContextPropagator } from "@opentelemetry/core";
+import { CompositePropagator, W3CBaggagePropagator, W3CTraceContextPropagator } from "@opentelemetry/core";
 import { InMemorySpanExporter, SimpleSpanProcessor, TracerProvider } from "@opentelemetry/sdk-trace";
 import { describe, expect, it } from "vitest";
 import * as texts from "../../src/answers/texts.js";
@@ -16,11 +16,35 @@ import { PlexusError } from "../../src/errors.js";
 import { callWaitMs } from "../../src/forward/index.js";
 import {
   createPlexusMcpServer,
+  sessionIdleMs,
   type ForwardOptions,
   type ImagesApi,
   type PlexusMcpServerOptions,
 } from "../../src/mcp/server.js";
+import { withTraceContext } from "../../src/telemetry/trace.js";
 import type { CreateOptions, Endpoint, ImageInfo, StartOptions, StopOptions } from "../../src/types.js";
+
+/** Records what each test's spans are, through an SDK registered as an application registers one. */
+function recordSpans(): { exporter: InMemorySpanExporter; end(): void } {
+  const exporter = new InMemorySpanExporter();
+  context.setGlobalContextManager(new AsyncLocalStorageContextManager().enable());
+  propagation.setGlobalPropagator(
+    new CompositePropagator({ propagators: [new W3CTraceContextPropagator(), new W3CBaggagePropagator()] }),
+  );
+  trace.setGlobalTracerProvider(new TracerProvider({ spanProcessors: [new SimpleSpanProcessor({ exporter })] }));
+  return {
+    exporter,
+    end: () => {
+      trace.disable();
+      propagation.disable();
+      context.disable();
+    },
+  };
+}
+
+function servedSpans(exporter: InMemorySpanExporter) {
+  return exporter.getFinishedSpans().filter((span) => span.kind === SpanKind.SERVER);
+}
 
 function row(
   name: string,
@@ -102,9 +126,11 @@ async function connect(
   answer: NonNullable<PlexusMcpServerOptions["callTool"]> = async (_endpoint, name) => ({
     content: [{ type: "text", text: `${name} answered` }],
   }),
+  extra: Partial<PlexusMcpServerOptions> = {},
 ) {
   const forwarded: Forwarded[] = [];
   const server = createPlexusMcpServer({
+    ...extra,
     images,
     listTools: async (endpoint) => {
       const tools = toolsByUrl[endpoint.url];
@@ -447,6 +473,8 @@ describe("plexus mcp", () => {
         "gen_ai.tool.name": "class_get",
         "network.transport": "pipe",
         "session.id": expect.stringMatching(/^[0-9a-f-]{36}$/),
+        "plexus.call.index": 1,
+        "plexus.call.forwarded": true,
         "plexus.client.name": "test",
         "plexus.client.version": "1.0.0",
         "plexus.argument.names": ["name"],
@@ -456,12 +484,128 @@ describe("plexus mcp", () => {
       expect(refused.attributes["plexus.argument.names"]).toEqual(["name", "secretFlag"]);
       expect(refused.attributes["plexus.argument.unknown_names"]).toEqual(["secretFlag"]);
       expect(refused.attributes["session.id"]).toBe(forwarded.attributes["session.id"]);
+      expect(refused.attributes["plexus.call.index"]).toBe(2);
+      expect(refused.attributes["plexus.call.forwarded"]).toBe(false);
+      expect(refused.attributes["plexus.error.code"]).toBe("invalid-arguments");
+      expect(forwarded.attributes).not.toHaveProperty("plexus.error.code");
       expect(other.attributes["session.id"]).not.toBe(forwarded.attributes["session.id"]);
+      expect(other.attributes["plexus.call.index"]).toBe(1);
       expect(JSON.stringify(served.map((span) => span.attributes))).not.toMatch(/SecretClass|\/Users\/ada|dev/);
     } finally {
       trace.disable();
       propagation.disable();
       context.disable();
+    }
+  });
+
+  it("opens a new session after thirty minutes without a call, and counts calls within one from 1", async () => {
+    const recording = recordSpans();
+    try {
+      let now = Date.UTC(2026, 10, 22, 9);
+      const slow = { release: () => undefined as void };
+      let started = () => undefined as void;
+      const running = new Promise<void>((resolve) => (started = resolve));
+      const { call } = await connect(
+        new FakeImages([row("dev", { port: 7001 })]),
+        {},
+        async (_endpoint, name) => {
+          if (name === "test_run") {
+            await new Promise<void>((resolve) => {
+              slow.release = resolve;
+              started();
+            });
+          }
+          return { content: [{ type: "text", text: "done" }] };
+        },
+        { now: () => now },
+      );
+
+      await call("image_list");
+      now += sessionIdleMs - 1;
+      await call("image_list");
+      const slowCall = call("test_run");
+      await running;
+      // A call that runs longer than the idle time keeps its session open.
+      now += 2 * sessionIdleMs;
+      await call("image_list");
+      slow.release();
+      await slowCall;
+      now += sessionIdleMs;
+      await call("image_list");
+
+      const spans = servedSpans(recording.exporter);
+      const longCall = spans.find((span) => span.name === "tools/call test_run")!;
+      const inSession = (same: boolean) =>
+        spans
+          .filter((span) => (span.attributes["session.id"] === longCall.attributes["session.id"]) === same)
+          .map((span) => [span.name, span.attributes["plexus.call.index"]])
+          .sort((a, b) => Number(a[1]) - Number(b[1]));
+      expect(inSession(true)).toEqual([
+        ["tools/call image_list", 1],
+        ["tools/call image_list", 2],
+        ["tools/call test_run", 3],
+        ["tools/call image_list", 4],
+      ]);
+      expect(inSession(false)).toEqual([["tools/call image_list", 1]]);
+    } finally {
+      recording.end();
+    }
+  });
+
+  it("sends the session in the baggage of what a call forwards, beside the host's own entries", async () => {
+    const recording = recordSpans();
+    try {
+      const metas: unknown[] = [];
+      const { client } = await connect(new FakeImages([row("dev", { port: 7001 })]), {}, async () => {
+        metas.push(withTraceContext({})?._meta);
+        return { content: [] };
+      });
+
+      await client.callTool({
+        name: "class_get",
+        arguments: {},
+        _meta: { traceparent: "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01", baggage: "run=r1" },
+      });
+
+      const [span] = servedSpans(recording.exporter);
+      expect(metas).toEqual([
+        {
+          traceparent: expect.stringMatching(/^00-4bf92f3577b34da6a3ce929d0e0e4736-[0-9a-f]{16}-01$/),
+          baggage: `run=r1,session.id=${String(span.attributes["session.id"])}`,
+        },
+      ]);
+    } finally {
+      recording.end();
+    }
+  });
+
+  it("says why it refused a call before any image saw it, by a code of its own", async () => {
+    const recording = recordSpans();
+    try {
+      const images = new FakeImages([]);
+      const { call } = await connect(images);
+
+      await call("class_get");
+      images.rows = [row("a", { port: 7001 }), row("b", { port: 7002 })];
+      await call("class_get");
+      await call("class_get", { image: 3 });
+      await call("class_get", { image: "gone" });
+      images.rows = [row("a", { running: true, problem: "no endpoint" }), row("b", { running: true, problem: "no endpoint" })];
+      await call("class_get");
+      await call("image_start", { name: "broken" });
+      await call("image_list", { name: "a" });
+
+      expect(servedSpans(recording.exporter).map((span) => span.attributes["plexus.error.code"])).toEqual([
+        "no-image-running",
+        "several-images",
+        "invalid-arguments",
+        "no-such-image",
+        "none-takes-calls",
+        "start-failed",
+        undefined,
+      ]);
+    } finally {
+      recording.end();
     }
   });
 
