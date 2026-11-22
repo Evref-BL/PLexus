@@ -77,6 +77,20 @@ jobs:
           if [[ "$current_version" == "$LAUNCHER_VERSION" ]]; then
             exit 0
           fi
+          # The registry lists a version before it serves its tarball, for minutes
+          # at times, and installing it in between fails with a 404.
+          wait_for_npm() {
+            for attempt in $(seq 60); do
+              tarball="$(npm view "$1" dist.tarball 2>/dev/null || true)"
+              if [[ -n "$tarball" ]] && curl -fsI -o /dev/null "$tarball"; then
+                return 0
+              fi
+              sleep 10
+            done
+            echo "npm does not serve $1 after ten minutes."
+            return 1
+          }
+          wait_for_npm "@evref-bl/pharo-launcher-mcp@${LAUNCHER_VERSION}"
           # Exact, never a range: nothing in the stack publishes a lockfile, so
           # a range is resolved fresh on every user's machine.
           npm pkg set "dependencies.@evref-bl/pharo-launcher-mcp=${LAUNCHER_VERSION}" \
