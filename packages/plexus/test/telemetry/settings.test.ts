@@ -6,7 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
-import { applySettingsFile, parseSettings, settingsFile } from "../../src/telemetry/settings.js";
+import { applySettingsFile, parseSettings, quietImageDiagnostics, settingsFile } from "../../src/telemetry/settings.js";
 
 const directories: string[] = [];
 afterEach(() => {
@@ -52,6 +52,20 @@ describe("the telemetry settings file", () => {
     expect(own.OTEL_EXPORTER_OTLP_ENDPOINT).toBeUndefined();
 
     expect(applySettingsFile({}, path.join(os.tmpdir(), "no-such-dir", "otel.env"))).toEqual({});
+  });
+});
+
+describe("the images' OpenTelemetry diagnostics", () => {
+  it("are off unless the environment, the settings file's included, sets a level", () => {
+    const bare: NodeJS.ProcessEnv = {};
+    quietImageDiagnostics(bare);
+    expect(bare).toEqual({ OTEL_LOG_LEVEL: "none" });
+
+    const file = fileHolding("OTEL_EXPORTER_OTLP_ENDPOINT=https://c.test\nOTEL_LOG_LEVEL=debug\n");
+    const joined: NodeJS.ProcessEnv = {};
+    applySettingsFile(joined, file);
+    quietImageDiagnostics(joined);
+    expect(joined.OTEL_LOG_LEVEL).toBe("debug");
   });
 });
 

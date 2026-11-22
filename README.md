@@ -196,11 +196,14 @@ unless `PLEXUS_TELEMETRY` is set. The library reads no file.
 
 - a create without a script loads MCP's `Telemetry` group beside the rest,
   into a base of its own; when that base cannot be built, offline for one,
-  the create copies the base without it, and the image is not traced. A
-  create with a script loads what its script loads;
+  the create copies the base without it, and the image is not traced. Creates
+  then copy the base without it for a day before trying again, or until the
+  pin changes. A create with a script loads what its script loads;
 - a start switches the image's MCP server to its OpenTelemetry backend when it
   has one, and starts it as it is otherwise. The VM runs in PLexus's
-  environment, so the image reads the same `OTEL_*` variables.
+  environment, so the image reads the same `OTEL_*` variables. The `plexus`
+  command sets `OTEL_LOG_LEVEL` to `none` there unless it is set, so that the
+  image's OpenTelemetry SDK writes nothing to the VM's output.
 
 ## Library
 
