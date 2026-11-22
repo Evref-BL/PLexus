@@ -70,7 +70,8 @@ stdout; a refusal is `{"ok":false,"code":...,"error":...}` with exit status 1.
   already answers is left as it is, and answered the same way with
   `alreadyRunning: true`; one a VM runs that does not answer is refused
   (`image-running`). It fails as soon as the VM reports a failure or exits,
-  naming the launcher's logs. It never creates: a missing image is refused.
+  naming the launcher's logs, which the launcher keeps for the image's last
+  few starts. It never creates: a missing image is refused.
 - **stop** does not save: the image starts again as it was last saved. The
   image is asked to quit, by evaluating `Smalltalk snapshot: false andQuit:
   true` with the `evaluate` tool its MCP server lists, so that it does what it
@@ -83,8 +84,9 @@ stdout; a refusal is `{"ok":false,"code":...,"error":...}` with exit status 1.
   lists no evaluate tool. Evaluating `Smalltalk saveSession`
   in the image saves it without stopping it. An image that is not running is
   already stopped.
-- **delete** removes the image's directory, and refuses while a VM runs it or
-  a create or a start is still at work on it.
+- **delete** removes the image's directory and the launcher's logs of its
+  starts, and refuses while a VM runs it or a create or a start is still at
+  work on it.
 - **list** shows each image, its state, its pids, its endpoint, its
   template, Pharo version, how MCP got into it, and whether it records its
   calls when that is known (see [Telemetry](#telemetry)). It pings nothing and

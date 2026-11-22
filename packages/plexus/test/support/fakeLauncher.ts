@@ -131,6 +131,16 @@ export class FakeLauncher implements LauncherPort {
     return launched(vm.pid, this.home);
   }
 
+  /** Throws this instead of deleting nothing. */
+  deleteLogsFailure?: Error;
+
+  deleteLaunchLogs(input: { imageName: string }): void {
+    this.calls.push({ method: "deleteLaunchLogs", input });
+    if (this.deleteLogsFailure) {
+      throw this.deleteLogsFailure;
+    }
+  }
+
   async listProcesses(): Promise<LauncherCommandResult<LauncherProcess[]>> {
     this.calls.push({ method: "listProcesses", input: undefined });
     return ok([...this.processes]);
