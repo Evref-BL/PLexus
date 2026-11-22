@@ -303,6 +303,23 @@ describe("create without a script", () => {
     expect(launcher.called("createImage")).toHaveLength(1);
   });
 
+  it("with telemetry, uses the base without it when the base with it cannot be built", async () => {
+    const { home, launcher, context } = setup();
+    writeBase(home, key);
+    launcher.prepareAnswer = (input: ImageStartInput) => {
+      fs.writeFileSync(
+        path.join(path.dirname(input.script!), "prepare-status.properties"),
+        "status=failed\rmessage=Error: Could not resolve: BaselineOfOpenTelemetry\r",
+      );
+      return failed("exit 1");
+    };
+
+    const created = await create({ ...context, telemetry: true }, "dev", { ...options });
+    expect(created).toMatchObject({ name: "dev", state: "stopped", fromBase: true });
+    expect(fs.existsSync(created.path)).toBe(true);
+    expect(listing(basesRoot(home))).toEqual([key]);
+  });
+
   it("removes the bases of other pins once it built one", async () => {
     const { home, context } = setup();
     writeBase(home, "pharo-13-0-64bit-0a1b2c3d-mcp-3.6.0");

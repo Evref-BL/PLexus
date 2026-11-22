@@ -52,14 +52,32 @@ export function newBuild(context: ImagesContext, name: string): ImageFiles {
 /**
  * The base for this template, built first when there is none. `built` says
  * whether this call built the one it answers. With telemetry it is the base
- * that holds MCP's `Telemetry` group, a base of its own.
+ * that holds MCP's `Telemetry` group, a base of its own, unless that one
+ * cannot be built: telemetry never fails a create, so the base without it
+ * serves, and the image is not traced.
  */
 export async function ensureBase(
   context: ImagesContext,
   template: { name: string; category: string },
   pin: string,
 ): Promise<{ dir: string; built: boolean }> {
-  const key = baseKey(template.name, template.category, pin, context.telemetry);
+  if (!context.telemetry) {
+    return ensureBaseHolding(context, template, pin, false);
+  }
+  try {
+    return await ensureBaseHolding(context, template, pin, true);
+  } catch {
+    return ensureBaseHolding(context, template, pin, false);
+  }
+}
+
+async function ensureBaseHolding(
+  context: ImagesContext,
+  template: { name: string; category: string },
+  pin: string,
+  telemetry: boolean,
+): Promise<{ dir: string; built: boolean }> {
+  const key = baseKey(template.name, template.category, pin, telemetry);
   const dir = path.join(basesRoot(context.home), key);
   const isBase = () => isFile(path.join(dir, `${baseFileName}.image`));
   if (isBase()) {
@@ -70,7 +88,7 @@ export async function ensureBase(
   try {
     const failure =
       (await createFromTemplate(context, build, template)) ??
-      (await prepare(context, build, { kind: "pin", version: pin, telemetry: context.telemetry }));
+      (await prepare(context, build, { kind: "pin", version: pin, telemetry }));
     if (failure !== undefined) {
       throw new PlexusError(
         "create-failed",
