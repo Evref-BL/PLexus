@@ -45,9 +45,6 @@ export async function prepare(
     script: files.prepareScript,
     detached: false,
     displayMode: "headless",
-    // The VM's output and the launcher's report of which VM it ran: a VM that
-    // cannot run an image says there how to renew it.
-    includeRaw: true,
   });
   const status = readProperties(files.prepareStatus);
   if (result.ok && status?.status === "ok") {

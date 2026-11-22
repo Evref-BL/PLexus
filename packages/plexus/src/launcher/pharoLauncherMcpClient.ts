@@ -5,6 +5,7 @@
 import fs from "node:fs";
 import {
   openPharoLauncher,
+  type LauncherLaunchReport,
   type PharoLauncher,
 } from "@evref-bl/pharo-launcher-mcp/launcher";
 import { homeProfileEnvironment } from "./pharoLauncherProfile.js";
@@ -89,34 +90,25 @@ export function launcherFailureMessage(
   return renewal ? `${message}\n${renewal}` : message;
 }
 
-// A launch that waited for its VM has the VM's output in the raw result,
-// after the launcher's own report of which VM it ran.
+/** The launcher's report of what a start ran: which VM, its pid, its logs, its output. */
+export function launchOf(result: unknown): LauncherLaunchReport | undefined {
+  return isRecord(result) && isRecord(result.launch)
+    ? (result.launch as LauncherLaunchReport)
+    : undefined;
+}
+
+// A launch that waited for its VM reports what the VM wrote.
 function waitedLaunchRenewalHint(payload: unknown): string | undefined {
-  if (!isRecord(payload) || !isRecord(payload.raw)) {
-    return undefined;
-  }
-  const { stdout, stderr } = payload.raw;
-  const report = typeof stdout === "string" ? stdout : "";
-  return vmRenewalHint(`${report}\n${typeof stderr === "string" ? stderr : ""}`, report);
+  const launch = launchOf(payload);
+  return launch?.by === "vm" && launch.output
+    ? vmRenewalHint(`${launch.output.stdout}\n${launch.output.stderr}`, launch)
+    : undefined;
 }
 
-/** The launcher's report of a launch: which VM, which pid, which logs. */
-export function launchReport(result: unknown): string {
-  if (!isRecord(result)) {
-    return "";
-  }
-  if (isRecord(result.raw) && typeof result.raw.stdout === "string") {
-    return result.raw.stdout;
-  }
-  return isRecord(result.data) && typeof result.data.message === "string"
-    ? result.data.message
-    : "";
-}
-
-/** The VM a detached launch started, as the launcher reports its pid. */
+/** The VM a detached launch started. */
 export function launchedPid(result: unknown): number | undefined {
-  const pid = /^Detached profile-scoped Pharo image pid (\d+)\./m.exec(launchReport(result))?.[1];
-  return pid === undefined ? undefined : Number(pid);
+  const launch = launchOf(result);
+  return launch?.by === "vm" ? launch.pid : undefined;
 }
 
 /**
@@ -124,15 +116,16 @@ export function launchedPid(result: unknown): number | undefined {
  * its errors first, then its output, each trimmed like a diagnostic.
  */
 export function launchOutputTail(result: unknown): string[] {
-  if (!isRecord(result) || !isRecord(result.raw)) {
+  const launch = launchOf(result);
+  if (launch?.by !== "vm" || !launch.output) {
     return [];
   }
-  const streams: Array<[string, unknown]> = [
-    ["Its error output ends with:", result.raw.stderr],
-    ["Its output ends with:", result.raw.stdout],
+  const streams: Array<[string, string]> = [
+    ["Its error output ends with:", launch.output.stderr],
+    ["Its output ends with:", launch.output.stdout],
   ];
   return streams.flatMap(([label, text]) => {
-    const trimmed = typeof text === "string" ? text.trim() : "";
+    const trimmed = text.trim();
     if (!trimmed) {
       return [];
     }
@@ -145,11 +138,8 @@ export function launchOutputTail(result: unknown): string[] {
 
 /** The log files a detached launch writes the VM's output to. */
 export function launchLogPaths(result: unknown): string[] {
-  const paths = launchReport(result)
-    .split(/\r?\n/)
-    .map((line) => /^(?:stdout|stderr):\s*(\S.*)$/.exec(line.trim())?.[1])
-    .filter((value): value is string => value !== undefined);
-  return [...new Set(paths)];
+  const logs = launchOf(result)?.logs;
+  return logs ? [...new Set([logs.stdout, logs.stderr])] : [];
 }
 
 /**
@@ -157,8 +147,8 @@ export function launchLogPaths(result: unknown): string[] {
  * when it stopped with its own fatal-error report, or nothing.
  */
 export function exitedLaunchHint(result: unknown, logPaths: readonly string[]): string | undefined {
-  const report = launchReport(result);
-  return report ? vmRenewalHint(logPaths.map(logTail).join("\n"), report) : undefined;
+  const launch = launchOf(result);
+  return launch ? vmRenewalHint(logPaths.map(logTail).join("\n"), launch) : undefined;
 }
 
 // The end of a log, where a VM that stopped wrote why. A log that is gone says

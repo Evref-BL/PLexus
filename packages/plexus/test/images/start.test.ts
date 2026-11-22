@@ -60,7 +60,6 @@ describe("start", () => {
         detached: true,
         displayMode: "headless",
         script: path.join(plexus, "start.st"),
-        includeRaw: true,
       },
     ]);
     expect(fs.readFileSync(path.join(plexus, "start.st"), "utf8")).toBe(startScript());

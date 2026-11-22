@@ -74,7 +74,6 @@ export async function start(
       detached: true,
       displayMode: display,
       script: files.startScript,
-      includeRaw: true,
     });
     if (!launch.ok) {
       throw new PlexusError("start-failed", launcherFailureMessage("startImage", launch));

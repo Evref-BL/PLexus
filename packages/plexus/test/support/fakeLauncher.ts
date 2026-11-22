@@ -168,13 +168,19 @@ export class FakeLauncher implements LauncherPort {
 
 export function launched(pid: number, home: string): LauncherCommandResult {
   const logs = path.join(home, "profiles", "logs");
-  return ok(undefined, [
-    `Detached profile-scoped Pharo image pid ${pid}.`,
-    "vm: /vms/140-x64/Pharo",
-    "vmId: 140-x64",
-    `stdout: ${path.join(logs, "launch.out.log")}`,
-    `stderr: ${path.join(logs, "launch.err.log")}`,
-  ].join("\n"));
+  return {
+    ...ok(),
+    launch: {
+      by: "vm",
+      imagePath: path.join(home, "profiles", "images", "x", "x.image"),
+      displayMode: "headless",
+      vmPath: "/vms/140-x64/Pharo",
+      vmId: "140-x64",
+      vmUpdated: false,
+      pid,
+      logs: { stdout: path.join(logs, "launch.out.log"), stderr: path.join(logs, "launch.err.log") },
+    },
+  };
 }
 
 /** An image directory as the launcher makes one from a template. */

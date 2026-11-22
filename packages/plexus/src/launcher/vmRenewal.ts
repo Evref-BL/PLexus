@@ -10,28 +10,29 @@
  * error from another cause would remove a VM that running images use.
  */
 
+import type { LauncherLaunchReport } from "@evref-bl/pharo-launcher-mcp/launcher";
+
 // The Pharo VM's own report of a fatal error, printed before it exits, so
 // before any image code could have run.
 const vmFatalErrorBanner = "VM Error";
 
 /**
- * The VM slot a profile-scoped launch ran, from the launcher's report of it,
+ * The VM slot a launch ran, the directory of that VM under the profile's VMs,
  * and whether the launch installed that VM itself, which makes it the current
- * one.
+ * one. Only a launch that ran the VM itself names it.
  */
 export function launchedVmSlot(
-  launcherReport: string,
+  launch: LauncherLaunchReport | undefined,
 ): { vmId: string; slot: string; installedNow: boolean } | undefined {
-  const vmPath = /^vm: (.+)$/m.exec(launcherReport)?.[1]?.trim();
-  const vmId = /^vmId: (.+)$/m.exec(launcherReport)?.[1]?.trim();
-  if (!vmPath || !vmId) {
+  if (launch?.by !== "vm") {
     return undefined;
   }
+  const { vmPath, vmId } = launch;
   const match = new RegExp(`^(.*[\\\\/]${escapeRegExp(vmId)})[\\\\/]`).exec(vmPath);
   if (!match) {
     return undefined;
   }
-  return { vmId, slot: match[1], installedNow: /^vmUpdated: true$/m.test(launcherReport) };
+  return { vmId, slot: match[1], installedNow: launch.vmUpdated };
 }
 
 /**
@@ -39,16 +40,16 @@ export function launchedVmSlot(
  * nothing when the output shows no such report or the slot is unknown.
  *
  * @param vmOutput what the VM wrote before it stopped
- * @param launcherReport the launcher's report of the launch, naming the VM
+ * @param launch the launcher's report of the launch, naming the VM
  */
 export function vmRenewalHint(
   vmOutput: string,
-  launcherReport: string,
+  launch: LauncherLaunchReport | undefined,
 ): string | undefined {
   if (!vmOutput.includes(vmFatalErrorBanner)) {
     return undefined;
   }
-  const vm = launchedVmSlot(launcherReport);
+  const vm = launchedVmSlot(launch);
   if (!vm) {
     return undefined;
   }

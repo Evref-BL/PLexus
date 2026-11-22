@@ -117,7 +117,6 @@ describe("create without a script", () => {
         script: path.join(storeRoot(home), buildName, "plexus", "prepare.st"),
         detached: false,
         displayMode: "headless",
-        includeRaw: true,
       },
     ]);
     expect(prepareScript).toContain(`commitish: 'v${pin}'`);
@@ -204,10 +203,17 @@ describe("create without a script", () => {
     const { launcher, context } = setup();
     launcher.prepareAnswer = () => ({
       ...ok(),
-      raw: {
-        stdout: `Profile-scoped Pharo image launch.\n${"x".repeat(600)}Loaded nothing\n`,
-        stderr: "Error: eval failed: MessageNotUnderstood\n",
-        format: "text" as const,
+      launch: {
+        by: "vm" as const,
+        imagePath: "/images/dev/dev.image",
+        displayMode: "headless" as const,
+        vmPath: "/vms/140-x64/Pharo",
+        vmId: "140-x64",
+        vmUpdated: false,
+        output: {
+          stdout: `${"x".repeat(600)}Loaded nothing\n`,
+          stderr: "Error: eval failed: MessageNotUnderstood\n",
+        },
       },
     });
 
@@ -217,7 +223,6 @@ describe("create without a script", () => {
       "The preparation ended without saying whether MCP loaded.\nIts error output ends with:\nError: eval failed: MessageNotUnderstood\nIts output ends with:\n…",
     );
     expect(error.message).toContain("xLoaded nothing");
-    expect(error.message).not.toContain("Profile-scoped");
   });
 
   it("says what the launcher said when it could not make the image", async () => {
