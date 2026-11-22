@@ -176,7 +176,10 @@ until the program running PLexus installs an SDK:
   `plexus.client.name` and `.version`, and the names of the arguments given
   that the tool declares (`plexus.argument.names`) and of the others
   (`plexus.argument.unknown_names`), an image's tool declaring the arguments
-  its image lists and `image`; an error answer fails it as `tool_error`:
+  its image lists and `image`. A call to an image whose tools the host has not
+  listed fetches that listing beside it and, once answered, waits half a
+  second at most for it; without it, only `image` is named. An error answer
+  fails the span as `tool_error`:
   - `session.id` is random, kept by the server process, and renewed when a
     call comes after 30 minutes in which no call ran. Every span the call
     makes carries it, as does every span of a listing of the tools; every
@@ -263,7 +266,8 @@ unless `PLEXUS_TELEMETRY` is set. The library reads no file.
   command sets `OTEL_LOG_LEVEL` to `none` there unless it is set, so that the
   image's OpenTelemetry SDK writes nothing to the VM's output.
 
-Whether an image records its calls is kept with it: a create writes it in
+Whether an image records its calls, that is whether its MCP server records
+them through its OpenTelemetry backend, is kept with it: a create writes it in
 `created.properties`, and a start has the image write it in
 `endpoint.properties`. Create, start and list carry it as `telemetry`,
 `{"on":true}` or `{"on":false,"reason":...}`, for a running image what its
@@ -275,6 +279,10 @@ backend), or `switch-failed` (its server failed to switch, and `detail` says
 why). Enrolled, `plexus mcp` says it too: `image_list` marks an image that
 does not record its calls, and `image_create`, `image_start` and `image_list`
 naming an image say that it records them, or why not and what makes it.
+Recording is not sending: what an image sends, and where, its `OTEL_*`
+settings decide. When the settings of `plexus mcp` name no OTLP endpoint, its
+answers say that what an image records has nowhere named to go, instead of
+`on`.
 
 ## Library
 

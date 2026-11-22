@@ -10,7 +10,7 @@ function harness(env: NodeJS.ProcessEnv = {}) {
   const err: string[] = [];
   const opened: ImagesOptions[] = [];
   const calls: unknown[][] = [];
-  const served: Array<[ImagesApi, boolean]> = [];
+  const served: Array<[ImagesApi, boolean, boolean]> = [];
   const images: ImagesApi = {
     templates: async () => {
       calls.push(["templates"]);
@@ -46,8 +46,8 @@ function harness(env: NodeJS.ProcessEnv = {}) {
       opened.push(options);
       return images;
     },
-    serveMcp: async (served_, telemetry) => {
-      served.push([served_, telemetry]);
+    serveMcp: async (served_, telemetry, endpointNamed) => {
+      served.push([served_, telemetry, endpointNamed]);
     },
   };
   const run = (...argv: string[]) =>
@@ -235,10 +235,14 @@ describe("plexus", () => {
     const cli = harness({ PLEXUS_SCOPE: "Pharo4Agents" });
     expect(await cli.run("mcp")).toBe(0);
     expect(cli.opened).toEqual([{ scope: "Pharo4Agents" }]);
-    expect(cli.served.map(([, telemetry]) => telemetry)).toEqual([false]);
+    expect(cli.served.map(([, telemetry, endpointNamed]) => [telemetry, endpointNamed])).toEqual([[false, false]]);
 
     const enrolled = harness({ PLEXUS_TELEMETRY: "1" });
     expect(await enrolled.run("mcp")).toBe(0);
-    expect(enrolled.served.map(([, telemetry]) => telemetry)).toEqual([true]);
+    expect(enrolled.served.map(([, telemetry, endpointNamed]) => [telemetry, endpointNamed])).toEqual([[true, false]]);
+
+    const sending = harness({ PLEXUS_TELEMETRY: "1", OTEL_EXPORTER_OTLP_ENDPOINT: "http://127.0.0.1:4318" });
+    expect(await sending.run("mcp")).toBe(0);
+    expect(sending.served.map(([, telemetry, endpointNamed]) => [telemetry, endpointNamed])).toEqual([[true, true]]);
   });
 });

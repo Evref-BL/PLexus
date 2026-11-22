@@ -137,23 +137,27 @@ function mcpOfRecord(row: Pick<ImageInfo, "mcp">): string | undefined {
 
 /**
  * What an answer says of telemetry, when the PLexus answering enrolls images
- * in OpenTelemetry (`enrolled`): `telemetry: on`, or a warning saying why the
- * image does not record its calls. Nothing otherwise, nor when nothing said.
+ * in OpenTelemetry (`enrolled`): `telemetry: on` for an image whose server
+ * records its calls through OpenTelemetry, said otherwise when PLexus's
+ * settings name no OTLP endpoint (`endpointNamed` false) to send them to, or
+ * a warning saying why the image does not record them. Nothing otherwise,
+ * nor when nothing said.
  */
 export interface Enrollment {
   enrolled?: boolean;
+  endpointNamed?: boolean;
 }
 
 function telemetrySaid(
   row: Pick<ImageInfo, "name" | "mcp"> & { telemetry?: ImageTelemetry },
-  { enrolled }: Enrollment,
+  { enrolled, endpointNamed }: Enrollment,
 ): { fields: Pair[]; warnings: string[] } {
   const telemetry = row.telemetry;
   if (!enrolled || telemetry === undefined) {
     return { fields: [], warnings: [] };
   }
   return telemetry.on
-    ? { fields: [["telemetry", "on"]], warnings: [] }
+    ? { fields: [["telemetry", endpointNamed === false ? texts.recordedNotSent() : "on"]], warnings: [] }
     : { fields: [], warnings: [texts.recordsNothing(row.name, telemetry, row.mcp?.source !== "script")] };
 }
 
@@ -196,9 +200,11 @@ export function list(rows: readonly ImageInfo[], enrollment: Enrollment = {}): T
   if (rows.length === 0) {
     return { summary: texts.noImages(), warnings: [], fields: [] };
   }
+  const unsent =
+    enrollment.enrolled && enrollment.endpointNamed === false && rows.some((row) => row.telemetry?.on === true);
   return {
     summary: texts.imagesSummary(rows.length, rows.filter((row) => row.state === "running" || row.state === "unreachable").length),
-    warnings: [...unreachableWarnings(rows), ...olderMcpWarnings(rows)],
+    warnings: [...unreachableWarnings(rows), ...olderMcpWarnings(rows), ...(unsent ? [texts.recordedNowhereToSend()] : [])],
     fields: [],
     lists: listedStates.map((state) => ({
       label: state,

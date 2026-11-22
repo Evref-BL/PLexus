@@ -16,6 +16,7 @@ import { PlexusError } from "../../src/errors.js";
 import { callWaitMs } from "../../src/forward/index.js";
 import {
   createPlexusMcpServer,
+  firstListingWaitMs,
   sessionIdleMs,
   type ForwardOptions,
   type ImagesApi,
@@ -528,24 +529,45 @@ describe("plexus mcp", () => {
     }
   });
 
-  it("learns the tools of an image a call goes to before the host listed them, for the calls that follow", async () => {
+  it("learns the tools of an image a call goes to before the host listed them, waiting a little for them once answered", async () => {
     const recording = recordSpans();
     try {
       const listed: string[] = [];
       const { call, forwarded } = await connect(new FakeImages([row("dev", { port: 7001 })]), {}, undefined, {
         listTools: async (endpoint) => {
           listed.push(endpoint.url);
+          await new Promise((resolve) => setTimeout(resolve, 30));
           return [tool("evaluate", { code: { type: "string" }, timeoutSeconds: { type: "integer", default: 300 } })];
         },
       });
-      await call("evaluate", { code: "1" });
+      await call("evaluate", { code: "1", made_up: true });
       await call("evaluate", { code: "2", image: "dev" });
 
       expect(listed).toEqual(["http://127.0.0.1:7001/"]);
       expect(forwarded[1].options.inputSchema?.properties).toHaveProperty("timeoutSeconds");
-      const [, second] = servedSpans(recording.exporter);
+      const [first, second] = servedSpans(recording.exporter);
+      expect(first.attributes["plexus.argument.names"]).toEqual(["code"]);
+      expect(first.attributes["plexus.argument.unknown_names"]).toEqual(["made_up"]);
       expect(second.attributes["plexus.argument.names"]).toEqual(["code", "image"]);
       expect(second.attributes).not.toHaveProperty("plexus.argument.unknown_names");
+    } finally {
+      recording.end();
+    }
+  });
+
+  it("says only image of a call whose image did not list its tools in time, rather than calling the rest unknown", async () => {
+    const recording = recordSpans();
+    try {
+      const { call } = await connect(new FakeImages([row("dev", { port: 7001 })]), {}, undefined, {
+        listTools: () => new Promise<Tool[]>(() => undefined),
+      });
+      const started = Date.now();
+      expect(textOf(await call("evaluate", { code: "1", image: "dev" }))).toBe("evaluate answered");
+
+      expect(Date.now() - started).toBeLessThan(firstListingWaitMs + 1_000);
+      const [served] = servedSpans(recording.exporter);
+      expect(served.attributes["plexus.argument.names"]).toEqual(["image"]);
+      expect(served.attributes).not.toHaveProperty("plexus.argument.unknown_names");
     } finally {
       recording.end();
     }

@@ -348,6 +348,22 @@ describe("whether an image records its calls", () => {
     );
   });
 
+  it("says that what an image records is sent nowhere named when no OTEL_* setting names an endpoint", () => {
+    const unnamed = { enrolled: true, endpointNamed: false };
+    expect(render(created(row("dev", { mcp: pinned, telemetry: { on: true } }), unnamed))).toBe(
+      "Created image dev; image_start starts it.\ntelemetry: recorded, but no OTEL_* setting names where to send it",
+    );
+    expect(render(started({ name: "dev", display: "headless", telemetry: { on: true } }, undefined, unnamed))).toContain(
+      "\ntelemetry: recorded, but no OTEL_* setting names where to send it",
+    );
+    const rows = [row("on", { mcp: pinned, telemetry: { on: true } }), row("off", { mcp: pinned, telemetry: madeBefore })];
+    expect(list(rows, unnamed).warnings).toEqual([
+      "The images that record their calls through OpenTelemetry have no OTEL_* setting naming where to send them.",
+    ]);
+    expect(list(rows, { enrolled: true, endpointNamed: true }).warnings).toEqual([]);
+    expect(list([rows[1]], unnamed).warnings).toEqual([]);
+  });
+
   it("says why a create or a start gives an image that records nothing, and what to do", () => {
     expect(render(created(row("dev", { template: nextStable, mcp: pinned, telemetry: { on: true } }), enrolled))).toBe(
       "Created image dev; image_start starts it.\ntelemetry: on",

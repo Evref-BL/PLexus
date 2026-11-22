@@ -7,6 +7,7 @@ import { PlexusError } from "./errors.js";
 import { Images } from "./images/index.js";
 import { scopeOfProject } from "./images/names.js";
 import { imageTools, runPlexusMcpServer, type ImagesApi } from "./mcp/server.js";
+import { tracesEndpoint } from "./telemetry/reachability.js";
 import type { ImagesOptions, StartOptions } from "./types.js";
 
 export interface CliIo {
@@ -17,13 +18,16 @@ export interface CliIo {
 
 export interface CliDependencies {
   images(options: ImagesOptions): ImagesApi;
-  /** `telemetry` says the images are enrolled in OpenTelemetry. */
-  serveMcp(images: ImagesApi, telemetry: boolean): Promise<void>;
+  /**
+   * `telemetry` says the images are enrolled in OpenTelemetry, and
+   * `endpointNamed` whether the environment names an OTLP endpoint for traces.
+   */
+  serveMcp(images: ImagesApi, telemetry: boolean, endpointNamed: boolean): Promise<void>;
 }
 
 const defaultDependencies: CliDependencies = {
   images: (options) => new Images(options),
-  serveMcp: (images, telemetry) => runPlexusMcpServer({ images, telemetry }),
+  serveMcp: (images, telemetry, endpointNamed) => runPlexusMcpServer({ images, telemetry, endpointNamed }),
 };
 
 type Verb = "templates" | "create" | "start" | "stop" | "delete" | "list";
@@ -241,7 +245,11 @@ export async function runCli(
         return 0;
       }
       const options = imagesOptions(parsed, io.env);
-      await dependencies.serveMcp(dependencies.images(options), options.telemetry === true);
+      await dependencies.serveMcp(
+        dependencies.images(options),
+        options.telemetry === true,
+        tracesEndpoint(io.env) !== undefined,
+      );
       return 0;
     }
 

@@ -6,6 +6,7 @@ import { defaultPharoMcpVersion } from "../../src/config/pharoMcpVersion.js";
 import { basesRoot, legacyBasesRoot, storeRoot, tmpRoot } from "../../src/home.js";
 import {
   baseKey,
+  basesCapBytes,
   evictBases,
   failedTelemetryBaseRetryMs,
   recentlyUsedBaseMs,
@@ -519,6 +520,7 @@ describe("evicting bases", () => {
     evictBases(context, { capBytes: 50 });
     expect(bases(home)).toEqual(["copying", "just-built"]);
     expect(recentlyUsedBaseMs).toBe(day);
+    expect(basesCapBytes).toBe(5 * 1024 ** 3);
   });
 
   it("counts an unstamped base as used when its directory last changed", () => {

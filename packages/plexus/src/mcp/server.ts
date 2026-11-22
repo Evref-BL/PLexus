@@ -52,6 +52,12 @@ export interface PlexusMcpServerOptions {
    * calls, and why not.
    */
   telemetry?: boolean;
+  /**
+   * Whether the OTEL_* settings the images start with name an OTLP endpoint
+   * for traces. When they do not, the image tools say that what an image
+   * records has nowhere named to go.
+   */
+  endpointNamed?: boolean;
   /** The clock a working session's idle time is kept by. */
   now?: () => number;
   listTools?: (endpoint: Endpoint) => Promise<Tool[]>;
@@ -196,6 +202,19 @@ interface Answered {
   image?: string;
 }
 
+/** How long the first call to an image whose tools the host has not listed waits, once answered, for their listing. */
+export const firstListingWaitMs = 500;
+
+/** The promise's end, or the bound's, whichever comes first. */
+async function settledWithin(work: Promise<unknown>, boundMs: number): Promise<void> {
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    await Promise.race([work.catch(() => undefined), new Promise((resolve) => (timer = setTimeout(resolve, boundMs)))]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /** How long a working session lasts without a call before the next one opens another. */
 export const sessionIdleMs = 30 * 60_000;
 
@@ -207,28 +226,32 @@ export function createPlexusMcpServer(options: PlexusMcpServerOptions): Server {
   // From the last tools/list, so that a call waits as long as the schema the
   // image listed for its tool allows.
   let listedSchemas: ListedSchemas = new Map();
-  // The images whose listing a forwarded call is fetching.
-  const learning = new Set<string>();
+  // The listings forwarded calls are fetching, by image.
+  const learning = new Map<string, Promise<void>>();
 
   /**
    * Fetches the listing of an image a call goes to before the host listed
-   * its tools, beside that call, which does not wait for it: the calls that
-   * follow then wait as its schemas say, and their spans name the arguments
-   * its tools declare.
+   * its tools, beside that call: the calls that follow then wait as its
+   * schemas say, and the spans name the arguments its tools declare. Answers
+   * the fetch, or nothing when the listing is known.
    */
-  function learnListing(image: string, endpoint: Endpoint): void {
-    if (listedSchemas.has(image) || learning.has(image)) {
-      return;
+  function learnListing(image: string, endpoint: Endpoint): Promise<void> | undefined {
+    if (listedSchemas.has(image)) {
+      return undefined;
     }
-    learning.add(image);
-    listToolsOf(endpoint)
-      .then((tools) => {
-        if (!listedSchemas.has(image)) {
-          listedSchemas.set(image, new Map(tools.map((tool) => [tool.name, tool.inputSchema])));
-        }
-      })
-      .catch(() => undefined)
-      .finally(() => learning.delete(image));
+    let fetching = learning.get(image);
+    if (fetching === undefined) {
+      fetching = listToolsOf(endpoint)
+        .then((tools) => {
+          if (!listedSchemas.has(image)) {
+            listedSchemas.set(image, new Map(tools.map((tool) => [tool.name, tool.inputSchema])));
+          }
+        })
+        .catch(() => undefined)
+        .finally(() => learning.delete(image));
+      learning.set(image, fetching);
+    }
+    return fetching;
   }
 
   const server = new Server(
@@ -281,14 +304,19 @@ export function createPlexusMcpServer(options: PlexusMcpServerOptions): Server {
   /**
    * The arguments a tool declares: an image tool's schema's, or, for an
    * image's tool, `image` and those the image the call went to listed for it,
-   * or any image listed when it went to none.
+   * or any image listed when it went to none. Unknown, for an image's tool,
+   * while no listing it could be in is known.
    */
-  function declaredArguments(name: string, image: string | undefined): Set<string> {
+  function declaredArguments(name: string, image: string | undefined): Set<string> | undefined {
     const own = imageTools.find((each) => each.name === name);
     if (own !== undefined) {
       return new Set(Object.keys(own.inputSchema.properties ?? {}));
     }
-    const schemas = image === undefined ? [...listedSchemas.values()] : [listedSchemas.get(image) ?? new Map()];
+    const listing = image === undefined ? undefined : listedSchemas.get(image);
+    const schemas = image === undefined ? [...listedSchemas.values()] : listing === undefined ? [] : [listing];
+    if (schemas.length === 0) {
+      return undefined;
+    }
     return new Set(["image", ...schemas.flatMap((tools) => Object.keys(tools.get(name)?.properties ?? {}))]);
   }
 
@@ -335,7 +363,14 @@ export function createPlexusMcpServer(options: PlexusMcpServerOptions): Server {
               }
               return answered.result;
             } finally {
-              span.setAttributes(argumentAttributes(args, declaredArguments(params.name, image)));
+              // Without a listing, only `image` is known to be declared, and
+              // nothing is said of the other names.
+              const declared = declaredArguments(params.name, image);
+              span.setAttributes(
+                declared === undefined
+                  ? argumentAttributes(args, new Set(["image"]), { unknown: false })
+                  : argumentAttributes(args, declared),
+              );
             }
           },
         ),
@@ -375,13 +410,20 @@ export function createPlexusMcpServer(options: PlexusMcpServerOptions): Server {
     const args = (params.arguments ?? {}) as Record<string, unknown>;
     const imageTool = imageTools.find((tool) => tool.name === name);
     if (imageTool === undefined) {
-      const callOn = (endpoint: Endpoint, image: string, forwarded: Record<string, unknown>) => {
-        learnListing(image, endpoint);
+      const callOn = async (endpoint: Endpoint, image: string, forwarded: Record<string, unknown>) => {
+        const listing = learnListing(image, endpoint);
         const inputSchema = listedSchemas.get(image)?.get(name);
-        return callToolOn(endpoint, name, forwarded, {
-          ...(inputSchema === undefined ? {} : { inputSchema }),
-          signal,
-        });
+        try {
+          return await callToolOn(endpoint, name, forwarded, {
+            ...(inputSchema === undefined ? {} : { inputSchema }),
+            signal,
+          });
+        } finally {
+          // An answer faster than the listing waits a little for it.
+          if (listing !== undefined) {
+            await settledWithin(listing, firstListingWaitMs);
+          }
+        }
       };
       // Given none, the refusal of a tool the image does not have asks the
       // image for its listing itself, waiting less than a tools/list does.
@@ -392,7 +434,10 @@ export function createPlexusMcpServer(options: PlexusMcpServerOptions): Server {
       return { result: text(refusal, true), refusal: "invalid-arguments" };
     }
     try {
-      const answer = await answerImageTool(images, name, args, { enrolled: options.telemetry === true });
+      const answer = await answerImageTool(images, name, args, {
+        enrolled: options.telemetry === true,
+        ...(options.endpointNamed === undefined ? {} : { endpointNamed: options.endpointNamed }),
+      });
       if (name === "image_start" || name === "image_stop" || name === "image_delete") {
         await server.sendToolListChanged();
       }

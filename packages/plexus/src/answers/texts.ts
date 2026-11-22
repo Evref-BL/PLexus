@@ -202,6 +202,15 @@ export function recordsNothing(
   return `Image ${name} does not record its calls: ${(why.reason === undefined ? undefined : reasons[why.reason]) ?? "its start did not say why."}`;
 }
 
+/** The telemetry of an image that records its calls, when no OTEL_* setting names where to send them. */
+export function recordedNotSent(): string {
+  return "recorded, but no OTEL_* setting names where to send it";
+}
+
+export function recordedNowhereToSend(): string {
+  return "The images that record their calls through OpenTelemetry have no OTEL_* setting naming where to send them.";
+}
+
 /** A create, which the caller named the template of. */
 export function created(name: string, from: { script?: string; everyStart?: boolean }): string {
   const script =

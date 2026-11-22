@@ -34,12 +34,17 @@ export function identifierOrOther(name: string): string {
  * The names of a call's arguments that look like identifiers, never their
  * values: those the tool declares as `plexus.argument.names`, and the others
  * as `plexus.argument.unknown_names`, so that a name the caller made up is
- * only ever in the second.
+ * only ever in the second; the others not at all without `unknown`, when
+ * what the tool declares is not known in full.
  */
-export function argumentAttributes(args: Record<string, unknown>, declared: ReadonlySet<string>): Attributes {
+export function argumentAttributes(
+  args: Record<string, unknown>,
+  declared: ReadonlySet<string>,
+  options: { unknown?: boolean } = {},
+): Attributes {
   const names = Object.keys(args).filter((name) => identifier.test(name));
   const known = names.filter((name) => declared.has(name));
-  const unknown = names.filter((name) => !declared.has(name));
+  const unknown = options.unknown === false ? [] : names.filter((name) => !declared.has(name));
   return {
     ...(known.length === 0 ? {} : { "plexus.argument.names": known }),
     ...(unknown.length === 0 ? {} : { "plexus.argument.unknown_names": unknown }),
