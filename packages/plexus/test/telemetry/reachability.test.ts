@@ -9,6 +9,7 @@ import type { ReadableSpan, SpanExporter } from "@opentelemetry/sdk-trace";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   GuardedExporter,
+  isLoopback,
   Reachability,
   readReachability,
   reachabilityFile,
@@ -185,13 +186,44 @@ describe("an export to an endpoint", () => {
 
   it("records a failure when the exporter throws or rejects", async () => {
     const reachability = new Reachability(file, endpoint, () => start);
+    let now = start;
     for (const [index, outcome] of (["throw", "reject"] as const).entries()) {
-      // A process that failed waits; another one, later, tries again.
-      const guarded = new GuardedExporter(fakeExporter(outcome), new Reachability(file, endpoint, () => start), ExportResultCode);
+      // A process that failed waits; another one, once that wait is over, tries again.
+      const guarded = new GuardedExporter(fakeExporter(outcome), new Reachability(file, endpoint, () => now), ExportResultCode);
       expect((await exportOnce(guarded)).code).toBe(ExportResultCode.FAILED);
       expect(readReachability(file)[endpoint]?.failures).toBe(index + 1);
+      now = readReachability(file)[endpoint]?.retryAt ?? now;
     }
     expect(reachability.isOpen()).toBe(true);
+  });
+
+  it("waits out the time to try again that another process's failure set", async () => {
+    let now = start;
+    const exporter = fakeExporter(succeeded, succeeded);
+    const guarded = new GuardedExporter(exporter, new Reachability(file, endpoint, () => now), ExportResultCode);
+    writeReachability(file, { [endpoint]: { failures: 2, retryAt: start + 10 * minutes } });
+
+    expect((await exportOnce(guarded)).code).toBe(ExportResultCode.FAILED);
+    expect(exporter.calls).toBe(0);
+
+    now = start + 10 * minutes;
+    expect((await exportOnce(guarded)).code).toBe(ExportResultCode.SUCCESS);
+    expect(exporter.calls).toBe(1);
+    expect(readReachability(file)).toEqual({});
+  });
+
+  it("takes a collector that refused the batch, as malformed or too large, for one it reached", async () => {
+    for (const status of [400, 413]) {
+      writeReachability(file, { [endpoint]: { failures: 1, retryAt: start } });
+      const refused = { code: ExportResultCode.FAILED, error: Object.assign(new Error("refused"), { code: status }) };
+      const guarded = new GuardedExporter(fakeExporter(refused), new Reachability(file, endpoint, () => start), ExportResultCode);
+
+      expect((await exportOnce(guarded)).code).toBe(ExportResultCode.FAILED);
+      expect(readReachability(file), String(status)).toEqual({});
+    }
+    const unauthorized = { code: ExportResultCode.FAILED, error: Object.assign(new Error("no"), { code: 401 }) };
+    await exportOnce(new GuardedExporter(fakeExporter(unauthorized), new Reachability(file, endpoint, () => start), ExportResultCode));
+    expect(readReachability(file)[endpoint]?.failures).toBe(1);
   });
 
   it("fails an export that has not ended by its deadline, and remembers the endpoint", async () => {
@@ -216,11 +248,38 @@ describe("an export to an endpoint", () => {
   });
 });
 
+describe("an endpoint on this machine", () => {
+  it("is localhost, 127.0.0.0/8 or ::1", () => {
+    for (const endpoint of ["http://localhost:4318/v1/traces", "http://127.0.0.1:4318/v1/traces", "http://127.1.2.3/v1/traces", "http://[::1]:4318/v1/traces"]) {
+      expect(isLoopback(endpoint), endpoint).toBe(true);
+    }
+    for (const endpoint of ["http://collector.test/v1/traces", "http://10.0.0.1/v1/traces", "http://localhost.example/v1/traces", "not a url"]) {
+      expect(isLoopback(endpoint), endpoint).toBe(false);
+    }
+  });
+
+  it("is never left alone: its failures are not recorded, and an entry an earlier PLexus wrote goes once it answers", async () => {
+    const endpoint = "http://127.0.0.1:4318/v1/traces";
+    writeReachability(file, { [endpoint]: { failures: 3, retryAt: start + 20 * minutes } });
+    const exporter = fakeExporter(failed, succeeded);
+    const reachability = new Reachability(file, endpoint, () => start);
+    const guarded = new GuardedExporter(exporter, reachability, ExportResultCode);
+
+    expect(reachability.isOpen()).toBe(false);
+    expect((await exportOnce(guarded)).code).toBe(ExportResultCode.FAILED);
+    expect(readReachability(file)[endpoint]?.failures).toBe(3);
+    expect((await exportOnce(guarded)).code).toBe(ExportResultCode.SUCCESS);
+    expect(exporter.calls).toBe(2);
+    expect(readReachability(file)).toEqual({});
+  });
+});
+
 describe("the command's SDK and an unreachable collector", () => {
-  it("is not loaded, and sends nothing, while the endpoint's time to try again is to come", async () => {
-    const { endpoint, received } = await collector();
-    vi.stubEnv("OTEL_EXPORTER_OTLP_ENDPOINT", endpoint);
-    writeReachability(file, { [`${endpoint}/v1/traces`]: { failures: 1, retryAt: start + 1 } });
+  const elsewhere = "http://collector.test:4318";
+
+  it("is not loaded, and sends nothing, while a collector elsewhere has its time to try again to come", async () => {
+    vi.stubEnv("OTEL_EXPORTER_OTLP_ENDPOINT", elsewhere);
+    writeReachability(file, { [`${elsewhere}/v1/traces`]: { failures: 1, retryAt: start + 1 } });
     let loaded = false;
     vi.doMock("@opentelemetry/sdk-trace", async (original) => {
       loaded = true;
@@ -237,20 +296,46 @@ describe("the command's SDK and an unreachable collector", () => {
 
     expect(loaded).toBe(false);
     expect(recording).toBe(false);
-    expect(received).toEqual([]);
   });
 
-  it("records a failure when the endpoint refuses, and is not installed in the next process", async () => {
-    const endpoint = await closedPort();
-    vi.stubEnv("OTEL_EXPORTER_OTLP_ENDPOINT", endpoint);
+  it("is installed in a process that serves all the same, which passes the trace context on and sends once that time has come", async () => {
+    let now = start;
+    // A documentation address: nothing answers there.
+    vi.stubEnv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://192.0.2.1:4318");
     vi.stubEnv("OTEL_EXPORTER_OTLP_TIMEOUT", "200");
+    vi.stubEnv("OTEL_BSP_SCHEDULE_DELAY", "10");
+    const key = "http://192.0.2.1:4318/v1/traces";
+    writeReachability(file, { [key]: { failures: 1, retryAt: start + 5 * minutes } });
+
+    const telemetry = await startTelemetry(process.env, { longLived: true, reachabilityFile: file, now: () => now });
+    const carrier: Record<string, string> = {};
+    telemetry.within(() => {
+      const span = trace.getTracer("t").startSpan("x");
+      context.with(trace.setSpan(context.active(), span), () => propagation.inject(context.active(), carrier));
+      expect(span.isRecording()).toBe(true);
+      span.end();
+    });
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(carrier.traceparent).toMatch(/^00-[0-9a-f]{32}-[0-9a-f]{16}-01$/);
+    expect(readReachability(file)[key]?.failures).toBe(1);
+
+    now = start + 5 * minutes;
+    trace.getTracer("t").startSpan("y").end();
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    expect(readReachability(file)[key]?.failures).toBe(2);
+    await telemetry.shutdown();
+  });
+
+  it("records a failure when a collector elsewhere does not answer, before the command ends, and is not installed in the next process", async () => {
+    vi.stubEnv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://192.0.2.1:4318");
+    vi.stubEnv("OTEL_EXPORTER_OTLP_TIMEOUT", "500");
 
     const telemetry = await startTelemetry(process.env, { reachabilityFile: file, now: () => start });
     trace.getTracer("t").startSpan("x").end();
     await telemetry.shutdown();
 
     expect(readReachability(file)).toEqual({
-      [`${endpoint}/v1/traces`]: { failures: 1, retryAt: start + 5 * minutes },
+      "http://192.0.2.1:4318/v1/traces": { failures: 1, retryAt: start + 5 * minutes },
     });
     trace.disable();
     const next = await startTelemetry(process.env, { reachabilityFile: file, now: () => start + minutes });
@@ -258,10 +343,10 @@ describe("the command's SDK and an unreachable collector", () => {
     await next.shutdown();
   });
 
-  it("sends again once the time to try again has come, and clears the entry when it succeeds", async () => {
+  it("sends to a collector on this machine whatever its last export did, and records nothing when it refuses", async () => {
     const { endpoint, received } = await collector();
     vi.stubEnv("OTEL_EXPORTER_OTLP_ENDPOINT", endpoint);
-    writeReachability(file, { [`${endpoint}/v1/traces`]: { failures: 4, retryAt: start } });
+    writeReachability(file, { [`${endpoint}/v1/traces`]: { failures: 4, retryAt: start + 60 * minutes } });
 
     const telemetry = await startTelemetry(process.env, { now: () => start });
     trace.getTracer("t").startSpan("x").end();
@@ -269,19 +354,31 @@ describe("the command's SDK and an unreachable collector", () => {
 
     expect(received).toEqual(["/v1/traces"]);
     expect(readReachability(file)).toEqual({});
+
+    trace.disable();
+    const refusing = await closedPort();
+    vi.stubEnv("OTEL_EXPORTER_OTLP_ENDPOINT", refusing);
+    vi.stubEnv("OTEL_EXPORTER_OTLP_TIMEOUT", "200");
+    const next = await startTelemetry(process.env, { now: () => start });
+    trace.getTracer("t").startSpan("x").end();
+    await next.shutdown();
+    expect(readReachability(file)).toEqual({});
   });
 
   it("waits a second at most at exit, and gives a long-lived process's batches the whole export timeout", () => {
     expect(exportTimings({ protocol: "http/protobuf", timeoutMs: 2_000, batch: {} })).toEqual({
       exportTimeoutMs: 1_000,
+      deadlineMs: 900,
       exitWaitMs: 1_000,
     });
     expect(exportTimings({ protocol: "http/protobuf", timeoutMs: 2_000, batch: {} }, true)).toEqual({
       exportTimeoutMs: 2_000,
+      deadlineMs: 2_000,
       exitWaitMs: 1_000,
     });
     expect(exportTimings({ protocol: "http/protobuf", timeoutMs: 200, batch: {} }, true)).toEqual({
       exportTimeoutMs: 200,
+      deadlineMs: 200,
       exitWaitMs: 200,
     });
   });

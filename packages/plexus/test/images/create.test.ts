@@ -87,7 +87,10 @@ describe("create without a script", () => {
       category: template.category,
       mcp: `pin:${pin}`,
       plexus: plexusVersion,
+      telemetry: "off",
+      "telemetry.reason": "not-asked",
     });
+    expect(created.telemetry).toEqual({ on: false, reason: "not-asked" });
     expect(listing(tmpRoot(home))).toEqual([]);
   });
 
@@ -136,6 +139,30 @@ describe("create without a script", () => {
     const second = await create(context, "other", { ...options });
     expect(second.fromBase).toBe(true);
     expect(launcher.called("createImage")).toHaveLength(1);
+  });
+
+  it("deletes the clones the preparation forgot, within the build's directory and nowhere else", async () => {
+    const { home, launcher, context } = setup();
+    const elsewhere = path.join(home, "shared", "iceberg", "Evref-BL", "MCP");
+    fs.mkdirSync(elsewhere, { recursive: true });
+    let clone = "";
+    launcher.prepareAnswer = (input: ImageStartInput) => {
+      const dir = path.dirname(path.dirname(input.script!));
+      clone = path.join(dir, "pharo-local", "iceberg", "Evref-BL", "MCP");
+      fs.mkdirSync(path.join(clone, ".git"), { recursive: true });
+      fs.writeFileSync(
+        path.join(dir, "plexus", "prepare-status.properties"),
+        `status=ok\rtelemetry=off\rclone=${clone}\rclone=${elsewhere}\rclone=${dir}\r`,
+      );
+      return ok();
+    };
+
+    await create(context, "dev", { ...options });
+
+    expect(fs.existsSync(path.join(basesRoot(home), key, "pharo-local", "iceberg", "Evref-BL", "MCP"))).toBe(false);
+    expect(fs.existsSync(path.join(storeRoot(home), "dev", "pharo-local", "iceberg", "Evref-BL", "MCP"))).toBe(false);
+    expect(fs.existsSync(path.join(basesRoot(home), key, "base.image"))).toBe(true);
+    expect(fs.existsSync(elsewhere)).toBe(true);
   });
 
   it("takes the category from the template list when none is given", async () => {
@@ -299,7 +326,10 @@ describe("create without a script", () => {
     };
     const enrolled = { ...context, telemetry: true };
 
-    expect((await create(enrolled, "dev", { ...options })).fromBase).toBe(false);
+    const created = await create(enrolled, "dev", { ...options });
+    expect(created.fromBase).toBe(false);
+    expect(created.telemetry).toEqual({ on: true });
+    expect(readProperties(path.join(storeRoot(home), "dev", "plexus", "created.properties"))).toMatchObject({ telemetry: "on" });
     expect(prepared).toHaveLength(1);
     expect(prepared[0]).toContain("    load: #( 'default' 'Telemetry' ).");
     expect(listing(basesRoot(home))).toEqual([key, baseKey(template.name, template.category, pin, true)].sort());
@@ -324,6 +354,18 @@ describe("create without a script", () => {
     expect(created).toMatchObject({ name: "dev", state: "stopped", fromBase: true });
     expect(fs.existsSync(created.path)).toBe(true);
     expect(listing(basesRoot(home))).toEqual([key, failedTelemetryKey].sort());
+    // The failure is said, not passed over: the image records nothing, and why.
+    const said = {
+      on: false,
+      reason: "base-failed",
+      detail: "Loading MCP failed: Error: Could not resolve: BaselineOfOpenTelemetry Pharo Launcher startImage failed: exit 1",
+    };
+    expect(created.telemetry).toEqual(said);
+    expect(readProperties(path.join(storeRoot(home), "dev", "plexus", "created.properties"))).toMatchObject({
+      telemetry: "off",
+      "telemetry.reason": "base-failed",
+      "telemetry.detail": said.detail,
+    });
   });
 
   it("with telemetry, copies the base without it for a day after the base with it failed, then tries again", async () => {
@@ -340,7 +382,13 @@ describe("create without a script", () => {
     expect(launcher.called("createImage")).toHaveLength(1);
 
     context.clock.now += failedTelemetryBaseRetryMs - 1;
-    expect((await create(enrolled, "second", { ...options })).fromBase).toBe(true);
+    const second = await create(enrolled, "second", { ...options });
+    expect(second.fromBase).toBe(true);
+    expect(second.telemetry).toEqual({
+      on: false,
+      reason: "base-failed",
+      detail: "Loading MCP failed: offline Pharo Launcher startImage failed: exit 1",
+    });
     expect(launcher.called("createImage")).toHaveLength(1);
 
     context.clock.now += 1;
@@ -432,6 +480,25 @@ describe("create with a script", () => {
     expect(listing(path.join(dir, "plexus"))).toEqual(["created.properties"]);
     expect(listing(storeRoot(home))).toEqual(["Scope-mcp"]);
     expect(listing(basesRoot(home))).toEqual([]);
+    expect(created).not.toHaveProperty("telemetry");
+  });
+
+  it("records whether what the script loaded has MCP's OpenTelemetry backend, as the image said", async () => {
+    for (const [said, telemetry] of [
+      ["on", { on: true }],
+      ["off", { on: false, reason: "no-backend" }],
+    ] as const) {
+      const { home, launcher, context } = setup();
+      launcher.prepareAnswer = (input) => {
+        fs.writeFileSync(path.join(path.dirname(input.script!), "prepare-status.properties"), `status=ok\rtelemetry=${said}\r`);
+        return ok();
+      };
+
+      const created = await create(context, "mcp", { ...options, script: script(home) });
+
+      expect(created.telemetry).toEqual(telemetry);
+      expect(readProperties(path.join(storeRoot(home), "mcp", "plexus", "created.properties"))?.telemetry).toBe(said);
+    }
   });
 
   it("leaves alone the image of a create that took the name meanwhile", async () => {

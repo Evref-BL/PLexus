@@ -27,6 +27,22 @@ export interface Template {
  */
 export type ImageState = "creating" | "stopped" | "starting" | "running" | "unreachable";
 
+/**
+ * Why an image records no calls through OpenTelemetry:
+ *
+ * - `not-asked`: the PLexus that made it, or that started it, was not asked
+ *   to enroll images in OpenTelemetry;
+ * - `base-failed`: the base holding MCP's `Telemetry` group could not be
+ *   built, so it is a copy of the base without it;
+ * - `no-backend`: its MCP has no OpenTelemetry backend;
+ * - `switch-failed`: its MCP server did not switch to that backend when it
+ *   started.
+ */
+export type TelemetryOffReason = "not-asked" | "base-failed" | "no-backend" | "switch-failed";
+
+/** Whether an image records its calls through OpenTelemetry; when not, why, and the failure's own words for one that failed. */
+export type ImageTelemetry = { on: true } | { on: false; reason?: TelemetryOffReason; detail?: string };
+
 /** One image, as observed when asked. */
 export interface ImageInfo {
   /** The name the caller uses, without the scope. */
@@ -50,6 +66,12 @@ export interface ImageInfo {
    * files in again when `everyStart` says so.
    */
   mcp?: { source: "pin"; version: string } | { source: "script"; script: string; everyStart?: true };
+  /**
+   * Whether it records its calls through OpenTelemetry: for a running image,
+   * what its start did; otherwise what its create gave it, whether a start
+   * that enrolls it records them. Absent when neither said.
+   */
+  telemetry?: ImageTelemetry;
 }
 
 export interface CreateOptions {

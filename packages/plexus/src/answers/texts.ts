@@ -82,6 +82,12 @@ export function takesNoCalls(name: string, pids: readonly number[], problem: str
   return `Image ${name} runs as ${pidsText(pids)} but takes no calls: ${problem}. image_stop kills ${vmsText(pids)} without saving; ${startsAsSaved}`;
 }
 
+/** Several images that take no calls for the same `problem`, said once. */
+export function takeNoCalls(images: ReadonlyArray<{ name: string; pids: readonly number[] }>, problem: string): string {
+  const named = andList(images.map((each) => `${each.name} (${pidsText(each.pids)})`));
+  return `Images ${named} run but take no calls: ${problem}. image_stop kills an image's VMs without saving; image_start then starts it as it was last saved.`;
+}
+
 export function severalAnswer(names: readonly string[]): string {
   return `Several images are running (${names.join(", ")}): name one with the image argument.`;
 }
@@ -169,20 +175,40 @@ export function imageStopped(name: string): string {
   return `Image ${name} is not running.`;
 }
 
-export function olderMcp(name: string, version: string, current: string): string {
-  return `Image ${name} holds Pharo MCP ${version}, and images are created with ${current} now, so its tools may differ from the current ones. Recreating it gives it the current MCP.`;
+/** Images that hold an older MCP release than the one images are created with. */
+export function olderMcp(names: readonly string[], version: string, current: string): string {
+  return names.length === 1
+    ? `Image ${names[0]} holds Pharo MCP ${version}, and images are created with ${current} now, so its tools may differ from the current ones. Recreating it gives it the current MCP.`
+    : `Images ${andList(names)} hold Pharo MCP ${version}, and images are created with ${current} now, so their tools may differ from the current ones. Recreating them gives them the current MCP.`;
 }
 
-export function created(
+/**
+ * Why an image does not record its calls through OpenTelemetry, said when
+ * PLexus enrolls images, and what makes it record. `pinned` is an image
+ * holding the pinned MCP, which recreating it renews.
+ */
+export function recordsNothing(
   name: string,
-  from: { template?: string; script?: string; everyStart?: boolean },
+  why: { reason?: string; detail?: string },
+  pinned: boolean,
 ): string {
-  const template = from.template === undefined ? "" : ` from ${from.template}`;
+  const recreate = "Recreating it gives it MCP's Telemetry group.";
+  const reasons: Record<string, string> = {
+    "not-asked": "it was made without MCP's Telemetry group, by a PLexus that did not enroll images in OpenTelemetry. Recreating it adds the group.",
+    "base-failed": `the base with MCP's Telemetry group failed to build${why.detail ? ` (${why.detail})` : ""}, so it was copied from the base without it. A create tries that base again a day after it failed.`,
+    "no-backend": `its MCP has no OpenTelemetry backend. ${pinned ? recreate : "Its script must load MCP's Telemetry group."}`,
+    "switch-failed": `its MCP server failed to switch to OpenTelemetry${why.detail ? `: ${why.detail.replace(/\.$/, "")}` : ""}.`,
+  };
+  return `Image ${name} does not record its calls: ${(why.reason === undefined ? undefined : reasons[why.reason]) ?? "its start did not say why."}`;
+}
+
+/** A create, which the caller named the template of. */
+export function created(name: string, from: { script?: string; everyStart?: boolean }): string {
   const script =
     from.script === undefined
       ? ""
       : `, with ${from.script} filed in instead of the pinned MCP${from.everyStart ? ", and again at every start" : ""}`;
-  return `Created image ${name}${template}${script}. It is not running yet; image_start starts it.`;
+  return `Created image ${name}${script}; image_start starts it.`;
 }
 
 export function started(name: string, how: { interactive?: boolean; everyStart?: string }): string {
@@ -190,16 +216,16 @@ export function started(name: string, how: { interactive?: boolean; everyStart?:
     ...(how.interactive ? ["its window open"] : []),
     ...(how.everyStart === undefined ? [] : [`${how.everyStart} filed in again`]),
   ];
-  return `Started image ${name} as it was last saved${clauses.length === 0 ? "" : `, with ${clauses.join(" and ")}`}.`;
+  return `Started image ${name}${clauses.length === 0 ? "" : `, with ${clauses.join(" and ")}`}.`;
 }
 
-/** What `plexus mcp` adds to a start: a call naming no image goes to the only one that answers. */
+/** What `plexus mcp` adds to a start while another image runs: a call naming no image goes to the only one that answers. */
 export function passImage(name: string): string {
   return `Pass image: "${name}" to its tools while another image runs.`;
 }
 
 export function stopped(name: string): string {
-  return `Stopped image ${name}; what it had not saved is lost. image_stop with save: true saves an image before stopping it.`;
+  return `Stopped image ${name}; what it had not saved is lost.`;
 }
 
 export function savedAndStopped(name: string): string {

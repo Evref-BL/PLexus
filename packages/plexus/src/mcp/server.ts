@@ -20,20 +20,20 @@ import { callTool, listTools } from "../forward/index.js";
 import { endpointOf } from "../images/endpoint.js";
 import type { Images } from "../images/index.js";
 import {
-  argumentNames,
+  argumentAttributes,
   clientAttributes,
   contextFromMeta,
   failed,
   identifierOrOther,
   inSpan,
-  withBaggageEntry,
+  withSession,
 } from "../telemetry/trace.js";
 import type { Display, Endpoint, ImageInfo } from "../types.js";
 import { plexusVersion } from "../version.js";
 
 export type ImagesApi = Pick<
   Images,
-  "templates" | "list" | "create" | "start" | "stop" | "delete"
+  "templates" | "list" | "create" | "start" | "stop" | "delete" | "answering"
 >;
 
 /** What a forwarded call carries beside its arguments. */
@@ -46,6 +46,12 @@ export interface ForwardOptions {
 
 export interface PlexusMcpServerOptions {
   images: ImagesApi;
+  /**
+   * The images are enrolled in OpenTelemetry, as the `telemetry` option of
+   * `Images` asks: the image tools then say whether an image records its
+   * calls, and why not.
+   */
+  telemetry?: boolean;
   /** The clock a working session's idle time is kept by. */
   now?: () => number;
   listTools?: (endpoint: Endpoint) => Promise<Tool[]>;
@@ -183,10 +189,11 @@ class Refusal extends Error {
   }
 }
 
-/** A call's answer, and the code of the refusal it is, when this server refused it. */
+/** A call's answer, the code of the refusal it is, when this server refused it, and the image a forwarded call went to. */
 interface Answered {
   result: CallToolResult;
   refusal?: RefusalCode;
+  image?: string;
 }
 
 /** How long a working session lasts without a call before the next one opens another. */
@@ -200,6 +207,29 @@ export function createPlexusMcpServer(options: PlexusMcpServerOptions): Server {
   // From the last tools/list, so that a call waits as long as the schema the
   // image listed for its tool allows.
   let listedSchemas: ListedSchemas = new Map();
+  // The images whose listing a forwarded call is fetching.
+  const learning = new Set<string>();
+
+  /**
+   * Fetches the listing of an image a call goes to before the host listed
+   * its tools, beside that call, which does not wait for it: the calls that
+   * follow then wait as its schemas say, and their spans name the arguments
+   * its tools declare.
+   */
+  function learnListing(image: string, endpoint: Endpoint): void {
+    if (listedSchemas.has(image) || learning.has(image)) {
+      return;
+    }
+    learning.add(image);
+    listToolsOf(endpoint)
+      .then((tools) => {
+        if (!listedSchemas.has(image)) {
+          listedSchemas.set(image, new Map(tools.map((tool) => [tool.name, tool.inputSchema])));
+        }
+      })
+      .catch(() => undefined)
+      .finally(() => learning.delete(image));
+  }
 
   const server = new Server(
     { name: "plexus", version: plexusVersion },
@@ -211,12 +241,19 @@ export function createPlexusMcpServer(options: PlexusMcpServerOptions): Server {
   const now = options.now ?? Date.now;
   let session = { id: randomUUID(), calls: 0, running: 0, lastActive: now() };
 
-  /** The session a call starts in, and its place there, from 1. */
-  function callStarted(): { session: typeof session; index: number } {
+  /** The session now: another one when the last call ended sessionIdleMs ago or more. */
+  function currentSession(): typeof session {
     const at = now();
     if (session.running === 0 && at - session.lastActive >= sessionIdleMs) {
       session = { id: randomUUID(), calls: 0, running: 0, lastActive: at };
     }
+    return session;
+  }
+
+  /** The session a call starts in, and its place there, from 1. */
+  function callStarted(): { session: typeof session; index: number } {
+    const at = now();
+    currentSession();
     session.calls += 1;
     session.running += 1;
     session.lastActive = at;
@@ -228,8 +265,12 @@ export function createPlexusMcpServer(options: PlexusMcpServerOptions): Server {
     ended.lastActive = now();
   }
 
+  // A listing is no call: it takes the session as it is, and leaves its
+  // calls and its idle time as they were.
   server.setRequestHandler(ListToolsRequestSchema, (request) =>
-    context.with(contextFromMeta(request.params?._meta), () => listAll()),
+    context.with(contextFromMeta(request.params?._meta), () =>
+      context.with(withSession(context.active(), currentSession().id), () => listAll()),
+    ),
   );
   server.setRequestHandler(CallToolRequestSchema, (request, extra) =>
     context.with(contextFromMeta(request.params._meta), () =>
@@ -238,13 +279,27 @@ export function createPlexusMcpServer(options: PlexusMcpServerOptions): Server {
   );
 
   /**
+   * The arguments a tool declares: an image tool's schema's, or, for an
+   * image's tool, `image` and those the image the call went to listed for it,
+   * or any image listed when it went to none.
+   */
+  function declaredArguments(name: string, image: string | undefined): Set<string> {
+    const own = imageTools.find((each) => each.name === name);
+    if (own !== undefined) {
+      return new Set(Object.keys(own.inputSchema.properties ?? {}));
+    }
+    const schemas = image === undefined ? [...listedSchemas.values()] : [listedSchemas.get(image) ?? new Map()];
+    return new Set(["image", ...schemas.flatMap((tools) => Object.keys(tools.get(name)?.properties ?? {}))]);
+  }
+
+  /**
    * A call this server answers, as a SERVER span after the MCP conventions:
-   * the tool, the names of its arguments and those an image tool does not
-   * take, the session and the call's place in it, whether the tool is an
-   * image's, and the host as its initialize request named itself. Never a
-   * value. An answer that is an error fails the span as `tool_error`, and a
-   * refusal of this server's own says its code. What the call forwards
-   * carries the session in its baggage.
+   * the tool, the names of its arguments the tool declares and of the others,
+   * the session and the call's place in it, whether the tool is an image's,
+   * and the host as its initialize request named itself. Never a value. An
+   * answer that is an error fails the span as `tool_error`, and a refusal of
+   * this server's own says its code. Every span the call makes carries the
+   * session, and what it forwards carries it in its baggage.
    */
   function served(
     params: { name: string; arguments?: Record<string, unknown> },
@@ -252,12 +307,9 @@ export function createPlexusMcpServer(options: PlexusMcpServerOptions): Server {
   ): Promise<CallToolResult> {
     const tool = identifierOrOther(params.name);
     const args = (params.arguments ?? {}) as Record<string, unknown>;
-    const names = argumentNames(args);
-    const declared = imageTools.find((each) => each.name === params.name)?.inputSchema.properties;
-    const unknown = declared === undefined ? [] : names.filter((name) => !(name in declared));
     const call = callStarted();
     return context
-      .with(withBaggageEntry(context.active(), "session.id", call.session.id), () =>
+      .with(withSession(context.active(), call.session.id), () =>
         inSpan(
           `tools/call ${tool}`,
           SpanKind.SERVER,
@@ -266,22 +318,25 @@ export function createPlexusMcpServer(options: PlexusMcpServerOptions): Server {
             "gen_ai.operation.name": "execute_tool",
             "gen_ai.tool.name": tool,
             "network.transport": "pipe",
-            "session.id": call.session.id,
             "plexus.call.index": call.index,
             "plexus.call.forwarded": !imageToolNames.has(params.name),
             ...clientAttributes(server.getClientVersion()),
-            ...(names.length === 0 ? {} : { "plexus.argument.names": names }),
-            ...(unknown.length === 0 ? {} : { "plexus.argument.unknown_names": unknown }),
           },
           async (span) => {
-            const { result, refusal } = await run();
-            if (refusal !== undefined) {
-              span.setAttribute("plexus.error.code", refusal);
+            let image: string | undefined;
+            try {
+              const answered = await run();
+              image = answered.image;
+              if (answered.refusal !== undefined) {
+                span.setAttribute("plexus.error.code", answered.refusal);
+              }
+              if (answered.result.isError) {
+                failed(span, "tool_error");
+              }
+              return answered.result;
+            } finally {
+              span.setAttributes(argumentAttributes(args, declaredArguments(params.name, image)));
             }
-            if (result.isError) {
-              failed(span, "tool_error");
-            }
-            return result;
           },
         ),
       )
@@ -321,6 +376,7 @@ export function createPlexusMcpServer(options: PlexusMcpServerOptions): Server {
     const imageTool = imageTools.find((tool) => tool.name === name);
     if (imageTool === undefined) {
       const callOn = (endpoint: Endpoint, image: string, forwarded: Record<string, unknown>) => {
+        learnListing(image, endpoint);
         const inputSchema = listedSchemas.get(image)?.get(name);
         return callToolOn(endpoint, name, forwarded, {
           ...(inputSchema === undefined ? {} : { inputSchema }),
@@ -336,7 +392,7 @@ export function createPlexusMcpServer(options: PlexusMcpServerOptions): Server {
       return { result: text(refusal, true), refusal: "invalid-arguments" };
     }
     try {
-      const answer = await answerImageTool(images, name, args);
+      const answer = await answerImageTool(images, name, args, { enrolled: options.telemetry === true });
       if (name === "image_start" || name === "image_stop" || name === "image_delete") {
         await server.sendToolListChanged();
       }
@@ -368,6 +424,7 @@ async function answerImageTool(
   images: ImagesApi,
   name: string,
   args: Record<string, unknown>,
+  enrollment: answers.Enrollment,
 ): Promise<answers.ToolAnswer> {
   const image = args.name as string;
   switch (name) {
@@ -379,19 +436,23 @@ async function answerImageTool(
           template: args.template as string,
           ...(args.category === undefined ? {} : { category: args.category as string }),
         }),
+        enrollment,
       );
     case "image_start": {
-      // Listed first, for the script every start files in and the MCP it
-      // holds; the start itself refuses an image that is not there.
-      const row = await images.list(image).then(([found]) => found, () => undefined);
+      // Listed first, for the script every start files in, the MCP it holds
+      // and whether another image runs; the start itself refuses an image
+      // that is not there.
+      const rows = await images.list().catch(() => []);
       const result = await images.start(
         image,
         args.display === undefined ? {} : { display: args.display as Display },
       );
-      const answer = answers.started(result, row);
+      const answer = answers.started(result, rows.find((each) => each.name === image), enrollment);
       // True by construction: a call that names no image goes to the only
-      // one that answers.
-      return { ...answer, summary: `${answer.summary} ${answers.texts.passImage(image)}` };
+      // one that answers, so the image is named only beside another.
+      return rows.some((each) => each.name !== image && each.running)
+        ? { ...answer, summary: `${answer.summary} ${answers.texts.passImage(image)}` }
+        : answer;
     }
     case "image_stop":
       return answers.stopped(await images.stop(image, args.save === true ? { save: true } : {}));
@@ -399,10 +460,10 @@ async function answerImageTool(
       return answers.deleted(await images.delete(image));
     default: {
       if (args.name === undefined) {
-        return answers.list(await images.list());
+        return answers.list(await images.list(), enrollment);
       }
       const [row] = await images.list(image);
-      return answers.image(row);
+      return answers.image(row, enrollment);
     }
   }
 }
@@ -468,12 +529,14 @@ async function forward(
 
   let target: Reachable;
   try {
-    target = image === undefined ? await onlyAnswering(images, name) : await named(images, image as string);
+    target =
+      images.answering(image as string | undefined) ??
+      (image === undefined ? await onlyAnswering(images, name) : await named(images, image as string));
   } catch (error) {
     return refused(error);
   }
   try {
-    return { result: await callOn(target.endpoint, target.name, rest) };
+    return { result: await callOn(target.endpoint, target.name, rest), image: target.name };
   } catch (error) {
     const answer = await answers.callFailed(
       target.name,
@@ -483,7 +546,7 @@ async function forward(
       listToolsAt,
     );
     // A cancelled call is answered nothing: the host gave up on it.
-    return { result: answer === undefined ? failure(error) : text(answers.render(answer), true) };
+    return { result: answer === undefined ? failure(error) : text(answers.render(answer), true), image: target.name };
   }
 }
 

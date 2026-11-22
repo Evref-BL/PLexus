@@ -54,7 +54,7 @@ function tool(name: string): Tool {
 }
 
 describe("render", () => {
-  it("writes the summary, the warnings, the fields, the list and the groups, in that order", () => {
+  it("writes the summary, the warnings, the fields, the lists and the groups, in that order", () => {
     expect(
       render({
         summary: "Something happened. Then more.",
@@ -63,13 +63,11 @@ describe("render", () => {
           ["path", "/a b/c"],
           ["every start", "/abs/load.st"],
         ],
-        list: {
-          label: "images",
-          records: [
-            { name: "dev", pairs: [["state", "running"]] },
-            { name: "ci", pairs: [["state", "stopped"]] },
-          ],
-        },
+        lists: [
+          { label: "running", records: [{ name: "dev", pairs: [["pharo", "14.0"]] }] },
+          { label: "starting", records: [] },
+          { label: "stopped", records: [{ name: "ci", pairs: [] }] },
+        ],
         groups: [{ label: "Category", lines: ["Pharo 15.0 - 64bit (development version, latest)"] }],
       }),
     ).toBe(
@@ -79,9 +77,10 @@ describe("render", () => {
         "Warning: Another.",
         "path: /a b/c",
         "every start: /abs/load.st",
-        "images:",
-        "  dev state=running",
-        "  ci state=stopped",
+        "running:",
+        "  dev pharo=14.0",
+        "stopped:",
+        "  ci",
         "Category:",
         "  Pharo 15.0 - 64bit (development version, latest)",
       ].join("\n"),
@@ -94,35 +93,18 @@ describe("render", () => {
         summary: "S.",
         warnings: [],
         fields: [],
-        list: {
-          label: "items",
-          records: [
-            { name: "a", pairs: [["note", 'say "hi" \\ go'], ["mark", 'it"s']] },
-          ],
-        },
+        lists: [
+          {
+            label: "items",
+            records: [{ name: "a", pairs: [["note", 'say "hi" \\ go'], ["mark", 'it"s']] }],
+          },
+        ],
       }),
     ).toBe(['S.', "items:", '  a note="say \\"hi\\" \\\\ go" mark=it"s'].join("\n"));
   });
 
-  it("gives every record all its pairs, even those every record holds alike", () => {
-    const records = [
-      { name: "a", pairs: [["state", "running"], ["pharo", "14.0"], ["mcp", "3.8.0"]] as [string, string][] },
-      { name: "b", pairs: [["state", "stopped"], ["pharo", "14.0"], ["mcp", "3.8.0"]] as [string, string][] },
-      { name: "c", pairs: [["state", "stopped"], ["pharo", "14.0"], ["mcp", "3.8.0"]] as [string, string][] },
-    ];
-    expect(render({ summary: "S.", warnings: [], fields: [], list: { label: "images", records } })).toBe(
-      [
-        "S.",
-        "images:",
-        "  a state=running pharo=14.0 mcp=3.8.0",
-        "  b state=stopped pharo=14.0 mcp=3.8.0",
-        "  c state=stopped pharo=14.0 mcp=3.8.0",
-      ].join("\n"),
-    );
-  });
-
   it("writes no list for no record", () => {
-    expect(render({ summary: "S.", warnings: [], fields: [], list: { label: "images", records: [] } })).toBe("S.");
+    expect(render({ summary: "S.", warnings: [], fields: [], lists: [{ label: "images", records: [] }] })).toBe("S.");
   });
 });
 
@@ -163,22 +145,46 @@ describe("image_templates", () => {
 });
 
 describe("image_list", () => {
-  it("says on each of main-1's three images its own Pharo version and template, which a copied line keeps", () => {
+  it("lists each image on one short line under its state, running ones first, with only what is not usual", () => {
     const answer = list([
-      runningRow("eval", { pharoVersion: "14.0", template: nextStable, mcp: { source: "script", script: "/abs/MCP-14ae2d5.st" } }),
-      runningRow("old", { pharoVersion: "14.0", template: nextStable, mcp: pinned }),
       row("scratch", { pharoVersion: "14.0", template: nextStable, mcp: pinned }),
+      runningRow("eval", { pharoVersion: "14.0", template: nextStable, mcp: { source: "script", script: "/abs/MCP-14ae2d5.st" } }),
+      runningRow("old", { pharoVersion: "13.0", template: "Pharo 13.0 - 64bit (stable)", mcp: { source: "pin", version: "3.8.0" } }),
+      row("moose", { pharoVersion: "12.0", template: "Moose Suite 12.0", mcp: pinned }),
+      row("p10", { pharoVersion: "10.0", template: "Pharo 10.0 - 64bit", mcp: pinned }),
+      row("legacy", { pharoVersion: "14.0", template: "Pharo 13.0 - 64bit", mcp: pinned }),
     ]);
-    const text = render(answer);
-    expect(text).toBe(
+    expect(render(answer)).toBe(
       [
-        "3 images, 2 running.",
-        "images:",
-        '  eval state=running pharo=14.0 template="Pharo 14.0 - 64bit (next stable)" mcp=script',
-        `  old state=running pharo=14.0 template="Pharo 14.0 - 64bit (next stable)" mcp=${defaultPharoMcpVersion}`,
-        `  scratch state=stopped pharo=14.0 template="Pharo 14.0 - 64bit (next stable)" mcp=${defaultPharoMcpVersion}`,
+        "6 images, 2 running.",
+        `Warning: Image old holds Pharo MCP 3.8.0, and images are created with ${defaultPharoMcpVersion} now, so its tools may differ from the current ones. Recreating it gives it the current MCP.`,
+        "running:",
+        "  eval pharo=14.0 mcp=script",
+        "  old pharo=13.0 mcp=3.8.0",
+        "stopped:",
+        "  scratch pharo=14.0",
+        '  moose pharo=12.0 template="Moose Suite 12.0"',
+        "  p10 pharo=10.0",
+        '  legacy pharo=14.0 template="Pharo 13.0 - 64bit"',
       ].join("\n"),
     );
+  });
+
+  it("says once, naming the images, that several take no calls for the same reason", () => {
+    const unreachable = (name: string, pids: number[], endpointProblem?: string) =>
+      row(name, { state: "unreachable", pids, ...(endpointProblem === undefined ? {} : { endpointProblem }) });
+    expect(list([unreachable("a", [11]), unreachable("b", [12, 13]), unreachable("c", [14], "its endpoint refused the connection")]).warnings).toEqual([
+      "Images a (pid 11) and b (pids 12, 13) run but take no calls: it wrote no endpoint. image_stop kills an image's VMs without saving; image_start then starts it as it was last saved.",
+      "Image c runs as pid 14 but takes no calls: its endpoint refused the connection. image_stop kills that VM without saving; image_start then starts it as it was last saved.",
+    ]);
+  });
+
+  it("says once, naming the images, a warning that would repeat for each", () => {
+    const older = (name: string, version = "3.8.0") => row(name, { mcp: { source: "pin", version } });
+    expect(list([older("a"), row("b", { mcp: pinned }), older("c"), older("d", "3.7.0"), older("e")]).warnings).toEqual([
+      `Images a, c, and e hold Pharo MCP 3.8.0, and images are created with ${defaultPharoMcpVersion} now, so their tools may differ from the current ones. Recreating them gives them the current MCP.`,
+      `Image d holds Pharo MCP 3.7.0, and images are created with ${defaultPharoMcpVersion} now, so its tools may differ from the current ones. Recreating it gives it the current MCP.`,
+    ]);
   });
 
   it("gives each field only when known, and the display only when a window is open", () => {
@@ -189,14 +195,7 @@ describe("image_list", () => {
           row("bare"),
         ]),
       ),
-    ).toBe(
-      [
-        "2 images, 1 running.",
-        "images:",
-        `  dev state=running pharo=13.0 template="Pharo 13.0 - 64bit" mcp=${defaultPharoMcpVersion} display=interactive`,
-        "  bare state=stopped",
-      ].join("\n"),
-    );
+    ).toBe(["2 images, 1 running.", "running:", "  dev pharo=13.0 display=interactive", "stopped:", "  bare"].join("\n"));
   });
 
   it("warns of an image that takes no calls and of an older MCP, in record order", () => {
@@ -224,9 +223,7 @@ describe("image_list", () => {
       }),
     ]);
     expect(answer.warnings).toEqual([]);
-    expect(render(answer)).toBe(
-      ["2 images, none running.", "images:", "  dev state=starting", "  spike state=creating"].join("\n"),
-    );
+    expect(render(answer)).toBe(["2 images, none running.", "starting:", "  dev", "creating:", "  spike"].join("\n"));
   });
 
   it("counts one image as one, and says where to start with none", () => {
@@ -279,16 +276,16 @@ describe("image_list", () => {
 });
 
 describe("image_create, image_start, image_stop and image_delete", () => {
-  it("says what a create made, and that it does not run yet", () => {
+  it("says what a create made, and what starts it", () => {
     expect(render(created(row("p13", { template: "Pharo 13.0 - 64bit (stable)", mcp: pinned })))).toBe(
-      "Created image p13 from Pharo 13.0 - 64bit (stable). It is not running yet; image_start starts it.",
+      "Created image p13; image_start starts it.",
     );
     expect(
       render(
         created(row("mine", { template: "Pharo 14.0 - 64bit (stable)", mcp: { source: "script", script: "/abs/load-my-mcp.st" } })),
       ),
     ).toBe(
-      "Created image mine from Pharo 14.0 - 64bit (stable), with /abs/load-my-mcp.st filed in instead of the pinned MCP. It is not running yet; image_start starts it.",
+      "Created image mine, with /abs/load-my-mcp.st filed in instead of the pinned MCP; image_start starts it.",
     );
     expect(
       created(
@@ -298,35 +295,26 @@ describe("image_create, image_start, image_stop and image_delete", () => {
         }),
       ).summary,
     ).toBe(
-      "Created image mine from Pharo 14.0 - 64bit (stable), with /abs/load-my-mcp.st filed in instead of the pinned MCP, and again at every start. It is not running yet; image_start starts it.",
-    );
-    expect(created(row("p13", { mcp: pinned })).summary).toBe(
-      "Created image p13. It is not running yet; image_start starts it.",
+      "Created image mine, with /abs/load-my-mcp.st filed in instead of the pinned MCP, and again at every start; image_start starts it.",
     );
   });
 
-  it("says a start is of the image as it was last saved, and nothing of pids or endpoints", () => {
-    expect(render(started({ name: "p13", display: "headless" }, row("p13", { mcp: pinned })))).toBe(
-      "Started image p13 as it was last saved.",
-    );
-    expect(started({ name: "p13", display: "interactive" }).summary).toBe(
-      "Started image p13 as it was last saved, with its window open.",
-    );
+  it("says a start, and nothing of pids or endpoints", () => {
+    expect(render(started({ name: "p13", display: "headless" }, row("p13", { mcp: pinned })))).toBe("Started image p13.");
+    expect(started({ name: "p13", display: "interactive" }).summary).toBe("Started image p13, with its window open.");
     expect(started({ name: "mine", display: "headless" }, row("mine", { mcp: { source: "script", script: "/abs/load.st", everyStart: true } })).summary).toBe(
-      "Started image mine as it was last saved, with /abs/load.st filed in again.",
+      "Started image mine, with /abs/load.st filed in again.",
     );
     expect(started({ name: "mine", display: "interactive" }, row("mine", { mcp: { source: "script", script: "/abs/load.st", everyStart: true } })).summary).toBe(
-      "Started image mine as it was last saved, with its window open and /abs/load.st filed in again.",
+      "Started image mine, with its window open and /abs/load.st filed in again.",
     );
     expect(started({ name: "old", display: "headless" }, row("old", { mcp: { source: "pin", version: "3.7.0" } })).warnings).toEqual([
       `Image old holds Pharo MCP 3.7.0, and images are created with ${defaultPharoMcpVersion} now, so its tools may differ from the current ones. Recreating it gives it the current MCP.`,
     ]);
   });
 
-  it("says a stop loses what was not saved and how to save, that it saved, or that nothing ran", () => {
-    expect(render(stopped({ name: "p13", killed: [4242] }))).toBe(
-      "Stopped image p13; what it had not saved is lost. image_stop with save: true saves an image before stopping it.",
-    );
+  it("says a stop lost what was not saved, that it saved, or that nothing ran", () => {
+    expect(render(stopped({ name: "p13", killed: [4242] }))).toBe("Stopped image p13; what it had not saved is lost.");
     expect(render(stopped({ name: "p13", killed: [], saved: true }))).toBe("Saved and stopped image p13.");
     expect(render(stopped({ name: "p13", killed: [4243], saved: true }))).toBe("Saved and stopped image p13.");
     expect(render(stopped({ name: "p13", killed: [] }))).toBe("Image p13 was not running.");
@@ -334,6 +322,51 @@ describe("image_create, image_start, image_stop and image_delete", () => {
 
   it("says a delete took the files", () => {
     expect(render(deleted({ name: "old" }))).toBe("Deleted image old and its files.");
+  });
+});
+
+describe("whether an image records its calls", () => {
+  const enrolled = { enrolled: true };
+  const madeBefore = { on: false, reason: "not-asked" } as const;
+
+  it("is said only by a PLexus that enrolls images in OpenTelemetry", () => {
+    const off = row("dev", { mcp: pinned, telemetry: madeBefore });
+    expect(render(list([off]))).not.toContain("telemetry");
+    expect(render(image(off))).not.toContain("record");
+    expect(render(created(off))).not.toContain("record");
+    expect(render(started({ name: "dev", display: "headless", telemetry: madeBefore }, off))).not.toContain("record");
+  });
+
+  it("marks a listed image that does not record, and says on or why not for one image", () => {
+    const text = render(
+      list([row("on", { mcp: pinned, telemetry: { on: true } }), row("off", { mcp: pinned, telemetry: madeBefore }), row("older", { mcp: pinned })], enrolled),
+    );
+    expect(text.split("\n").slice(1)).toEqual(["stopped:", "  on", "  off telemetry=off", "  older"]);
+    expect(render(image(row("on", { telemetry: { on: true } }), enrolled))).toContain("\ntelemetry: on\npath: ");
+    expect(render(image(row("dev", { mcp: pinned, telemetry: madeBefore }), enrolled))).toContain(
+      "Warning: Image dev does not record its calls: it was made without MCP's Telemetry group, by a PLexus that did not enroll images in OpenTelemetry. Recreating it adds the group.",
+    );
+  });
+
+  it("says why a create or a start gives an image that records nothing, and what to do", () => {
+    expect(render(created(row("dev", { template: nextStable, mcp: pinned, telemetry: { on: true } }), enrolled))).toBe(
+      "Created image dev; image_start starts it.\ntelemetry: on",
+    );
+    expect(
+      render(created(row("dev", { mcp: pinned, telemetry: { on: false, reason: "base-failed", detail: "Loading MCP failed: offline" } }), enrolled)),
+    ).toContain(
+      "Warning: Image dev does not record its calls: the base with MCP's Telemetry group failed to build (Loading MCP failed: offline), so it was copied from the base without it. A create tries that base again a day after it failed.",
+    );
+    const scripted = row("dev", { mcp: { source: "script", script: "/load.st" } });
+    expect(render(started({ name: "dev", display: "headless", telemetry: { on: false, reason: "no-backend" } }, scripted, enrolled))).toBe(
+      "Started image dev.\nWarning: Image dev does not record its calls: its MCP has no OpenTelemetry backend. Its script must load MCP's Telemetry group.",
+    );
+    expect(render(started({ name: "dev", display: "headless", telemetry: { on: false, reason: "switch-failed", detail: "Not configured." } }, undefined, enrolled))).toBe(
+      "Started image dev.\nWarning: Image dev does not record its calls: its MCP server failed to switch to OpenTelemetry: Not configured.",
+    );
+    expect(render(started({ name: "dev", display: "headless", telemetry: { on: true } }, undefined, enrolled))).toBe(
+      "Started image dev.\ntelemetry: on",
+    );
   });
 });
 

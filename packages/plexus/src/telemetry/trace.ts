@@ -4,9 +4,14 @@
  * registers an SDK. A span carries names, kinds and outcomes, never a value:
  * no argument, result, image name, path or message, and no status
  * description, since that would be a message.
+ *
+ * Every span carries the `session.id` of the work it belongs to: the session
+ * `plexus mcp` runs a call in, or else one made at random for the process.
  */
+import { randomUUID } from "node:crypto";
 import {
   context,
+  createContextKey,
   propagation,
   SpanStatusCode,
   trace,
@@ -25,9 +30,35 @@ export function identifierOrOther(name: string): string {
   return identifier.test(name) ? name : "_OTHER";
 }
 
-/** The names of a call's arguments that look like identifiers, never their values. */
-export function argumentNames(args: Record<string, unknown>): string[] {
-  return Object.keys(args).filter((name) => identifier.test(name));
+/**
+ * The names of a call's arguments that look like identifiers, never their
+ * values: those the tool declares as `plexus.argument.names`, and the others
+ * as `plexus.argument.unknown_names`, so that a name the caller made up is
+ * only ever in the second.
+ */
+export function argumentAttributes(args: Record<string, unknown>, declared: ReadonlySet<string>): Attributes {
+  const names = Object.keys(args).filter((name) => identifier.test(name));
+  const known = names.filter((name) => declared.has(name));
+  const unknown = names.filter((name) => !declared.has(name));
+  return {
+    ...(known.length === 0 ? {} : { "plexus.argument.names": known }),
+    ...(unknown.length === 0 ? {} : { "plexus.argument.unknown_names": unknown }),
+  };
+}
+
+const sessionKey = createContextKey("@evref-bl/plexus session");
+
+let processSession: string | undefined;
+
+/** The context with `id` as its session: on the spans made in it, and in the baggage what it forwards carries. */
+export function withSession(active: Context, id: string): Context {
+  return withBaggageEntry(active, "session.id", id).setValue(sessionKey, id);
+}
+
+/** The session the context runs in, or the process's own, made at random the first time it is asked for. */
+export function sessionOf(active: Context): string {
+  const id = active.getValue(sessionKey);
+  return typeof id === "string" ? id : (processSession ??= randomUUID());
 }
 
 // A client names itself as a product does, and gives a version that starts
@@ -67,23 +98,27 @@ export function errorType(error: unknown): string {
 }
 
 /**
- * `work` inside a span that is active while it runs, ended with its outcome.
- * A rejection fails the span with the type `typeOf` gives, and is passed on.
+ * `work` inside a span that is active while it runs, ended with its outcome,
+ * with the session it runs in. A rejection fails the span with the type
+ * `typeOf` gives, unless it gives none, and is passed on.
  */
 export function inSpan<T>(
   name: string,
   kind: SpanKind,
   attributes: Attributes,
   work: (span: Span) => Promise<T>,
-  typeOf: (error: unknown) => string = errorType,
+  typeOf: (error: unknown) => string | undefined = errorType,
 ): Promise<T> {
   return trace
     .getTracer("@evref-bl/plexus", plexusVersion)
-    .startActiveSpan(name, { kind, attributes }, async (span) => {
+    .startActiveSpan(name, { kind, attributes: { ...attributes, "session.id": sessionOf(context.active()) } }, async (span) => {
       try {
         return await work(span);
       } catch (error) {
-        failed(span, typeOf(error));
+        const type = typeOf(error);
+        if (type !== undefined) {
+          failed(span, type);
+        }
         throw error;
       } finally {
         span.end();

@@ -42,13 +42,14 @@ interface HttpAnswer {
  *
  * The request is a CLIENT span, `<method>` or `tools/call <tool>`, and
  * carries the active trace context in its `params._meta`: see
- * `requestAttributes` for what the span records.
+ * `requestAttributes` for what the span records. A request that `endsImage`
+ * does not fail its span when the connection closes or no answer comes.
  */
 export async function request(
   url: string,
   method: string,
   params: Record<string, unknown> | undefined,
-  options: { timeoutMs: number; session?: Session; signal?: AbortSignal },
+  options: { timeoutMs: number; session?: Session; signal?: AbortSignal; endsImage?: boolean },
 ): Promise<Record<string, unknown>> {
   const id = `plexus-${method}-${Date.now()}`;
   const tool = method === "tools/call" && typeof params?.name === "string" ? identifierOrOther(params.name) : undefined;
@@ -89,8 +90,14 @@ export async function request(
       }
       return payload;
     },
-    requestErrorType,
+    (error) => (options.endsImage && endedImage(error) ? undefined : requestErrorType(error)),
   );
+}
+
+/** Whether a request failed as one that ends the image may: its connection closed, or no answer came in time. */
+function endedImage(error: unknown): boolean {
+  const kind = (error as Partial<ForwardError> | undefined)?.kind;
+  return kind === "closed" || kind === "timeout";
 }
 
 /**

@@ -8,11 +8,12 @@ import {
   launchLogPaths,
   type LauncherProcess,
 } from "../launcher/pharoLauncherMcpClient.js";
-import type { Display, Endpoint, StartOptions } from "../types.js";
+import type { Display, Endpoint, ImageTelemetry, StartOptions } from "../types.js";
 import { readClaim, takeClaim, type ClaimHolder, type ClaimState } from "./claims.js";
 import type { ImagesContext } from "./context.js";
 import { buildingState, stillBuilding } from "./create.js";
 import { observeEndpoint } from "./endpoint.js";
+import { imageTelemetry } from "./list.js";
 import { hostProcesses, killFailureLines, killVms, vmsOn } from "./processes.js";
 import { startScript } from "./scripts.js";
 import {
@@ -21,6 +22,7 @@ import {
   isPidAlive,
   noSuchImage,
   readProperties,
+  telemetryOf,
   type ImageFiles,
 } from "./store.js";
 
@@ -32,12 +34,15 @@ export interface StartResult {
   endpoint: Endpoint;
   display: Display;
   seconds: number;
+  /** Whether its server records its calls through OpenTelemetry, and why not: see `ImageInfo.telemetry`. */
+  telemetry?: ImageTelemetry;
 }
 
 /**
  * Launch the image with the start script and wait until its MCP server
  * answers, or fail as soon as the VM reports a failure or exits. Nothing is
- * recorded: the next look at the host is what says it runs.
+ * recorded: the next look at the host is what says it runs, and whether it
+ * records its calls.
  */
 export async function start(
   context: ImagesContext,
@@ -109,12 +114,14 @@ export async function start(
         [outcome.failure, ...killFailureLines(failures)].join("\n"),
       );
     }
+    const telemetry = imageTelemetry(outcome, telemetryOf(readProperties(files.created)));
     return {
       name,
       pids: outcome.pids,
       endpoint: outcome.endpoint,
       display,
       seconds: Math.round((context.now() - startedAt) / 100) / 10,
+      ...(telemetry === undefined ? {} : { telemetry }),
     };
   } finally {
     release();
@@ -137,9 +144,9 @@ function alreadyRunning(files: ImageFiles, vms: readonly LauncherProcess[]): Ple
   );
 }
 
-/** The endpoint that answered, or why the start failed and which VMs ran then. */
+/** The endpoint that answered and what its start said of telemetry, or why the start failed and which VMs ran then. */
 type WaitOutcome =
-  | { endpoint: Endpoint; pids: number[] }
+  | { endpoint: Endpoint; telemetry?: ImageTelemetry; pids: number[] }
   | { failure: string; pids: number[] };
 
 async function waitForEndpoint(
@@ -169,7 +176,7 @@ async function waitForEndpoint(
       sawVm = true;
       const observed = observeEndpoint(files, vms);
       if ("endpoint" in observed && (await context.ping(observed.endpoint))) {
-        return { endpoint: observed.endpoint, pids };
+        return { ...observed, pids };
       }
     } else if (sawVm || elapsed >= context.vmAppearMs) {
       const hint = exitedLaunchHint(launch.launch, launch.logs);

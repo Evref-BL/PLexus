@@ -216,13 +216,14 @@ export function writeLauncherImage(dir: string, name: string, template = "Pharo 
   );
 }
 
-export function writeEndpoint(dir: string, endpoint: { port: number; pid?: number }): void {
+/** The endpoint file a start script writes, with the lines it adds after the pid, such as what it says of telemetry. */
+export function writeEndpoint(dir: string, endpoint: { port: number; pid?: number; more?: string[] }): void {
   fs.mkdirSync(path.join(dir, "plexus"), { recursive: true });
   fs.writeFileSync(
     path.join(dir, "plexus", "endpoint.properties"),
     `transport=http\rhost=127.0.0.1\rport=${endpoint.port}\rpath=/\r${
       endpoint.pid === undefined ? "" : `pid=${endpoint.pid}\r`
-    }`,
+    }${(endpoint.more ?? []).map((line) => `${line}\r`).join("")}`,
   );
 }
 

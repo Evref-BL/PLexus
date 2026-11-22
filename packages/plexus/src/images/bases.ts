@@ -12,6 +12,7 @@ import { repairCopiedImageMetadataInDirectory } from "@evref-bl/pharo-launcher-m
 import * as texts from "../answers/texts.js";
 import { PlexusError } from "../errors.js";
 import { basesRoot, storeRoot, tmpRoot } from "../home.js";
+import type { ImageTelemetry } from "../types.js";
 import type { ImagesContext } from "./context.js";
 import { buildPrefix } from "./names.js";
 import { createFromTemplate, prepare } from "./prepare.js";
@@ -62,35 +63,52 @@ export const failedTelemetryBaseRetryMs = 24 * 60 * 60_000;
 
 /**
  * The base for this template, built first when there is none. `built` says
- * whether this call built the one it answers. With telemetry it is the base
- * that holds MCP's `Telemetry` group, a base of its own, unless that one
+ * whether this call built the one it answers, and `telemetry` whether the
+ * images copied from it can record their calls. With telemetry it is the
+ * base that holds MCP's `Telemetry` group, a base of its own, unless that one
  * cannot be built: telemetry never fails a create, so the base without it
- * serves, and the image is not traced. A telemetry base that failed while
- * the plain one served is remembered, and not tried again until
- * `failedTelemetryBaseRetryMs` has passed.
+ * serves, and `telemetry` says why its images record nothing. A telemetry
+ * base that failed while the plain one served is remembered with why, and not
+ * tried again until `failedTelemetryBaseRetryMs` has passed.
  */
 export async function ensureBase(
   context: ImagesContext,
   template: { name: string; category: string },
   pin: string,
-): Promise<{ dir: string; built: boolean }> {
+): Promise<{ dir: string; built: boolean; telemetry: ImageTelemetry }> {
   if (!context.telemetry) {
-    return ensureBaseHolding(context, template, pin, false);
+    return { ...(await ensureBaseHolding(context, template, pin, false)), telemetry: { on: false, reason: "not-asked" } };
   }
-  const failure = failureRecord(context.home, baseKey(template.name, template.category, pin, true));
-  const failedAt = readFailure(failure);
-  if (failedAt !== undefined && context.now() - failedAt < failedTelemetryBaseRetryMs) {
-    return ensureBaseHolding(context, template, pin, false);
+  const record = failureRecord(context.home, baseKey(template.name, template.category, pin, true));
+  const failure = readFailure(record);
+  if (failure !== undefined && context.now() - failure.at < failedTelemetryBaseRetryMs) {
+    return { ...(await ensureBaseHolding(context, template, pin, false)), telemetry: baseFailed(failure.detail) };
   }
   try {
     const base = await ensureBaseHolding(context, template, pin, true);
-    fs.rmSync(failure, { force: true });
-    return base;
-  } catch {
+    fs.rmSync(record, { force: true });
+    return { ...base, telemetry: { on: true } };
+  } catch (error) {
     const base = await ensureBaseHolding(context, template, pin, false);
-    writeFailure(failure, context.now());
-    return base;
+    const detail = failureDetail(error);
+    writeFailure(record, context.now(), detail);
+    return { ...base, telemetry: baseFailed(detail) };
   }
+}
+
+function baseFailed(detail: string | undefined): ImageTelemetry {
+  return { on: false, reason: "base-failed", ...(detail ? { detail } : {}) };
+}
+
+/** The longest a failure's own words are kept: a launcher's diagnostic can run to pages. */
+const detailLength = 300;
+
+/** What a failure said, on one line, after the line saying which base failed. */
+function failureDetail(error: unknown): string {
+  const lines = (error instanceof Error ? error.message : String(error)).split(/\r?\n/);
+  const said = error instanceof PlexusError && lines.length > 1 ? lines.slice(1) : lines;
+  const text = said.join(" ").replace(/\s+/g, " ").trim();
+  return text.length > detailLength ? `${text.slice(0, detailLength)}…` : text;
 }
 
 /**
@@ -102,19 +120,21 @@ function failureRecord(home: string, key: string): string {
   return path.join(basesRoot(home), key.replace(/-mcp-([^/\\]+)$/, "-failed-mcp-$1"));
 }
 
-function readFailure(file: string): number | undefined {
+/** When the base failed, on the record's first line, and why, on its second. */
+function readFailure(file: string): { at: number; detail?: string } | undefined {
   try {
-    const at = Number(fs.readFileSync(file, "utf8").trim());
-    return Number.isFinite(at) ? at : undefined;
+    const [first, detail] = fs.readFileSync(file, "utf8").split(/\r?\n/);
+    const at = Number(first.trim());
+    return Number.isFinite(at) ? { at, ...(detail?.trim() ? { detail: detail.trim() } : {}) } : undefined;
   } catch {
     return undefined;
   }
 }
 
-function writeFailure(file: string, at: number): void {
+function writeFailure(file: string, at: number, detail: string): void {
   try {
     fs.mkdirSync(path.dirname(file), { recursive: true });
-    fs.writeFileSync(file, `${at}\n`, "utf8");
+    fs.writeFileSync(file, `${at}\n${detail}\n`, "utf8");
   } catch {
     // Not remembered: the next create tries again.
   }
@@ -137,7 +157,7 @@ async function ensureBaseHolding(
   try {
     const failure =
       (await createFromTemplate(context, build, template)) ??
-      (await prepare(context, build, { kind: "pin", version: pin, telemetry }));
+      (await prepare(context, build, { kind: "pin", version: pin, telemetry })).failure;
     if (failure !== undefined) {
       throw new PlexusError(
         "create-failed",

@@ -10,6 +10,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { callTool, listTools } from "../../src/forward/index.js";
 import { request } from "../../src/forward/jsonRpc.js";
 import { storeRoot } from "../../src/home.js";
+import { withSession } from "../../src/telemetry/trace.js";
 import { FakeLauncher, imagesWith, tempHome, writeLauncherImage } from "../support/fakeLauncher.js";
 
 const exporter = new InMemorySpanExporter();
@@ -146,6 +147,7 @@ describe("a forwarded request with an SDK", () => {
       "mcp.session.id": "session-1",
       "network.transport": "tcp",
       "network.protocol.name": "http",
+      "session.id": expect.stringMatching(/^[0-9a-f-]{36}$/),
     });
 
     const call = server.received.find((each) => each.method === "tools/call")!;
@@ -202,6 +204,69 @@ describe("a forwarded request with an SDK", () => {
     expectNoValues("Secret");
   });
 
+  it("carries the session it runs in, or the process's own, never one the caller's baggage names", async () => {
+    registerSdk();
+    const server = await fakeMcpServer();
+    const callers = propagation.setBaggage(context.active(), propagation.createBaggage({ "session.id": { value: "alice" } }));
+
+    await context.with(callers, () => callTool({ url: server.url }, "class_get", {}));
+    await context.with(withSession(callers, "s-1"), () => callTool({ url: server.url }, "class_get", {}));
+    await callTool({ url: server.url }, "class_get", {});
+
+    const [inCaller, inSession, alone] = exporter.getFinishedSpans().map((span) => span.attributes["session.id"]);
+    expect(inSession).toBe("s-1");
+    expect(inCaller).toMatch(/^[0-9a-f-]{36}$/);
+    expect(alone).toBe(inCaller);
+    const sent = server.received.filter((each) => each.method === "tools/call").map((each) => each.params?._meta);
+    expect((sent[1] as { baggage?: string }).baggage).toBe("session.id=s-1");
+  });
+
+  it("does not fail a call meant to end the image when its connection closes or no answer comes", async () => {
+    registerSdk();
+    const cases: Array<[(method: string) => Reply | undefined, string | undefined]> = [
+      [(method) => (method === "tools/call" ? "never" : standardAnswer(method)), "timeout"],
+      [(method) => (method === "tools/call" ? { error: { code: -32603, message: "no" } } : standardAnswer(method)), "-32603"],
+    ];
+    for (const [answer, type] of cases) {
+      exporter.reset();
+      const server = await fakeMcpServer(answer);
+      const failure = await callTool({ url: server.url }, "evaluate", { code: "quit" }, { minimumMs: 200, endsImage: true }).then(
+        () => undefined,
+        (error: Error & { kind?: string }) => error.kind,
+      );
+
+      const span = spanNamed("tools/call evaluate");
+      if (type === "timeout") {
+        expect(failure).toBe("timeout");
+        expect(span.status.code).toBe(SpanStatusCode.UNSET);
+        expect(span.attributes).not.toHaveProperty("error.type");
+      } else {
+        expect(span.attributes["error.type"]).toBe(type);
+      }
+    }
+
+    exporter.reset();
+    const closing = http.createServer((incoming, response) => {
+      let body = "";
+      incoming.on("data", (chunk: Buffer) => (body += chunk.toString("utf8")));
+      incoming.on("end", () => {
+        const message = JSON.parse(body) as { id?: string; method: string };
+        if (message.method === "tools/call") {
+          incoming.socket.destroy();
+          return;
+        }
+        response.writeHead(message.id === undefined ? 202 : 200, { "content-type": "application/json" });
+        response.end(message.id === undefined ? undefined : JSON.stringify({ jsonrpc: "2.0", id: message.id, ...(standardAnswer(message.method) as object) }));
+      });
+    });
+    servers.push(closing);
+    await new Promise<void>((resolve) => closing.listen(0, "127.0.0.1", resolve));
+    const url = `http://127.0.0.1:${(closing.address() as AddressInfo).port}/`;
+    const kind = await callTool({ url }, "evaluate", { code: "quit" }, { endsImage: true }).catch((error: { kind?: string }) => error.kind);
+    expect(kind).toBe("closed");
+    expect(spanNamed("tools/call evaluate").attributes).not.toHaveProperty("error.type");
+  });
+
   it("fails with a kind and no description: an error result, a JSON-RPC error, an HTTP status, a timeout", async () => {
     registerSdk();
     const cases: Array<[Reply, string]> = [
@@ -239,25 +304,27 @@ describe("the image verbs with an SDK", () => {
     await images.stop("dev").catch(() => undefined);
 
     const [taken, deleted, refused, stopped] = exporter.getFinishedSpans();
+    const session = taken.attributes["session.id"];
+    expect(session).toMatch(/^[0-9a-f-]{36}$/);
     expect([taken.name, taken.kind, taken.attributes]).toEqual([
       "plexus.image.create",
       SpanKind.INTERNAL,
-      { "error.type": "image-exists" },
+      { "error.type": "image-exists", "session.id": session },
     ]);
     expect([deleted.name, deleted.kind, deleted.status.code]).toEqual([
       "plexus.image.delete",
       SpanKind.INTERNAL,
       SpanStatusCode.UNSET,
     ]);
-    expect(deleted.attributes).toEqual({});
+    expect(deleted.attributes).toEqual({ "session.id": session });
     expect([refused.name, refused.status, refused.attributes]).toEqual([
       "plexus.image.delete",
       { code: SpanStatusCode.ERROR },
-      { "error.type": "no-such-image" },
+      { "error.type": "no-such-image", "session.id": session },
     ]);
     expect([stopped.name, stopped.attributes]).toEqual([
       "plexus.image.stop",
-      { "plexus.image.save": false, "error.type": "no-such-image" },
+      { "plexus.image.save": false, "error.type": "no-such-image", "session.id": session },
     ]);
     expectNoValues("Secret", "dev", home);
     expect(fs.existsSync(path.join(storeRoot(home), "Secret-dev"))).toBe(false);

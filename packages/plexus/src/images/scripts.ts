@@ -30,6 +30,9 @@ function smalltalkPath(value: string): string {
 const errorText =
   "((error description copyReplaceAll: String cr with: ' ') copyReplaceAll: String lf with: ' ')";
 
+/** The longest error a start script writes as why the server records nothing. */
+const detailLength = 300;
+
 function failureWriter(file: string, indent: string): string {
   return [
     `${indent}${file} ensureDelete.`,
@@ -43,11 +46,19 @@ function failureWriter(file: string, indent: string): string {
  * Get MCP into a fresh image, save it and quit. The pinned release is loaded
  * with the Metacello expression PLexus has always used, with its `Telemetry`
  * group beside its default one when telemetry is asked for; a script is filed
- * in instead.
+ * in instead. The status says whether MCP then has its OpenTelemetry backend
+ * (`telemetry=on`), which a script may or may not have loaded.
  *
- * A pinned load forgets the Iceberg repositories it registered: their
- * locations name the build directory, which a base is renamed away from. A
- * script's are kept, since its image is built where it stays.
+ * The image clones `github://` repositories over HTTPS, as a public one needs
+ * no credentials that way, before it loads anything and in the image saved.
+ *
+ * A pinned load forgets the Iceberg repositories it registered whose clone is
+ * in the build directory, which a base is renamed away from, and the status
+ * names those clones (`clone=`) for PLexus to delete once the image has quit:
+ * a clone left without its repository is taken by a later load of the same
+ * project for one it must not overwrite, which then fails. A clone elsewhere,
+ * in a location every image shares, stays registered. A script's are kept,
+ * since its image is built where it stays.
  */
 export function prepareScript(source: PrepareSource): string {
   const load =
@@ -73,17 +84,25 @@ export function prepareScript(source: PrepareSource): string {
     source.kind === "pin"
       ? [
           `  (Smalltalk globals at: #IceRepository ifAbsent: [ nil ]) ifNotNil: [ :class |`,
-          `    (class registry reject: [ :each | repositoriesBefore includes: each ])`,
-          `      do: [ :each | class registry remove: each ifAbsent: [ ] ] ].`,
+          `    (class registry reject: [ :each | repositoriesBefore includes: each ]) do: [ :each |`,
+          `      | location |`,
+          `      location := [ each location ifNotNil: [ :place | place asFileReference ] ]`,
+          `        on: Error do: [ :error | nil ].`,
+          `      (location isNil or: [ FileLocator imageDirectory asFileReference contains: location ]) ifTrue: [`,
+          `        class registry remove: each ifAbsent: [ ].`,
+          `        location ifNotNil: [ clones add: location fullName ] ] ] ].`,
         ].join("\n")
       : "";
 
   return `"Written by PLexus to prepare this image. Do not edit."
-| dir status repositoriesBefore |
+| dir status repositoriesBefore clones |
 dir := FileLocator imageDirectory asFileReference / 'plexus'.
 dir ensureCreateDirectory.
 status := dir / 'prepare-status.properties'.
+clones := OrderedCollection new.
 [
+  (Smalltalk globals at: #Iceberg ifAbsent: [ nil ]) ifNotNil: [ :class |
+    (class respondsTo: #remoteTypeSelector:) ifTrue: [ class remoteTypeSelector: #httpsUrl ] ].
   repositoriesBefore := (Smalltalk globals at: #IceRepository ifAbsent: [ nil ])
     ifNil: [ #() ] ifNotNil: [ :class | class registry copy ].
 ${load}
@@ -91,7 +110,12 @@ ${load}
     ifFalse: [ Error signal: 'MCP is not in the image after loading.' ].
 ${forget}
   status ensureDelete.
-  status writeStreamDo: [ :stream | stream nextPutAll: 'status=ok'; cr ].
+  status writeStreamDo: [ :stream |
+    stream nextPutAll: 'status=ok'; cr;
+      nextPutAll: 'telemetry=';
+      nextPutAll: (((Smalltalk globals at: #MCP) canUnderstand: #useOpenTelemetryObservability)
+        ifTrue: [ 'on' ] ifFalse: [ 'off' ]); cr.
+    clones do: [ :each | stream nextPutAll: 'clone='; nextPutAll: each; cr ] ].
   Smalltalk snapshot: true andQuit: true ]
     on: Error
     do: [ :error |
@@ -111,18 +135,23 @@ ${failureWriter("status", "      ")}
  *
  * With telemetry, a server that has an OpenTelemetry backend is switched to
  * it before it starts; one without is started as it is, and a backend that
- * fails to switch leaves it so too.
+ * fails to switch leaves it so too. The file says whether the server records
+ * through OpenTelemetry (`telemetry=on`), and when not, why
+ * (`telemetry.reason`, `telemetry.detail`): see `TelemetryOffReason`.
  */
 export function startScript(options: { telemetry?: boolean } = {}): string {
   const observability = options.telemetry
     ? [
+        `  telemetry := 'no-backend'.`,
         `  (mcp respondsTo: #useOpenTelemetryObservability) ifTrue: [`,
-        `    [ mcp useOpenTelemetryObservability ] on: Error do: [ :error | nil ] ].`,
+        `    telemetry := [ mcp useOpenTelemetryObservability. nil ]`,
+        `      on: Error`,
+        `      do: [ :error | failure := ${errorText}. 'switch-failed' ] ].`,
         ``,
       ].join("\n")
-    : "";
+    : `  telemetry := 'not-asked'.\n`;
   return `"Written by PLexus to start this image's MCP server. Do not edit."
-| dir status mcp port pid endpoint temporary |
+| dir status mcp port pid endpoint temporary telemetry failure records |
 dir := FileLocator imageDirectory asFileReference / 'plexus'.
 status := dir / 'start-status.properties'.
 [
@@ -143,6 +172,12 @@ ${observability}  mcp port: 0.
   (port isInteger and: [ port > 0 ])
     ifFalse: [ Error signal: 'MCP did not report a bound port after starting.' ].
   Smalltalk globals at: #PLexusMCPServer put: mcp.
+  records := [
+    (mcp respondsTo: #observability) and: [
+      (Smalltalk globals at: #MCPOpenTelemetryObservabilityBackend ifAbsent: [ nil ])
+        ifNil: [ false ]
+        ifNotNil: [ :backend | mcp observability isKindOf: backend ] ] ]
+    on: Error do: [ :error | false ].
   endpoint := dir / 'endpoint.properties'.
   temporary := dir / 'endpoint.properties.tmp'.
   temporary ensureDelete.
@@ -151,7 +186,14 @@ ${observability}  mcp port: 0.
     stream nextPutAll: 'host=127.0.0.1'; cr.
     stream nextPutAll: 'port='; nextPutAll: port asString; cr.
     stream nextPutAll: 'path=/'; cr.
-    pid ifNotNil: [ :value | stream nextPutAll: 'pid='; nextPutAll: value asString; cr ] ].
+    pid ifNotNil: [ :value | stream nextPutAll: 'pid='; nextPutAll: value asString; cr ].
+    records
+      ifTrue: [ stream nextPutAll: 'telemetry=on'; cr ]
+      ifFalse: [
+        stream nextPutAll: 'telemetry=off'; cr.
+        telemetry ifNotNil: [ :reason | stream nextPutAll: 'telemetry.reason='; nextPutAll: reason; cr ].
+        failure ifNotNil: [ :text |
+          stream nextPutAll: 'telemetry.detail='; nextPutAll: (text first: (text size min: ${detailLength})); cr ] ] ].
   endpoint ensureDelete.
   temporary renameTo: endpoint basename ]
     on: Error

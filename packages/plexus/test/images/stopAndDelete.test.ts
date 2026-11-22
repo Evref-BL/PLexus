@@ -148,7 +148,7 @@ describe("stop without save", () => {
         endpoint: { url: "http://127.0.0.1:7001/", pid: vm.pid },
         name: "evaluate",
         args: quitCode,
-        options: { minimumMs: 2_000 },
+        options: { minimumMs: 2_000, endsImage: true },
       },
     ]);
     expect(launcher.called("killProcess")).toEqual([]);
@@ -224,7 +224,7 @@ describe("stop with save", () => {
         endpoint: { url: "http://127.0.0.1:7001/", pid: vm.pid },
         name: "evaluate",
         args: saveCode,
-        options: { minimumMs: 60_000 },
+        options: { minimumMs: 60_000, endsImage: true },
       },
     ]);
     expect(launcher.called("killProcess")).toEqual([]);
