@@ -135,6 +135,84 @@ function runningSetup() {
   return { ...fixture, vm, calls, answer, endpointFile: path.join(fixture.dir, "plexus", "endpoint.properties") };
 }
 
+const quitCode = { code: "Smalltalk snapshot: false andQuit: true" };
+
+describe("stop without save", () => {
+  it("has the image quit, and kills nothing once it has gone", async () => {
+    const { launcher, vm, calls, answer, endpointFile, context } = runningSetup();
+    answer({ exits: true });
+
+    expect(await stop(context, "dev")).toEqual({ name: "dev", killed: [], quit: true });
+    expect(calls).toEqual([
+      {
+        endpoint: { url: "http://127.0.0.1:7001/", pid: vm.pid },
+        name: "evaluate",
+        args: quitCode,
+        options: { minimumMs: 2_000 },
+      },
+    ]);
+    expect(launcher.called("killProcess")).toEqual([]);
+    expect(fs.existsSync(endpointFile)).toBe(false);
+  });
+
+  it("waits for a VM that took the quit, and kills the one beside it", async () => {
+    const { launcher, vm, answer, context } = runningSetup();
+    const beside = launcher.run(path.join(launcher.imageDir("dev"), "dev.image"), { headless: false });
+    answer({ failure: forwardFailure("timed out", { kind: "timeout" }) });
+    let polls = 0;
+    const sleep = context.sleep;
+    context.sleep = async (ms) => {
+      await sleep(ms);
+      if (++polls === 2) {
+        launcher.processes = launcher.processes.filter((each) => each.pid !== vm.pid);
+      }
+    };
+
+    expect(await stop(context, "dev")).toEqual({ name: "dev", killed: [beside.pid], quit: true });
+    expect(launcher.called("killProcess")).toEqual([{ pid: beside.pid }]);
+  });
+
+  it("kills a VM that took the quit but did not go in time", async () => {
+    const { launcher, vm, answer, context } = runningSetup();
+    answer({});
+
+    expect(await stop(context, "dev")).toEqual({ name: "dev", killed: [vm.pid] });
+    expect(context.clock.now - Date.parse("2026-11-13T12:00:00Z")).toBe(3_000);
+    expect(launcher.called("killProcess")).toEqual([{ pid: vm.pid }]);
+  });
+
+  it("kills at once an image that did not take the quit", async () => {
+    const answers: Array<(context: ReturnType<typeof runningSetup>) => void> = [
+      ({ answer }) => answer({ takesMs: 2_000, failure: forwardFailure("no answer", { kind: "no-handshake", waitedMs: 2_000 }) }),
+      ({ answer }) => answer({ failure: forwardFailure("connect ECONNREFUSED", { kind: "refused" }) }),
+      ({ context }) => {
+        context.callTool = async () => ({ isError: true, content: [{ type: "text", text: "No MCP tool named evaluate." }] });
+      },
+    ];
+    for (const prepare of answers) {
+      const fixture = runningSetup();
+      prepare(fixture);
+
+      expect(await stop(fixture.context, "dev")).toEqual({ name: "dev", killed: [fixture.vm.pid] });
+      expect(fixture.context.clock.now - Date.parse("2026-11-13T12:00:00Z")).toBeLessThanOrEqual(2_000);
+      expect(fixture.launcher.called("killProcess")).toEqual([{ pid: fixture.vm.pid }]);
+    }
+  });
+
+  it("asks nothing of an image that takes no calls", async () => {
+    const { launcher, imagePath, context } = setup();
+    const vm = launcher.run(imagePath);
+    let asked = false;
+    context.callTool = async () => {
+      asked = true;
+      throw new Error("not asked");
+    };
+
+    expect(await stop(context, "dev")).toEqual({ name: "dev", killed: [vm.pid] });
+    expect(asked).toBe(false);
+  });
+});
+
 describe("stop with save", () => {
   it("has the image save itself and quit, and says it saved", async () => {
     const { launcher, vm, calls, answer, endpointFile, context } = runningSetup();

@@ -251,6 +251,7 @@ export function testContext(
     now: () => clock.now,
     pollMs: 250,
     vmAppearMs: 30_000,
+    quitWaitMs: 3_000,
     stopWaitMs: 10_000,
     saveWaitMs: 60_000,
     clock,

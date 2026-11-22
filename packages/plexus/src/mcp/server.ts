@@ -75,7 +75,7 @@ An image takes one writer: image_create a new one for each new subject or
 parallel agent rather than share one, named like a branch
 (pretty-print-formatter, not p15). A running image may be another session's.
 A call to an image's tool names the image, and may leave it out while only
-one runs. image_stop kills an image without saving it; with save: true, the
+one runs. image_stop stops an image without saving it; with save: true, the
 image saves itself and quits.`;
 
 const nameProperty = { type: "string", description: "The image's name." } as const;
@@ -129,13 +129,13 @@ export const imageTools: Tool[] = [
   {
     name: "image_stop",
     description:
-      "Stop an image. By default it kills every VM that runs it without saving, and the image starts again as it was last saved. With save: true, the image saves itself and quits instead, keeping its changes. Evaluating `Smalltalk saveSession` in the image saves it without stopping it.",
+      "Stop an image. By default it stops without saving: the image is asked to quit, every VM still running it is then killed, and it starts again as it was last saved. With save: true, the image saves itself and quits instead, keeping its changes. Evaluating `Smalltalk saveSession` in the image saves it without stopping it.",
     inputSchema: schema(
       {
         name: nameProperty,
         save: {
           type: "boolean",
-          description: "true to have the image save itself and quit; false or absent kills it without saving.",
+          description: "true to have the image save itself and quit; false or absent stops it without saving.",
         },
       },
       ["name"],

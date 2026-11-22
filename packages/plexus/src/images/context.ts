@@ -35,6 +35,8 @@ export interface ImagesContext {
   pollMs: number;
   /** How long a start waits for a VM to appear on the image at all. */
   vmAppearMs: number;
+  /** How long a stop that does not save waits for an image that took the quit to go, before killing it. */
+  quitWaitMs: number;
   /** How long a stop waits for the VMs it killed to go. */
   stopWaitMs: number;
   /** How long a stop that saves waits for the image to take the save, and for its VM to quit. */
@@ -77,6 +79,7 @@ export function imagesContext(options: InternalImagesOptions = {}): ImagesContex
     now: () => Date.now(),
     pollMs: 250,
     vmAppearMs: 30_000,
+    quitWaitMs: 3_000,
     stopWaitMs: 10_000,
     saveWaitMs: 60_000,
   };

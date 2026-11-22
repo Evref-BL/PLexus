@@ -63,7 +63,7 @@ const imageCommands: Record<Verb, CommandSpec> = {
   stop: {
     usage: "plexus image stop <name> [--save]",
     summary:
-      "Kill every VM running the image, without saving. With --save, the image saves itself and quits instead, through its own evaluate tool, the one call PLexus makes to an image's tools; one that does not in time is left running, and one that lists no evaluate tool cannot save.",
+      "Stop the image without saving: it is asked to quit through its own evaluate tool, and every VM still running it a few seconds later is killed. With --save, the image saves itself and quits instead, through the same tool; one that does not in time is left running, and one that lists no evaluate tool cannot save.",
     values: [],
     flags: ["save"],
     positionals: { min: 1, max: 1 },
