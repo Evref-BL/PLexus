@@ -95,6 +95,9 @@ class FakeImages implements ImagesApi {
     if (name === "broken") {
       throw new PlexusError("start-failed", "Image broken exited during start.");
     }
+    if (this.rows.some((each) => each.name === name && each.state === "running")) {
+      return { name, pids: [100], endpoint: { url: "http://127.0.0.1:7001/", pid: 100 }, display: "headless" as const, seconds: 0, alreadyRunning: true as const };
+    }
     return { name, pids: [100], endpoint: { url: "http://127.0.0.1:7001/" }, display: options?.display ?? "headless", seconds: 2 };
   }
 
@@ -202,7 +205,7 @@ describe("plexus mcp", () => {
     expect(client.getServerCapabilities()?.tools).toEqual({ listChanged: true });
     expect(client.getInstructions()).toContain("Search these tools for any Pharo, Smalltalk, Tonel or .st work.");
     expect(client.getInstructions()).toContain("may leave it out while only\none runs");
-    expect(tools.find((each) => each.name === "image_start")?.description).toContain("refuses an image that is already running");
+    expect(tools.find((each) => each.name === "image_start")?.description).toContain("An image already running is left as it is.");
     const imageStop = tools.find((each) => each.name === "image_stop")!;
     expect(imageStop.description).toContain("without saving");
     expect(imageStop.description).toContain("With save: true, the image saves itself and quits");
@@ -274,6 +277,54 @@ describe("plexus mcp", () => {
     fail = true;
     await call("class_search", { name: "Object" });
     expect(images.calls.filter(([method]) => method === "list")).toEqual([["list", "dev"]]);
+  });
+
+  it("answers a start of an image already running as no error, with no error span", async () => {
+    const recording = recordSpans();
+    try {
+      const { call } = await connect(new FakeImages([row("dev", { port: 7001 }), row("other", { port: 7002 })]));
+      const answer = await call("image_start", { name: "dev" });
+
+      expect(answer.isError).toBeUndefined();
+      expect(textOf(answer)).toBe('Image dev was already running. Pass image: "dev" to its tools while another image runs.');
+      const spans = recording.exporter.getFinishedSpans();
+      expect(spans.filter((span) => span.status.code === SpanStatusCode.ERROR)).toEqual([]);
+      expect(servedSpans(recording.exporter)[0].attributes).not.toHaveProperty("plexus.error.code");
+    } finally {
+      recording.end();
+    }
+  });
+
+  it("among several images, sends a call naming none to the only one that has the tool, and says when none has it", async () => {
+    const recording = recordSpans();
+    try {
+      const { call, forwarded } = await connect(
+        new FakeImages([row("a", { port: 7001 }), row("b", { port: 7002 })]),
+        {
+          "http://127.0.0.1:7001/": [tool("eval"), tool("image_evaluate")],
+          "http://127.0.0.1:7002/": [tool("eval"), tool("class_get")],
+        },
+      );
+
+      expect(textOf(await call("class_get", { name: "Object" }))).toBe("class_get answered");
+      expect(forwarded.map((each) => each.endpoint.url)).toEqual(["http://127.0.0.1:7002/"]);
+
+      const missing = await call("class_search");
+      expect(missing.isError).toBe(true);
+      expect(textOf(missing)).toBe("No running image (a, b) has a tool class_search: tool_search finds the tools an image has.");
+      expect(textOf(await call("evaluate"))).toBe(
+        "No running image (a, b) has a tool evaluate, but a lists image_evaluate: call that instead.",
+      );
+      expect(textOf(await call("eval"))).toBe("Several images are running (a, b): name one with the image argument.");
+      expect(forwarded).toHaveLength(1);
+
+      const [, none, , several] = servedSpans(recording.exporter);
+      expect(none.attributes).not.toHaveProperty("plexus.error.code");
+      expect(none.attributes["error.type"]).toBe("tool_error");
+      expect(several.attributes["plexus.error.code"]).toBe("several-images");
+    } finally {
+      recording.end();
+    }
   });
 
   it("passes the image's own error as it is", async () => {
@@ -390,8 +441,8 @@ describe("plexus mcp", () => {
     expect(textOf(await call("image_start", { name: "dev", display: "interactive" }))).toBe(
       'Started image dev, with its window open. Pass image: "dev" to its tools while another image runs.',
     );
-    // The fake's rows stay as they were: old is the only image running, so its start says nothing of image.
-    expect(textOf(await call("image_start", { name: "old" }))).toBe(["Started image old.", olderWarning].join("\n"));
+    // Old runs already, and is the only image running, so its start says nothing of image.
+    expect(textOf(await call("image_start", { name: "old" }))).toBe(["Image old was already running.", olderWarning].join("\n"));
     expect(textOf(await call("image_stop", { name: "dev" }))).toBe("Stopped image dev; what it had not saved is lost.");
     expect(textOf(await call("image_stop", { name: "old", save: true }))).toBe("Saved and stopped image old.");
     expect(textOf(await call("image_delete", { name: "dev" }))).toBe("Deleted image dev and its files.");

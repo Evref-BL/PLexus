@@ -211,15 +211,19 @@ describe("start", () => {
     });
   });
 
-  it("refuses an image a VM already runs, naming it", async () => {
+  it("answers an image whose server already answers as it is, and launches nothing", async () => {
     const { launcher, dir, imagePath, context } = setup();
-    const vm = launcher.run(imagePath);
-    writeEndpoint(dir, { port: 7001, pid: vm.pid });
+    const vm = launcher.run(imagePath, { headless: false });
+    writeEndpoint(dir, { port: 7001, pid: vm.pid, more: ["telemetry=on"] });
 
-    await expect(start(context, "dev")).rejects.toMatchObject({
-      code: "image-running",
-      message: "Image dev is already running; its tools answer now.",
-      details: { pids: [vm.pid], endpoint: { url: "http://127.0.0.1:7001/", pid: vm.pid } },
+    expect(await start(context, "dev")).toEqual({
+      name: "dev",
+      pids: [vm.pid],
+      endpoint: { url: "http://127.0.0.1:7001/", pid: vm.pid },
+      display: "interactive",
+      seconds: 0,
+      telemetry: { on: true },
+      alreadyRunning: true,
     });
     expect(launcher.called("startImage")).toEqual([]);
   });

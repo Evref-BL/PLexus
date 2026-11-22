@@ -270,13 +270,14 @@ export function created(
 }
 
 /**
- * A start. `row`, the image as listed before or after the start, which
- * changes neither, adds the script every start files in and the older-MCP
- * warning; the pids, the endpoint and the time taken are not said. Enrolled,
- * it says whether the image records its calls.
+ * A start, or an image that was already running. `row`, the image as listed
+ * before or after the start, which changes neither, adds the script every
+ * start files in and the older-MCP warning; the pids, the endpoint and the
+ * time taken are not said. Enrolled, it says whether the image records its
+ * calls.
  */
 export function started(
-  result: Pick<StartResult, "name" | "display" | "telemetry">,
+  result: Pick<StartResult, "name" | "display" | "telemetry" | "alreadyRunning">,
   row?: ImageInfo,
   enrollment: Enrollment = {},
 ): ToolAnswer {
@@ -284,10 +285,12 @@ export function started(
   const everyStart = row === undefined ? undefined : everyStartScript(row);
   const telemetry = telemetrySaid({ name: result.name, ...(row?.mcp === undefined ? {} : { mcp: row.mcp }), ...(result.telemetry === undefined ? {} : { telemetry: result.telemetry }) }, enrollment);
   return {
-    summary: texts.started(result.name, {
-      interactive: result.display === "interactive",
-      ...(everyStart === undefined ? {} : { everyStart }),
-    }),
+    summary: result.alreadyRunning
+      ? texts.alreadyRunning(result.name, result.display === "interactive")
+      : texts.started(result.name, {
+          interactive: result.display === "interactive",
+          ...(everyStart === undefined ? {} : { everyStart }),
+        }),
     warnings: [...(older === undefined ? [] : [older]), ...telemetry.warnings],
     fields: telemetry.fields,
   };
@@ -415,7 +418,7 @@ async function listedNames(
  * with words put before it, as `image_evaluate` is `evaluate`. Several such names, or a listing that holds the asked name, which
  * the image has just denied having, name none.
  */
-function meantTool(tool: string, listed: readonly string[]): string | undefined {
+export function meantTool(tool: string, listed: readonly string[]): string | undefined {
   if (listed.includes(tool)) {
     return undefined;
   }

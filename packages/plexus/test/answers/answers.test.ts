@@ -299,6 +299,18 @@ describe("image_create, image_start, image_stop and image_delete", () => {
     );
   });
 
+  it("says an image a start found running was already running, as a start would say the rest", () => {
+    expect(render(started({ name: "p13", display: "headless", alreadyRunning: true }, row("p13", { mcp: pinned })))).toBe(
+      "Image p13 was already running.",
+    );
+    expect(started({ name: "p13", display: "interactive", alreadyRunning: true }).summary).toBe(
+      "Image p13 was already running, with its window open.",
+    );
+    expect(render(started({ name: "dev", display: "headless", alreadyRunning: true, telemetry: { on: true } }, undefined, { enrolled: true }))).toBe(
+      "Image dev was already running.\ntelemetry: on",
+    );
+  });
+
   it("says a start, and nothing of pids or endpoints", () => {
     expect(render(started({ name: "p13", display: "headless" }, row("p13", { mcp: pinned })))).toBe("Started image p13.");
     expect(started({ name: "p13", display: "interactive" }).summary).toBe("Started image p13, with its window open.");

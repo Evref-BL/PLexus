@@ -43,9 +43,9 @@ export function deleteRunning(name: string, pids: readonly number[]): string {
   return `Image ${name} is running as ${pidsText(pids)}. Stop it with image_stop before deleting it.`;
 }
 
-/** A start of an image whose MCP server answers. */
-export function alreadyRunning(name: string): string {
-  return `Image ${name} is already running; its tools answer now.`;
+/** A start of an image whose MCP server already answers. */
+export function alreadyRunning(name: string, interactive: boolean): string {
+  return `Image ${name} was already running${interactive ? ", with its window open" : ""}.`;
 }
 
 export function beingStarted(name: string, holder?: number): string {
@@ -111,6 +111,13 @@ export function noSuchTool(name: string, tool: string, meant?: string): string {
   return meant === undefined
     ? `Image ${name} answered that it has no tool ${tool}: tool_search finds the tools it has.`
     : `Image ${name} answered that it has no tool ${tool}, but it lists ${meant}: call that instead.`;
+}
+
+/** No image of those running, which a call naming none could go to, lists the tool; `meant` is the one listed tool an agent asking for it most likely wants. */
+export function noImageHasTool(names: readonly string[], tool: string, meant?: { tool: string; image: string }): string {
+  return meant === undefined
+    ? `No running image (${names.join(", ")}) has a tool ${tool}: tool_search finds the tools an image has.`
+    : `No running image (${names.join(", ")}) has a tool ${tool}, but ${meant.image} lists ${meant.tool}: call that instead.`;
 }
 
 export function stoppedBeforeAnswering(name: string, tool: string): string {

@@ -125,7 +125,7 @@ export const imageTools: Tool[] = [
   {
     name: "image_start",
     description:
-      "Start an image and wait until its MCP server answers; its tools are then listed here. It refuses an image that is already running.",
+      "Start an image and wait until its MCP server answers; its tools are then listed here. An image already running is left as it is.",
     inputSchema: schema(
       {
         name: nameProperty,
@@ -195,6 +195,9 @@ class Refusal extends Error {
   }
 }
 
+/** No image a call naming none could go to lists its tool: answered as an image answers a tool it lacks, with no refusal code. */
+class NoImageHasTool extends Error {}
+
 /** A call's answer, the code of the refusal it is, when this server refused it, and the image a forwarded call went to. */
 interface Answered {
   result: CallToolResult;
@@ -226,6 +229,20 @@ export function createPlexusMcpServer(options: PlexusMcpServerOptions): Server {
   // From the last tools/list, so that a call waits as long as the schema the
   // image listed for its tool allows.
   let listedSchemas: ListedSchemas = new Map();
+  /**
+   * The names of the tools the image lists: the host's last listing of it,
+   * else one fetched now, waited for as briefly as a first call waits; none
+   * when it does not come.
+   */
+  async function toolsOf(image: Reachable): Promise<ReadonlySet<string> | undefined> {
+    const listing = learnListing(image.name, image.endpoint);
+    if (listing !== undefined) {
+      await settledWithin(listing, firstListingWaitMs);
+    }
+    const tools = listedSchemas.get(image.name);
+    return tools === undefined ? undefined : new Set(tools.keys());
+  }
+
   // The listings forwarded calls are fetching, by image.
   const learning = new Map<string, Promise<void>>();
 
@@ -427,7 +444,7 @@ export function createPlexusMcpServer(options: PlexusMcpServerOptions): Server {
       };
       // Given none, the refusal of a tool the image does not have asks the
       // image for its listing itself, waiting less than a tools/list does.
-      return forward(images, callOn, options.listTools, name, args);
+      return forward(images, callOn, options.listTools, name, args, toolsOf);
     }
     const refusal = answers.checkArguments(imageTool, args);
     if (refusal !== undefined) {
@@ -565,6 +582,7 @@ async function forward(
   listToolsAt: PlexusMcpServerOptions["listTools"],
   name: string,
   args: Record<string, unknown>,
+  toolsOf: (image: Reachable) => Promise<ReadonlySet<string> | undefined>,
 ): Promise<Answered> {
   const { image, ...rest } = args;
   const refusal = answers.checkArguments({ name, inputSchema: imageArgument }, image === undefined ? {} : { image });
@@ -576,8 +594,12 @@ async function forward(
   try {
     target =
       images.answering(image as string | undefined) ??
-      (image === undefined ? await onlyAnswering(images, name) : await named(images, image as string));
+      (image === undefined ? await onlyAnswering(images, name, toolsOf) : await named(images, image as string));
   } catch (error) {
+    // No image to ask has the tool: said as an image that lacks it says it.
+    if (error instanceof NoImageHasTool) {
+      return { result: text(error.message, true) };
+    }
     return refused(error);
   }
   try {
@@ -601,14 +623,44 @@ async function named(images: ImagesApi, image: string): Promise<Reachable> {
   return { name: row.name, endpoint: endpointOf(row) };
 }
 
-async function onlyAnswering(images: ImagesApi, tool: string): Promise<Reachable> {
+/**
+ * Where a call naming no image goes: the only image that answers or, of
+ * several, the only one that lists the tool. When none of them lists it, that
+ * is said as an image that lacks a tool says it; when several do, or a
+ * listing did not come, the call must name one.
+ */
+async function onlyAnswering(
+  images: ImagesApi,
+  tool: string,
+  toolsOf: (image: Reachable) => Promise<ReadonlySet<string> | undefined>,
+): Promise<Reachable> {
   const rows = await images.list();
   const reachable = answering(rows);
   if (reachable.length === 1) {
     return reachable[0];
   }
   if (reachable.length > 1) {
-    throw new Refusal("several-images", answers.texts.severalAnswer(reachable.map((each) => each.name)));
+    const listings = await Promise.all(reachable.map(async (each) => ({ each, tools: await toolsOf(each) })));
+    const holders = listings.filter(({ tools }) => tools?.has(tool)).map(({ each }) => each);
+    if (holders.length === 1) {
+      return holders[0];
+    }
+    if (holders.length === 0 && listings.every(({ tools }) => tools !== undefined)) {
+      const listed = listings.flatMap(({ tools }) => [...(tools ?? [])]);
+      const meant = answers.meantTool(tool, [...new Set(listed)]);
+      const meantBy = listings.filter(({ tools }) => meant !== undefined && tools?.has(meant)).map(({ each }) => each.name);
+      throw new NoImageHasTool(
+        answers.texts.noImageHasTool(
+          reachable.map((each) => each.name),
+          tool,
+          meant !== undefined && meantBy.length === 1 ? { tool: meant, image: meantBy[0] } : undefined,
+        ),
+      );
+    }
+    throw new Refusal(
+      "several-images",
+      answers.texts.severalAnswer((holders.length > 1 ? holders : reachable).map((each) => each.name)),
+    );
   }
   const running = rows.filter((row) => row.running);
   if (running.length === 1) {

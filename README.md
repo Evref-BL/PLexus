@@ -66,9 +66,11 @@ stdout; a refusal is `{"ok":false,"code":...,"error":...}` with exit status 1.
   which.
 - **create** refuses a name that is taken, and never starts the image.
 - **start** launches the image headless unless asked otherwise, and answers
-  once its MCP server does, with its pid and endpoint. It refuses an image a VM
-  already runs, and fails as soon as the VM reports a failure or exits, naming
-  the launcher's logs. It never creates: a missing image is refused.
+  once its MCP server does, with its pid and endpoint. An image whose server
+  already answers is left as it is, and answered the same way with
+  `alreadyRunning: true`; one a VM runs that does not answer is refused
+  (`image-running`). It fails as soon as the VM reports a failure or exits,
+  naming the launcher's logs. It never creates: a missing image is refused.
 - **stop** does not save: the image starts again as it was last saved. The
   image is asked to quit, by evaluating `Smalltalk snapshot: false andQuit:
   true` with the `evaluate` tool its MCP server lists, so that it does what it
@@ -139,7 +141,9 @@ host passes its project directory, whose name is the scope:
 It offers `image_templates`, `image_create`, `image_start`, `image_stop`,
 `image_delete` and `image_list`, followed by the tools of every image in scope
 that runs with an endpoint. Each of those takes an `image` argument naming the
-image to call; it may be left out while one image runs. After a start, a stop
+image to call; it may be left out while one image runs. A call naming no image
+while several run goes to the only one that lists the tool, and is answered
+that none has it when none does. After a start, a stop
 or a delete, the server tells the host its tool list changed. Its instructions tell the host to search these tools for Pharo work, and
 that an image takes one writer.
 
