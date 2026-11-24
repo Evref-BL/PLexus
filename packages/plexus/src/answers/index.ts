@@ -220,7 +220,13 @@ function recordPairs(row: ImageInfo, { enrolled }: Enrollment): Pair[] {
     ...known("mcp", mcpOfRecord(row)),
     ...(row.display === "interactive" ? [["display", "interactive"] as Pair] : []),
     ...known("telemetry", enrolled && row.telemetry?.on === false ? "off" : undefined),
+    ...known("used", usedDay(row)),
   ];
+}
+
+/** The day a stopped image was last used, which tells a stale one; a running image is in use. */
+function usedDay(row: ImageInfo): string | undefined {
+  return row.state === "stopped" ? row.lastUsed?.slice(0, 10) : undefined;
 }
 
 /** One image, named: only here with its path, and its script when it has one. */
@@ -250,6 +256,7 @@ export function image(row: ImageInfo, enrollment: Enrollment = {}): ToolAnswer {
       ),
       ...known("every start", everyStartScript(row)),
       ...telemetry.fields,
+      ...known("used", usedDay(row)),
       ["path", row.path],
     ],
   };
@@ -310,6 +317,15 @@ export function stopped(result: { name: string; killed: readonly number[]; quit?
 
 export function deleted(result: { name: string }): ToolAnswer {
   return { summary: texts.deleted(result.name), warnings: [], fields: [] };
+}
+
+/** A stop or a delete of several images: what each did, then why any was not done. */
+export function several(done: readonly ToolAnswer[], refusals: readonly string[]): ToolAnswer {
+  return {
+    summary: done.map((answer) => answer.summary).join(" "),
+    warnings: [...done.flatMap((answer) => answer.warnings), ...refusals],
+    fields: [],
+  };
 }
 
 function known(key: string, value: string | undefined): Pair[] {
@@ -443,6 +459,7 @@ function withoutFinalPeriod(message: string): string {
 interface PropertySchema {
   type?: string | string[];
   enum?: unknown[];
+  items?: { type?: string };
 }
 
 /**
@@ -458,7 +475,7 @@ export function checkArguments(
 ): string | undefined {
   const given = args ?? {};
   const properties = (tool.inputSchema.properties ?? {}) as Record<string, PropertySchema>;
-  const missing = (tool.inputSchema.required ?? []).filter((name) => isMissing(given[name]));
+  const missing = (tool.inputSchema.required ?? []).filter((name) => isMissing(given[name], properties[name]));
   const violations = missing.map(texts.argumentRequired);
 
   for (const [name, property] of Object.entries(properties)) {
@@ -483,8 +500,13 @@ export function checkArguments(
   return violations.length === 0 ? undefined : texts.invalidArguments(tool.name, violations);
 }
 
-function isMissing(value: unknown): boolean {
-  return value === undefined || (typeof value === "string" && value.trim() === "");
+/** Nothing given: no value, a blank string, or an empty list where a list is taken. */
+function isMissing(value: unknown, property: PropertySchema | undefined): boolean {
+  return (
+    value === undefined ||
+    (typeof value === "string" && value.trim() === "") ||
+    (Array.isArray(value) && value.length === 0 && [property?.type].flat().includes("array"))
+  );
 }
 
 // One sentence per argument: a value outside an enum is said with the values
@@ -499,6 +521,13 @@ function valueViolation(name: string, property: PropertySchema, value: unknown):
   }
   if (typeof value === "string" && value.trim() === "") {
     return texts.argumentBlank(name);
+  }
+  if (Array.isArray(value) && property.items?.type !== undefined) {
+    const itemType = property.items.type;
+    const wrong = value.find((item) => !hasType(item, itemType) || (typeof item === "string" && item.trim() === ""));
+    if (wrong !== undefined) {
+      return texts.argumentItem(name, itemType, jsonText(wrong));
+    }
   }
   return undefined;
 }

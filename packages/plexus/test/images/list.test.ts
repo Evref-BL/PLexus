@@ -78,6 +78,26 @@ describe("list", () => {
     expect(empty.called("listProcesses")).toHaveLength(0);
   });
 
+  it("says when each image was last used: the later of its last start and its last save", async () => {
+    const { home, launcher } = store(["saved", "started", "never"]);
+    const at = (iso: string) => new Date(iso);
+    fs.utimesSync(imagePath(launcher, "saved"), at("2026-11-20T10:00:00Z"), at("2026-11-20T10:00:00Z"));
+    fs.utimesSync(imagePath(launcher, "started"), at("2026-11-02T10:00:00Z"), at("2026-11-02T10:00:00Z"));
+    const startScript = path.join(launcher.imageDir("started"), "plexus", "start.st");
+    fs.mkdirSync(path.dirname(startScript), { recursive: true });
+    fs.writeFileSync(startScript, "");
+    fs.utimesSync(startScript, at("2026-11-18T08:30:00Z"), at("2026-11-18T08:30:00Z"));
+    fs.rmSync(imagePath(launcher, "never"));
+
+    const rows = await list(testContext(home, launcher));
+    const used = Object.fromEntries(rows.map((row) => [row.name, row.lastUsed]));
+    expect(used).toEqual({
+      saved: "2026-11-20T10:00:00.000Z",
+      started: "2026-11-18T08:30:00.000Z",
+      never: undefined,
+    });
+  });
+
   it("answers the image named, or refuses one that is not there", async () => {
     const { home, launcher } = store(["Scope-dev"]);
     const context = testContext(home, launcher, { scope: "Scope" });

@@ -88,9 +88,20 @@ parallel agent rather than share one, named like a branch
 (pretty-print-formatter, not p15). A running image may be another session's.
 A call to an image's tool names the image, and may leave it out while only
 one runs. image_stop stops an image without saving it; with save: true, the
-image saves itself and quits.`;
+image saves itself and quits.
+
+Stop an image you started once its work pauses: a running image holds its
+memory. A stopped image holds its disk until it is deleted: keep it a while
+after its subject is done, and when image_list shows images unused for some
+time, propose to the user which to delete.`;
 
 const nameProperty = { type: "string", description: "The image's name." } as const;
+
+const namesProperty = {
+  type: ["string", "array"],
+  items: { type: "string" },
+  description: "The image's name, or several.",
+} as const;
 
 function schema(
   properties: Record<string, object>,
@@ -141,10 +152,10 @@ export const imageTools: Tool[] = [
   {
     name: "image_stop",
     description:
-      "Stop an image. By default it stops without saving: the image is asked to quit, every VM still running it is then killed, and it starts again as it was last saved. With save: true, the image saves itself and quits instead, keeping its changes. Evaluating `Smalltalk saveSession` in the image saves it without stopping it.",
+      "Stop an image, or several. By default it stops without saving: the image is asked to quit, every VM still running it is then killed, and it starts again as it was last saved. With save: true, the image saves itself and quits instead, keeping its changes. Evaluating `Smalltalk saveSession` in the image saves it without stopping it.",
     inputSchema: schema(
       {
-        name: nameProperty,
+        name: namesProperty,
         save: {
           type: "boolean",
           description: "true to have the image save itself and quit; false or absent stops it without saving.",
@@ -155,13 +166,13 @@ export const imageTools: Tool[] = [
   },
   {
     name: "image_delete",
-    description: "Delete an image and its directory. It refuses an image that is running.",
-    inputSchema: schema({ name: nameProperty }, ["name"]),
+    description: "Delete an image and its directory, or several. It refuses an image that is running.",
+    inputSchema: schema({ name: namesProperty }, ["name"]),
   },
   {
     name: "image_list",
     description:
-      "List the images: whether each runs and takes calls, its template and Pharo version. Name one to see only that one, with its path.",
+      "List the images: whether each runs and takes calls, its template and Pharo version, and the day a stopped one was last used. Name one to see only that one, with its path.",
     inputSchema: schema({ name: nameProperty }),
   },
 ];
@@ -517,9 +528,11 @@ async function answerImageTool(
         : answer;
     }
     case "image_stop":
-      return answers.stopped(await images.stop(image, args.save === true ? { save: true } : {}));
+      return eachImage(args.name, async (each) =>
+        answers.stopped(await images.stop(each, args.save === true ? { save: true } : {})),
+      );
     case "image_delete":
-      return answers.deleted(await images.delete(image));
+      return eachImage(args.name, async (each) => answers.deleted(await images.delete(each)));
     default: {
       if (args.name === undefined) {
         return answers.list(await images.list(), enrollment);
@@ -528,6 +541,35 @@ async function answerImageTool(
       return answers.image(row, enrollment);
     }
   }
+}
+
+/**
+ * A stop or a delete of one image, answered as it is, refusal included; or of
+ * several, in turn: the answer says what each did and why any was not done,
+ * and is a refusal only when none was.
+ */
+async function eachImage(
+  given: unknown,
+  act: (name: string) => Promise<answers.ToolAnswer>,
+): Promise<answers.ToolAnswer> {
+  if (!Array.isArray(given)) {
+    return act(given as string);
+  }
+  const done: answers.ToolAnswer[] = [];
+  const refusals: unknown[] = [];
+  for (const name of given as string[]) {
+    try {
+      done.push(await act(name));
+    } catch (error) {
+      refusals.push(error);
+    }
+  }
+  const messages = refusals.map((error) => (error instanceof Error ? error.message : String(error)));
+  if (done.length === 0) {
+    const first = refusals[0];
+    throw first instanceof PlexusError ? new PlexusError(first.code, messages.join("\n")) : new Error(messages.join("\n"));
+  }
+  return answers.several(done, messages);
 }
 
 interface Reachable {

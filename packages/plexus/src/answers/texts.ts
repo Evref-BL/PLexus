@@ -311,6 +311,10 @@ export function argumentType(argument: string, types: readonly string[], actual:
   return `${argument} must be ${orList(types)}, not ${actual}.`;
 }
 
+export function argumentItem(argument: string, type: string, actual: string): string {
+  return `${argument} must list non-blank ${type}s, not ${actual}.`;
+}
+
 export function argumentNotAccepted(argument: string, accepted: readonly string[]): string {
   return accepted.length === 0
     ? `${argument} is not accepted here.`

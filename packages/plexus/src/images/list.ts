@@ -134,6 +134,7 @@ export function describe(files: ImageFiles, processes: readonly LauncherProcess[
   const everyStart = readFirstLine(files.onStart) !== undefined;
   const observed = vms.length > 0 ? observeEndpoint(files, vms) : undefined;
   const telemetry = imageTelemetry(observed, telemetryOf(created));
+  const lastUsed = lastUsedOf(files);
 
   return {
     name: files.name,
@@ -148,7 +149,23 @@ export function describe(files: ImageFiles, processes: readonly LauncherProcess[
     ...(pharoVersion === undefined ? {} : { pharoVersion: pharoVersionOf(pharoVersion) }),
     ...(mcp === undefined ? {} : { mcp: mcp.source === "script" && everyStart ? { ...mcp, everyStart: true } : mcp }),
     ...(telemetry === undefined ? {} : { telemetry }),
+    ...(lastUsed === undefined ? {} : { lastUsed }),
   };
+}
+
+/**
+ * The later of its last start, when the start script every start writes was
+ * written, and its last save, when its image file was.
+ */
+function lastUsedOf(files: ImageFiles): string | undefined {
+  const times = [files.startScript, files.imagePath].flatMap((file) => {
+    try {
+      return [fs.statSync(file).mtimeMs];
+    } catch {
+      return [];
+    }
+  });
+  return times.length === 0 ? undefined : new Date(Math.max(...times)).toISOString();
 }
 
 /**
