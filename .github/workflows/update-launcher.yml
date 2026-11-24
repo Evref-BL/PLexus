@@ -127,8 +127,16 @@ jobs:
           for _ in {1..60}; do
             if gh pr checks "$PR_NUMBER" --json name --jq 'length' 2>/dev/null | grep -qx '[1-9][0-9]*'; then
               gh pr checks "$PR_NUMBER" --watch --interval 10
-              gh pr merge "$PR_NUMBER" --squash --delete-branch
-              exit 0
+              # GitHub can refuse the merge for a few seconds after the last check
+              # passes, and fail the branch deletion after a merge that worked: the
+              # pull request's state says whether it merged.
+              for _ in {1..12}; do
+                gh pr merge "$PR_NUMBER" --squash --delete-branch || true
+                [ "$(gh pr view "$PR_NUMBER" --json state --jq .state)" = MERGED ] && exit 0
+                sleep 10
+              done
+              echo "PR #$PR_NUMBER did not merge."
+              exit 1
             fi
             sleep 5
           done
