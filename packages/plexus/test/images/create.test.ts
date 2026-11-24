@@ -265,6 +265,30 @@ describe("create without a script", () => {
     expect(error.message).toContain("xLoaded nothing");
   });
 
+  it("fetches the template list before its first build, when the profile has none", async () => {
+    const { launcher, context } = setup();
+
+    await create(context, "dev", { ...options });
+    await create(context, "other", { ...options, template: "Pharo 14.0 - 64bit", category: "Other" });
+
+    const methods = launcher.calls.map((call) => call.method).filter((method) => method !== "startImage");
+    expect(methods.slice(0, 2)).toEqual(["updateTemplates", "createImage"]);
+    expect(launcher.called("updateTemplates")).toHaveLength(1);
+    expect(launcher.called("createImage")).toHaveLength(2);
+  });
+
+  it("says why when the template list cannot be fetched, and makes nothing", async () => {
+    const { home, launcher, context } = setup();
+    launcher.updateAnswer = () => failed("no network");
+
+    await expect(create(context, "dev", { ...options })).rejects.toMatchObject({
+      code: "create-failed",
+      message: expect.stringContaining("no network"),
+    });
+    expect(launcher.called("createImage")).toEqual([]);
+    expect(listing(storeRoot(home))).toEqual([]);
+  });
+
   it("says what the launcher said when it could not make the image", async () => {
     const { home, launcher, context } = setup();
     launcher.createAnswer = () => failed("Cannot download the template.");

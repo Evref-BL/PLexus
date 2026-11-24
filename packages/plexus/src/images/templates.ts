@@ -74,6 +74,31 @@ export async function categoryOf(context: ImagesContext, template: string): Prom
   return found[0].category;
 }
 
+/**
+ * Fetches the launcher's sources list when the profile has none, which only
+ * a template update does: until then the launcher knows no category, and a
+ * create naming one fails. What failed, when it did.
+ */
+export async function ensureTemplateSources(context: ImagesContext): Promise<string | undefined> {
+  if (nonEmpty(sourcesListPath(context.home))) {
+    return undefined;
+  }
+  const update = await context.launcher().updateTemplates();
+  return update.ok ? undefined : launcherFailureMessage("updateTemplates", update);
+}
+
+function sourcesListPath(home: string): string {
+  return path.join(homeProfileEnvironment(home).PHARO_LAUNCHER_MCP_TEMPLATE_SOURCES_DIR, "sources.list");
+}
+
+function nonEmpty(file: string): boolean {
+  try {
+    return fs.statSync(file).size > 0;
+  } catch {
+    return false;
+  }
+}
+
 // The launcher's category listing names every group, the HTTP listings among
 // them, which list every build of a Pharo version as a template, hundreds
 // each. So the groups come from the sources list it reads, its URL groups and
@@ -96,10 +121,7 @@ async function categories(context: ImagesContext): Promise<string[]> {
 function sourcesListGroups(home: string): string[] {
   let sources: string;
   try {
-    sources = fs.readFileSync(
-      path.join(homeProfileEnvironment(home).PHARO_LAUNCHER_MCP_TEMPLATE_SOURCES_DIR, "sources.list"),
-      "utf8",
-    );
+    sources = fs.readFileSync(sourcesListPath(home), "utf8");
   } catch {
     return [];
   }
