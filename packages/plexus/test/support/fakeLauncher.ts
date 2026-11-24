@@ -12,6 +12,7 @@ import type {
 } from "@evref-bl/pharo-launcher-mcp/launcher";
 import { afterEach } from "vitest";
 import { storeRoot } from "../../src/home.js";
+import { homeProfileEnvironment } from "../../src/launcher/pharoLauncherProfile.js";
 import type { ImagesContext } from "../../src/images/context.js";
 import type { InternalImagesOptions } from "../../src/images/context.js";
 import { Images } from "../../src/images/index.js";
@@ -76,6 +77,7 @@ export class FakeLauncher implements LauncherPort {
   createAnswer?: (input: ImageCreateInput) => MadeImageResult | Promise<MadeImageResult>;
   prepareAnswer?: Answer<ImageStartInput>;
   launchAnswer?: Answer<ImageStartInput>;
+  updateAnswer?: () => TemplateUpdateResult;
 
   constructor(readonly home: string) {}
 
@@ -173,9 +175,21 @@ export class FakeLauncher implements LauncherPort {
       : ok(names.map((name) => ({ name, category })));
   }
 
+  /**
+   * Fetches the profile's sources list when it has none, as the launcher's update does. It
+   * names no group, so the categories still come from the launcher.
+   */
   async updateTemplates(): Promise<TemplateUpdateResult> {
     this.calls.push({ method: "updateTemplates", input: undefined });
-    return ok();
+    const answer = this.updateAnswer?.() ?? ok();
+    if (answer.ok) {
+      const sources = homeProfileEnvironment(this.home).PHARO_LAUNCHER_MCP_TEMPLATE_SOURCES_DIR;
+      fs.mkdirSync(sources, { recursive: true });
+      if (!fs.existsSync(path.join(sources, "sources.list"))) {
+        fs.writeFileSync(path.join(sources, "sources.list"), "OrderedCollection [ ]\n");
+      }
+    }
+    return answer;
   }
 
   called(method: keyof LauncherPort): unknown[] {

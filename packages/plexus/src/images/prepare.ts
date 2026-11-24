@@ -8,6 +8,7 @@ import {
 import type { ImagesContext } from "./context.js";
 import { prepareScript, type PrepareSource } from "./scripts.js";
 import { readProperties, type ImageFiles } from "./store.js";
+import { ensureTemplateSources } from "./templates.js";
 
 /**
  * Make an image from a template in the store, under the name the launcher
@@ -18,6 +19,10 @@ export async function createFromTemplate(
   files: ImageFiles,
   template: { name: string; category: string },
 ): Promise<string | undefined> {
+  const missing = await ensureTemplateSources(context);
+  if (missing !== undefined) {
+    return missing;
+  }
   const result = await context.launcher().createImage({
     templateName: template.name,
     templateCategory: template.category,
