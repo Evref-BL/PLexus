@@ -85,10 +85,44 @@ export function clientAttributes(client: { name?: unknown; version?: unknown } |
   };
 }
 
-/** Marks the span failed: status ERROR, with no description, and `error.type`. */
-export function failed(span: Span, type: string): void {
+/**
+ * Marks the span failed: status ERROR and `error.type`, with the JSON-RPC
+ * error's message as the status description when a JSON-RPC error failed it.
+ */
+export function failed(span: Span, type: string, message?: string): void {
   span.setAttribute("error.type", type);
-  span.setStatus({ code: SpanStatusCode.ERROR });
+  span.setStatus({ code: SpanStatusCode.ERROR, ...(message === undefined ? {} : { message }) });
+}
+
+/**
+ * Whether the conventions' content switch, `OTEL_INSTRUMENTATION_GENAI_CAPTURE_CONTENT`,
+ * turns content on for spans: `SPAN_ONLY` or `SPAN_AND_EVENT`, in any case.
+ * Off by default, and for any other value.
+ */
+export function capturesContent(env: NodeJS.ProcessEnv = process.env): boolean {
+  const value = env.OTEL_INSTRUMENTATION_GENAI_CAPTURE_CONTENT?.trim().toUpperCase();
+  return value === "SPAN_ONLY" || value === "SPAN_AND_EVENT";
+}
+
+/**
+ * A tool call's arguments and, when it succeeded, its result, as the
+ * conventions' opt-in content attributes, each as JSON; nothing while content
+ * is off. The result is its structured content when it has some, else its
+ * content.
+ */
+export function contentAttributes(
+  args: unknown,
+  result?: { isError?: unknown; structuredContent?: unknown; content?: unknown },
+  env: NodeJS.ProcessEnv = process.env,
+): Attributes {
+  if (!capturesContent(env)) {
+    return {};
+  }
+  const answered = result === undefined || result.isError === true ? undefined : (result.structuredContent ?? result.content);
+  return {
+    ...(args === undefined ? {} : { "gen_ai.tool.call.arguments": JSON.stringify(args) }),
+    ...(answered === undefined ? {} : { "gen_ai.tool.call.result": JSON.stringify(answered) }),
+  };
 }
 
 /**
@@ -105,7 +139,8 @@ export function errorType(error: unknown): string {
 /**
  * `work` inside a span that is active while it runs, ended with its outcome,
  * with the session it runs in. A rejection fails the span with the type
- * `typeOf` gives, unless it gives none, and is passed on.
+ * `typeOf` gives, unless it gives none, and the description `messageOf`
+ * gives, and is passed on.
  */
 export function inSpan<T>(
   name: string,
@@ -113,6 +148,7 @@ export function inSpan<T>(
   attributes: Attributes,
   work: (span: Span) => Promise<T>,
   typeOf: (error: unknown) => string | undefined = errorType,
+  messageOf: (error: unknown) => string | undefined = () => undefined,
 ): Promise<T> {
   return trace
     .getTracer("@evref-bl/plexus", plexusVersion)
@@ -122,7 +158,7 @@ export function inSpan<T>(
       } catch (error) {
         const type = typeOf(error);
         if (type !== undefined) {
-          failed(span, type);
+          failed(span, type, messageOf(error));
         }
         throw error;
       } finally {

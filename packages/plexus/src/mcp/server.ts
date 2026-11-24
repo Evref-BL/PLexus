@@ -22,7 +22,9 @@ import type { Images } from "../images/index.js";
 import {
   argumentAttributes,
   clientAttributes,
+  contentAttributes,
   contextFromMeta,
+  errorType,
   failed,
   identifierOrOther,
   inSpan,
@@ -325,7 +327,7 @@ export function createPlexusMcpServer(options: PlexusMcpServerOptions): Server {
   );
   server.setRequestHandler(CallToolRequestSchema, (request, extra) =>
     context.with(contextFromMeta(request.params._meta), () =>
-      served(request.params, () => call(request.params, extra.signal)),
+      served(request.params, extra.requestId, () => call(request.params, extra.signal)),
     ),
   );
 
@@ -350,15 +352,19 @@ export function createPlexusMcpServer(options: PlexusMcpServerOptions): Server {
 
   /**
    * A call this server answers, as a SERVER span after the MCP conventions:
-   * the tool, the names of its arguments the tool declares and of the others,
-   * the session and the call's place in it, whether the tool is an image's,
-   * and the host as its initialize request named itself. Never a value. An
-   * answer that is an error fails the span as `tool_error`, and a refusal of
-   * this server's own says its code. Every span the call makes carries the
-   * session, and what it forwards carries it in its baggage.
+   * the request's id, the tool, the names of its arguments the tool declares
+   * and of the others, the session and the call's place in it, whether the
+   * tool is an image's, and the host as its initialize request named itself;
+   * the arguments and the result only when content is turned on. An answer
+   * that is an error fails the span as `tool_error`, and a refusal of this
+   * server's own says its code; a call that throws, which the host gets as a
+   * JSON-RPC error, has its message as the status description. Every span the
+   * call makes carries the session, and what it forwards carries it in its
+   * baggage.
    */
   function served(
     params: { name: string; arguments?: Record<string, unknown> },
+    requestId: string | number,
     run: () => Promise<Answered>,
   ): Promise<CallToolResult> {
     const tool = identifierOrOther(params.name);
@@ -371,12 +377,14 @@ export function createPlexusMcpServer(options: PlexusMcpServerOptions): Server {
           SpanKind.SERVER,
           {
             "mcp.method.name": "tools/call",
+            "jsonrpc.request.id": String(requestId),
             "gen_ai.operation.name": "execute_tool",
             "gen_ai.tool.name": tool,
             "network.transport": "pipe",
             "plexus.call.index": call.index,
             "plexus.call.forwarded": !imageToolNames.has(params.name),
             ...clientAttributes(server.getClientVersion()),
+            ...contentAttributes(params.arguments),
           },
           async (span) => {
             let image: string | undefined;
@@ -389,6 +397,7 @@ export function createPlexusMcpServer(options: PlexusMcpServerOptions): Server {
               if (answered.result.isError) {
                 failed(span, "tool_error");
               }
+              span.setAttributes(contentAttributes(undefined, answered.result));
               return answered.result;
             } finally {
               // Without a listing, only `image` is known to be declared, and
@@ -401,6 +410,8 @@ export function createPlexusMcpServer(options: PlexusMcpServerOptions): Server {
               );
             }
           },
+          errorType,
+          (error) => (error instanceof Error ? error.message : undefined),
         ),
       )
       .finally(() => callEnded(call.session));

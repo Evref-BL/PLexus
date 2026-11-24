@@ -544,7 +544,7 @@ describe("plexus mcp", () => {
     }
   });
 
-  it("records each call it serves as a SERVER span: the tool, argument names, session and host, never a value", async () => {
+  it("records each call it serves as a SERVER span: its id, the tool, argument names, session and host, no value unless content is on", async () => {
     const exporter = new InMemorySpanExporter();
     context.setGlobalContextManager(new AsyncLocalStorageContextManager().enable());
     propagation.setGlobalPropagator(new W3CTraceContextPropagator());
@@ -575,6 +575,7 @@ describe("plexus mcp", () => {
       expect(forwarded.parentSpanContext?.spanId).toBe("00f067aa0ba902b7");
       expect(forwarded.attributes).toEqual({
         "mcp.method.name": "tools/call",
+        "jsonrpc.request.id": expect.stringMatching(/^\d+$/),
         "gen_ai.operation.name": "execute_tool",
         "gen_ai.tool.name": "class_get",
         "network.transport": "pipe",

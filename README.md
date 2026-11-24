@@ -171,7 +171,9 @@ until the program running PLexus installs an SDK:
 
 - each request forwarded to an image is a CLIENT span named after its method
   and tool (`tools/call class_get`), with the attributes of the OpenTelemetry
-  MCP conventions, and passes its trace context to the image in the request's
+  MCP conventions, the request's id (`jsonrpc.request.id`) and the image's
+  address and port (`server.address`, `server.port`) among them, and passes
+  its trace context to the image in the request's
   `params._meta` (`traceparent`, `tracestate`, `baggage`); a request a call
   of `plexus mcp` forwards carries that call's `session.id` in its baggage.
   The request asking an image to quit, for a stop or a stop that saves, does
@@ -180,7 +182,8 @@ until the program running PLexus installs an SDK:
 - making, starting, stopping and deleting an image are INTERNAL spans,
   `plexus.image.create`, `.start`, `.stop` and `.delete`;
 - each tool call `plexus mcp` serves is a SERVER span, `tools/call <tool>`,
-  child of the trace context its `_meta` carries, with `session.id`,
+  child of the trace context its `_meta` carries, with `jsonrpc.request.id`,
+  `session.id`,
   `plexus.call.index`, `plexus.call.forwarded`, the host's `clientInfo` as
   `plexus.client.name` and `.version`, and the names of the arguments given
   that the tool declares (`plexus.argument.names`) and of the others
@@ -202,8 +205,13 @@ until the program running PLexus installs an SDK:
     `code` an image tool's refusal carries, as the command's do, or
     `_OTHER`.
 
-A span records names, outcomes and an error's kind (`error.type`), never an
-argument, a result, a message, an image's name, a path or an address.
+A span records names, outcomes and an error's kind (`error.type`); a span a
+JSON-RPC error failed has its message as the status description. A tool
+call's arguments and result (`gen_ai.tool.call.arguments`, and
+`gen_ai.tool.call.result` when the call succeeded, each as JSON) are recorded
+only when the conventions' switch turns content on:
+`OTEL_INSTRUMENTATION_GENAI_CAPTURE_CONTENT` set to `SPAN_ONLY` or
+`SPAN_AND_EVENT`, in any case. It is off by default, and for any other value.
 
 The `plexus` command installs an SDK when the standard environment asks for an
 OTLP traces exporter: `OTEL_EXPORTER_OTLP_ENDPOINT` or
