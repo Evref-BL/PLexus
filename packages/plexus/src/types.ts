@@ -72,6 +72,13 @@ export interface ImageInfo {
    * that enrolls it records them. Absent when neither said.
    */
   telemetry?: ImageTelemetry;
+  /**
+   * When it was last used, as an ISO date and time: the later of its last
+   * start and its last save. Absent when neither left a file.
+   */
+  lastUsed?: string;
+  /** The size of its image file, in bytes. */
+  imageBytes?: number;
 }
 
 export interface CreateOptions {

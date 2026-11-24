@@ -134,6 +134,7 @@ export function describe(files: ImageFiles, processes: readonly LauncherProcess[
   const everyStart = readFirstLine(files.onStart) !== undefined;
   const observed = vms.length > 0 ? observeEndpoint(files, vms) : undefined;
   const telemetry = imageTelemetry(observed, telemetryOf(created));
+  const { lastUsed, imageBytes } = usageOf(files);
 
   return {
     name: files.name,
@@ -148,7 +149,31 @@ export function describe(files: ImageFiles, processes: readonly LauncherProcess[
     ...(pharoVersion === undefined ? {} : { pharoVersion: pharoVersionOf(pharoVersion) }),
     ...(mcp === undefined ? {} : { mcp: mcp.source === "script" && everyStart ? { ...mcp, everyStart: true } : mcp }),
     ...(telemetry === undefined ? {} : { telemetry }),
+    ...(lastUsed === undefined ? {} : { lastUsed }),
+    ...(imageBytes === undefined ? {} : { imageBytes }),
   };
+}
+
+/**
+ * When it was last used, the later of its last start, when the start script
+ * every start writes was written, and its last save, when its image file
+ * was; and the size of its image file.
+ */
+function usageOf(files: ImageFiles): { lastUsed?: string; imageBytes?: number } {
+  const image = statOf(files.imagePath);
+  const times = [statOf(files.startScript), image].flatMap((stat) => (stat === undefined ? [] : [stat.mtimeMs]));
+  return {
+    ...(times.length === 0 ? {} : { lastUsed: new Date(Math.max(...times)).toISOString() }),
+    ...(image === undefined ? {} : { imageBytes: image.size }),
+  };
+}
+
+function statOf(file: string): fs.Stats | undefined {
+  try {
+    return fs.statSync(file);
+  } catch {
+    return undefined;
+  }
 }
 
 /**

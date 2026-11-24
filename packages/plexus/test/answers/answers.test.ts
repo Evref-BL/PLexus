@@ -187,6 +187,14 @@ describe("image_list", () => {
     ]);
   });
 
+  it("says the day a stopped image was last used and the size of its image file, which tell a stale one", () => {
+    const usage = { lastUsed: "2026-11-03T17:12:45.000Z", imageBytes: 74_115_008 };
+    expect(render(list([runningRow("dev", { lastUsed: "2026-11-24T09:00:00.000Z", imageBytes: 1 }), row("old", usage)]))).toBe(
+      ["2 images, 1 running.", "running:", "  dev", "stopped:", "  old used=2026-11-03 size=74MB"].join("\n"),
+    );
+    expect(render(image(row("old", usage)))).toContain("used: 2026-11-03\nsize: 74MB");
+  });
+
   it("gives each field only when known, and the display only when a window is open", () => {
     expect(
       render(
@@ -407,8 +415,13 @@ describe("checkArguments", () => {
     ["image_create", { name: "x", template: "y", category: " \t" }, "category is blank; leave it out or give it a value."],
     ["image_start", { name: "dev", display: "window" }, 'display must be "headless" or "interactive", not "window".'],
     ["image_create", { name: "x", template: 1.5 }, "template must be string, not number."],
-    ["image_stop", { name: null }, "name must be string, not null."],
-    ["image_stop", { name: [] }, "name must be string, not array."],
+    ["image_start", { name: null }, "name must be string, not null."],
+    ["image_start", { name: [] }, "name must be string, not array."],
+    ["image_stop", { name: ["dev", "mcp"] }, undefined],
+    ["image_stop", { name: null }, "name must be string or array, not null."],
+    ["image_delete", { name: [] }, "name is required."],
+    ["image_delete", { name: ["dev", 3] }, "name must list non-blank strings, not 3."],
+    ["image_delete", { name: ["dev", " "] }, 'name must list non-blank strings, not " ".'],
     ["image_delete", { name: "dev", force: true }, "force is not accepted here; expected one of name."],
     ["image_templates", { detail: 1 }, "detail is not accepted here."],
     [

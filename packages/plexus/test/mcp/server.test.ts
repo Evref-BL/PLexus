@@ -114,6 +114,9 @@ class FakeImages implements ImagesApi {
 
   async delete(name: string) {
     this.calls.push(["delete", name]);
+    if (name.startsWith("busy")) {
+      throw new PlexusError("image-running", `Image ${name} is running.`);
+    }
     return { name };
   }
 
@@ -460,6 +463,28 @@ describe("plexus mcp", () => {
       expect(refused.isError, tool).toBe(true);
       expect(textOf(refused), tool).toBe(refusal);
     }
+  });
+
+  it("stops or deletes several images in turn, saying why any was not, and refuses only when none was", async () => {
+    const images = new FakeImages([row("a"), row("b")]);
+    const { call } = await connect(images);
+
+    expect(textOf(await call("image_stop", { name: ["a", "b"], save: true }))).toBe(
+      "Saved and stopped image a. Saved and stopped image b.",
+    );
+    const some = await call("image_delete", { name: ["a", "busy", "b"] });
+    expect(some.isError).toBeUndefined();
+    expect(textOf(some)).toBe(
+      ["Deleted image a and its files. Deleted image b and its files.", "Warning: Image busy is running."].join("\n"),
+    );
+    expect(images.calls.filter(([method]) => method === "delete")).toEqual([
+      ["delete", "a"],
+      ["delete", "busy"],
+      ["delete", "b"],
+    ]);
+    const none = await call("image_delete", { name: ["busy", "busy-too"] });
+    expect(none.isError).toBe(true);
+    expect(textOf(none)).toBe(["Image busy is running.", "Image busy-too is running."].join("\n"));
   });
 
   it("refuses arguments that break a tool's schema before any of it runs", async () => {
