@@ -172,7 +172,7 @@ export const imageTools: Tool[] = [
   {
     name: "image_list",
     description:
-      "List the images: whether each runs and takes calls, its template and Pharo version, and the day a stopped one was last used. Name one to see only that one, with its path.",
+      "List the images: whether each runs and takes calls, its template and Pharo version, and, for a stopped one, the day it was last used and the size of its image file. Name one to see only that one, with its path.",
     inputSchema: schema({ name: nameProperty }),
   },
 ];

@@ -78,7 +78,7 @@ describe("list", () => {
     expect(empty.called("listProcesses")).toHaveLength(0);
   });
 
-  it("says when each image was last used: the later of its last start and its last save", async () => {
+  it("says when each image was last used, the later of its last start and its last save, and its image file's size", async () => {
     const { home, launcher } = store(["saved", "started", "never"]);
     const at = (iso: string) => new Date(iso);
     fs.utimesSync(imagePath(launcher, "saved"), at("2026-11-20T10:00:00Z"), at("2026-11-20T10:00:00Z"));
@@ -96,6 +96,8 @@ describe("list", () => {
       started: "2026-11-18T08:30:00.000Z",
       never: undefined,
     });
+    expect(rows.find((row) => row.name === "saved")?.imageBytes).toBe(fs.statSync(imagePath(launcher, "saved")).size);
+    expect(rows.find((row) => row.name === "never")?.imageBytes).toBeUndefined();
   });
 
   it("answers the image named, or refuses one that is not there", async () => {

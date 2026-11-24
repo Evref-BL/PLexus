@@ -221,12 +221,18 @@ function recordPairs(row: ImageInfo, { enrolled }: Enrollment): Pair[] {
     ...(row.display === "interactive" ? [["display", "interactive"] as Pair] : []),
     ...known("telemetry", enrolled && row.telemetry?.on === false ? "off" : undefined),
     ...known("used", usedDay(row)),
+    ...known("size", imageSize(row)),
   ];
 }
 
 /** The day a stopped image was last used, which tells a stale one; a running image is in use. */
 function usedDay(row: ImageInfo): string | undefined {
   return row.state === "stopped" ? row.lastUsed?.slice(0, 10) : undefined;
+}
+
+/** The size of a stopped image's image file, in megabytes: what deleting it would free, at the least. */
+function imageSize(row: ImageInfo): string | undefined {
+  return row.state === "stopped" && row.imageBytes !== undefined ? `${Math.round(row.imageBytes / 1_000_000)}MB` : undefined;
 }
 
 /** One image, named: only here with its path, and its script when it has one. */
@@ -257,6 +263,7 @@ export function image(row: ImageInfo, enrollment: Enrollment = {}): ToolAnswer {
       ...known("every start", everyStartScript(row)),
       ...telemetry.fields,
       ...known("used", usedDay(row)),
+      ...known("size", imageSize(row)),
       ["path", row.path],
     ],
   };

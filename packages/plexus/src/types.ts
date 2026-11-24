@@ -77,6 +77,8 @@ export interface ImageInfo {
    * start and its last save. Absent when neither left a file.
    */
   lastUsed?: string;
+  /** The size of its image file, in bytes. */
+  imageBytes?: number;
 }
 
 export interface CreateOptions {

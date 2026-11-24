@@ -156,8 +156,8 @@ Its own tools answer in plain text, for a model: what happened first, then
 what it found. `image_list` gives each image one line under its state, running
 images first, with only what differs from the usual: the template when it is
 not the plain one of its Pharo version, the MCP when it is not the one images
-are created with, and for a stopped image the day it was last used: the later
-of its last start and its last save. A warning that holds for several images is said once, naming
+are created with, and for a stopped image the day it was last used (the later
+of its last start and its last save) and the size of its image file. A warning that holds for several images is said once, naming
 them. A refusal, a call whose arguments break the tool's schema
 among them, is an error result that says what happened and what to do. A
 forwarded call waits as long as the call's own time limit allows, and at least

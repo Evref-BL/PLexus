@@ -187,16 +187,12 @@ describe("image_list", () => {
     ]);
   });
 
-  it("says the day a stopped image was last used, which tells a stale one", () => {
-    expect(
-      render(
-        list([
-          runningRow("dev", { lastUsed: "2026-11-24T09:00:00.000Z" }),
-          row("old", { lastUsed: "2026-11-03T17:12:45.000Z" }),
-        ]),
-      ),
-    ).toBe(["2 images, 1 running.", "running:", "  dev", "stopped:", "  old used=2026-11-03"].join("\n"));
-    expect(render(image(row("old", { lastUsed: "2026-11-03T17:12:45.000Z" })))).toContain("used: 2026-11-03");
+  it("says the day a stopped image was last used and the size of its image file, which tell a stale one", () => {
+    const usage = { lastUsed: "2026-11-03T17:12:45.000Z", imageBytes: 74_115_008 };
+    expect(render(list([runningRow("dev", { lastUsed: "2026-11-24T09:00:00.000Z", imageBytes: 1 }), row("old", usage)]))).toBe(
+      ["2 images, 1 running.", "running:", "  dev", "stopped:", "  old used=2026-11-03 size=74MB"].join("\n"),
+    );
+    expect(render(image(row("old", usage)))).toContain("used: 2026-11-03\nsize: 74MB");
   });
 
   it("gives each field only when known, and the display only when a window is open", () => {
