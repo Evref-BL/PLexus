@@ -141,6 +141,9 @@ describe("a forwarded request with an SDK", () => {
     expect(span.status.code).not.toBe(SpanStatusCode.ERROR);
     expect(span.attributes).toEqual({
       "mcp.method.name": "tools/call",
+      "jsonrpc.request.id": expect.stringMatching(/^plexus-tools\/call-\d+$/),
+      "server.address": "127.0.0.1",
+      "server.port": server.port,
       "gen_ai.tool.name": "class_get",
       "gen_ai.operation.name": "execute_tool",
       "mcp.protocol.version": "2025-06-18",
@@ -267,25 +270,57 @@ describe("a forwarded request with an SDK", () => {
     expect(spanNamed("tools/call evaluate").attributes).not.toHaveProperty("error.type");
   });
 
-  it("fails with a kind and no description: an error result, a JSON-RPC error, an HTTP status, a timeout", async () => {
+  it("fails with a kind, described by the JSON-RPC error's message alone: an error result, a JSON-RPC error, an HTTP status, a timeout", async () => {
     registerSdk();
-    const cases: Array<[Reply, string]> = [
+    const cases: Array<[Reply, string, string?]> = [
       [{ result: { content: [{ type: "text", text: "No class SecretClass" }], isError: true } }, "tool_error"],
-      [{ error: { code: -32602, message: "Invalid params: SecretClass" } }, "-32602"],
+      [{ error: { code: -32602, message: "Invalid params: SecretClass" } }, "-32602", "Invalid params: SecretClass"],
       [{ status: 500, result: {} }, "500"],
       ["never", "timeout"],
     ];
-    for (const [reply, type] of cases) {
+    for (const [reply, type, message] of cases) {
       exporter.reset();
       const server = await fakeMcpServer((method) => (method === "tools/call" ? reply : standardAnswer(method)));
 
       await callTool({ url: server.url }, "class_get", { name: "SecretClass" }, { minimumMs: 200 }).catch(() => undefined);
 
       const span = spanNamed("tools/call class_get");
-      expect(span.status, type).toEqual({ code: SpanStatusCode.ERROR });
+      expect(span.status, type).toEqual({ code: SpanStatusCode.ERROR, ...(message === undefined ? {} : { message }) });
       expect(span.attributes["error.type"]).toBe(type);
       expect(span.events).toEqual([]);
-      expectNoValues("SecretClass");
+      expect(span.attributes["gen_ai.tool.call.arguments"]).toBeUndefined();
+    }
+  });
+
+  it("records the arguments, and the result of a call that succeeded, only when content is turned on", async () => {
+    registerSdk();
+    const answers: Record<string, Reply> = {
+      ok: { result: { content: [{ type: "text", text: "Object subclass: #SecretClass" }] } },
+      failed: { result: { content: [{ type: "text", text: "No class SecretClass" }], isError: true } },
+    };
+    const recorded = async (capture: string | undefined, outcome: string) => {
+      exporter.reset();
+      const server = await fakeMcpServer((method) => (method === "tools/call" ? answers[outcome] : standardAnswer(method)));
+      const previous = process.env.OTEL_INSTRUMENTATION_GENAI_CAPTURE_CONTENT;
+      if (capture === undefined) delete process.env.OTEL_INSTRUMENTATION_GENAI_CAPTURE_CONTENT;
+      else process.env.OTEL_INSTRUMENTATION_GENAI_CAPTURE_CONTENT = capture;
+      try {
+        await callTool({ url: server.url }, "class_get", { name: "SecretClass" });
+      } finally {
+        if (previous === undefined) delete process.env.OTEL_INSTRUMENTATION_GENAI_CAPTURE_CONTENT;
+        else process.env.OTEL_INSTRUMENTATION_GENAI_CAPTURE_CONTENT = previous;
+      }
+      const span = spanNamed("tools/call class_get");
+      return [span.attributes["gen_ai.tool.call.arguments"], span.attributes["gen_ai.tool.call.result"]];
+    };
+
+    expect(await recorded("span_only", "ok")).toEqual([
+      '{"name":"SecretClass"}',
+      '[{"type":"text","text":"Object subclass: #SecretClass"}]',
+    ]);
+    expect(await recorded("SPAN_AND_EVENT", "failed")).toEqual(['{"name":"SecretClass"}', undefined]);
+    for (const capture of [undefined, "NO_CONTENT", "EVENT_ONLY", "yes"]) {
+      expect(await recorded(capture, "ok"), String(capture)).toEqual([undefined, undefined]);
     }
   });
 });

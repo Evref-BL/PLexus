@@ -1,6 +1,6 @@
 import http from "node:http";
 import { SpanKind, type Attributes } from "@opentelemetry/api";
-import { errorType, failed, identifierOrOther, inSpan, withTraceContext } from "../telemetry/trace.js";
+import { contentAttributes, errorType, failed, identifierOrOther, inSpan, withTraceContext } from "../telemetry/trace.js";
 import { plexusVersion } from "../version.js";
 
 const protocolVersion = "2025-06-18";
@@ -26,7 +26,7 @@ export interface Session {
 export type ForwardError = Error & ForwardErrorKind;
 
 type ForwardErrorKind =
-  | { kind: "answered"; rpcCode?: number }
+  | { kind: "answered"; rpcCode?: number; rpcMessage?: string }
   | { kind: "no-handshake" | "timeout"; waitedMs: number }
   | { kind: "refused" | "closed" | "cancelled" }
   | { kind: "other"; httpStatus?: number };
@@ -56,7 +56,10 @@ export async function request(
   return inSpan(
     tool === undefined ? method : `${method} ${tool}`,
     SpanKind.CLIENT,
-    requestAttributes(method, tool, options.session),
+    {
+      ...requestAttributes(method, tool, id, url, options.session),
+      ...(tool === undefined ? {} : contentAttributes(params?.arguments)),
+    },
     async (span) => {
       const sent = withTraceContext(params);
       const answer = await post(
@@ -77,20 +80,26 @@ export async function request(
       }
       if ("error" in payload) {
         const code = isRecord(payload.error) ? payload.error.code : undefined;
+        const message = isRecord(payload.error) ? payload.error.message : undefined;
         throw forwardError(new Error(`MCP error ${jsonRpcErrorText(payload.error)}`), {
           kind: "answered",
           ...(typeof code === "number" ? { rpcCode: code } : {}),
+          ...(typeof message === "string" ? { rpcMessage: message } : {}),
         });
       }
       if (!("result" in payload)) {
         throw forwardError(new Error(`MCP ${method} response did not include a result`), { kind: "other" });
       }
-      if (tool !== undefined && isRecord(payload.result) && payload.result.isError === true) {
-        failed(span, "tool_error");
+      if (tool !== undefined && isRecord(payload.result)) {
+        if (payload.result.isError === true) {
+          failed(span, "tool_error");
+        }
+        span.setAttributes(contentAttributes(undefined, payload.result));
       }
       return payload;
     },
     (error) => (options.endsImage && endedImage(error) ? undefined : requestErrorType(error)),
+    (error) => (error as Partial<ForwardError> | undefined)?.kind === "answered" ? (error as { rpcMessage?: string }).rpcMessage : undefined,
   );
 }
 
@@ -102,14 +111,16 @@ function endedImage(error: unknown): boolean {
 
 /**
  * What a forwarded request's span records, after the OpenTelemetry MCP
- * conventions: the method, the tool and its operation, and the session where
- * the handshake opened one. Not the request's id or the image's address,
- * which the field telemetry keeps nothing of: a tool sends only what it would
- * keep.
+ * conventions: the method, its id, the tool and its operation, the image's
+ * address and port, and the session where the handshake opened one.
  */
-function requestAttributes(method: string, tool: string | undefined, session: Session = {}): Attributes {
+function requestAttributes(method: string, tool: string | undefined, id: string, url: string, session: Session = {}): Attributes {
+  const server = new URL(url);
   return {
     "mcp.method.name": method,
+    "jsonrpc.request.id": id,
+    "server.address": server.hostname,
+    "server.port": Number(server.port || (server.protocol === "https:" ? 443 : 80)),
     ...(tool === undefined ? {} : { "gen_ai.tool.name": tool, "gen_ai.operation.name": "execute_tool" }),
     ...(session.protocolVersion === undefined ? {} : { "mcp.protocol.version": session.protocolVersion }),
     ...(session.sessionId === undefined ? {} : { "mcp.session.id": session.sessionId }),
