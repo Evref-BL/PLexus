@@ -139,7 +139,7 @@ function mcpOfRecord(row: Pick<ImageInfo, "mcp">): string | undefined {
  * What an answer says of telemetry, when the PLexus answering enrolls images
  * in OpenTelemetry (`enrolled`): `telemetry: on` for an image whose server
  * records its calls through OpenTelemetry, said otherwise when PLexus's
- * settings name no OTLP endpoint (`endpointNamed` false) to send them to, or
+ * settings send them to no OTLP endpoint (`endpointNamed` false), or
  * a warning saying why the image does not record them. Nothing otherwise,
  * nor when nothing said.
  */

@@ -1,8 +1,10 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import {
+  LATEST_PROTOCOL_VERSION,
   ToolListChangedNotificationSchema,
   type CallToolResult,
+  type JSONRPCMessage,
   type Tool,
 } from "@modelcontextprotocol/sdk/types.js";
 import { context, propagation, SpanKind, SpanStatusCode, trace } from "@opentelemetry/api";
@@ -161,8 +163,10 @@ async function connect(
   });
   const client = new Client({ name: "test", version: "1.0.0" });
   let listChanged = 0;
-  client.setNotificationHandler(ToolListChangedNotificationSchema, () => {
+  const changes: unknown[] = [];
+  client.setNotificationHandler(ToolListChangedNotificationSchema, (notification) => {
     listChanged += 1;
+    changes.push(notification.params);
   });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   // What the server answered, by request id.
@@ -183,6 +187,8 @@ async function connect(
       await new Promise((resolve) => setImmediate(resolve));
       return listChanged;
     },
+    /** The params of each tool list change the host was told of. */
+    changes,
     call: async (name: string, args: Record<string, unknown> = {}) =>
       (await client.callTool({ name, arguments: args })) as CallToolResult,
   };
@@ -578,6 +584,7 @@ describe("plexus mcp", () => {
         "jsonrpc.request.id": expect.stringMatching(/^\d+$/),
         "gen_ai.operation.name": "execute_tool",
         "gen_ai.tool.name": "class_get",
+        "mcp.protocol.version": LATEST_PROTOCOL_VERSION,
         "network.transport": "pipe",
         "session.id": expect.stringMatching(/^[0-9a-f-]{36}$/),
         "plexus.call.index": 1,
@@ -722,6 +729,53 @@ describe("plexus mcp", () => {
         ["tools/call image_list", 4],
       ]);
       expect(inSession(false)).toEqual([["tools/call image_list", 1]]);
+    } finally {
+      recording.end();
+    }
+  });
+
+  it("records the protocol version it agreed with the host at initialize", async () => {
+    const recording = recordSpans();
+    try {
+      const server = createPlexusMcpServer({ images: new FakeImages([]) });
+      const [hostSide, serverSide] = InMemoryTransport.createLinkedPair();
+      const answered = new Map<number, () => void>();
+      hostSide.onmessage = (message: JSONRPCMessage) => {
+        if ("id" in message && typeof message.id === "number") answered.get(message.id)?.();
+      };
+      await server.connect(serverSide);
+      await hostSide.start();
+      const send = (id: number, method: string, params: Record<string, unknown>) =>
+        new Promise<void>((resolve) => {
+          answered.set(id, resolve);
+          void hostSide.send({ jsonrpc: "2.0", id, method, params });
+        });
+
+      // An older version the SDK supports is the one agreed, not its latest.
+      await send(1, "initialize", { protocolVersion: "2025-03-26", capabilities: {}, clientInfo: { name: "host", version: "1.0" } });
+      await hostSide.send({ jsonrpc: "2.0", method: "notifications/initialized" });
+      await send(2, "tools/call", { name: "image_list", arguments: {} });
+
+      const [span] = servedSpans(recording.exporter);
+      expect(span.attributes["mcp.protocol.version"]).toBe("2025-03-26");
+      await server.close();
+    } finally {
+      recording.end();
+    }
+  });
+
+  it("tells the host its tools changed in the trace context of the call that changed them", async () => {
+    const recording = recordSpans();
+    try {
+      const { call, changes, listChanged } = await connect(new FakeImages([row("dev")]));
+
+      await call("image_start", { name: "dev" });
+      expect(await listChanged()).toBe(1);
+
+      const [span] = servedSpans(recording.exporter);
+      expect(changes).toEqual([
+        { _meta: { traceparent: `00-${span.spanContext().traceId}-${span.spanContext().spanId}-01`, baggage: expect.stringMatching(/^session\.id=/) } },
+      ]);
     } finally {
       recording.end();
     }
@@ -898,7 +952,7 @@ describe("plexus mcp", () => {
   });
 
   it("says the tool list changed after a start, a stop or a delete, an image that stopped unsaved included, and only then", async () => {
-    const { call, listChanged } = await connect(new FakeImages([row("dev")]));
+    const { call, changes, listChanged } = await connect(new FakeImages([row("dev")]));
 
     await call("image_list");
     await call("image_templates");
@@ -917,5 +971,7 @@ describe("plexus mcp", () => {
     expect(await listChanged()).toBe(3);
     expect((await call("image_stop", { name: "unsaved", save: true })).isError).toBe(true);
     expect(await listChanged()).toBe(4);
+    // Without an SDK there is no trace context to pass.
+    expect(changes).toEqual([undefined, undefined, undefined, undefined]);
   });
 });

@@ -1,9 +1,12 @@
 /**
  * What PLexus records about its own work, through the OpenTelemetry API
  * alone: every call here is a no-op until the application running PLexus
- * registers an SDK. A span carries names, kinds and outcomes, never a value:
- * no argument, result, image name, path or message, and no status
- * description, since that would be a message.
+ * registers an SDK. A span carries names, kinds and outcomes, and what the
+ * OpenTelemetry MCP conventions ask of its side: a request's id, the address
+ * and port of the image it goes to, and, as its status description, the
+ * message of the JSON-RPC error that failed it. A tool call's arguments and
+ * result are on its span only when the conventions' content switch turns
+ * them on (`capturesContent`); beyond them, no span names an image or a path.
  *
  * Every span carries the `session.id` of the work it belongs to: the session
  * `plexus mcp` runs a call in, or else one made at random for the process.
@@ -127,9 +130,10 @@ export function capturesContent(env: NodeJS.ProcessEnv = process.env): boolean {
 
 /**
  * A tool call's arguments and, when it succeeded, its result, as the
- * conventions' opt-in content attributes, each as JSON; nothing while content
- * is off. The result is its structured content when it has some, else its
- * content.
+ * conventions' opt-in content attributes, each the value itself, which the
+ * conventions ask for and OTLP sends as a map or a list; nothing while
+ * content is off. The result is its structured content when it has some,
+ * else its content.
  */
 export function contentAttributes(
   args: unknown,
@@ -141,8 +145,8 @@ export function contentAttributes(
   }
   const answered = result === undefined || result.isError === true ? undefined : (result.structuredContent ?? result.content);
   return {
-    ...(args === undefined ? {} : { "gen_ai.tool.call.arguments": JSON.stringify(args) }),
-    ...(answered === undefined ? {} : { "gen_ai.tool.call.result": JSON.stringify(answered) }),
+    ...(args === undefined ? {} : { "gen_ai.tool.call.arguments": args }),
+    ...(answered === undefined ? {} : { "gen_ai.tool.call.result": answered }),
   };
 }
 

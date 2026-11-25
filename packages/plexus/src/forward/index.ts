@@ -3,7 +3,7 @@
  * is cached, so nothing can name an image that has since stopped.
  */
 import type { Endpoint, ImageTool, ImageToolResult } from "../types.js";
-import { initialize, request } from "./jsonRpc.js";
+import { initialize, jsonRpcMessage, request } from "./jsonRpc.js";
 
 const defaultTimeoutMs = 60_000;
 
@@ -119,7 +119,8 @@ export function evaluationTool(tools: ReadonlyArray<{ name: string }>): string |
 /**
  * Whether an MCP server answers there. Any JSON-RPC answer to `ping` counts,
  * whatever its HTTP status: a server that wants a session first refuses the
- * ping, and refusing it is answering.
+ * ping, and refusing it is answering. The ping is no span of its own, and
+ * carries the active trace context in its `_meta`.
  */
 export async function ping(endpoint: Endpoint, timeoutMs = 1_000): Promise<boolean> {
   try {
@@ -129,7 +130,7 @@ export async function ping(endpoint: Endpoint, timeoutMs = 1_000): Promise<boole
         accept: "application/json, text/event-stream",
         "content-type": "application/json",
       },
-      body: JSON.stringify({ jsonrpc: "2.0", id: "plexus-ping", method: "ping" }),
+      body: JSON.stringify(jsonRpcMessage("ping", undefined, "plexus-ping")),
     });
     const payload: unknown = await answer.json().catch(() => undefined);
     return isRecord(payload) && payload.jsonrpc === "2.0" && ("result" in payload || "error" in payload);

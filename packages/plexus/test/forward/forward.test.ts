@@ -253,6 +253,40 @@ describe("a forwarded call", () => {
     expect(await failureOf(callTool({ url }, "class_search"))).toEqual({ message: "aborted", kind: "closed" });
   });
 
+  it("answers a refusal sent with an HTTP error status as the JSON-RPC error it carries", async () => {
+    const { url } = await fakeMcpServer((request) =>
+      request.method === "tools/call"
+        ? { status: 400, error: { code: -32600, message: "Bad Request: MCP-Protocol-Version does not match the body" } }
+        : standardAnswers(request),
+    );
+
+    expect(await failureOf(callTool({ url }, "class_search"))).toEqual({
+      message: "MCP error -32600: Bad Request: MCP-Protocol-Version does not match the body",
+      kind: "answered",
+      rpcCode: -32600,
+    });
+  });
+
+  it("says an HTTP error status whose body is no JSON-RPC error as other", async () => {
+    const { url } = await fakeMcpServer((request) =>
+      request.method === "tools/call" ? { status: 400, error: "Bad Request" } : standardAnswers(request),
+    );
+
+    expect(await failureOf(callTool({ url }, "class_search"))).toEqual({ message: "HTTP 400 Bad Request", kind: "other" });
+  });
+
+  it("sends the call without a session when the image refuses the handshake", async () => {
+    const { url, received } = await fakeMcpServer((request) =>
+      request.method === "initialize"
+        ? { status: 400, error: { code: -32602, message: "Unsupported protocol version" } }
+        : standardAnswers(request),
+    );
+
+    expect(await callTool({ url }, "class_search")).toEqual({ content: [{ type: "text", text: "class=MCPToolRegistry" }] });
+    expect(received.map((request) => request.method)).toEqual(["initialize", "tools/call"]);
+    expect(received[1]).not.toHaveProperty("sessionId");
+  });
+
   it("says what else went wrong as other", async () => {
     const { url } = await fakeMcpServer((request) =>
       request.method === "tools/call" ? { status: 500 } : standardAnswers(request),
