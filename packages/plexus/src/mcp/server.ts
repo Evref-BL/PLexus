@@ -20,14 +20,15 @@ import { callTool, listTools } from "../forward/index.js";
 import { endpointOf } from "../images/endpoint.js";
 import type { Images } from "../images/index.js";
 import {
+  answeredCode,
   argumentAttributes,
   clientAttributes,
   contentAttributes,
   contextFromMeta,
-  errorType,
   failed,
   identifierOrOther,
   inSpan,
+  serverFailedWith,
   withSession,
 } from "../telemetry/trace.js";
 import type { Display, Endpoint, ImageInfo } from "../types.js";
@@ -357,8 +358,10 @@ export function createPlexusMcpServer(options: PlexusMcpServerOptions): Server {
    * tool is an image's, and the host as its initialize request named itself;
    * the arguments and the result only when content is turned on. An answer
    * that is an error fails the span as `tool_error`, and a refusal of this
-   * server's own says its code; a call that throws, which the host gets as a
-   * JSON-RPC error, has its message as the status description. Every span the
+   * server's own says its code. A call that throws, which the host gets as a
+   * JSON-RPC error, records its code as `rpc.status_code` and fails the span
+   * with that code and its message, unless the code says the request was the
+   * caller's fault, as the conventions ask of a server. Every span the
    * call makes carries the session, and what it forwards carries it in its
    * baggage.
    */
@@ -399,6 +402,12 @@ export function createPlexusMcpServer(options: PlexusMcpServerOptions): Server {
               }
               span.setAttributes(contentAttributes(undefined, answered.result));
               return answered.result;
+            } catch (error) {
+              span.setAttribute("rpc.status_code", String(answeredCode(error)));
+              if (error instanceof PlexusError) {
+                span.setAttribute("plexus.error.code", error.code);
+              }
+              throw error;
             } finally {
               // Without a listing, only `image` is known to be declared, and
               // nothing is said of the other names.
@@ -410,7 +419,7 @@ export function createPlexusMcpServer(options: PlexusMcpServerOptions): Server {
               );
             }
           },
-          errorType,
+          (error) => (serverFailedWith(answeredCode(error)) ? String(answeredCode(error)) : undefined),
           (error) => (error instanceof Error ? error.message : undefined),
         ),
       )

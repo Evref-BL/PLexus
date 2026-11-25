@@ -10,7 +10,8 @@ import { afterEach, describe, expect, it } from "vitest";
 import { callTool, listTools } from "../../src/forward/index.js";
 import { request } from "../../src/forward/jsonRpc.js";
 import { storeRoot } from "../../src/home.js";
-import { withSession } from "../../src/telemetry/trace.js";
+import { PlexusError } from "../../src/errors.js";
+import { answeredCode, serverFailedWith, withSession } from "../../src/telemetry/trace.js";
 import { FakeLauncher, imagesWith, tempHome, writeLauncherImage } from "../support/fakeLauncher.js";
 
 const exporter = new InMemorySpanExporter();
@@ -287,9 +288,18 @@ describe("a forwarded request with an SDK", () => {
       const span = spanNamed("tools/call class_get");
       expect(span.status, type).toEqual({ code: SpanStatusCode.ERROR, ...(message === undefined ? {} : { message }) });
       expect(span.attributes["error.type"]).toBe(type);
+      expect(span.attributes["rpc.status_code"]).toBe(type === "-32602" ? "-32602" : undefined);
       expect(span.events).toEqual([]);
       expect(span.attributes["gen_ai.tool.call.arguments"]).toBeUndefined();
     }
+  });
+
+  it("counts a JSON-RPC code as a server's error unless it says the request was the caller's fault", () => {
+    expect([-32700, -32600, -32601, -32602, -32002].map(serverFailedWith)).toEqual([false, false, false, false, false]);
+    expect([-32603, -32000, 1].map(serverFailedWith)).toEqual([true, true, true]);
+    expect(answeredCode(Object.assign(new Error("Invalid params"), { code: -32602 }))).toBe(-32602);
+    expect(answeredCode(new PlexusError("no-such-image", "No image dev."))).toBe(-32603);
+    expect(answeredCode("not an error")).toBe(-32603);
   });
 
   it("records the arguments, and the result of a call that succeeded, only when content is turned on", async () => {

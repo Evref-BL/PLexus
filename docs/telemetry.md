@@ -40,7 +40,11 @@ until the program running PLexus installs an SDK:
     `_OTHER`.
 
 A span records names, outcomes and an error's kind (`error.type`); a span a
-JSON-RPC error failed has its message as the status description. A tool
+JSON-RPC error failed has its message as the status description. A JSON-RPC
+error's code is `rpc.status_code`: it fails a request PLexus forwards, whatever
+the code, while a call `plexus mcp` serves that throws is not its error when
+the code says the request was the caller's fault (`-32700`, `-32600`,
+`-32601`, `-32602`, `-32002`), as the conventions ask of a server. A tool
 call's arguments and result (`gen_ai.tool.call.arguments`, and
 `gen_ai.tool.call.result` when the call succeeded, each as JSON) are recorded
 only when the conventions' switch turns content on:
