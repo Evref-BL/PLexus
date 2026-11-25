@@ -10,14 +10,20 @@ until the program running PLexus installs an SDK:
   its trace context to the image in the request's
   `params._meta` (`traceparent`, `tracestate`, `baggage`); a request a call
   of `plexus mcp` forwards carries that call's `session.id` in its baggage.
-  The request asking an image to quit, for a stop or a stop that saves, does
+  The handshake before it (`initialize`, `notifications/initialized`) and the
+  `ping` that waits for a starting image are no spans of their own, and carry
+  the trace context they are sent in the same way. A JSON-RPC error is the
+  image's answer whatever HTTP status comes with it: an image answers a
+  request it refuses with 400 and a JSON-RPC error saying why. The request
+  asking an image to quit, for a stop or a stop that saves, does
   not fail its span when the image closes the connection or does not answer
   in time, since quitting is what it asked;
 - making, starting, stopping and deleting an image are INTERNAL spans,
   `plexus.image.create`, `.start`, `.stop` and `.delete`;
 - each tool call `plexus mcp` serves is a SERVER span, `tools/call <tool>`,
   child of the trace context its `_meta` carries, with `jsonrpc.request.id`,
-  `session.id`,
+  the protocol version agreed with the host at initialize
+  (`mcp.protocol.version`), `session.id`,
   `plexus.call.index`, `plexus.call.forwarded`, the host's `clientInfo` as
   `plexus.client.name` and `.version`, and the names of the arguments given
   that the tool declares (`plexus.argument.names`) and of the others
@@ -25,7 +31,8 @@ until the program running PLexus installs an SDK:
   its image lists and `image`. A call to an image whose tools the host has not
   listed fetches that listing beside it and, once answered, waits half a
   second at most for it; without it, only `image` is named. An error answer
-  fails the span as `tool_error`:
+  fails the span as `tool_error`. The `notifications/tools/list_changed` a
+  call sends the host carries the call's trace context in its `_meta`:
   - `session.id` is random, kept by the server process, and renewed when a
     call comes after 30 minutes in which no call ran. Every span the call
     makes carries it, as does every span of a listing of the tools; every
@@ -46,8 +53,9 @@ the code, while a call `plexus mcp` serves that throws is not its error when
 the code says the request was the caller's fault (`-32700`, `-32600`,
 `-32601`, `-32602`, `-32002`), as the conventions ask of a server. A tool
 call's arguments and result (`gen_ai.tool.call.arguments`, and
-`gen_ai.tool.call.result` when the call succeeded, each as JSON) are recorded
-only when the conventions' switch turns content on:
+`gen_ai.tool.call.result` when the call succeeded) are recorded as the values
+themselves, which OTLP sends as maps and lists, and only when the
+conventions' switch turns content on:
 `OTEL_INSTRUMENTATION_GENAI_CAPTURE_CONTENT` set to `SPAN_ONLY` or
 `SPAN_AND_EVENT`, in any case. It is off by default, and for any other value.
 
@@ -56,10 +64,17 @@ OTLP traces exporter: `OTEL_EXPORTER_OTLP_ENDPOINT` or
 `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` is set, `OTEL_TRACES_EXPORTER` is unset or
 `otlp`, and `OTEL_SDK_DISABLED` is not `true`. It sends over HTTP, protobuf
 unless `OTEL_EXPORTER_OTLP_PROTOCOL` is `http/json`; it does not send over
-gRPC. Its resource is `service.name` (`plexus`), `service.version`, `os.type`
-and what `OTEL_RESOURCE_ATTRIBUTES` adds, without the host and process
-detectors. A `TRACEPARENT` in its environment is the parent of what a command
-does; `plexus mcp` takes a call's parent from its `_meta` alone.
+gRPC. Its resource is `service.name` (`plexus`), `service.version`, `os.type`,
+`process.runtime.name` (`nodejs`) and `process.runtime.version` (Node's
+version), the SDK's own `telemetry.sdk.*`, and what `OTEL_RESOURCE_ATTRIBUTES`
+adds, without the host and process detectors. `service.name` stays `plexus`
+even when `OTEL_SERVICE_NAME` or `OTEL_RESOURCE_ATTRIBUTES` sets one, and so do
+the others PLexus gives: resource attributes the program gives win over the
+environment's, and the images PLexus starts share its environment. It reads
+neither `OTEL_PROPAGATORS` nor `OTEL_TRACES_SAMPLER`: it always propagates W3C
+trace context and baggage, and records every span unless the parent it
+continues was not sampled. A `TRACEPARENT` in its environment is the parent of
+what a command does; `plexus mcp` takes a call's parent from its `_meta` alone.
 The export timeout is two seconds unless `OTEL_EXPORTER_OTLP_TIMEOUT` says
 otherwise, and `OTEL_BSP_SCHEDULE_DELAY`, `OTEL_BSP_MAX_QUEUE_SIZE` and
 `OTEL_BSP_MAX_EXPORT_BATCH_SIZE` shape its batches. A command waits for its
@@ -135,6 +150,7 @@ why). Enrolled, `plexus mcp` says it too: `image_list` marks an image that
 does not record its calls, and `image_create`, `image_start` and `image_list`
 naming an image say that it records them, or why not and what makes it.
 Recording is not sending: what an image sends, and where, its `OTEL_*`
-settings decide. When the settings of `plexus mcp` name no OTLP endpoint, its
-answers say that what an image records has nowhere named to go, instead of
-`on`.
+settings decide. When the settings of `plexus mcp` send traces to no OTLP
+endpoint, as it reads them for its own SDK (no endpoint, `OTEL_SDK_DISABLED`
+true, or another `OTEL_TRACES_EXPORTER`), its answers say that what an image
+records is sent nowhere, instead of `on`.

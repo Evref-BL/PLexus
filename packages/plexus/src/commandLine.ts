@@ -7,7 +7,7 @@ import { PlexusError } from "./errors.js";
 import { Images } from "./images/index.js";
 import { scopeOfProject } from "./images/names.js";
 import { imageTools, runPlexusMcpServer, type ImagesApi } from "./mcp/server.js";
-import { tracesEndpoint } from "./telemetry/reachability.js";
+import { tracesExport } from "./telemetry/sdk.js";
 import type { ImagesOptions, StartOptions } from "./types.js";
 
 export interface CliIo {
@@ -20,7 +20,8 @@ export interface CliDependencies {
   images(options: ImagesOptions): ImagesApi;
   /**
    * `telemetry` says the images are enrolled in OpenTelemetry, and
-   * `endpointNamed` whether the environment names an OTLP endpoint for traces.
+   * `endpointNamed` whether the environment sends traces to an OTLP endpoint
+   * it names, as `tracesExport` reads it for PLexus's own SDK.
    */
   serveMcp(images: ImagesApi, telemetry: boolean, endpointNamed: boolean): Promise<void>;
 }
@@ -248,7 +249,7 @@ export async function runCli(
       await dependencies.serveMcp(
         dependencies.images(options),
         options.telemetry === true,
-        tracesEndpoint(io.env) !== undefined,
+        tracesExport(io.env) !== undefined,
       );
       return 0;
     }

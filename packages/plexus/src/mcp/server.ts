@@ -6,10 +6,12 @@
  */
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
   type CallToolResult,
+  type JSONRPCMessage,
   type Tool,
 } from "@modelcontextprotocol/sdk/types.js";
 import { randomUUID } from "node:crypto";
@@ -30,6 +32,7 @@ import {
   inSpan,
   serverFailedWith,
   withSession,
+  withTraceContext,
 } from "../telemetry/trace.js";
 import type { Display, Endpoint, ImageInfo } from "../types.js";
 import { plexusVersion } from "../version.js";
@@ -56,9 +59,9 @@ export interface PlexusMcpServerOptions {
    */
   telemetry?: boolean;
   /**
-   * Whether the OTEL_* settings the images start with name an OTLP endpoint
-   * for traces. When they do not, the image tools say that what an image
-   * records has nowhere named to go.
+   * Whether the OTEL_* settings the images start with send traces to an OTLP
+   * endpoint they name. When they do not, the image tools say that what an
+   * image records is sent nowhere.
    */
   endpointNamed?: boolean;
   /** The clock a working session's idle time is kept by. */
@@ -235,6 +238,30 @@ async function settledWithin(work: Promise<unknown>, boundMs: number): Promise<v
 /** How long a working session lasts without a call before the next one opens another. */
 export const sessionIdleMs = 30 * 60_000;
 
+/**
+ * The SDK's server, keeping the protocol version it agreed with the host at
+ * initialize, as its answer said it: the SDK keeps the host's name and
+ * capabilities from that handshake, and not the version.
+ */
+class PlexusServer extends Server {
+  protocolVersion: string | undefined;
+
+  override async connect(transport: Transport): Promise<void> {
+    const send = transport.send.bind(transport);
+    transport.send = (message, options) => {
+      this.protocolVersion = agreedVersion(message) ?? this.protocolVersion;
+      return send(message, options);
+    };
+    await super.connect(transport);
+  }
+}
+
+/** The protocol version an answer to initialize agrees on; nothing for any other message. */
+function agreedVersion(message: JSONRPCMessage): string | undefined {
+  const result = "result" in message && isRecord(message.result) ? message.result : undefined;
+  return typeof result?.protocolVersion === "string" && isRecord(result.serverInfo) ? result.protocolVersion : undefined;
+}
+
 export function createPlexusMcpServer(options: PlexusMcpServerOptions): Server {
   const images = options.images;
   // The forwarding answers what the image sent, which is what the protocol says.
@@ -285,10 +312,16 @@ export function createPlexusMcpServer(options: PlexusMcpServerOptions): Server {
     return fetching;
   }
 
-  const server = new Server(
+  const server = new PlexusServer(
     { name: "plexus", version: plexusVersion },
     { capabilities: { tools: { listChanged: true } }, instructions: serverInstructions },
   );
+
+  /** Tells the host its tools changed, the trace context of the call that changed them in the notification's `_meta`. */
+  function toolListChanged(): Promise<void> {
+    const params = withTraceContext(undefined);
+    return server.notification({ method: "notifications/tools/list_changed", ...(params === undefined ? {} : { params }) });
+  }
 
   // A working session groups a host connection's calls: random, renewed
   // after sessionIdleMs without a call, and gone with the process.
@@ -353,10 +386,11 @@ export function createPlexusMcpServer(options: PlexusMcpServerOptions): Server {
 
   /**
    * A call this server answers, as a SERVER span after the MCP conventions:
-   * the request's id, the tool, the names of its arguments the tool declares
-   * and of the others, the session and the call's place in it, whether the
-   * tool is an image's, and the host as its initialize request named itself;
-   * the arguments and the result only when content is turned on. An answer
+   * the request's id, the tool, the protocol version agreed at initialize,
+   * the names of its arguments the tool declares and of the others, the
+   * session and the call's place in it, whether the tool is an image's, and
+   * the host as its initialize request named itself; the arguments and the
+   * result only when content is turned on. An answer
    * that is an error fails the span as `tool_error`, and a refusal of this
    * server's own says its code. A call that throws, which the host gets as a
    * JSON-RPC error, records its code as `rpc.status_code` and fails the span
@@ -383,6 +417,7 @@ export function createPlexusMcpServer(options: PlexusMcpServerOptions): Server {
             "jsonrpc.request.id": String(requestId),
             "gen_ai.operation.name": "execute_tool",
             "gen_ai.tool.name": tool,
+            ...(server.protocolVersion === undefined ? {} : { "mcp.protocol.version": server.protocolVersion }),
             "network.transport": "pipe",
             "plexus.call.index": call.index,
             "plexus.call.forwarded": !imageToolNames.has(params.name),
@@ -487,13 +522,13 @@ export function createPlexusMcpServer(options: PlexusMcpServerOptions): Server {
         ...(options.endpointNamed === undefined ? {} : { endpointNamed: options.endpointNamed }),
       });
       if (name === "image_start" || name === "image_stop" || name === "image_delete") {
-        await server.sendToolListChanged();
+        await toolListChanged();
       }
       return { result: text(answers.render(answer)) };
     } catch (error) {
       // An image that stopped without saving has gone all the same.
       if (error instanceof PlexusError && error.code === "stopped-unsaved") {
-        await server.sendToolListChanged();
+        await toolListChanged();
       }
       return refused(error);
     }
@@ -749,4 +784,8 @@ function failure(error: unknown): CallToolResult {
 
 function text(value: string, isError = false): CallToolResult {
   return { content: [{ type: "text", text: value }], ...(isError ? { isError: true } : {}) };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }

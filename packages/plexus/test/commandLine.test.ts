@@ -244,5 +244,12 @@ describe("plexus", () => {
     const sending = harness({ PLEXUS_TELEMETRY: "1", OTEL_EXPORTER_OTLP_ENDPOINT: "http://127.0.0.1:4318" });
     expect(await sending.run("mcp")).toBe(0);
     expect(sending.served.map(([, telemetry, endpointNamed]) => [telemetry, endpointNamed])).toEqual([[true, true]]);
+
+    // An endpoint the settings send nothing to is none, as PLexus's own SDK reads them.
+    for (const off of [{ OTEL_SDK_DISABLED: "true" }, { OTEL_TRACES_EXPORTER: "none" }]) {
+      const unsent = harness({ PLEXUS_TELEMETRY: "1", OTEL_EXPORTER_OTLP_ENDPOINT: "http://127.0.0.1:4318", ...off });
+      expect(await unsent.run("mcp")).toBe(0);
+      expect(unsent.served.map(([, telemetry, endpointNamed]) => [telemetry, endpointNamed]), JSON.stringify(off)).toEqual([[true, false]]);
+    }
   });
 });

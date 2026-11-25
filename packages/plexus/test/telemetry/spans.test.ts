@@ -7,7 +7,7 @@ import { AsyncLocalStorageContextManager } from "@opentelemetry/context-async-ho
 import { CompositePropagator, W3CBaggagePropagator, W3CTraceContextPropagator } from "@opentelemetry/core";
 import { InMemorySpanExporter, SimpleSpanProcessor, TracerProvider, type ReadableSpan } from "@opentelemetry/sdk-trace";
 import { afterEach, describe, expect, it } from "vitest";
-import { callTool, listTools } from "../../src/forward/index.js";
+import { callTool, listTools, ping } from "../../src/forward/index.js";
 import { request } from "../../src/forward/jsonRpc.js";
 import { storeRoot } from "../../src/home.js";
 import { PlexusError } from "../../src/errors.js";
@@ -121,6 +121,8 @@ describe("a forwarded request without an SDK", () => {
     const calls = server.received.filter((each) => each.method === "tools/call");
     expect(calls[0].params).toEqual({ name: "class_get", arguments: { name: "SecretClass" } });
     expect(calls[1].params).toEqual({ name: "class_get", _meta: { progressToken: 7 } });
+    expect(server.received.find((each) => each.method === "initialize")?.params).not.toHaveProperty("_meta");
+    expect(server.received.find((each) => each.method === "notifications/initialized")).not.toHaveProperty("params");
   });
 });
 
@@ -151,6 +153,7 @@ describe("a forwarded request with an SDK", () => {
       "mcp.session.id": "session-1",
       "network.transport": "tcp",
       "network.protocol.name": "http",
+      "network.protocol.version": "1.1",
       "session.id": expect.stringMatching(/^[0-9a-f-]{36}$/),
     });
 
@@ -181,6 +184,38 @@ describe("a forwarded request with an SDK", () => {
       traceparent: expect.stringMatching(/^00-[0-9a-f]{32}-[0-9a-f]{16}-01$/),
       baggage: "run=r1",
     });
+  });
+
+  it("passes the trace context in the handshake and a ping too, which are no spans of their own", async () => {
+    registerSdk();
+    const server = await fakeMcpServer();
+
+    await trace.getTracer("test").startActiveSpan("caller", async (caller) => {
+      await callTool({ url: server.url }, "class_get", {});
+      await ping({ url: server.url });
+      caller.end();
+    });
+
+    const caller = spanNamed("caller").spanContext();
+    const callers = { traceparent: `00-${caller.traceId}-${caller.spanId}-01` };
+    const sent = (method: string) => server.received.find((each) => each.method === method)?.params;
+    expect(sent("initialize")).toEqual({
+      protocolVersion: "2025-06-18",
+      capabilities: {},
+      clientInfo: { name: "plexus", version: expect.any(String) },
+      _meta: callers,
+    });
+    expect(sent("notifications/initialized")).toEqual({ _meta: callers });
+    expect(sent("ping")).toEqual({ _meta: callers });
+    expect(exporter.getFinishedSpans().map((span) => span.name)).toEqual(["tools/call class_get", "caller"]);
+  });
+
+  it("records an IPv6 address without the brackets a URL keeps", async () => {
+    registerSdk();
+
+    await request("http://[::1]:9/", "tools/list", undefined, { timeoutMs: 200 }).catch(() => undefined);
+
+    expect(spanNamed("tools/list").attributes).toMatchObject({ "server.address": "::1", "server.port": 9 });
   });
 
   it("names a listing after its method alone, without a tool or an operation", async () => {
@@ -276,6 +311,8 @@ describe("a forwarded request with an SDK", () => {
     const cases: Array<[Reply, string, string?]> = [
       [{ result: { content: [{ type: "text", text: "No class SecretClass" }], isError: true } }, "tool_error"],
       [{ error: { code: -32602, message: "Invalid params: SecretClass" } }, "-32602", "Invalid params: SecretClass"],
+      // An image refuses a request it cannot take with 400 and a JSON-RPC error: that error is the answer.
+      [{ status: 400, error: { code: -32600, message: "Unsupported protocol version" } }, "-32600", "Unsupported protocol version"],
       [{ status: 500, result: {} }, "500"],
       ["never", "timeout"],
     ];
@@ -283,14 +320,21 @@ describe("a forwarded request with an SDK", () => {
       exporter.reset();
       const server = await fakeMcpServer((method) => (method === "tools/call" ? reply : standardAnswer(method)));
 
-      await callTool({ url: server.url }, "class_get", { name: "SecretClass" }, { minimumMs: 200 }).catch(() => undefined);
+      const failure = await callTool({ url: server.url }, "class_get", { name: "SecretClass" }, { minimumMs: 200 }).then(
+        () => undefined,
+        (error: Error & { kind?: string }) => error,
+      );
 
       const span = spanNamed("tools/call class_get");
       expect(span.status, type).toEqual({ code: SpanStatusCode.ERROR, ...(message === undefined ? {} : { message }) });
       expect(span.attributes["error.type"]).toBe(type);
-      expect(span.attributes["rpc.status_code"]).toBe(type === "-32602" ? "-32602" : undefined);
+      expect(span.attributes["rpc.status_code"]).toBe(message === undefined ? undefined : type);
       expect(span.events).toEqual([]);
       expect(span.attributes["gen_ai.tool.call.arguments"]).toBeUndefined();
+      if (message !== undefined) {
+        expect(failure?.kind).toBe("answered");
+        expect(failure?.message).toBe(`MCP error ${type}: ${message}`);
+      }
     }
   });
 
@@ -324,11 +368,12 @@ describe("a forwarded request with an SDK", () => {
       return [span.attributes["gen_ai.tool.call.arguments"], span.attributes["gen_ai.tool.call.result"]];
     };
 
+    // The values themselves, as the conventions ask, never their JSON.
     expect(await recorded("span_only", "ok")).toEqual([
-      '{"name":"SecretClass"}',
-      '[{"type":"text","text":"Object subclass: #SecretClass"}]',
+      { name: "SecretClass" },
+      [{ type: "text", text: "Object subclass: #SecretClass" }],
     ]);
-    expect(await recorded("SPAN_AND_EVENT", "failed")).toEqual(['{"name":"SecretClass"}', undefined]);
+    expect(await recorded("SPAN_AND_EVENT", "failed")).toEqual([{ name: "SecretClass" }, undefined]);
     for (const capture of [undefined, "NO_CONTENT", "EVENT_ONLY", "yes"]) {
       expect(await recorded(capture, "ok"), String(capture)).toEqual([undefined, undefined]);
     }

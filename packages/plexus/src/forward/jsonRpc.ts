@@ -14,14 +14,15 @@ export interface Session {
  * How a forwarded request failed, beside its message: whether the image
  * answered, never got the call, or got it and gave no answer.
  *
- * - `answered`: the image answered a JSON-RPC error, with its code;
+ * - `answered`: the image answered a JSON-RPC error, with its code, whatever
+ *   the HTTP status it came with;
  * - `no-handshake`: the handshake timed out, so the call was not sent;
  * - `timeout`: the call was sent and not answered in time;
  * - `refused`: the connection was refused, so nothing was sent;
  * - `closed`: the connection closed after the call was sent;
  * - `cancelled`: the caller's signal aborted the request;
- * - `other`: an HTTP status, with `httpStatus`, invalid JSON, or a response
- *   with no result.
+ * - `other`: an HTTP status whose body is no JSON-RPC error, with
+ *   `httpStatus`, invalid JSON, or a response with no result.
  */
 export type ForwardError = Error & ForwardErrorKind;
 
@@ -38,7 +39,9 @@ interface HttpAnswer {
 
 /**
  * One request, answered by its JSON-RPC response object. A JSON-RPC error is
- * thrown with the server's `error.data` in the message.
+ * thrown with the server's `error.data` in the message, whatever the HTTP
+ * status it came with: an image answers a request it refuses with 400 and a
+ * JSON-RPC error saying why.
  *
  * The request is a CLIENT span, `<method>` or `tools/call <tool>`, and
  * carries the active trace context in its `params._meta`: see
@@ -62,19 +65,7 @@ export async function request(
       ...(tool === undefined ? {} : contentAttributes(params?.arguments)),
     },
     async (span) => {
-      const sent = withTraceContext(params);
-      const answer = await post(
-        url,
-        {
-          jsonrpc: "2.0",
-          id,
-          method,
-          ...(sent === undefined ? {} : { params: sent }),
-        },
-        options.timeoutMs,
-        options.session,
-        options.signal,
-      );
+      const answer = await post(url, jsonRpcMessage(method, params, id), options.timeoutMs, options.session, options.signal);
       const payload = answer.payload;
       if (!isRecord(payload)) {
         throw forwardError(new Error("MCP response was not a JSON object"), { kind: "other" });
@@ -116,20 +107,47 @@ function endedImage(error: unknown): boolean {
 /**
  * What a forwarded request's span records, after the OpenTelemetry MCP
  * conventions: the method, its id, the tool and its operation, the image's
- * address and port, and the session where the handshake opened one.
+ * address and port, the protocol version and the session where the
+ * handshake agreed them, and HTTP/1.1, the only version Node's `http`
+ * client speaks.
  */
 function requestAttributes(method: string, tool: string | undefined, id: string, url: string, session: Session = {}): Attributes {
   const server = new URL(url);
   return {
     "mcp.method.name": method,
     "jsonrpc.request.id": id,
-    "server.address": server.hostname,
+    "server.address": bareHost(server),
     "server.port": Number(server.port || (server.protocol === "https:" ? 443 : 80)),
     ...(tool === undefined ? {} : { "gen_ai.tool.name": tool, "gen_ai.operation.name": "execute_tool" }),
     ...(session.protocolVersion === undefined ? {} : { "mcp.protocol.version": session.protocolVersion }),
     ...(session.sessionId === undefined ? {} : { "mcp.session.id": session.sessionId }),
     "network.transport": "tcp",
     "network.protocol.name": "http",
+    "network.protocol.version": "1.1",
+  };
+}
+
+/** A URL's host as a socket takes it: URL keeps an IPv6 address in brackets. */
+function bareHost(url: URL): string {
+  return url.hostname.replace(/^\[(.*)\]$/, "$1");
+}
+
+/**
+ * A JSON-RPC request, or a notification when it has no id, whose params
+ * carry the active trace context in their `_meta`, as the MCP conventions ask
+ * of every request and notification: see `withTraceContext`.
+ */
+export function jsonRpcMessage(
+  method: string,
+  params: Record<string, unknown> | undefined,
+  id?: string,
+): Record<string, unknown> {
+  const sent = withTraceContext(params);
+  return {
+    jsonrpc: "2.0",
+    ...(id === undefined ? {} : { id }),
+    method,
+    ...(sent === undefined ? {} : { params: sent }),
   };
 }
 
@@ -164,6 +182,9 @@ function requestErrorType(error: unknown): string {
  * or timed out and `failOnTimeout` asks: a server that does not answer the
  * handshake will not answer the call either, and failing here says the call
  * was never sent.
+ *
+ * Neither the request nor the notification that follows it is a span of its
+ * own; each carries the active trace context in its `_meta`.
  */
 export async function initialize(
   url: string,
@@ -174,16 +195,11 @@ export async function initialize(
   try {
     answer = await post(
       url,
-      {
-        jsonrpc: "2.0",
-        id: `plexus-initialize-${Date.now()}`,
-        method: "initialize",
-        params: {
-          protocolVersion,
-          capabilities: {},
-          clientInfo: { name: "plexus", version: plexusVersion },
-        },
-      },
+      jsonRpcMessage(
+        "initialize",
+        { protocolVersion, capabilities: {}, clientInfo: { name: "plexus", version: plexusVersion } },
+        `plexus-initialize-${Date.now()}`,
+      ),
       timeoutMs,
       {},
       options.signal,
@@ -213,13 +229,9 @@ export async function initialize(
     ...(answer.sessionId ? { sessionId: answer.sessionId } : {}),
   };
   // A stateless server does not implement the notification.
-  await post(
-    url,
-    { jsonrpc: "2.0", method: "notifications/initialized" },
-    timeoutMs,
-    session,
-    options.signal,
-  ).catch(() => undefined);
+  await post(url, jsonRpcMessage("notifications/initialized", undefined), timeoutMs, session, options.signal).catch(
+    () => undefined,
+  );
   return session;
 }
 
@@ -264,6 +276,9 @@ function socketError(error: unknown, signal: AbortSignal | undefined): ForwardEr
 /**
  * One POST, waiting at most `timeoutMs` for the server to say anything, and
  * no longer than `signal` lets it: an abort destroys the request in flight.
+ * A status other than 2xx is the answer when its body is a JSON-RPC error,
+ * which says why the server refused the request; otherwise it fails as an
+ * HTTP error.
  */
 function post(
   url: string,
@@ -285,8 +300,7 @@ function post(
     const fail = (error: unknown) => reject(socketError(error, signal));
     const outgoing = http.request(
       {
-        // URL keeps an IPv6 host in brackets; the socket wants it bare.
-        hostname: target.hostname.replace(/^\[(.*)\]$/, "$1"),
+        hostname: bareHost(target),
         port: target.port,
         path: `${target.pathname}${target.search}`,
         method: "POST",
@@ -312,7 +326,13 @@ function post(
         });
         response.on("end", () => {
           const status = response.statusCode;
+          const text = Buffer.concat(chunks).toString("utf8");
           if (status === undefined || status < 200 || status >= 300) {
+            const refusal = jsonRpcError(text);
+            if (refusal !== undefined) {
+              resolve({ payload: refusal });
+              return;
+            }
             reject(
               forwardError(
                 new Error(`HTTP ${status ?? "unknown"} ${response.statusMessage ?? ""}`.trim()),
@@ -322,7 +342,6 @@ function post(
             return;
           }
 
-          const text = Buffer.concat(chunks).toString("utf8");
           if (!text.trim()) {
             // A notification is answered with an empty 202.
             resolve({ payload: undefined });
@@ -364,6 +383,17 @@ function post(
     outgoing.on("error", fail);
     outgoing.end(body);
   });
+}
+
+/** The JSON-RPC error response a body holds, or nothing when it holds none. */
+function jsonRpcError(text: string): Record<string, unknown> | undefined {
+  let data: unknown;
+  try {
+    data = JSON.parse(text);
+  } catch {
+    return undefined;
+  }
+  return isRecord(data) && data.jsonrpc === "2.0" && isRecord(data.error) ? data : undefined;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

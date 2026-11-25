@@ -209,13 +209,13 @@ export function recordsNothing(
   return `Image ${name} does not record its calls: ${(why.reason === undefined ? undefined : reasons[why.reason]) ?? "its start did not say why."}`;
 }
 
-/** The telemetry of an image that records its calls, when no OTEL_* setting names where to send them. */
+/** The telemetry of an image that records its calls, when the OTEL_* settings send them to no OTLP endpoint. */
 export function recordedNotSent(): string {
-  return "recorded, but no OTEL_* setting names where to send it";
+  return "recorded, but the OTEL_* settings send it nowhere";
 }
 
 export function recordedNowhereToSend(): string {
-  return "The images that record their calls through OpenTelemetry have no OTEL_* setting naming where to send them.";
+  return "The images that record their calls through OpenTelemetry have OTEL_* settings that send them nowhere.";
 }
 
 /** A create, which the caller named the template of. */
