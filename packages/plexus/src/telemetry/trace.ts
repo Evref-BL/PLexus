@@ -86,6 +86,27 @@ export function clientAttributes(client: { name?: unknown; version?: unknown } |
 }
 
 /**
+ * The JSON-RPC codes that say the caller sent a request its receiver could
+ * not serve. The OpenTelemetry MCP conventions do not count them as an error
+ * on a server's span, and count every JSON-RPC code as one on a client's.
+ */
+const callersCodes: ReadonlySet<number> = new Set([-32700, -32600, -32601, -32602, -32002]);
+
+/** Whether a server's span counts a JSON-RPC error code as its own error: every code but the caller's. */
+export function serverFailedWith(code: number): boolean {
+  return !callersCodes.has(code);
+}
+
+/**
+ * The JSON-RPC code a request handler's error is answered with: its own
+ * `code` when that is an integer, as the MCP SDK answers it, else -32603.
+ */
+export function answeredCode(error: unknown): number {
+  const code = (error as { code?: unknown } | undefined)?.code;
+  return typeof code === "number" && Number.isSafeInteger(code) ? code : -32603;
+}
+
+/**
  * Marks the span failed: status ERROR and `error.type`, with the JSON-RPC
  * error's message as the status description when a JSON-RPC error failed it.
  */

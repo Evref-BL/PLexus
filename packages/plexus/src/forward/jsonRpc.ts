@@ -42,7 +42,8 @@ interface HttpAnswer {
  *
  * The request is a CLIENT span, `<method>` or `tools/call <tool>`, and
  * carries the active trace context in its `params._meta`: see
- * `requestAttributes` for what the span records. A request that `endsImage`
+ * `requestAttributes` for what the span records. A JSON-RPC error answer
+ * fails it, whatever its code, which `rpc.status_code` records. A request that `endsImage`
  * does not fail its span when the connection closes or no answer comes.
  */
 export async function request(
@@ -81,6 +82,9 @@ export async function request(
       if ("error" in payload) {
         const code = isRecord(payload.error) ? payload.error.code : undefined;
         const message = isRecord(payload.error) ? payload.error.message : undefined;
+        if (typeof code === "number") {
+          span.setAttribute("rpc.status_code", String(code));
+        }
         throw forwardError(new Error(`MCP error ${jsonRpcErrorText(payload.error)}`), {
           kind: "answered",
           ...(typeof code === "number" ? { rpcCode: code } : {}),
