@@ -7,6 +7,10 @@ host passes its project directory, whose name is the scope:
 { "mcpServers": { "plexus": { "command": "plexus", "args": ["mcp", "--project", "/path/to/MyProject"] } } }
 ```
 
+An empty `--project`, or one holding a `${...}` variable the host did not
+expand, is refused and the server does not start, rather than give every
+project the same scope.
+
 It offers `image_templates`, `image_create`, `image_start`, `image_stop`,
 `image_delete` and `image_list`, followed by the tools of every image in scope
 that runs with an endpoint. Each of those takes an `image` argument naming the
