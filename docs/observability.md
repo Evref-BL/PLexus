@@ -1,4 +1,4 @@
-# Telemetry
+# Observability
 
 PLexus traces its work through the OpenTelemetry API, which records nothing
 until the program running PLexus installs an SDK:

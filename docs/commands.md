@@ -12,7 +12,7 @@ plexus mcp
 
 Every command takes `--home <dir>` (`PLEXUS_HOME`), `--scope <prefix>`
 (`PLEXUS_SCOPE`), `--project <dir>`, `--telemetry` (`PLEXUS_TELEMETRY`, see
-[Telemetry](telemetry.md)), and `--help`. The scope is `--scope`, else
+[Observability](observability.md)), and `--help`. The scope is `--scope`, else
 `PLEXUS_SCOPE`, else the name of the `--project` directory, with each run of
 characters a scope cannot hold made one `_`, else none. Results are JSON on
 stdout; a refusal is `{"ok":false,"code":...,"error":...}` with exit status 1.
@@ -45,7 +45,7 @@ stdout; a refusal is `{"ok":false,"code":...,"error":...}` with exit status 1.
   work on it.
 - **list** shows each image, its state, its pids, its endpoint, its
   template, Pharo version, how MCP got into it, and whether it records its
-  calls when that is known (see [Telemetry](telemetry.md)). It pings nothing and
+  calls when that is known (see [Observability](observability.md)). It pings nothing and
   writes nothing. The state is `creating` (a create is still at work), `stopped`,
   `starting` (a start of this PLexus launched it and its server has not said
   where it answers yet), `running`, or `unreachable` (a VM runs it and it

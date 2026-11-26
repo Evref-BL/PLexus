@@ -63,7 +63,7 @@ await images.stop("dev");
 - [Commands](docs/commands.md): every command, its options, and what it
   answers.
 - [`plexus mcp`](docs/mcp-server.md): the server's tools and their answers.
-- [Telemetry](docs/telemetry.md): the spans PLexus records with
+- [Observability](docs/observability.md): the spans PLexus records with
   OpenTelemetry, and its settings.
 - [Library](docs/library.md): the library, and what semver covers.
 
