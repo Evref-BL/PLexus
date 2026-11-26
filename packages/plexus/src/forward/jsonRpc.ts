@@ -296,7 +296,18 @@ function post(
   }
   const body = JSON.stringify(payload);
 
-  return new Promise((resolve, reject) => {
+  return new Promise((answered, failed) => {
+    // A deadline, not the socket's idle timeout, which an answer trickling
+    // in a byte at a time would never reach.
+    let deadline: NodeJS.Timeout | undefined;
+    const resolve = (answer: HttpAnswer) => {
+      clearTimeout(deadline);
+      answered(answer);
+    };
+    const reject = (error: unknown) => {
+      clearTimeout(deadline);
+      failed(error);
+    };
     const fail = (error: unknown) => reject(socketError(error, signal));
     const outgoing = http.request(
       {
@@ -314,7 +325,6 @@ function post(
             : {}),
           ...(session.sessionId ? { "Mcp-Session-Id": session.sessionId } : {}),
         },
-        timeout: timeoutMs,
         ...(signal === undefined ? {} : { signal }),
       },
       (response) => {
@@ -372,14 +382,14 @@ function post(
       },
     );
 
-    outgoing.on("timeout", () => {
+    deadline = setTimeout(() => {
       outgoing.destroy(
         forwardError(new Error(`MCP request timed out after ${timeoutMs}ms`), {
           kind: "timeout",
           waitedMs: timeoutMs,
         }),
       );
-    });
+    }, timeoutMs);
     outgoing.on("error", fail);
     outgoing.end(body);
   });

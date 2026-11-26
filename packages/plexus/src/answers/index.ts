@@ -106,6 +106,12 @@ function unreachableWarnings(rows: readonly ImageInfo[]): string[] {
   );
 }
 
+/** One warning naming the images whose create ended before it was done, if any. */
+function unfinishedWarnings(rows: readonly ImageInfo[]): string[] {
+  const names = rows.filter((row) => row.state === "unfinished").map((row) => row.name);
+  return names.length === 0 ? [] : [texts.unfinished(names)];
+}
+
 /** One warning per older MCP release, naming every image that holds it, in record order. */
 function olderMcpWarnings(rows: readonly ImageInfo[]): string[] {
   const byVersion = new Map<string, string[]>();
@@ -189,7 +195,7 @@ export function templates(listed: readonly Template[]): ToolAnswer {
 }
 
 /** The order the states are listed in: those that take calls, or would, first. */
-const listedStates: readonly ImageState[] = ["running", "unreachable", "starting", "creating", "stopped"];
+const listedStates: readonly ImageState[] = ["running", "unreachable", "starting", "creating", "unfinished", "stopped"];
 
 /**
  * Every image, one short record each under its state, running ones first;
@@ -204,7 +210,12 @@ export function list(rows: readonly ImageInfo[], enrollment: Enrollment = {}): T
     enrollment.enrolled && enrollment.endpointNamed === false && rows.some((row) => row.telemetry?.on === true);
   return {
     summary: texts.imagesSummary(rows.length, rows.filter((row) => row.state === "running" || row.state === "unreachable").length),
-    warnings: [...unreachableWarnings(rows), ...olderMcpWarnings(rows), ...(unsent ? [texts.recordedNowhereToSend()] : [])],
+    warnings: [
+      ...unreachableWarnings(rows),
+      ...unfinishedWarnings(rows),
+      ...olderMcpWarnings(rows),
+      ...(unsent ? [texts.recordedNowhereToSend()] : []),
+    ],
     fields: [],
     lists: listedStates.map((state) => ({
       label: state,
@@ -239,6 +250,7 @@ function imageSize(row: ImageInfo): string | undefined {
 export function image(row: ImageInfo, enrollment: Enrollment = {}): ToolAnswer {
   const summaries: Record<ImageState, string> = {
     creating: texts.imageCreating(row.name),
+    unfinished: texts.neverFinished(row.name),
     stopped: texts.imageStopped(row.name),
     starting: texts.imageStarting(row.name),
     running: texts.imageRunning(row.name, row.display === "interactive"),
@@ -493,6 +505,46 @@ interface PropertySchema {
   type?: string | string[];
   enum?: unknown[];
   items?: { type?: string };
+}
+
+/**
+ * The arguments as the schema spells them, from the variations a model
+ * sends for them: a value of an enum in another case, a boolean written as
+ * `"true"` or `"false"`, a list of one where a string is taken. Anything
+ * else is left as it is, for `checkArguments` to refuse.
+ */
+export function lenientArguments(
+  tool: Pick<ImageTool, "inputSchema">,
+  args: Record<string, unknown>,
+): Record<string, unknown> {
+  const properties = (tool.inputSchema.properties ?? {}) as Record<string, PropertySchema>;
+  const lenient = { ...args };
+  for (const [name, value] of Object.entries(args)) {
+    const property = properties[name];
+    if (property === undefined) {
+      continue;
+    }
+    const types = property.type === undefined ? [] : [property.type].flat();
+    if (typeof value === "string" && Array.isArray(property.enum)) {
+      const spelled = property.enum.find(
+        (each) => typeof each === "string" && each.toLowerCase() === value.trim().toLowerCase(),
+      );
+      if (spelled !== undefined) {
+        lenient[name] = spelled;
+      }
+    } else if (typeof value === "string" && types.includes("boolean") && /^\s*(true|false)\s*$/i.test(value)) {
+      lenient[name] = value.trim().toLowerCase() === "true";
+    } else if (
+      Array.isArray(value) &&
+      value.length === 1 &&
+      typeof value[0] === "string" &&
+      types.includes("string") &&
+      !types.includes("array")
+    ) {
+      lenient[name] = value[0];
+    }
+  }
+  return lenient;
 }
 
 /**

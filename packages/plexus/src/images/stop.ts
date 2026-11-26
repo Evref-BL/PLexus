@@ -4,22 +4,16 @@ import { PlexusError } from "../errors.js";
 import { evaluationTool } from "../forward/index.js";
 import type { ForwardError } from "../forward/jsonRpc.js";
 import type { LauncherProcess } from "../launcher/pharoLauncherMcpClient.js";
-import type { Endpoint, ImageToolResult, StopOptions } from "../types.js";
+import type { Endpoint, ImageToolResult, StopOptions, StopResult } from "../types.js";
 import type { ImagesContext } from "./context.js";
+import { buildingState } from "./claims.js";
+import { stillBuilding } from "./create.js";
 import { endpointOf } from "./endpoint.js";
 import { describe } from "./list.js";
 import { hostProcesses, killFailureLines, killVms, vmsOn } from "./processes.js";
 import { exists, imageFiles, noSuchImage, type ImageFiles } from "./store.js";
 
-export interface StopResult {
-  name: string;
-  /** The VMs killed: those left after the image quit or saved, or every one that ran it when it did neither. */
-  killed: number[];
-  /** The image quit without saving when asked. */
-  quit?: true;
-  /** The image saved itself and quit. */
-  saved?: true;
-}
+export type { StopResult } from "../types.js";
 
 /** What an image evaluates to save itself and quit. */
 const saveAndQuitCode = "Smalltalk snapshot: true andQuit: true";
@@ -55,6 +49,12 @@ export async function stop(
   if (!exists(files.dir)) {
     throw noSuchImage(files);
   }
+  // A VM a create runs is that create's: killed, the create fails and
+  // removes the image.
+  const building = buildingState(context, files);
+  if (building.state === "held") {
+    throw stillBuilding(files, building.holder);
+  }
   const processes = await hostProcesses(context);
   const pids = vmsOn(files.imagePath, processes).map((vm) => vm.pid);
   if (pids.length === 0) {
@@ -86,7 +86,7 @@ async function askToQuit(
   files: ImageFiles,
   processes: readonly LauncherProcess[],
 ): Promise<number[] | undefined> {
-  const row = describe(files, processes);
+  const row = describe(context, files, processes);
   if (row.state !== "running" || row.endpoint === undefined) {
     return undefined;
   }
@@ -171,10 +171,10 @@ async function saveAndStop(
   processes: readonly LauncherProcess[],
 ): Promise<StopResult> {
   const name = files.name;
-  const row = describe(files, processes);
+  const row = describe(context, files, processes);
   if (row.state === "unreachable") {
     throw new PlexusError(
-      "save-failed",
+      "no-endpoint",
       texts.saveTakesNoCalls(name, row.pids, row.endpointProblem ?? "it wrote no endpoint"),
       { pids: row.pids },
     );

@@ -228,12 +228,21 @@ describe("start", () => {
     expect(launcher.called("startImage")).toEqual([]);
   });
 
+  it("refuses options it cannot start with, before anything runs", async () => {
+    const { launcher, context } = setup();
+    await expect(start(context, "dev", { display: "fullscreen" as "headless" })).rejects.toMatchObject({
+      code: "invalid-arguments",
+    });
+    await expect(start(context, "dev", { timeoutMs: -1 })).rejects.toMatchObject({ code: "invalid-arguments" });
+    expect(launcher.called("startImage")).toEqual([]);
+  });
+
   it("says a running image it launched is starting while its server has not answered", async () => {
     const { launcher, plexus, imagePath, context } = setup();
     const vm = launcher.run(imagePath, { script: path.join(plexus, "start.st") });
 
     await expect(start(context, "dev")).rejects.toMatchObject({
-      code: "image-running",
+      code: "starting",
       message: `Image dev is starting as pid ${vm.pid}: its MCP server does not answer yet. Call it again once image_list shows it running.`,
       details: { pids: [vm.pid] },
     });
@@ -245,14 +254,14 @@ describe("start", () => {
     const vm = launcher.run(imagePath);
 
     await expect(start(context, "dev")).rejects.toMatchObject({
-      code: "image-running",
+      code: "no-endpoint",
       message: `Image dev runs as pid ${vm.pid} but takes no calls: not started by this PLexus. image_stop kills that VM without saving; image_start then starts it as it was last saved.`,
       details: { pids: [vm.pid] },
     });
     expect(launcher.called("startImage")).toEqual([]);
   });
 
-  it("refuses while another start holds the launch lock", async () => {
+  it("refuses once its time is up while another start holds the launch lock", async () => {
     const { launcher, plexus, context } = setup();
     fs.mkdirSync(plexus, { recursive: true });
     fs.writeFileSync(
@@ -260,11 +269,13 @@ describe("start", () => {
       JSON.stringify({ pid: process.pid, at: new Date(context.now()).toISOString() }),
     );
 
+    const startedAt = context.now();
     await expect(start(context, "dev")).rejects.toMatchObject({
       code: "being-started",
-      message: `Image dev is being started by process ${process.pid}. Its tools take calls once image_list shows it running.`,
+      message: `Image dev is being started by process ${process.pid}, which took longer than this start may. image_list shows when it runs.`,
       details: { pid: process.pid },
     });
+    expect(context.now() - startedAt).toBeGreaterThanOrEqual(300_000);
     expect(launcher.called("startImage")).toEqual([]);
     expect(fs.existsSync(path.join(plexus, "launch.lock"))).toBe(true);
   });
@@ -294,12 +305,31 @@ describe("start", () => {
     const now = new Date(context.now());
     fs.utimesSync(path.join(plexus, "launch.lock"), now, now);
 
-    const refused = await start(context, "dev").catch((caught: unknown) => caught);
-    expect(refused).toMatchObject({
-      code: "being-started",
-      message: "Image dev is being started. Its tools take calls once image_list shows it running.",
-    });
+    const refused = await start(context, "dev", { timeoutMs: 5_000 }).catch((caught: unknown) => caught);
+    expect(refused).toMatchObject({ code: "being-started" });
     expect((refused as { details?: unknown }).details).toBeUndefined();
+    expect(launcher.called("startImage")).toEqual([]);
+
+    // Never written, it is taken over once its creator has had time to write it.
+    await expect(start(context, "dev")).resolves.toMatchObject({ name: "dev" });
+  });
+
+  it("waits for another start, and answers the image it left running", async () => {
+    const { launcher, plexus, imagePath, context } = setup();
+    fs.mkdirSync(plexus, { recursive: true });
+    const lock = path.join(plexus, "launch.lock");
+    fs.writeFileSync(lock, JSON.stringify({ pid: process.pid, at: new Date(context.now()).toISOString() }));
+    const sleep = context.sleep;
+    context.sleep = async (ms) => {
+      if (fs.existsSync(lock)) {
+        const vm = launcher.run(imagePath, { script: path.join(plexus, "start.st") });
+        writeEndpoint(path.dirname(imagePath), { port: 7001, pid: vm.pid });
+        fs.rmSync(lock);
+      }
+      await sleep(ms);
+    };
+
+    await expect(start(context, "dev")).resolves.toMatchObject({ name: "dev", alreadyRunning: true });
     expect(launcher.called("startImage")).toEqual([]);
   });
 

@@ -83,25 +83,29 @@ export interface PlexusMcpServerOptions {
 export const serverInstructions = `Live Pharo images for this project: reading and changing code, running tests,
 searching and critiquing it.
 
-Search these tools for any Pharo, Smalltalk, Tonel or .st work. image_list
-says which images this project has and which are running, as of the call.
-Start an image with image_start before calling its tools; a project with no
-image needs image_create, which starts the image it makes. A running image
+Search these tools for any Pharo, Smalltalk, Tonel or .st work. Call
+image_list first: it says which images this project has and which run.
+image_start starts one; image_create makes one and starts it. A running image
 lists its common tools here, and its own search tools find the rest.
 
-An image takes one writer: image_create a new one for each new subject or
-parallel agent rather than share one, named like a branch
-(pretty-print-formatter, not p15). A running image may be another session's.
-A call to an image's tool names the image, and may leave it out while only
-one runs. image_stop stops an image without saving it; with save: true, the
-image saves itself and quits.
+An image takes one writer. A running image you did not start or create may be
+another session's: do not call, stop or delete it unless the user says so.
+image_create one for each new subject or parallel agent, named like a branch
+(pretty-print-formatter, not p15), and name the image in every call to its
+tools.
 
 Stop an image you started once its work pauses: a running image holds its
-memory. A stopped image holds its disk until it is deleted: keep it a while
-after its subject is done, and when image_list shows images unused for some
-time, propose to the user which to delete.`;
+memory. image_stop stops it without saving; save: true keeps what it holds.
+A stopped image holds its disk until it is deleted: keep it a while after its
+subject is done, and when image_list shows images unused for some time,
+propose to the user which to delete.`;
 
 const nameProperty = { type: "string", description: "The image's name." } as const;
+
+const newNameProperty = {
+  type: "string",
+  description: "A new image's name, like a branch's: letters, digits, dots, dashes and underscores.",
+} as const;
 
 const namesProperty = {
   type: ["string", "array"],
@@ -120,7 +124,7 @@ export const imageTools: Tool[] = [
   {
     name: "image_templates",
     description:
-      "List the templates an image can be created from, by category. A template in several categories needs its category in image_create.",
+      "List the templates an image can be created from, by category. A template in several categories is taken from Official, else Deprecated distributions, and otherwise needs its category in image_create.",
     inputSchema: schema({}),
   },
   {
@@ -129,7 +133,7 @@ export const imageTools: Tool[] = [
       "Create an image from a template, with MCP loaded and saved in it, and start it unless start is false; its tools are then listed here.",
     inputSchema: schema(
       {
-        image: nameProperty,
+        image: newNameProperty,
         template: {
           type: "string",
           description: "The template's name, as image_templates lists it; the current stable Pharo when absent.",
@@ -165,7 +169,7 @@ export const imageTools: Tool[] = [
   {
     name: "image_stop",
     description:
-      "Stop an image, or several. By default it stops without saving: the image is asked to quit, every VM still running it is then killed, and it starts again as it was last saved. With save: true, the image saves itself and quits instead, keeping its changes. Evaluating `Smalltalk saveSession` in the image saves it without stopping it.",
+      "Stop an image, or several, without saving: it starts again as it was last saved. With save: true, it saves itself first, keeping its changes. Evaluating `Smalltalk saveSession` in the image saves it without stopping it.",
     inputSchema: schema(
       {
         image: namesProperty,
@@ -180,7 +184,7 @@ export const imageTools: Tool[] = [
   {
     name: "image_delete",
     description:
-      "Delete an image and its directory, or several. It refuses a running image unless stop is true, which stops it without saving first.",
+      "Delete an image and its directory, or several, for good: what it holds that is not exported or pushed is lost. It refuses a running image unless stop is true, which stops it without saving first.",
     inputSchema: schema(
       {
         image: namesProperty,
@@ -195,7 +199,7 @@ export const imageTools: Tool[] = [
   {
     name: "image_list",
     description:
-      "List the images: whether each runs and takes calls, its template and Pharo version, and, for a stopped one, the day it was last used and the size of its image file. Name one to see only that one, with its path.",
+      "List the images: whether each runs and takes calls, its Pharo version, and, for a stopped one, the day it was last used and the size of its image file. Name one to see only that one, with its template and path.",
     inputSchema: schema({ image: nameProperty }),
   },
 ];
@@ -213,7 +217,6 @@ type ListedSchemas = Map<string, Map<string, Tool["inputSchema"]>>;
  */
 export type RefusalCode =
   | PlexusErrorCode
-  | "invalid-arguments"
   | "no-image-running"
   | "several-images"
   | "none-takes-calls"
@@ -287,6 +290,9 @@ export function createPlexusMcpServer(options: PlexusMcpServerOptions): Server {
   // From the last tools/list, so that a call waits as long as the schema the
   // image listed for its tool allows.
   let listedSchemas: ListedSchemas = new Map();
+  // The images this server created or started, which a start finding one
+  // already running does not warn of.
+  const startedHere = new Set<string>();
   /**
    * The names of the tools the image lists: the host's last listing of it,
    * else one fetched now, waited for as briefly as a first call waits; none
@@ -529,20 +535,21 @@ export function createPlexusMcpServer(options: PlexusMcpServerOptions): Server {
       // image for its listing itself, waiting less than a tools/list does.
       return forward(images, callOn, options.listTools, name, args, toolsOf);
     }
-    const refusal = answers.checkArguments(imageTool, args);
+    const given = answers.lenientArguments(imageTool, args);
+    const refusal = answers.checkArguments(imageTool, given);
     if (refusal !== undefined) {
       return { result: text(refusal, true), refusal: "invalid-arguments" };
     }
     try {
-      const answer = await answerImageTool(images, name, args, {
+      const answer = await answerImageTool(images, name, given, {
         enrolled: options.telemetry === true,
         ...(options.endpointNamed === undefined ? {} : { endpointNamed: options.endpointNamed }),
-      });
+      }, startedHere);
       if (
         name === "image_start" ||
         name === "image_stop" ||
         name === "image_delete" ||
-        (name === "image_create" && args.start !== false)
+        (name === "image_create" && given.start !== false)
       ) {
         await toolListChanged();
       }
@@ -575,6 +582,7 @@ async function answerImageTool(
   name: string,
   args: Record<string, unknown>,
   enrollment: answers.Enrollment,
+  startedHere: Set<string>,
 ): Promise<answers.ToolAnswer> {
   const image = args.image as string;
   switch (name) {
@@ -594,7 +602,7 @@ async function answerImageTool(
       }
       let started: answers.ToolAnswer;
       try {
-        started = await startAnswer(images, image, {}, enrollment);
+        started = await startAnswer(images, image, {}, enrollment, startedHere);
       } catch (error) {
         const reason = error instanceof Error ? error.message : String(error);
         throw new PlexusError(
@@ -610,6 +618,7 @@ async function answerImageTool(
         image,
         args.display === undefined ? {} : { display: args.display as Display },
         enrollment,
+        startedHere,
       );
     case "image_stop":
       return eachImage(args.image, async (each) =>
@@ -627,7 +636,7 @@ async function answerImageTool(
         } catch (error) {
           // The library's words name image_stop; this tool can stop it itself.
           if (error instanceof PlexusError && error.code === "image-running") {
-            const pids = Array.isArray(error.details?.pids) ? (error.details.pids as number[]) : [];
+            const pids = error.details?.pids ?? [];
             throw new PlexusError("image-running", answers.texts.deleteRunningUnlessStopped(each, pids), error.details);
           }
           throw error;
@@ -643,12 +652,16 @@ async function answerImageTool(
   }
 }
 
-/** Starts the image and says so, naming it when another image runs. */
+/**
+ * Starts the image and says so, naming it when another image runs, and
+ * saying when it ran already though this server never started it.
+ */
 async function startAnswer(
   images: ImagesApi,
   image: string,
   options: { display?: Display },
   enrollment: answers.Enrollment,
+  startedHere: Set<string>,
 ): Promise<answers.ToolAnswer> {
   // Listed first, for the script every start files in, the MCP it holds and
   // whether another image runs; the start itself refuses an image that is
@@ -656,11 +669,15 @@ async function startAnswer(
   const rows = await images.list().catch(() => []);
   const result = await images.start(image, options);
   const answer = answers.started(result, rows.find((each) => each.name === image), enrollment);
-  // True by construction: a call that names no image goes to the only one
-  // that answers, so the image is named only beside another.
-  return rows.some((each) => each.name !== image && each.running)
-    ? { ...answer, summary: `${answer.summary} ${answers.texts.passImage(image)}` }
-    : answer;
+  const sentences = [
+    answer.summary,
+    ...(result.alreadyRunning && !startedHere.has(result.name) ? [answers.texts.notStartedHere()] : []),
+    // True by construction: a call that names no image goes to the only one
+    // that answers, so the image is named only beside another.
+    ...(rows.some((each) => each.name !== result.name && each.running) ? [answers.texts.passImage(result.name)] : []),
+  ];
+  startedHere.add(result.name);
+  return { ...answer, summary: sentences.join(" ") };
 }
 
 /**
@@ -677,14 +694,24 @@ async function eachImage(
   }
   const done: answers.ToolAnswer[] = [];
   const refusals: unknown[] = [];
+  const missing: string[] = [];
   for (const name of given as string[]) {
     try {
       done.push(await act(name));
     } catch (error) {
+      if (error instanceof PlexusError && error.code === "no-such-image") {
+        missing.push(name);
+      }
       refusals.push(error);
     }
   }
-  const messages = refusals.map((error) => (error instanceof Error ? error.message : String(error)));
+  // The names of no image, said once.
+  const messages = [
+    ...(missing.length > 1 ? [answers.texts.noSuchImages(missing)] : []),
+    ...refusals
+      .filter((error) => missing.length <= 1 || !(error instanceof PlexusError && error.code === "no-such-image"))
+      .map((error) => (error instanceof Error ? error.message : String(error))),
+  ];
   if (done.length === 0) {
     const first = refusals[0];
     throw first instanceof PlexusError ? new PlexusError(first.code, messages.join("\n")) : new Error(messages.join("\n"));
@@ -720,7 +747,7 @@ function withImageArgument(tool: Tool, running: readonly string[]): Tool {
           type: "string",
           description:
             running.length === 1
-              ? `The image to call, ${running[0]} unless named.`
+              ? `The image to call: ${running[0]}.`
               : `The image to call: one of ${running.join(", ")}.`,
         },
       },
@@ -746,7 +773,8 @@ async function forward(
   args: Record<string, unknown>,
   toolsOf: (image: Reachable) => Promise<ReadonlySet<string> | undefined>,
 ): Promise<Answered> {
-  const { image, ...rest } = args;
+  const { image: given, ...rest } = args;
+  const { image } = answers.lenientArguments({ inputSchema: imageArgument }, given === undefined ? {} : { image: given });
   const refusal = answers.checkArguments({ name, inputSchema: imageArgument }, image === undefined ? {} : { image });
   if (refusal !== undefined) {
     return { result: text(refusal, true), refusal: "invalid-arguments" };
@@ -804,10 +832,12 @@ async function onlyAnswering(
   if (reachable.length > 1) {
     const listings = await Promise.all(reachable.map(async (each) => ({ each, tools: await toolsOf(each) })));
     const holders = listings.filter(({ tools }) => tools?.has(tool)).map(({ each }) => each);
-    if (holders.length === 1) {
+    // An image whose listing did not come may hold the tool too.
+    const allListed = listings.every(({ tools }) => tools !== undefined);
+    if (holders.length === 1 && allListed) {
       return holders[0];
     }
-    if (holders.length === 0 && listings.every(({ tools }) => tools !== undefined)) {
+    if (holders.length === 0 && allListed) {
       const listed = listings.flatMap(({ tools }) => [...(tools ?? [])]);
       const meant = answers.meantTool(tool, [...new Set(listed)]);
       const meantBy = listings.filter(({ tools }) => meant !== undefined && tools?.has(meant)).map(({ each }) => each.name);
@@ -831,7 +861,13 @@ async function onlyAnswering(
   if (running.length > 1) {
     throw new Refusal("none-takes-calls", answers.texts.noneTakesCalls(running.map((row) => row.name)));
   }
-  throw new Refusal("no-image-running", answers.texts.noImageRunning(tool));
+  throw new Refusal(
+    "no-image-running",
+    answers.texts.noImageRunning(
+      tool,
+      rows.filter((row) => row.state === "stopped").map((row) => row.name),
+    ),
+  );
 }
 
 /** A refusal of this server's own: its message as the answer, and its code. */

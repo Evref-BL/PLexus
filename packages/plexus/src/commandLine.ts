@@ -9,6 +9,7 @@ import { scopeOfProject } from "./images/names.js";
 import { imageTools, runPlexusMcpServer, type ImagesApi } from "./mcp/server.js";
 import { tracesExport } from "./telemetry/sdk.js";
 import type { ImagesOptions, StartOptions } from "./types.js";
+import { plexusVersion } from "./version.js";
 
 export interface CliIo {
   stdout(text: string): void;
@@ -61,7 +62,7 @@ const imageCommands: Record<Verb, CommandSpec> = {
   },
   start: {
     usage: "plexus image start <name> [--display interactive] [--timeout <seconds>]",
-    summary: "Start an image and wait until its MCP server answers. Refused while it runs.",
+    summary: "Start an image and wait until its MCP server answers, 300 seconds at most unless --timeout says. An image a VM already runs is left as it is, and answered with alreadyRunning.",
     values: ["display", "timeout"],
     flags: [],
     positionals: { min: 1, max: 1 },
@@ -129,9 +130,12 @@ function parse(args: readonly string[], spec: CommandSpec): Parsed {
       help = true;
       continue;
     }
-    if (!arg.startsWith("--")) {
+    if (!arg.startsWith("-") || arg === "-") {
       positionals.push(arg);
       continue;
+    }
+    if (!arg.startsWith("--")) {
+      throw new UsageError(`Unknown option ${arg}`, spec.usage);
     }
     const [option, inline] = splitOption(arg.slice(2));
     if (allowedFlags.has(option)) {
@@ -171,13 +175,18 @@ function plexusTelemetry(env: NodeJS.ProcessEnv): boolean {
   return /^(1|true)$/i.test(env.PLEXUS_TELEMETRY?.trim() ?? "");
 }
 
-function imagesOptions(parsed: Parsed, env: NodeJS.ProcessEnv): ImagesOptions {
+function imagesOptions(parsed: Parsed, env: NodeJS.ProcessEnv, usage: string): ImagesOptions {
+  if (parsed.values.get("home")?.trim() === "") {
+    throw new UsageError("--home needs a directory", usage);
+  }
   const home = parsed.values.get("home") ?? env.PLEXUS_HOME;
+  const launcherDir = env.PHARO_LAUNCHER_DIR;
   const project = parsed.values.get("project");
   const scope =
     parsed.values.get("scope") ?? env.PLEXUS_SCOPE ?? (project === undefined ? undefined : scopeOfProject(project));
   return {
     ...(home ? { home } : {}),
+    ...(launcherDir ? { launcherDir } : {}),
     // An empty scope goes on to be refused: dropped, it would mean none, and
     // none reaches every image in the store.
     ...(scope === undefined ? {} : { scope }),
@@ -206,6 +215,7 @@ function help(): string {
     "Usage:",
     ...Object.values(imageCommands).map((spec) => `  ${spec.usage}`),
     `  ${mcpCommand.usage}`,
+    "  plexus --version",
     "",
     `Every command takes ${globalUsage}.`,
     "  --home       where images, VMs and templates live (PLEXUS_HOME; ~/.plexus)",
@@ -218,7 +228,10 @@ function help(): string {
     "               gives any, replaces every OTEL_* variable inherited, and turns this on unless",
     "               PLEXUS_TELEMETRY is set",
     "",
-    "Results are JSON on stdout. A refusal is {\"ok\":false,\"code\":...,\"error\":...} and exits 1.",
+    "PHARO_LAUNCHER_DIR names where Pharo Launcher is installed, when not in its usual place.",
+    "",
+    "Results are JSON on stdout, exit 0. A refusal is {\"ok\":false,\"code\":...,\"error\":...} and exits 1.",
+    "A command line that cannot be read is said on stderr, and exits 2.",
   ].join("\n");
 }
 
@@ -238,6 +251,10 @@ export async function runCli(
       (noun === undefined ? io.stderr : io.stdout)(`${help()}\n`);
       return noun === undefined ? 2 : 0;
     }
+    if (noun === "--version") {
+      io.stdout(`${plexusVersion}\n`);
+      return 0;
+    }
 
     if (noun === "mcp") {
       const parsed = parse(argv.slice(1), mcpCommand);
@@ -245,7 +262,7 @@ export async function runCli(
         io.stdout(`${commandHelp(mcpCommand)}\n`);
         return 0;
       }
-      const options = imagesOptions(parsed, io.env);
+      const options = imagesOptions(parsed, io.env, mcpCommand.usage);
       await dependencies.serveMcp(
         dependencies.images(options),
         options.telemetry === true,
@@ -266,7 +283,7 @@ export async function runCli(
       (verb === undefined ? io.stderr : io.stdout)(`${help()}\n`);
       return verb === undefined ? 2 : 0;
     }
-    if (!(verb in imageCommands)) {
+    if (!Object.hasOwn(imageCommands, verb)) {
       throw new UsageError(`Unknown image command ${verb}`, help());
     }
     const spec = imageCommands[verb as Verb];
@@ -276,7 +293,10 @@ export async function runCli(
       return 0;
     }
 
-    const images = dependencies.images(imagesOptions(parsed, io.env));
+    if (parsed.flags.has("every-start") && !parsed.values.has("script")) {
+      throw new UsageError("--every-start needs --script", spec.usage);
+    }
+    const images = dependencies.images(imagesOptions(parsed, io.env, spec.usage));
     const [name] = parsed.positionals;
     switch (verb as Verb) {
       case "templates":

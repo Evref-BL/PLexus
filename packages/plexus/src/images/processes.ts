@@ -26,7 +26,7 @@ export async function hostProcesses(context: ImagesContext): Promise<LauncherPro
 
 /**
  * The VMs running this image file. Matched on the real path, never on a
- * basename or a substring: those took `plugin-mcp-eval` for `mcp-eval`.
+ * basename or a substring, which would take `shop-mcp-eval` for `mcp-eval`.
  */
 export function vmsOn(
   imagePath: string,

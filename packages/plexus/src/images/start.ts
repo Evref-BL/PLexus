@@ -8,10 +8,10 @@ import {
   launchLogPaths,
   type LauncherProcess,
 } from "../launcher/pharoLauncherMcpClient.js";
-import type { Display, Endpoint, ImageTelemetry, StartOptions } from "../types.js";
-import { readClaim, takeClaim, type ClaimHolder, type ClaimState } from "./claims.js";
+import type { Endpoint, ImageTelemetry, StartOptions, StartResult } from "../types.js";
+import { buildingState, readClaim, takeClaim, type ClaimHolder, type ClaimState } from "./claims.js";
 import type { ImagesContext } from "./context.js";
-import { buildingState, stillBuilding } from "./create.js";
+import { stillBuilding } from "./create.js";
 import { observeEndpoint } from "./endpoint.js";
 import { imageTelemetry } from "./list.js";
 import { displayOf, hostProcesses, killFailureLines, killVms, vmsOn } from "./processes.js";
@@ -28,17 +28,7 @@ import {
 
 export const defaultStartTimeoutMs = 300_000;
 
-export interface StartResult {
-  name: string;
-  pids: number[];
-  endpoint: Endpoint;
-  display: Display;
-  seconds: number;
-  /** Whether its server records its calls through OpenTelemetry, and why not: see `ImageInfo.telemetry`. */
-  telemetry?: ImageTelemetry;
-  /** The image was already running and answering, and was left as it was. */
-  alreadyRunning?: true;
-}
+export type { StartResult } from "../types.js";
 
 /**
  * Launch the image with the start script and wait until its MCP server
@@ -56,6 +46,12 @@ export async function start(
   const startedAt = context.now();
   const display = options.display ?? "headless";
   const timeoutMs = options.timeoutMs ?? defaultStartTimeoutMs;
+  if (display !== "headless" && display !== "interactive") {
+    throw new PlexusError("invalid-arguments", `display is headless or interactive, not ${String(display)}.`);
+  }
+  if (!(Number.isFinite(timeoutMs) && timeoutMs > 0)) {
+    throw new PlexusError("invalid-arguments", `timeoutMs is a positive number of milliseconds, not ${String(timeoutMs)}.`);
+  }
   const files = existingImage(context, name);
   const building = buildingState(context, files);
   if (building.state === "held") {
@@ -65,7 +61,7 @@ export async function start(
     throw new PlexusError("building", texts.neverFinished(name));
   }
 
-  const release = takeLaunchLock(context, files, timeoutMs);
+  const release = await takeLaunchLock(context, files, timeoutMs, startedAt);
   try {
     // Under the lock: a start that looked before another released it would
     // find no VM yet, and launch a second one on the same file.
@@ -154,7 +150,7 @@ function notAnswering(
   const pids = vms.map((vm) => vm.pid);
   const message =
     "starting" in observed ? texts.starting(files.name, pids) : texts.takesNoCalls(files.name, pids, observed.problem);
-  return new PlexusError("image-running", message, { pids });
+  return new PlexusError("starting" in observed ? "starting" : "no-endpoint", message, { pids });
 }
 
 /** The endpoint that answered and what its start said of telemetry, or why the start failed and which VMs ran then. */
@@ -216,13 +212,16 @@ function launchLockMs(timeoutMs: number): number {
 
 /**
  * Two starts of one image would launch two VMs on one file, so a start holds
- * the image's launch lock while it launches.
+ * the image's launch lock while it launches. A start another holds is waited
+ * for, within this start's time: what it leaves running is then this one's
+ * answer.
  */
-function takeLaunchLock(
+async function takeLaunchLock(
   context: ImagesContext,
   files: ImageFiles,
   timeoutMs: number,
-): () => void {
+  startedAt: number,
+): Promise<() => void> {
   try {
     // Not recursive: a delete that took the image away since it was found
     // must not get its directory back, empty, from a start.
@@ -235,16 +234,21 @@ function takeLaunchLock(
       throw error;
     }
   }
-  let taken: ReturnType<typeof takeClaim>;
-  try {
-    taken = takeClaim(context, files.launchLock, launchLockMs(timeoutMs));
-  } catch (error) {
-    throw errorCode(error) === "ENOENT" ? noSuchImage(files) : error;
+  for (;;) {
+    let taken: ReturnType<typeof takeClaim>;
+    try {
+      taken = takeClaim(context, files.launchLock, launchLockMs(timeoutMs));
+    } catch (error) {
+      throw errorCode(error) === "ENOENT" ? noSuchImage(files) : error;
+    }
+    if ("release" in taken) {
+      return taken.release;
+    }
+    if (context.now() - startedAt >= timeoutMs) {
+      throw beingStarted(files, taken.heldBy, true);
+    }
+    await context.sleep(context.pollMs);
   }
-  if ("release" in taken) {
-    return taken.release;
-  }
-  throw beingStarted(files, taken.heldBy);
 }
 
 /** Whether a start holds this image's launch lock now. */
@@ -252,10 +256,10 @@ export function launchLockState(context: ImagesContext, files: ImageFiles): Clai
   return readClaim(context, files.launchLock, launchLockMs(defaultStartTimeoutMs));
 }
 
-export function beingStarted(files: ImageFiles, holder: ClaimHolder | undefined): PlexusError {
+export function beingStarted(files: ImageFiles, holder: ClaimHolder | undefined, outwaited = false): PlexusError {
   return new PlexusError(
     "being-started",
-    texts.beingStarted(files.name, holder?.pid),
+    (outwaited ? texts.startOutwaited : texts.beingStarted)(files.name, holder?.pid),
     holder ? { pid: holder.pid } : undefined,
   );
 }

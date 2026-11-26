@@ -120,6 +120,11 @@ class FakeImages implements ImagesApi {
     if (name.startsWith("busy")) {
       throw new PlexusError("image-running", `Image ${name} is running.`);
     }
+    // A one-letter name is one of the rows when there is such an image; any
+    // longer name is taken as there.
+    if (name.length === 1 && !this.rows.some((each) => each.name === name)) {
+      throw new PlexusError("no-such-image", texts.noSuchImage(name));
+    }
     return { name };
   }
 
@@ -214,11 +219,12 @@ describe("plexus mcp", () => {
     expect(tools.map((each) => each.name)).toEqual(imageToolNames);
     expect(client.getServerCapabilities()?.tools).toEqual({ listChanged: true });
     expect(client.getInstructions()).toContain("Search these tools for any Pharo, Smalltalk, Tonel or .st work.");
-    expect(client.getInstructions()).toContain("may leave it out while only\none runs");
+    expect(client.getInstructions()).toContain("name the image in every call to its\ntools");
+    expect(client.getInstructions()).toContain("do not call, stop or delete it unless the user says so");
     expect(tools.find((each) => each.name === "image_start")?.description).toContain("An image already running is left as it is.");
     const imageStop = tools.find((each) => each.name === "image_stop")!;
     expect(imageStop.description).toContain("without saving");
-    expect(imageStop.description).toContain("With save: true, the image saves itself and quits");
+    expect(imageStop.description).toContain("With save: true, it saves itself first");
     expect(imageStop.description).toContain("Evaluating `Smalltalk saveSession` in the image saves it without stopping it.");
     expect(imageStop.inputSchema.properties).toMatchObject({ save: { type: "boolean" } });
     expect(imageStop.inputSchema.required).toEqual(["image"]);
@@ -302,7 +308,9 @@ describe("plexus mcp", () => {
       const answer = await call("image_start", { image: "dev" });
 
       expect(answer.isError).toBeUndefined();
-      expect(textOf(answer)).toBe('Image dev was already running. Pass image: "dev" to its tools while another image runs.');
+      expect(textOf(answer)).toBe(
+        'Image dev was already running. This session did not start it, so it may be another session\'s. Pass image: "dev" to its tools while another image runs.',
+      );
       const spans = recording.exporter.getFinishedSpans();
       expect(spans.filter((span) => span.status.code === SpanStatusCode.ERROR)).toEqual([]);
       expect(servedSpans(recording.exporter)[0].attributes).not.toHaveProperty("plexus.error.code");
@@ -341,6 +349,18 @@ describe("plexus mcp", () => {
     } finally {
       recording.end();
     }
+  });
+
+  it("asks which image when an image that may have the tool could not be listed", async () => {
+    const { call, forwarded } = await connect(new FakeImages([row("a", { port: 7001 }), row("b", { port: 7002 })]), {
+      "http://127.0.0.1:7001/": new Error("busy"),
+      "http://127.0.0.1:7002/": [tool("evaluate")],
+    });
+
+    expect(textOf(await call("evaluate", { code: "1" }))).toBe(
+      "Several images are running (a, b): name one with the image argument.",
+    );
+    expect(forwarded).toEqual([]);
   });
 
   it("passes the image's own error as it is", async () => {
@@ -403,12 +423,46 @@ describe("plexus mcp", () => {
     expect(two.forwarded).toEqual([]);
   });
 
+  it("takes the values a model writes in other spellings", async () => {
+    const images = new FakeImages([row("dev")]);
+    const { call } = await connect(images);
+
+    expect((await call("image_start", { image: ["dev"], display: "Interactive" })).isError).toBeUndefined();
+    expect((await call("image_stop", { image: "dev", save: "true" })).isError).toBeUndefined();
+    expect(images.calls).toContainEqual(["start", "dev", { display: "interactive" }]);
+    expect(images.calls).toContainEqual(["stop", "dev", { save: true }]);
+    expect(textOf(await call("image_stop", { image: "dev", save: "maybe" }))).toBe(
+      "Invalid arguments for image_stop. save must be boolean, not string.",
+    );
+  });
+
+  it("names the images there are not once, however many a call names", async () => {
+    const { call } = await connect(new FakeImages([row("a")]));
+    expect(textOf(await call("image_delete", { image: ["a", "x", "y"] }))).toBe(
+      [
+        "Deleted image a and its files.",
+        "Warning: There are no images x and y. image_list names the images there are; image_create makes one.",
+      ].join("\n"),
+    );
+  });
+
+  it("says which image a call naming none could start, or that there is none", async () => {
+    const none = await connect(new FakeImages([]));
+    expect(textOf(await none.call("class_search"))).toBe(
+      "No image is running to take class_search, and there is none: image_create makes one.",
+    );
+    const many = await connect(new FakeImages(["a", "b", "c", "d", "e", "f"].map((name) => row(name))));
+    expect(textOf(await many.call("class_search"))).toBe(
+      "No image is running to take class_search. image_start starts one of the 6 image_list names; image_create makes another.",
+    );
+  });
+
   it("knows no tool beyond its own while no image runs", async () => {
     const { call } = await connect(new FakeImages([row("dev")]));
     const result = await call("class_search");
     expect(result.isError).toBe(true);
     expect(textOf(result)).toBe(
-      "No image is running to take class_search. Start one with image_start; it starts as it was last saved.",
+      "No image is running to take class_search. image_start starts dev; image_create makes another.",
     );
   });
 
@@ -465,6 +519,10 @@ describe("plexus mcp", () => {
       'Started image dev, with its window open. Pass image: "dev" to its tools while another image runs.',
     );
     // Old runs already, and is the only image running, so its start says nothing of image.
+    expect(textOf(await call("image_start", { image: "old" }))).toBe(
+      ["Image old was already running. This session did not start it, so it may be another session's.", olderWarning].join("\n"),
+    );
+    // Once started here, or met here already running, it is not said again.
     expect(textOf(await call("image_start", { image: "old" }))).toBe(["Image old was already running.", olderWarning].join("\n"));
     expect(textOf(await call("image_stop", { image: "dev" }))).toBe("Stopped image dev; what it had not saved is lost.");
     expect(textOf(await call("image_stop", { image: "old", save: true }))).toBe("Saved and stopped image old.");
@@ -478,7 +536,7 @@ describe("plexus mcp", () => {
     for (const [tool, args, refusal] of [
       ["image_list", { image: "gone" }, "There is no image gone. image_list names the images there are; image_create makes one."],
       ["image_start", { image: "broken" }, "Image broken exited during start."],
-      ["image_create", { image: "broken" }, "Created image broken, but it did not start: Image broken exited during start."],
+      ["image_create", { image: "broken" }, "Created image broken, but it did not start (image_start tries again): Image broken exited during start."],
     ] as const) {
       const refused = await call(tool, args);
       expect(refused.isError, tool).toBe(true);
@@ -498,7 +556,7 @@ describe("plexus mcp", () => {
     expect(textOf(some)).toBe(
       [
         "Deleted image a and its files. Deleted image b and its files.",
-        "Warning: Image busy is running. image_delete with stop: true stops it without saving, then deletes it.",
+        "Warning: Image busy is running, maybe for another session. Once its work is done, image_delete with stop: true stops it without saving, then deletes it.",
       ].join("\n"),
     );
     expect(images.calls.filter(([method]) => method === "delete")).toEqual([
@@ -510,8 +568,8 @@ describe("plexus mcp", () => {
     expect(none.isError).toBe(true);
     expect(textOf(none)).toBe(
       [
-        "Image busy is running. image_delete with stop: true stops it without saving, then deletes it.",
-        "Image busy-too is running. image_delete with stop: true stops it without saving, then deletes it.",
+        "Image busy is running, maybe for another session. Once its work is done, image_delete with stop: true stops it without saving, then deletes it.",
+        "Image busy-too is running, maybe for another session. Once its work is done, image_delete with stop: true stops it without saving, then deletes it.",
       ].join("\n"),
     );
   });

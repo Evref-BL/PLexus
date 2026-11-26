@@ -364,7 +364,7 @@ describe("whether an image records its calls", () => {
     expect(text.split("\n").slice(1)).toEqual(["stopped:", "  on", "  off telemetry=off", "  older"]);
     expect(render(image(row("on", { telemetry: { on: true } }), enrolled))).toContain("\ntelemetry: on\npath: ");
     expect(render(image(row("dev", { mcp: pinned, telemetry: madeBefore }), enrolled))).toContain(
-      "Warning: Image dev does not record its calls: it was made without MCP's Telemetry group, by a PLexus that did not enroll images in OpenTelemetry. Recreating it adds the group.",
+      "Warning: Image dev does not record its calls: the PLexus that made it, or last started it, did not enroll images in OpenTelemetry.",
     );
   });
 

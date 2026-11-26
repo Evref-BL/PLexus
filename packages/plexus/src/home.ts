@@ -2,7 +2,7 @@ import os from "node:os";
 import path from "node:path";
 
 /** Where the `plexus` command keeps everything: `$PLEXUS_HOME`, or `~/.plexus`. */
-export function plexusHome(env: NodeJS.ProcessEnv = process.env): string {
+export function plexusHome(env: Readonly<Record<string, string | undefined>> = process.env): string {
   const configured = env.PLEXUS_HOME;
   return configured ? path.resolve(configured) : defaultHome();
 }

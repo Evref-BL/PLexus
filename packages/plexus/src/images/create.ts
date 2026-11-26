@@ -3,8 +3,7 @@ import path from "node:path";
 import * as texts from "../answers/texts.js";
 import { defaultPharoMcpVersion } from "../config/pharoMcpVersion.js";
 import { PlexusError } from "../errors.js";
-import { longCommandTimeoutMs } from "../launcher/pharoLauncherMcpClient.js";
-import type { CreateOptions, ImageInfo, ImageTelemetry } from "../types.js";
+import type { CreateOptions, CreateResult, ImageTelemetry } from "../types.js";
 import { plexusVersion } from "../version.js";
 import {
   copyBase,
@@ -13,7 +12,7 @@ import {
   newBuild,
   renameImage,
 } from "./bases.js";
-import { claimContent, readClaim, type ClaimHolder, type ClaimState } from "./claims.js";
+import { claimContent, type ClaimHolder } from "./claims.js";
 import type { ImagesContext } from "./context.js";
 import { removeLeftovers } from "./leftovers.js";
 import { describe } from "./list.js";
@@ -29,15 +28,11 @@ import {
   type McpSource,
 } from "./store.js";
 
-export type CreateResult = ImageInfo & { seconds: number };
+export type { CreateResult } from "../types.js";
 
 /** A create's result, and whether the image was copied from a base that was already there, which only its span says. */
 export type Created = CreateResult & { fromBase: boolean };
 
-// A create runs at most two long launcher commands, one making the image from
-// its template and one preparing it. A building marker older than that
-// outlived its create, whatever process its pid names by now.
-const createMaxMs = 2 * longCommandTimeoutMs + 10 * 60_000;
 
 /**
  * A new image with MCP in it, saved and not started. Without a script it is a
@@ -71,15 +66,10 @@ export async function create(
   }
 
   return {
-    ...describe(files, []),
+    ...describe(context, files, []),
     fromBase,
     seconds: Math.round((context.now() - startedAt) / 100) / 10,
   };
-}
-
-/** Whether a create is making this image now, or made it and ended first. */
-export function buildingState(context: ImagesContext, files: ImageFiles): ClaimState {
-  return readClaim(context, files.building, createMaxMs);
 }
 
 export function stillBuilding(files: ImageFiles, holder: ClaimHolder | undefined): PlexusError {
@@ -93,7 +83,7 @@ export function stillBuilding(files: ImageFiles, holder: ClaimHolder | undefined
 function checkedScript(options: CreateOptions): string | undefined {
   if (options.script === undefined) {
     if (options.everyStart) {
-      throw new PlexusError("script-not-found", "everyStart needs a script.");
+      throw new PlexusError("invalid-arguments", "everyStart needs a script.");
     }
     return undefined;
   }

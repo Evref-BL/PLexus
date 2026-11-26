@@ -5,8 +5,9 @@
  * process that was killed never blocks an image for good.
  */
 import fs from "node:fs";
+import { longCommandTimeoutMs } from "../launcher/pharoLauncherMcpClient.js";
 import type { ImagesContext } from "./context.js";
-import { errorCode, isPidAlive, ownedName } from "./store.js";
+import { errorCode, isPidAlive, ownedName, type ImageFiles } from "./store.js";
 
 export interface ClaimHolder {
   pid: number;
@@ -131,4 +132,14 @@ function parseHolder(content: string): ClaimHolder | undefined {
   } catch {
     return undefined;
   }
+}
+
+// A create runs at most two long launcher commands, one making the image from
+// its template and one preparing it. A building marker older than that
+// outlived its create, whatever process its pid names by now.
+const createMaxMs = 2 * longCommandTimeoutMs + 10 * 60_000;
+
+/** Whether a create is making this image now, or made it and ended first. */
+export function buildingState(context: ImagesContext, files: ImageFiles): ClaimState {
+  return readClaim(context, files.building, createMaxMs);
 }

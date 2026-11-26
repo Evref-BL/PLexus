@@ -1,7 +1,8 @@
 import * as texts from "../answers/texts.js";
 import { PlexusError } from "../errors.js";
 import type { ImagesContext } from "./context.js";
-import { buildingState, stillBuilding } from "./create.js";
+import { buildingState } from "./claims.js";
+import { stillBuilding } from "./create.js";
 import { hostProcesses, vmsOn } from "./processes.js";
 import { beingStarted, launchLockState } from "./start.js";
 import { exists, imageFiles, noSuchImage, removeDirectory, type ImageFiles } from "./store.js";

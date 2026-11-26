@@ -64,6 +64,7 @@ export function imagesContext(options: InternalImagesOptions = {}): ImagesContex
   // with them, so they are absolute whatever the caller's directory.
   const home = options.home === undefined ? defaultHome() : path.resolve(options.home);
   const scope = checkScope(options.scope);
+  const launcherDir = options.launcherDir === undefined ? undefined : path.resolve(options.launcherDir);
   let launcher = options.launcher;
   return {
     home,
@@ -71,7 +72,7 @@ export function imagesContext(options: InternalImagesOptions = {}): ImagesContex
     telemetry: options.telemetry === true,
     // Opening resolves the launcher installation, which an operation that
     // never reaches the launcher has no reason to pay for.
-    launcher: () => (launcher ??= openLauncherPort(home)),
+    launcher: () => (launcher ??= openLauncherPort(home, launcherDir)),
     ping: (endpoint) => ping(endpoint),
     listTools: (endpoint) => listTools(endpoint, { timeoutMs: listingWaitMs }),
     callTool: (endpoint, name, args, callOptions) => callTool(endpoint, name, args, callOptions),
