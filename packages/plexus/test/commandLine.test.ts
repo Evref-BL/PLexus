@@ -72,6 +72,7 @@ describe("plexus", () => {
     expect(
       await cli.run("image", "create", "mcp", "--template", "Pharo 14.0", "--category=Official", "--script", "load.st", "--every-start"),
     ).toBe(0);
+    expect(await cli.run("image", "create", "plain")).toBe(0);
     expect(await cli.run("image", "start", "dev", "--display", "interactive", "--timeout", "90")).toBe(0);
     expect(await cli.run("image", "start", "dev")).toBe(0);
     expect(await cli.run("image", "stop", "dev")).toBe(0);
@@ -82,6 +83,7 @@ describe("plexus", () => {
       ["list", "dev"],
       ["templates"],
       ["create", "mcp", { template: "Pharo 14.0", category: "Official", script: "load.st", everyStart: true }],
+      ["create", "plain", {}],
       ["start", "dev", { display: "interactive", timeoutMs: 90_000 }],
       ["start", "dev", {}],
       ["stop", "dev", {}],
@@ -169,7 +171,6 @@ describe("plexus", () => {
       [["image", "list", "--project-path", "."], "Unknown option --project-path"],
       [["image", "stop", "dev", "--template", "T"], "Unknown option --template"],
       [["image", "stop", "dev", "--save=yes"], "--save takes no value"],
-      [["image", "create", "dev"], "create needs --template"],
       [["image", "create", "dev", "--template"], "--template needs a value"],
       [["image", "create", "dev", "--template", "T", "--every-start=yes"], "--every-start takes no value"],
       [["image", "start", "dev", "--display", "fullscreen"], "--display is headless or interactive"],
@@ -200,7 +201,7 @@ describe("plexus", () => {
   it("explains itself and each command", async () => {
     const cli = harness();
     expect(await cli.run("--help")).toBe(0);
-    expect(cli.stdout()).toContain("plexus image create <name> --template <t>");
+    expect(cli.stdout()).toContain("plexus image create <name> [--template <t> [--category <c>]]");
     expect(cli.stdout()).toContain("plexus mcp");
 
     const start = harness();

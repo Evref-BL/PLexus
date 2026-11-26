@@ -15,9 +15,16 @@ while several run goes to the only one that lists the tool, and is answered
 that none has it when none does. After a start, a stop
 or a delete, the server tells the host its tool list changed. Its instructions tell the host to search these tools for Pharo work,
 that an image takes one writer, to stop an image once its work pauses, and to
-propose deleting the images unused for a while. `image_stop` and
-`image_delete` take one name or several: several are handled in turn, and the
-answer says what each did and why any was not done.
+propose deleting the images unused for a while.
+
+Its own tools name the image with an `image` argument too. `image_create`
+starts the image it made unless given `start: false`, and creates from the
+current stable Pharo unless given a template, which it finds as
+[Images](images.md#templates) says; its answer names the template when the
+call named another or none. `image_delete` refuses a running image unless
+given `stop: true`, which stops it without saving first. `image_stop` and
+`image_delete` take one image or several: several are handled in turn, and
+the answer says what each did and why any was not done.
 
 Its own tools answer in plain text, for a model: what happened first, then
 what it found. `image_list` gives each image one line under its state, running

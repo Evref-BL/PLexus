@@ -36,7 +36,7 @@ The same work is a command, whose results are JSON:
 
 ```sh
 plexus image templates
-plexus image create <name> --template <t> [--category <c>] [--script <file> [--every-start]]
+plexus image create <name> [--template <t> [--category <c>]] [--script <file> [--every-start]]
 plexus image start <name> [--display interactive] [--timeout <seconds>]
 plexus image stop <name> [--save]
 plexus image delete <name>

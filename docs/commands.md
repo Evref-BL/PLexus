@@ -2,7 +2,7 @@
 
 ```sh
 plexus image templates
-plexus image create <name> --template <t> [--category <c>] [--script <file> [--every-start]]
+plexus image create <name> [--template <t> [--category <c>]] [--script <file> [--every-start]]
 plexus image start <name> [--display interactive] [--timeout <seconds>]
 plexus image stop <name> [--save]
 plexus image delete <name>
@@ -20,7 +20,9 @@ stdout; a refusal is `{"ok":false,"code":...,"error":...}` with exit status 1.
 - **templates** lists the launcher's templates with their category. A name in
   more than one category is marked `ambiguous`, and a create from it must say
   which.
-- **create** refuses a name that is taken, and never starts the image.
+- **create** refuses a name that is taken, and never starts the image. It
+  creates from the current stable Pharo unless given a template, which it
+  finds as [Images](images.md#templates) says.
 - **start** launches the image headless unless asked otherwise, and answers
   once its MCP server does, with its pid and endpoint. An image whose server
   already answers is left as it is, and answered the same way with

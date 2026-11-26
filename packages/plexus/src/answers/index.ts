@@ -269,17 +269,39 @@ export function image(row: ImageInfo, enrollment: Enrollment = {}): ToolAnswer {
   };
 }
 
+/**
+ * `how.template` is the template the create used, said when the call named
+ * another or none; `how.started` that a start follows, which says the rest.
+ */
 export function created(
   result: Pick<ImageInfo, "name" | "mcp" | "telemetry">,
   enrollment: Enrollment = {},
+  how: { template?: string; started?: boolean } = {},
 ): ToolAnswer {
   return {
     summary: texts.created(result.name, {
       ...(result.mcp?.source === "script"
         ? { script: result.mcp.script, everyStart: result.mcp.everyStart === true }
         : {}),
+      ...(how.template === undefined ? {} : { template: how.template }),
+      ...(how.started === true ? { started: true } : {}),
     }),
     ...telemetrySaid(result, enrollment),
+  };
+}
+
+/** Two answers to one call, in turn, with what both say said once. */
+export function both(first: ToolAnswer, second: ToolAnswer): ToolAnswer {
+  const fields = [...first.fields];
+  for (const field of second.fields) {
+    if (!fields.some(([key, value]) => key === field[0] && value === field[1])) {
+      fields.push(field);
+    }
+  }
+  return {
+    summary: `${first.summary} ${second.summary}`,
+    warnings: [...new Set([...first.warnings, ...second.warnings])],
+    fields,
   };
 }
 
@@ -324,6 +346,10 @@ export function stopped(result: { name: string; killed: readonly number[]; quit?
 
 export function deleted(result: { name: string }): ToolAnswer {
   return { summary: texts.deleted(result.name), warnings: [], fields: [] };
+}
+
+export function stoppedAndDeleted(name: string): ToolAnswer {
+  return { summary: texts.stoppedAndDeleted(name), warnings: [], fields: [] };
 }
 
 /** A stop or a delete of several images: what each did, then why any was not done. */
