@@ -3,7 +3,7 @@ import path from "node:path";
 import * as texts from "../answers/texts.js";
 import { PlexusError } from "../errors.js";
 import { launcherFailureMessage } from "../launcher/pharoLauncherMcpClient.js";
-import { homeProfileEnvironment } from "../launcher/pharoLauncherProfile.js";
+import { homeTemplateSources } from "../launcher/pharoLauncherProfile.js";
 import type { Template } from "../types.js";
 import type { ImagesContext } from "./context.js";
 
@@ -29,14 +29,14 @@ export async function templates(context: ImagesContext): Promise<Template[]> {
   const listed: Template[] = [];
   let failure: string | undefined;
   for (const category of await categories(context)) {
-    const result = await launcher.listTemplates({ templateCategory: category });
+    const result = await launcher.listTemplates({ category });
     if (!result.ok) {
       // A group the sources list names but this launcher cannot open, unless
       // no group opens at all.
       failure ??= launcherFailureMessage("listTemplates", result);
       continue;
     }
-    for (const template of result.data ?? []) {
+    for (const template of result.data?.templates ?? []) {
       if (
         template.name &&
         !listed.some((seen) => seen.name === template.name && seen.category === category)
@@ -323,7 +323,7 @@ export async function ensureTemplateSources(context: ImagesContext): Promise<str
 }
 
 function sourcesListPath(home: string): string {
-  return path.join(homeProfileEnvironment(home).PHARO_LAUNCHER_MCP_TEMPLATE_SOURCES_DIR, "sources.list");
+  return homeTemplateSources(home);
 }
 
 function nonEmpty(file: string): boolean {
@@ -350,7 +350,7 @@ async function categories(context: ImagesContext): Promise<string[]> {
       launcherFailureMessage("listTemplateCategories", result),
     );
   }
-  return [...new Set(result.data ?? [])];
+  return [...new Set(result.data?.categories ?? [])];
 }
 
 function sourcesListGroups(home: string): string[] {

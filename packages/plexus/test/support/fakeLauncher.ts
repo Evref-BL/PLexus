@@ -2,17 +2,22 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type {
-  ImageCreateInput,
-  ImageStartInput,
+  CreateImageInput,
+  KillProcessResult,
   LauncherCommandResult,
   LauncherImage,
   LauncherProcess,
   MadeImageResult,
+  ProcessListResult,
+  StartImageInput,
+  StartImageResult,
+  TemplateCategoriesResult,
+  TemplateListResult,
   TemplateUpdateResult,
-} from "@evref-bl/pharo-launcher-mcp/launcher";
+} from "@evref-bl/pharo-launcher-mcp";
 import { afterEach } from "vitest";
 import { storeRoot } from "../../src/home.js";
-import { homeProfileEnvironment } from "../../src/launcher/pharoLauncherProfile.js";
+import { homeTemplateSources } from "../../src/launcher/pharoLauncherProfile.js";
 import type { ImagesContext } from "../../src/images/context.js";
 import type { InternalImagesOptions } from "../../src/images/context.js";
 import { Images } from "../../src/images/index.js";
@@ -32,13 +37,11 @@ export function tempHome(): string {
   return dir;
 }
 
-export function ok<T>(data?: T, message?: string): LauncherCommandResult<T> {
+export function ok<T = undefined>(data?: T): LauncherCommandResult<T> {
   return {
     ok: true,
     ...(data === undefined ? {} : { data }),
-    ...(message === undefined ? {} : { data: { message } as T }),
-    parser: { status: "parsed", format: "text" },
-    command: { args: [], durationMs: 0, exitCode: 0, timedOut: false },
+    command: { durationMs: 0, exitCode: 0, timedOut: false },
   };
 }
 
@@ -47,17 +50,15 @@ export function made(): MadeImageResult {
   return ok<{ image?: LauncherImage }>();
 }
 
-export function failed(diagnostic: string, raw?: { stdout: string; stderr: string }): LauncherCommandResult<never> {
+export function failed(diagnostic: string): LauncherCommandResult<never> {
   return {
     ok: false,
     diagnostic,
-    parser: { status: "skipped", format: "text" },
-    ...(raw ? { raw: { ...raw, format: "text" as const } } : {}),
-    command: { args: [], durationMs: 0, exitCode: 1, timedOut: false },
+    command: { durationMs: 0, exitCode: 1, timedOut: false },
   };
 }
 
-type Answer<I> = (input: I) => LauncherCommandResult | Promise<LauncherCommandResult>;
+type Answer<I> = (input: I) => StartImageResult | Promise<StartImageResult>;
 
 /**
  * A launcher over a temporary store: it makes image directories the way the
@@ -74,9 +75,9 @@ export class FakeLauncher implements LauncherPort {
   /** Pids a kill does not end. */
   immortal = new Set<number>();
   nextPid = 4_000;
-  createAnswer?: (input: ImageCreateInput) => MadeImageResult | Promise<MadeImageResult>;
-  prepareAnswer?: Answer<ImageStartInput>;
-  launchAnswer?: Answer<ImageStartInput>;
+  createAnswer?: (input: CreateImageInput) => MadeImageResult | Promise<MadeImageResult>;
+  prepareAnswer?: Answer<StartImageInput>;
+  launchAnswer?: Answer<StartImageInput>;
   updateAnswer?: () => TemplateUpdateResult;
 
   constructor(readonly home: string) {}
@@ -96,27 +97,32 @@ export class FakeLauncher implements LauncherPort {
     ]
       .filter(Boolean)
       .join(" ");
-    const vm = { pid, commandLine: `${pid} "${commandLine}"`, imagePath };
+    const vm = {
+      pid,
+      commandLine: `${pid} "${commandLine}"`,
+      imagePath,
+      imageName: path.basename(imagePath, ".image"),
+    };
     this.processes.push(vm);
     return vm;
   }
 
-  async createImage(input: ImageCreateInput): Promise<MadeImageResult> {
+  async createImage(input: CreateImageInput): Promise<MadeImageResult> {
     this.calls.push({ method: "createImage", input });
     if (this.createAnswer) {
       return this.createAnswer(input);
     }
-    writeLauncherImage(this.imageDir(input.newImageName), input.newImageName, input.templateName);
+    writeLauncherImage(this.imageDir(input.image), input.image, input.template);
     return made();
   }
 
-  async startImage(input: ImageStartInput): Promise<LauncherCommandResult> {
+  async startImage(input: StartImageInput): Promise<StartImageResult> {
     this.calls.push({ method: "startImage", input });
     if (!input.detached) {
       if (this.prepareAnswer) {
         return this.prepareAnswer(input);
       }
-      const plexus = path.join(this.imageDir(input.imageName), "plexus");
+      const plexus = path.join(this.imageDir(input.image), "plexus");
       fs.mkdirSync(plexus, { recursive: true });
       fs.writeFileSync(path.join(plexus, "prepare-status.properties"), "status=ok\r");
       return ok();
@@ -124,55 +130,58 @@ export class FakeLauncher implements LauncherPort {
     if (this.launchAnswer) {
       return this.launchAnswer(input);
     }
-    const imagePath = path.join(this.imageDir(input.imageName), `${input.imageName}.image`);
+    const imagePath = path.join(this.imageDir(input.image), `${input.image}.image`);
     const vm = this.run(imagePath, {
       headless: input.displayMode !== "interactive",
       ...(input.script ? { script: input.script } : {}),
     });
-    writeEndpoint(this.imageDir(input.imageName), { port: 7001, pid: vm.pid });
+    writeEndpoint(this.imageDir(input.image), { port: 7001, pid: vm.pid });
     return launched(vm.pid, this.home);
   }
 
   /** Throws this instead of deleting nothing. */
   deleteLogsFailure?: Error;
 
-  deleteLaunchLogs(input: { imageName: string }): void {
+  async deleteLaunchLogs(input: { image: string }): Promise<void> {
     this.calls.push({ method: "deleteLaunchLogs", input });
     if (this.deleteLogsFailure) {
       throw this.deleteLogsFailure;
     }
   }
 
-  async listProcesses(): Promise<LauncherCommandResult<LauncherProcess[]>> {
+  async listProcesses(): Promise<ProcessListResult> {
     this.calls.push({ method: "listProcesses", input: undefined });
-    return ok([...this.processes]);
+    return ok({ processes: [...this.processes] });
   }
 
   async killProcess(
     input: Parameters<LauncherPort["killProcess"]>[0],
-  ): Promise<LauncherCommandResult> {
+  ): Promise<KillProcessResult> {
     this.calls.push({ method: "killProcess", input });
-    const pid = "pid" in input ? Number(input.pid) : undefined;
+    const pid = "pid" in input ? input.pid : undefined;
     if (pid !== undefined && !this.immortal.has(pid)) {
       this.processes = this.processes.filter((vm) => vm.pid !== pid);
     }
-    return ok();
+    return ok({ killed: pid === undefined ? [] : [pid], failures: [] });
   }
 
-  async listTemplateCategories(): Promise<LauncherCommandResult<string[]>> {
+  async listTemplateCategories(): Promise<TemplateCategoriesResult> {
     this.calls.push({ method: "listTemplateCategories", input: undefined });
-    return ok([...this.categories]);
+    return ok({ categories: [...this.categories] });
   }
 
   async listTemplates(
     input?: Parameters<LauncherPort["listTemplates"]>[0],
-  ): Promise<LauncherCommandResult<Array<{ name: string; category: string }>>> {
+  ): Promise<TemplateListResult> {
     this.calls.push({ method: "listTemplates", input });
-    const category = input?.templateCategory ?? "";
+    const category = input?.category ?? "";
     const names = this.templatesByCategory[category];
     return names === undefined
-      ? failed(`Image template category '${category}' not found`)
-      : ok(names.map((name) => ({ name, category })));
+      ? {
+          ...failed(`Image template category '${category}' not found`),
+          failure: { kind: "unknown-category" },
+        }
+      : ok({ templates: names.map((name) => ({ name, category })) });
   }
 
   /**
@@ -183,10 +192,10 @@ export class FakeLauncher implements LauncherPort {
     this.calls.push({ method: "updateTemplates", input: undefined });
     const answer = this.updateAnswer?.() ?? ok();
     if (answer.ok) {
-      const sources = homeProfileEnvironment(this.home).PHARO_LAUNCHER_MCP_TEMPLATE_SOURCES_DIR;
-      fs.mkdirSync(sources, { recursive: true });
-      if (!fs.existsSync(path.join(sources, "sources.list"))) {
-        fs.writeFileSync(path.join(sources, "sources.list"), "OrderedCollection [ ]\n");
+      const sources = homeTemplateSources(this.home);
+      fs.mkdirSync(path.dirname(sources), { recursive: true });
+      if (!fs.existsSync(sources)) {
+        fs.writeFileSync(sources, "OrderedCollection [ ]\n");
       }
     }
     return answer;
@@ -197,7 +206,7 @@ export class FakeLauncher implements LauncherPort {
   }
 }
 
-export function launched(pid: number, home: string): LauncherCommandResult {
+export function launched(pid: number, home: string): StartImageResult {
   const logs = path.join(home, "profiles", "logs");
   return {
     ...ok(),

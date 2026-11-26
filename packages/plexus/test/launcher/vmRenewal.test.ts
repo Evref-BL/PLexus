@@ -1,4 +1,4 @@
-import type { LauncherLaunchReport } from "@evref-bl/pharo-launcher-mcp/launcher";
+import type { LauncherLaunchReport } from "@evref-bl/pharo-launcher-mcp";
 import { describe, expect, it } from "vitest";
 import { launchedVmSlot, vmRenewalHint } from "../../src/launcher/vmRenewal.js";
 

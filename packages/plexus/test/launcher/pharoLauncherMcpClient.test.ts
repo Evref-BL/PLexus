@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { openPharoLauncher } from "@evref-bl/pharo-launcher-mcp/launcher";
+import { openPharoLauncher, type StartImageResult } from "@evref-bl/pharo-launcher-mcp";
 import { describe, expect, it } from "vitest";
 import { plexusHome, storeRoot } from "../../src/home.js";
 import {
@@ -9,7 +9,7 @@ import {
   launchLogPaths,
   openLauncherPort,
 } from "../../src/launcher/pharoLauncherMcpClient.js";
-import { homeProfileEnvironment } from "../../src/launcher/pharoLauncherProfile.js";
+import { homeProfile, homeTemplateSources } from "../../src/launcher/pharoLauncherProfile.js";
 import { tempHome } from "../support/fakeLauncher.js";
 
 describe("the home", () => {
@@ -21,17 +21,14 @@ describe("the home", () => {
   it("holds one launcher profile, whose images are the store", () => {
     const home = path.resolve(path.sep, "tmp", "plexus-home");
     const profile = path.join(home, "profiles");
-    expect(homeProfileEnvironment(home)).toEqual({
-      PHARO_LAUNCHER_MCP_PROFILE: "plexus",
-      PHARO_LAUNCHER_MCP_STATE_ROOT: profile,
-      PHARO_LAUNCHER_MCP_LAUNCHER_IMAGE: path.join(profile, "launcher", "PharoLauncher.image"),
-      PHARO_LAUNCHER_MCP_IMAGES_DIR: storeRoot(home),
-      PHARO_LAUNCHER_MCP_VMS_DIR: path.join(profile, "vms"),
-      PHARO_LAUNCHER_MCP_TEMPLATE_SOURCES_DIR: path.join(profile, "templates"),
-      PHARO_LAUNCHER_MCP_INIT_SCRIPTS_DIR: path.join(profile, "init-scripts"),
-      PHARO_LAUNCHER_MCP_LOGS_DIR: path.join(profile, "logs"),
-      PHARO_LAUNCHER_MCP_LAUNCHER_CONFIGURATION: path.join(profile, "launcher", "pharo-launcher-cli-config.ston"),
-    });
+    expect(homeProfile(home)).toEqual({ stateRoot: profile, name: "plexus" });
+    expect(homeTemplateSources(home)).toBe(path.join(profile, "templates", "sources.list"));
+  });
+
+  it("is where the launcher keeps the images", async () => {
+    const home = tempHome();
+    const listed = await openPharoLauncher({ profile: homeProfile(home) }).listImages();
+    expect(listed.imagesDir).toBe(storeRoot(home));
   });
 });
 
@@ -56,36 +53,30 @@ describe("launcher failures", () => {
 describe("a waited launch whose VM cannot run an image", () => {
   // What the launcher answers for a waited launch, as preparing an image makes
   // one: its report of the VM it ran, with what that VM wrote.
-  async function failedLaunch(options: { stderr: string; reported: boolean; vmUpdated?: boolean }) {
-    const launcher = openPharoLauncher({
-      runner: async () => ({
-        exitCode: 1,
-        stdout: "",
-        stderr: options.stderr,
-        durationMs: 5,
-        timedOut: false,
-        ...(options.reported
-          ? {
-              launch: {
-                by: "vm" as const,
-                imagePath: "/home/me/.plexus/profiles/images/plexus-build-1/plexus-build-1.image",
-                displayMode: "headless" as const,
-                vmPath: "/home/me/.plexus/profiles/vms/140-x64/Pharo.app/Contents/MacOS/Pharo",
-                vmId: "140-x64",
-                vmDirectory: "/home/me/.plexus/profiles/vms/140-x64",
-                vmUpdated: options.vmUpdated ?? false,
-                output: { stdout: "", stderr: options.stderr },
-              },
-            }
-          : {}),
-      }),
-    });
-    return launcher.startImage({
-      imageName: "plexus-build-1",
-      detached: false,
-      displayMode: "headless",
-      script: "/home/me/prepare.st",
-    });
+  async function failedLaunch(options: {
+    stderr: string;
+    reported: boolean;
+    vmUpdated?: boolean;
+  }): Promise<StartImageResult> {
+    return {
+      ok: false,
+      diagnostic: options.stderr,
+      command: { durationMs: 5, exitCode: 1, timedOut: false },
+      ...(options.reported
+        ? {
+            launch: {
+              by: "vm" as const,
+              imagePath: "/home/me/.plexus/profiles/images/plexus-build-1/plexus-build-1.image",
+              displayMode: "headless" as const,
+              vmPath: "/home/me/.plexus/profiles/vms/140-x64/Pharo.app/Contents/MacOS/Pharo",
+              vmId: "140-x64",
+              vmDirectory: "/home/me/.plexus/profiles/vms/140-x64",
+              vmUpdated: options.vmUpdated ?? false,
+              output: { stdout: "", stderr: options.stderr },
+            },
+          }
+        : {}),
+    };
   }
   const staleVm = "allocateHeap: Could not allocate codeZone in the expected place\nVM Error Fri Nov 13 10:02:44 2026";
 
@@ -151,7 +142,7 @@ describe("a deleted image's logs", () => {
       fs.writeFileSync(log(image), "");
     }
 
-    openLauncherPort(home).deleteLaunchLogs({ imageName: "shop-gone" });
+    openLauncherPort(home).deleteLaunchLogs({ image: "shop-gone" });
 
     expect(fs.existsSync(log("shop-gone"))).toBe(false);
     expect(fs.existsSync(log("shop-kept"))).toBe(true);

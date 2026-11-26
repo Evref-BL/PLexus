@@ -33,15 +33,15 @@ export async function deleteImage(
     throw beingStarted(files, lock.holder);
   }
   removeDirectory(context.home, files.dir);
-  deleteLaunchLogs(context, files);
+  await deleteLaunchLogs(context, files);
   return { name };
 }
 
 // The image is gone whatever happens to its logs: a launcher that cannot be
 // opened leaves them to the sweep of the next start.
-function deleteLaunchLogs(context: ImagesContext, files: ImageFiles): void {
+async function deleteLaunchLogs(context: ImagesContext, files: ImageFiles): Promise<void> {
   try {
-    context.launcher().deleteLaunchLogs({ imageName: files.diskName });
+    await context.launcher().deleteLaunchLogs({ image: files.diskName });
   } catch {
     // Left for the launcher's next start.
   }

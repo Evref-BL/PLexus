@@ -72,7 +72,7 @@ await images.stop("dev");
 ```sh
 npm install
 npm run check            # typecheck, build, unit tests
-npm run verify:env       # where the launcher was found
+npm run verify:env       # whether the launcher is usable
 npm run smoke:start-route-stop -- --template "Pharo 14.0 - 64bit"
 ```
 

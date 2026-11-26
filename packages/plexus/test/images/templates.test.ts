@@ -35,9 +35,9 @@ describe("templates", () => {
     expect(launcher.called("updateTemplates")).toHaveLength(1);
     expect(launcher.called("listTemplateCategories")).toEqual([]);
     expect(launcher.called("listTemplates")).toEqual([
-      { templateCategory: "Official distributions" },
-      { templateCategory: "Moose's" },
-      { templateCategory: "Retired" },
+      { category: "Official distributions" },
+      { category: "Moose's" },
+      { category: "Retired" },
     ]);
   });
 

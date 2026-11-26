@@ -4,7 +4,7 @@ import {
   readImageDirectory,
   readLauncherImage,
   type LauncherImage,
-} from "@evref-bl/pharo-launcher-mcp/launcher";
+} from "@evref-bl/pharo-launcher-mcp";
 import { storeRoot } from "../home.js";
 import type { LauncherProcess } from "../launcher/pharoLauncherMcpClient.js";
 import type { Endpoint, ImageInfo, ImageState, ImageTelemetry } from "../types.js";
@@ -146,7 +146,7 @@ export function describe(files: ImageFiles, processes: readonly LauncherProcess[
     ...(observed && "endpoint" in observed ? { endpoint: observed.endpoint } : {}),
     ...(observed && "problem" in observed ? { endpointProblem: observed.problem } : {}),
     ...(template === undefined ? {} : { template }),
-    ...(pharoVersion === undefined ? {} : { pharoVersion: pharoVersionOf(pharoVersion) }),
+    ...(pharoVersion === undefined ? {} : { pharoVersion }),
     ...(mcp === undefined ? {} : { mcp: mcp.source === "script" && everyStart ? { ...mcp, everyStart: true } : mcp }),
     ...(telemetry === undefined ? {} : { telemetry }),
     ...(lastUsed === undefined ? {} : { lastUsed }),
@@ -207,11 +207,6 @@ function stateOf(building: boolean, observed: EndpointObservation | undefined): 
     return "stopped";
   }
   return "endpoint" in observed ? "running" : "starting" in observed ? "starting" : "unreachable";
-}
-
-/** The Pharo version as Pharo says it: "140" is 14.0 and "61" is 6.1; anything else as it is. */
-function pharoVersionOf(raw: string): string {
-  return /^\d{2,3}$/.test(raw) ? `${raw.slice(0, -1)}.${raw.slice(-1)}` : raw;
 }
 
 /**

@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import type { ImageStartInput } from "@evref-bl/pharo-launcher-mcp/launcher";
+import type { StartImageInput } from "@evref-bl/pharo-launcher-mcp";
 import { describe, expect, it } from "vitest";
 import { defaultPharoMcpVersion } from "../../src/config/pharoMcpVersion.js";
 import { basesRoot, storeRoot, tmpRoot } from "../../src/home.js";
@@ -109,7 +109,7 @@ describe("create without a script", () => {
   it("builds the base first when there is none, then reuses it", async () => {
     const { home, launcher, context } = setup();
     let prepareScript = "";
-    launcher.prepareAnswer = (input: ImageStartInput) => {
+    launcher.prepareAnswer = (input: StartImageInput) => {
       prepareScript = fs.readFileSync(input.script!, "utf8");
       fs.writeFileSync(path.join(path.dirname(input.script!), "prepare-status.properties"), "status=ok\r");
       return ok();
@@ -120,15 +120,15 @@ describe("create without a script", () => {
     expect(first.fromBase).toBe(false);
     const [createImage] = launcher.called("createImage") as Array<Record<string, unknown>>;
     expect(createImage).toMatchObject({
-      templateName: template.name,
-      templateCategory: template.category,
+      template: template.name,
+      category: template.category,
     });
     expect(createImage).not.toHaveProperty("noLaunch");
-    const buildName = createImage.newImageName as string;
+    const buildName = createImage.image as string;
     expect(buildName).toMatch(new RegExp(`^plexus-build-${process.pid}-[0-9a-f]{8}$`));
     expect(launcher.called("startImage")).toEqual([
       {
-        imageName: buildName,
+        image: buildName,
         script: path.join(storeRoot(home), buildName, "plexus", "prepare.st"),
         detached: false,
         displayMode: "headless",
@@ -158,7 +158,7 @@ describe("create without a script", () => {
     const elsewhere = path.join(home, "shared", "iceberg", "Evref-BL", "MCP");
     fs.mkdirSync(elsewhere, { recursive: true });
     let clone = "";
-    launcher.prepareAnswer = (input: ImageStartInput) => {
+    launcher.prepareAnswer = (input: StartImageInput) => {
       const dir = path.dirname(path.dirname(input.script!));
       clone = path.join(dir, "pharo-local", "iceberg", "Evref-BL", "MCP");
       fs.mkdirSync(path.join(clone, ".git"), { recursive: true });
@@ -373,7 +373,7 @@ describe("create without a script", () => {
     const { home, launcher, context } = setup();
     writeBase(home, key);
     const prepared: string[] = [];
-    launcher.prepareAnswer = (input: ImageStartInput) => {
+    launcher.prepareAnswer = (input: StartImageInput) => {
       prepared.push(fs.readFileSync(input.script!, "utf8"));
       fs.writeFileSync(path.join(path.dirname(input.script!), "prepare-status.properties"), "status=ok\r");
       return ok();
@@ -396,7 +396,7 @@ describe("create without a script", () => {
   it("with telemetry, uses the base without it when the base with it cannot be built", async () => {
     const { home, launcher, context } = setup();
     writeBase(home, key);
-    launcher.prepareAnswer = (input: ImageStartInput) => {
+    launcher.prepareAnswer = (input: StartImageInput) => {
       fs.writeFileSync(
         path.join(path.dirname(input.script!), "prepare-status.properties"),
         "status=failed\rmessage=Error: Could not resolve: BaselineOfOpenTelemetry\r",
@@ -425,7 +425,7 @@ describe("create without a script", () => {
   it("with telemetry, copies the base without it for a day after the base with it failed, then tries again", async () => {
     const { home, launcher, context } = setup();
     writeBase(home, key);
-    const failing = (input: ImageStartInput) => {
+    const failing = (input: StartImageInput) => {
       fs.writeFileSync(path.join(path.dirname(input.script!), "prepare-status.properties"), "status=failed\rmessage=offline\r");
       return failed("exit 1");
     };
@@ -607,10 +607,10 @@ describe("create with a script", () => {
     const created = await create(context, "mcp", { ...options, script: loader });
 
     const [createImage] = launcher.called("createImage") as Array<Record<string, unknown>>;
-    expect(createImage.newImageName).toMatch(new RegExp(`^plexus-build-${process.pid}-[0-9a-f]{8}$`));
+    expect(createImage.image).toMatch(new RegExp(`^plexus-build-${process.pid}-[0-9a-f]{8}$`));
     expect(launcher.called("startImage")).toEqual([
       expect.objectContaining({
-        imageName: "Scope-mcp",
+        image: "Scope-mcp",
         script: path.join(storeRoot(home), "Scope-mcp", "plexus", "prepare.st"),
       }),
     ]);
@@ -664,7 +664,7 @@ describe("create with a script", () => {
   it("leaves alone the image of a create that took the name meanwhile", async () => {
     const { home, launcher, context } = setup();
     launcher.createAnswer = (input) => {
-      writeLauncherImage(launcher.imageDir(input.newImageName), input.newImageName);
+      writeLauncherImage(launcher.imageDir(input.image), input.image);
       writeLauncherImage(launcher.imageDir("mcp"), "mcp");
       fs.writeFileSync(path.join(launcher.imageDir("mcp"), "mcp.image"), "theirs");
       return made();
@@ -682,7 +682,7 @@ describe("create with a script", () => {
   it("removes its build when the launcher could not make the image", async () => {
     const { home, launcher, context } = setup();
     launcher.createAnswer = (input) => {
-      fs.mkdirSync(launcher.imageDir(input.newImageName), { recursive: true });
+      fs.mkdirSync(launcher.imageDir(input.image), { recursive: true });
       return failed("Cannot download the template.");
     };
 

@@ -24,9 +24,9 @@ export async function createFromTemplate(
     return missing;
   }
   const result = await context.launcher().createImage({
-    templateName: template.name,
-    templateCategory: template.category,
-    newImageName: files.diskName,
+    image: files.diskName,
+    template: template.name,
+    category: template.category,
   });
   return result.ok ? undefined : launcherFailureMessage("createImage", result);
 }
@@ -48,7 +48,7 @@ export async function prepare(
   fs.writeFileSync(files.prepareScript, prepareScript(source), "utf8");
 
   const result = await context.launcher().startImage({
-    imageName: files.diskName,
+    image: files.diskName,
     script: files.prepareScript,
     detached: false,
     displayMode: "headless",
