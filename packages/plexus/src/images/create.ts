@@ -18,7 +18,7 @@ import type { ImagesContext } from "./context.js";
 import { removeLeftovers } from "./leftovers.js";
 import { describe } from "./list.js";
 import { createFromTemplate, prepare } from "./prepare.js";
-import { categoryOf } from "./templates.js";
+import { resolveTemplate } from "./templates.js";
 import {
   exists,
   imageFiles,
@@ -56,13 +56,7 @@ export async function create(
     throw new PlexusError("image-exists", texts.imageExists(name));
   }
   const script = checkedScript(options);
-  if (typeof options.template !== "string" || options.template.trim() === "") {
-    throw new PlexusError("unknown-template", "A create needs a template.");
-  }
-  const template = {
-    name: options.template,
-    category: options.category ?? (await categoryOf(context, options.template)),
-  };
+  const template = await resolveTemplate(context, given(options.template), given(options.category));
   removeLeftovers(context.home);
 
   let fromBase = false;
@@ -174,4 +168,9 @@ function recordCreation(
     at: new Date(),
     ...(telemetry === undefined ? {} : { telemetry }),
   });
+}
+
+/** A string option that says something, or none. */
+function given(option: string | undefined): string | undefined {
+  return typeof option === "string" && option.trim() !== "" ? option.trim() : undefined;
 }

@@ -89,7 +89,8 @@ class FakeImages implements ImagesApi {
 
   async create(name: string, options: CreateOptions) {
     this.calls.push(["create", name, options]);
-    return { ...row(name, { fields: { template: options.template } }), seconds: 1 };
+    // As the library does: no template is the current stable Pharo.
+    return { ...row(name, { fields: { template: options.template ?? "Pharo 14.0 - 64bit (stable)" } }), seconds: 1 };
   }
 
   async start(name: string, options?: StartOptions) {
@@ -220,7 +221,13 @@ describe("plexus mcp", () => {
     expect(imageStop.description).toContain("With save: true, the image saves itself and quits");
     expect(imageStop.description).toContain("Evaluating `Smalltalk saveSession` in the image saves it without stopping it.");
     expect(imageStop.inputSchema.properties).toMatchObject({ save: { type: "boolean" } });
-    expect(imageStop.inputSchema.required).toEqual(["name"]);
+    expect(imageStop.inputSchema.required).toEqual(["image"]);
+    const imageCreate = tools.find((each) => each.name === "image_create")!;
+    expect(imageCreate.inputSchema.required).toEqual(["image"]);
+    expect(imageCreate.inputSchema.properties).toMatchObject({ start: { type: "boolean" } });
+    expect(tools.find((each) => each.name === "image_delete")!.inputSchema.properties).toMatchObject({
+      stop: { type: "boolean" },
+    });
   });
 
   it("adds the running image's tools, its name optional while it is the only one", async () => {
@@ -292,7 +299,7 @@ describe("plexus mcp", () => {
     const recording = recordSpans();
     try {
       const { call } = await connect(new FakeImages([row("dev", { port: 7001 }), row("other", { port: 7002 })]));
-      const answer = await call("image_start", { name: "dev" });
+      const answer = await call("image_start", { image: "dev" });
 
       expect(answer.isError).toBeUndefined();
       expect(textOf(answer)).toBe('Image dev was already running. Pass image: "dev" to its tools while another image runs.');
@@ -435,7 +442,7 @@ describe("plexus mcp", () => {
         "  dev pharo=14.0",
       ].join("\n"),
     );
-    expect(textOf(await call("image_list", { name: "dev" }))).toBe(
+    expect(textOf(await call("image_list", { image: "dev" }))).toBe(
       [
         "Image dev is not running.",
         "pharo: 14.0",
@@ -445,16 +452,23 @@ describe("plexus mcp", () => {
       ].join("\n"),
     );
     expect(
-      textOf(await call("image_create", { name: "new", template: "Pharo 14.0 - 64bit", category: "Official distributions" })),
+      textOf(
+        await call("image_create", { image: "new", template: "Pharo 14.0 - 64bit", category: "Official distributions", start: false }),
+      ),
     ).toBe("Created image new; image_start starts it.");
-    expect(textOf(await call("image_start", { name: "dev", display: "interactive" }))).toBe(
+    // A create starts its image unless told not to, and names the template it took when the call named none.
+    expect(textOf(await call("image_create", { image: "fresh" }))).toBe(
+      'Created image fresh from Pharo 14.0 - 64bit (stable). Started image fresh. Pass image: "fresh" to its tools while another image runs.',
+    );
+    expect(images.calls.slice(-3)).toEqual([["create", "fresh", {}], ["list", undefined], ["start", "fresh", {}]]);
+    expect(textOf(await call("image_start", { image: "dev", display: "interactive" }))).toBe(
       'Started image dev, with its window open. Pass image: "dev" to its tools while another image runs.',
     );
     // Old runs already, and is the only image running, so its start says nothing of image.
-    expect(textOf(await call("image_start", { name: "old" }))).toBe(["Image old was already running.", olderWarning].join("\n"));
-    expect(textOf(await call("image_stop", { name: "dev" }))).toBe("Stopped image dev; what it had not saved is lost.");
-    expect(textOf(await call("image_stop", { name: "old", save: true }))).toBe("Saved and stopped image old.");
-    expect(textOf(await call("image_delete", { name: "dev" }))).toBe("Deleted image dev and its files.");
+    expect(textOf(await call("image_start", { image: "old" }))).toBe(["Image old was already running.", olderWarning].join("\n"));
+    expect(textOf(await call("image_stop", { image: "dev" }))).toBe("Stopped image dev; what it had not saved is lost.");
+    expect(textOf(await call("image_stop", { image: "old", save: true }))).toBe("Saved and stopped image old.");
+    expect(textOf(await call("image_delete", { image: "dev" }))).toBe("Deleted image dev and its files.");
     expect(images.calls).toContainEqual(["create", "new", { template: "Pharo 14.0 - 64bit", category: "Official distributions" }]);
     expect(images.calls).toContainEqual(["start", "dev", { display: "interactive" }]);
     expect(images.calls).toContainEqual(["start", "old", {}]);
@@ -462,8 +476,9 @@ describe("plexus mcp", () => {
     expect(images.calls).toContainEqual(["stop", "old", { save: true }]);
 
     for (const [tool, args, refusal] of [
-      ["image_list", { name: "gone" }, "There is no image gone. image_list names the images there are; image_create makes one."],
-      ["image_start", { name: "broken" }, "Image broken exited during start."],
+      ["image_list", { image: "gone" }, "There is no image gone. image_list names the images there are; image_create makes one."],
+      ["image_start", { image: "broken" }, "Image broken exited during start."],
+      ["image_create", { image: "broken" }, "Created image broken, but it did not start: Image broken exited during start."],
     ] as const) {
       const refused = await call(tool, args);
       expect(refused.isError, tool).toBe(true);
@@ -475,22 +490,45 @@ describe("plexus mcp", () => {
     const images = new FakeImages([row("a"), row("b")]);
     const { call } = await connect(images);
 
-    expect(textOf(await call("image_stop", { name: ["a", "b"], save: true }))).toBe(
+    expect(textOf(await call("image_stop", { image: ["a", "b"], save: true }))).toBe(
       "Saved and stopped image a. Saved and stopped image b.",
     );
-    const some = await call("image_delete", { name: ["a", "busy", "b"] });
+    const some = await call("image_delete", { image: ["a", "busy", "b"] });
     expect(some.isError).toBeUndefined();
     expect(textOf(some)).toBe(
-      ["Deleted image a and its files. Deleted image b and its files.", "Warning: Image busy is running."].join("\n"),
+      [
+        "Deleted image a and its files. Deleted image b and its files.",
+        "Warning: Image busy is running. image_delete with stop: true stops it without saving, then deletes it.",
+      ].join("\n"),
     );
     expect(images.calls.filter(([method]) => method === "delete")).toEqual([
       ["delete", "a"],
       ["delete", "busy"],
       ["delete", "b"],
     ]);
-    const none = await call("image_delete", { name: ["busy", "busy-too"] });
+    const none = await call("image_delete", { image: ["busy", "busy-too"] });
     expect(none.isError).toBe(true);
-    expect(textOf(none)).toBe(["Image busy is running.", "Image busy-too is running."].join("\n"));
+    expect(textOf(none)).toBe(
+      [
+        "Image busy is running. image_delete with stop: true stops it without saving, then deletes it.",
+        "Image busy-too is running. image_delete with stop: true stops it without saving, then deletes it.",
+      ].join("\n"),
+    );
+  });
+
+  it("stops a running image before deleting it when asked to", async () => {
+    const images = new FakeImages([row("dev", { port: 7001 }), row("idle")]);
+    const { call } = await connect(images);
+
+    expect(textOf(await call("image_delete", { image: ["dev", "idle"], stop: true }))).toBe(
+      "Stopped image dev without saving, and deleted it and its files. Stopped image idle without saving, and deleted it and its files.",
+    );
+    expect(images.calls.filter(([method]) => method === "stop" || method === "delete")).toEqual([
+      ["stop", "dev", undefined],
+      ["delete", "dev"],
+      ["stop", "idle", undefined],
+      ["delete", "idle"],
+    ]);
   });
 
   it("refuses arguments that break a tool's schema before any of it runs", async () => {
@@ -498,20 +536,25 @@ describe("plexus mcp", () => {
     const { call } = await connect(images);
 
     for (const [tool, args, refusal] of [
-      ["image_start", {}, "Invalid arguments for image_start. name is required."],
-      ["image_start", { name: "  " }, "Invalid arguments for image_start. name is required."],
+      ["image_start", {}, "Invalid arguments for image_start. image is required."],
+      ["image_start", { image: "  " }, "Invalid arguments for image_start. image is required."],
+      [
+        "image_start",
+        { name: "dev" },
+        "Invalid arguments for image_start. image is required. name is not accepted here; expected one of display, image.",
+      ],
       [
         "image_delete",
-        { name: "dev", force: true },
-        "Invalid arguments for image_delete. force is not accepted here; expected one of name.",
+        { image: "dev", force: true },
+        "Invalid arguments for image_delete. force is not accepted here; expected one of image, stop.",
       ],
       [
         "image_start",
-        { name: "dev", display: "window" },
+        { image: "dev", display: "window" },
         'Invalid arguments for image_start. display must be "headless" or "interactive", not "window".',
       ],
-      ["image_create", { name: "new", template: 3 }, "Invalid arguments for image_create. template must be string, not integer."],
-      ["image_stop", { name: "dev", save: "yes" }, "Invalid arguments for image_stop. save must be boolean, not string."],
+      ["image_create", { image: "new", template: 3 }, "Invalid arguments for image_create. template must be string, not integer."],
+      ["image_stop", { image: "dev", save: "yes" }, "Invalid arguments for image_stop. save must be boolean, not string."],
     ] as const) {
       const result = await call(tool, args);
       expect(result.isError, tool).toBe(true);
@@ -570,7 +613,7 @@ describe("plexus mcp", () => {
         arguments: { name: "SecretClass", image: "dev", ghp_SecretToken: 1 },
         _meta: { traceparent: "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01" },
       });
-      await client.callTool({ name: "image_list", arguments: { name: "dev", secretFlag: "/Users/ada" } });
+      await client.callTool({ name: "image_list", arguments: { image: "dev", secretFlag: "/Users/ada" } });
       const second = await connect(new FakeImages([row("dev", { port: 7001 })]));
       await second.client.callTool({ name: "image_list", arguments: {} });
 
@@ -596,7 +639,7 @@ describe("plexus mcp", () => {
         "error.type": "tool_error",
       });
       expect(forwarded.status).toEqual({ code: SpanStatusCode.ERROR });
-      expect(refused.attributes["plexus.argument.names"]).toEqual(["name"]);
+      expect(refused.attributes["plexus.argument.names"]).toEqual(["image"]);
       expect(refused.attributes["plexus.argument.unknown_names"]).toEqual(["secretFlag"]);
       expect(refused.attributes["session.id"]).toBe(forwarded.attributes["session.id"]);
       expect(refused.attributes["plexus.call.index"]).toBe(2);
@@ -769,7 +812,7 @@ describe("plexus mcp", () => {
     try {
       const { call, changes, listChanged } = await connect(new FakeImages([row("dev")]));
 
-      await call("image_start", { name: "dev" });
+      await call("image_start", { image: "dev" });
       expect(await listChanged()).toBe(1);
 
       const [span] = servedSpans(recording.exporter);
@@ -821,8 +864,8 @@ describe("plexus mcp", () => {
       await call("class_get", { image: "gone" });
       images.rows = [row("a", { running: true, problem: "no endpoint" }), row("b", { running: true, problem: "no endpoint" })];
       await call("class_get");
-      await call("image_start", { name: "broken" });
-      await call("image_list", { name: "a" });
+      await call("image_start", { image: "broken" });
+      await call("image_list", { image: "a" });
 
       expect(servedSpans(recording.exporter).map((span) => span.attributes["plexus.error.code"])).toEqual([
         "no-image-running",
@@ -956,22 +999,27 @@ describe("plexus mcp", () => {
 
     await call("image_list");
     await call("image_templates");
-    await call("image_create", { name: "new", template: "T" });
-    await call("image_start", { name: "broken" });
+    await call("image_create", { image: "new", template: "T", start: false });
+    await call("image_create", { image: "broken" });
+    await call("image_start", { image: "broken" });
     await call("image_start", {});
     expect(await listChanged()).toBe(0);
-
-    await call("image_start", { name: "dev" });
+    await call("image_create", { image: "newer" });
     expect(await listChanged()).toBe(1);
-    await call("image_stop", { name: "dev" });
-    await call("image_delete", { name: "dev" });
-    expect(await listChanged()).toBe(3);
+    await call("image_stop", { image: "newer" });
+    expect(await listChanged()).toBe(2);
 
-    await call("image_stop", { name: "unsavable", save: true });
+    await call("image_start", { image: "dev" });
     expect(await listChanged()).toBe(3);
-    expect((await call("image_stop", { name: "unsaved", save: true })).isError).toBe(true);
-    expect(await listChanged()).toBe(4);
+    await call("image_stop", { image: "dev" });
+    await call("image_delete", { image: "dev" });
+    expect(await listChanged()).toBe(5);
+
+    await call("image_stop", { image: "unsavable", save: true });
+    expect(await listChanged()).toBe(5);
+    expect((await call("image_stop", { image: "unsaved", save: true })).isError).toBe(true);
+    expect(await listChanged()).toBe(6);
     // Without an SDK there is no trace context to pass.
-    expect(changes).toEqual([undefined, undefined, undefined, undefined]);
+    expect(changes).toEqual(Array(6).fill(undefined));
   });
 });

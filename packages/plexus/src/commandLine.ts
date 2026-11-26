@@ -52,9 +52,9 @@ const imageCommands: Record<Verb, CommandSpec> = {
     positionals: { min: 0, max: 0 },
   },
   create: {
-    usage: "plexus image create <name> --template <t> [--category <c>] [--script <file> [--every-start]]",
+    usage: "plexus image create <name> [--template <t> [--category <c>]] [--script <file> [--every-start]]",
     summary:
-      "Create an image with MCP in it, not started. A script is filed in instead of loading the pinned MCP; --every-start files it in at every start too.",
+      "Create an image with MCP in it, not started, from the current stable Pharo unless a template is named; a Pharo or Moose version such as 14 names its template. A script is filed in instead of loading the pinned MCP; --every-start files it in at every start too.",
     values: ["template", "category", "script"],
     flags: ["every-start"],
     positionals: { min: 1, max: 1 },
@@ -284,14 +284,11 @@ export async function runCli(
         break;
       case "create": {
         const template = parsed.values.get("template");
-        if (template === undefined) {
-          throw new UsageError("create needs --template", spec.usage);
-        }
         const category = parsed.values.get("category");
         const script = parsed.values.get("script");
         print(
           await images.create(name, {
-            template,
+            ...(template === undefined ? {} : { template }),
             ...(category === undefined ? {} : { category }),
             ...(script === undefined ? {} : { script }),
             ...(parsed.flags.has("every-start") ? { everyStart: true } : {}),

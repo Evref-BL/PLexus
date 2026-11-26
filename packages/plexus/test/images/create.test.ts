@@ -191,6 +191,28 @@ describe("create without a script", () => {
     });
   });
 
+  it("creates from the current stable Pharo when no template is named, and from a version's template", async () => {
+    const { home, launcher, context } = setup();
+    launcher.templatesByCategory = {
+      "Official distributions": ["Pharo 15.0 - 64bit (development version, latest)", template.name],
+    };
+    launcher.categories = Object.keys(launcher.templatesByCategory);
+    writeBase(home, key);
+
+    for (const [name, options] of [
+      ["dev", {}],
+      ["blank", { template: " " }],
+      ["version", { template: "14" }],
+    ] as const) {
+      expect((await create(context, name, options)).template, name).toBe(template.name);
+      expect(readProperties(path.join(storeRoot(home), name, "plexus", "created.properties")), name).toMatchObject({
+        template: template.name,
+        category: template.category,
+      });
+    }
+    expect(launcher.called("createImage")).toEqual([]);
+  });
+
   it("refuses an ambiguous or unknown template before making anything", async () => {
     const { home, launcher, context } = setup();
     launcher.templatesByCategory = { A: ["Pharo 14.0"], B: ["Pharo 14.0"] };
@@ -203,10 +225,6 @@ describe("create without a script", () => {
     await expect(create(context, "dev", { template: "Pharo 99" })).rejects.toMatchObject({
       code: "unknown-template",
       message: "There is no template named Pharo 99. image_templates lists the templates there are.",
-    });
-    await expect(create(context, "dev", { template: "" })).rejects.toMatchObject({
-      code: "unknown-template",
-      message: "A create needs a template.",
     });
     expect(launcher.called("createImage")).toEqual([]);
     expect(listing(storeRoot(home))).toEqual([]);

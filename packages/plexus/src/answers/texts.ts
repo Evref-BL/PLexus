@@ -43,6 +43,11 @@ export function deleteRunning(name: string, pids: readonly number[]): string {
   return `Image ${name} is running as ${pidsText(pids)}. Stop it with image_stop before deleting it.`;
 }
 
+/** The refusal of image_delete, which can stop the image itself. */
+export function deleteRunningUnlessStopped(name: string, pids: readonly number[]): string {
+  return `Image ${name} is running${pids.length === 0 ? "" : ` as ${pidsText(pids)}`}. image_delete with stop: true stops it without saving, then deletes it.`;
+}
+
 /** A start of an image whose MCP server already answers. */
 export function alreadyRunning(name: string, interactive: boolean): string {
   return `Image ${name} was already running${interactive ? ", with its window open" : ""}.`;
@@ -62,6 +67,10 @@ export function neverFinished(name: string): string {
 
 export function unknownTemplate(template: string): string {
   return `There is no template named ${template}. image_templates lists the templates there are.`;
+}
+
+export function noStableTemplate(): string {
+  return "The template list has no stable Pharo to create from: name a template. image_templates lists the templates there are.";
 }
 
 // Whether a call can reach an image.
@@ -219,12 +228,21 @@ export function recordedNowhereToSend(): string {
 }
 
 /** A create, which the caller named the template of. */
-export function created(name: string, from: { script?: string; everyStart?: boolean }): string {
+export function created(
+  name: string,
+  from: { script?: string; everyStart?: boolean; template?: string; started?: boolean },
+): string {
+  const template = from.template === undefined ? "" : ` from ${from.template}`;
   const script =
     from.script === undefined
       ? ""
       : `, with ${from.script} filed in instead of the pinned MCP${from.everyStart ? ", and again at every start" : ""}`;
-  return `Created image ${name}${script}; image_start starts it.`;
+  return `Created image ${name}${template}${script}${from.started ? "." : "; image_start starts it."}`;
+}
+
+/** A create that made its image, whose start then failed for `reason`. */
+export function createdNotStarted(name: string, reason: string): string {
+  return `Created image ${name}, but it did not start: ${reason}`;
 }
 
 export function started(name: string, how: { interactive?: boolean; everyStart?: string }): string {
@@ -287,6 +305,10 @@ export function wasNotRunning(name: string): string {
 
 export function deleted(name: string): string {
   return `Deleted image ${name} and its files.`;
+}
+
+export function stoppedAndDeleted(name: string): string {
+  return `Stopped image ${name} without saving, and deleted it and its files.`;
 }
 
 // Arguments checked against a tool's schema, in MCP's words.

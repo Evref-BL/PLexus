@@ -82,7 +82,12 @@ export interface ImageInfo {
 }
 
 export interface CreateOptions {
-  template: string;
+  /**
+   * The template's name, found in the template list as `chooseTemplate` says:
+   * a mainline Pharo or Moose version such as `14` names its template, and
+   * none is the current stable Pharo.
+   */
+  template?: string;
   /** Resolved from the template list when absent. */
   category?: string;
   /** Filed in instead of loading the pinned MCP; relative to the working directory. */

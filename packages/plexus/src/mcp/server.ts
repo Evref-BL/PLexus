@@ -86,8 +86,8 @@ searching and critiquing it.
 Search these tools for any Pharo, Smalltalk, Tonel or .st work. image_list
 says which images this project has and which are running, as of the call.
 Start an image with image_start before calling its tools; a project with no
-image needs image_templates and image_create first. A running image lists its
-common tools here, and its own search tools find the rest.
+image needs image_create, which starts the image it makes. A running image
+lists its common tools here, and its own search tools find the rest.
 
 An image takes one writer: image_create a new one for each new subject or
 parallel agent rather than share one, named like a branch
@@ -126,17 +126,24 @@ export const imageTools: Tool[] = [
   {
     name: "image_create",
     description:
-      "Create an image from a template, with MCP loaded and saved in it. It is not started.",
+      "Create an image from a template, with MCP loaded and saved in it, and start it unless start is false; its tools are then listed here.",
     inputSchema: schema(
       {
-        name: nameProperty,
-        template: { type: "string", description: "The template's name." },
+        image: nameProperty,
+        template: {
+          type: "string",
+          description: "The template's name, as image_templates lists it; the current stable Pharo when absent.",
+        },
         category: {
           type: "string",
           description: "The template's category, needed when its name is ambiguous.",
         },
+        start: {
+          type: "boolean",
+          description: "false to leave the image stopped; true or absent starts it.",
+        },
       },
-      ["name", "template"],
+      ["image"],
     ),
   },
   {
@@ -145,14 +152,14 @@ export const imageTools: Tool[] = [
       "Start an image and wait until its MCP server answers; its tools are then listed here. An image already running is left as it is.",
     inputSchema: schema(
       {
-        name: nameProperty,
+        image: nameProperty,
         display: {
           type: "string",
           enum: ["headless", "interactive"],
           description: "headless unless interactive is asked for.",
         },
       },
-      ["name"],
+      ["image"],
     ),
   },
   {
@@ -161,25 +168,35 @@ export const imageTools: Tool[] = [
       "Stop an image, or several. By default it stops without saving: the image is asked to quit, every VM still running it is then killed, and it starts again as it was last saved. With save: true, the image saves itself and quits instead, keeping its changes. Evaluating `Smalltalk saveSession` in the image saves it without stopping it.",
     inputSchema: schema(
       {
-        name: namesProperty,
+        image: namesProperty,
         save: {
           type: "boolean",
           description: "true to have the image save itself and quit; false or absent stops it without saving.",
         },
       },
-      ["name"],
+      ["image"],
     ),
   },
   {
     name: "image_delete",
-    description: "Delete an image and its directory, or several. It refuses an image that is running.",
-    inputSchema: schema({ name: namesProperty }, ["name"]),
+    description:
+      "Delete an image and its directory, or several. It refuses a running image unless stop is true, which stops it without saving first.",
+    inputSchema: schema(
+      {
+        image: namesProperty,
+        stop: {
+          type: "boolean",
+          description: "true to stop a running image without saving before deleting it; false or absent refuses it.",
+        },
+      },
+      ["image"],
+    ),
   },
   {
     name: "image_list",
     description:
       "List the images: whether each runs and takes calls, its template and Pharo version, and, for a stopped one, the day it was last used and the size of its image file. Name one to see only that one, with its path.",
-    inputSchema: schema({ name: nameProperty }),
+    inputSchema: schema({ image: nameProperty }),
   },
 ];
 
@@ -521,7 +538,12 @@ export function createPlexusMcpServer(options: PlexusMcpServerOptions): Server {
         enrolled: options.telemetry === true,
         ...(options.endpointNamed === undefined ? {} : { endpointNamed: options.endpointNamed }),
       });
-      if (name === "image_start" || name === "image_stop" || name === "image_delete") {
+      if (
+        name === "image_start" ||
+        name === "image_stop" ||
+        name === "image_delete" ||
+        (name === "image_create" && args.start !== false)
+      ) {
         await toolListChanged();
       }
       return { result: text(answers.render(answer)) };
@@ -554,48 +576,91 @@ async function answerImageTool(
   args: Record<string, unknown>,
   enrollment: answers.Enrollment,
 ): Promise<answers.ToolAnswer> {
-  const image = args.name as string;
+  const image = args.image as string;
   switch (name) {
     case "image_templates":
       return answers.templates(await images.templates());
-    case "image_create":
-      return answers.created(
-        await images.create(image, {
-          template: args.template as string,
-          ...(args.category === undefined ? {} : { category: args.category as string }),
-        }),
-        enrollment,
-      );
-    case "image_start": {
-      // Listed first, for the script every start files in, the MCP it holds
-      // and whether another image runs; the start itself refuses an image
-      // that is not there.
-      const rows = await images.list().catch(() => []);
-      const result = await images.start(
+    case "image_create": {
+      const result = await images.create(image, {
+        ...(args.template === undefined ? {} : { template: args.template as string }),
+        ...(args.category === undefined ? {} : { category: args.category as string }),
+      });
+      const created = answers.created(result, enrollment, {
+        ...(result.template === undefined || result.template === args.template ? {} : { template: result.template }),
+        started: args.start !== false,
+      });
+      if (args.start === false) {
+        return created;
+      }
+      let started: answers.ToolAnswer;
+      try {
+        started = await startAnswer(images, image, {}, enrollment);
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : String(error);
+        throw new PlexusError(
+          error instanceof PlexusError ? error.code : "start-failed",
+          answers.texts.createdNotStarted(image, reason),
+        );
+      }
+      return answers.both(created, started);
+    }
+    case "image_start":
+      return startAnswer(
+        images,
         image,
         args.display === undefined ? {} : { display: args.display as Display },
+        enrollment,
       );
-      const answer = answers.started(result, rows.find((each) => each.name === image), enrollment);
-      // True by construction: a call that names no image goes to the only
-      // one that answers, so the image is named only beside another.
-      return rows.some((each) => each.name !== image && each.running)
-        ? { ...answer, summary: `${answer.summary} ${answers.texts.passImage(image)}` }
-        : answer;
-    }
     case "image_stop":
-      return eachImage(args.name, async (each) =>
+      return eachImage(args.image, async (each) =>
         answers.stopped(await images.stop(each, args.save === true ? { save: true } : {})),
       );
     case "image_delete":
-      return eachImage(args.name, async (each) => answers.deleted(await images.delete(each)));
+      return eachImage(args.image, async (each) => {
+        if (args.stop === true) {
+          const stopped = await images.stop(each);
+          await images.delete(each);
+          return stopped.quit === true || stopped.killed.length > 0 ? answers.stoppedAndDeleted(each) : answers.deleted({ name: each });
+        }
+        try {
+          return answers.deleted(await images.delete(each));
+        } catch (error) {
+          // The library's words name image_stop; this tool can stop it itself.
+          if (error instanceof PlexusError && error.code === "image-running") {
+            const pids = Array.isArray(error.details?.pids) ? (error.details.pids as number[]) : [];
+            throw new PlexusError("image-running", answers.texts.deleteRunningUnlessStopped(each, pids), error.details);
+          }
+          throw error;
+        }
+      });
     default: {
-      if (args.name === undefined) {
+      if (args.image === undefined) {
         return answers.list(await images.list(), enrollment);
       }
       const [row] = await images.list(image);
       return answers.image(row, enrollment);
     }
   }
+}
+
+/** Starts the image and says so, naming it when another image runs. */
+async function startAnswer(
+  images: ImagesApi,
+  image: string,
+  options: { display?: Display },
+  enrollment: answers.Enrollment,
+): Promise<answers.ToolAnswer> {
+  // Listed first, for the script every start files in, the MCP it holds and
+  // whether another image runs; the start itself refuses an image that is
+  // not there.
+  const rows = await images.list().catch(() => []);
+  const result = await images.start(image, options);
+  const answer = answers.started(result, rows.find((each) => each.name === image), enrollment);
+  // True by construction: a call that names no image goes to the only one
+  // that answers, so the image is named only beside another.
+  return rows.some((each) => each.name !== image && each.running)
+    ? { ...answer, summary: `${answer.summary} ${answers.texts.passImage(image)}` }
+    : answer;
 }
 
 /**
