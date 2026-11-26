@@ -92,7 +92,7 @@ export async function start(
     fs.writeFileSync(files.startScript, startScript({ telemetry: context.telemetry }), "utf8");
 
     const launch = await context.launcher().startImage({
-      imageName: files.diskName,
+      image: files.diskName,
       detached: true,
       displayMode: display,
       script: files.startScript,

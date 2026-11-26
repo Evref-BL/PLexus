@@ -136,14 +136,19 @@ describe("list", () => {
     expect(rows.find((row) => row.name === "mcp-eval")).toMatchObject({ running: false, pids: [] });
   });
 
-  it("follows links to the image file, and reads the command line when the path is not given", async () => {
+  it("follows links to the image file, and leaves a relative path alone", async () => {
     const { home, launcher } = store(["dev"]);
     const linked = path.join(tempHome(), "linked-home");
     fs.symlinkSync(home, linked, process.platform === "win32" ? "junction" : "dir");
     launcher.processes.push(
-      { pid: 11, commandLine: "11 Pharo --headless", imagePath: path.join(linked, "profiles", "images", "dev", "dev.image") },
-      { pid: 12, commandLine: `12 Pharo ${imagePath(launcher, "dev")} eval x.st` },
-      { pid: 13, commandLine: "13 Pharo dev.image", imagePath: "dev.image" },
+      {
+        pid: 11,
+        commandLine: "11 Pharo --headless",
+        imagePath: path.join(linked, "profiles", "images", "dev", "dev.image"),
+        imageName: "dev",
+      },
+      { pid: 12, commandLine: `12 Pharo ${imagePath(launcher, "dev")} eval x.st`, imagePath: imagePath(launcher, "dev"), imageName: "dev" },
+      { pid: 13, commandLine: "13 Pharo dev.image", imagePath: "dev.image", imageName: "dev" },
     );
 
     const [row] = await list(testContext(home, launcher));
@@ -289,8 +294,7 @@ describe("list", () => {
     launcher.listProcesses = async () => ({
       ok: false,
       diagnostic: "ps failed",
-      parser: { status: "skipped", format: "text" },
-      command: { args: [], durationMs: 0, exitCode: 1, timedOut: false },
+      command: { durationMs: 0, exitCode: 1, timedOut: false },
     });
     const error = await list(testContext(home, launcher)).catch((caught: unknown) => caught);
     expect(error).toBeInstanceOf(PlexusError);

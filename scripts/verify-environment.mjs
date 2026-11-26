@@ -2,15 +2,16 @@
 /**
  * What this machine can run PLexus with.
  *
- * The launcher answers where it found Pharo Launcher the same way it finds it
- * when PLexus calls it, so a discrepancy here is one that would break a
+ * The launcher's `--health` finds Pharo Launcher as its library does when
+ * PLexus calls it, once the PHARO_LAUNCHER_* variables, which the library
+ * never reads, are left out. So a discrepancy here is one that would break a
  * create.
  */
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
+import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { openPharoLauncher } from "@evref-bl/pharo-launcher-mcp/launcher";
 
 const repoRoot = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 
@@ -26,6 +27,20 @@ function commandVersion(command) {
     shell: process.platform === "win32",
   });
   return result.status === 0 ? result.stdout.trim().split("\n")[0] : undefined;
+}
+
+function launcherHealth() {
+  const manifest = createRequire(import.meta.url).resolve("@evref-bl/pharo-launcher-mcp/package.json");
+  const { bin } = JSON.parse(fs.readFileSync(manifest, "utf8"));
+  const env = Object.fromEntries(
+    Object.entries(process.env).filter(([name]) => !name.startsWith("PHARO_LAUNCHER_")),
+  );
+  const result = spawnSync(
+    process.execPath,
+    [path.join(path.dirname(manifest), bin["pharo-launcher-mcp"]), "--health"],
+    { encoding: "utf8", env },
+  );
+  return { ok: result.status === 0, report: `${result.stdout}${result.stderr}`.trim() };
 }
 
 async function main() {
@@ -46,15 +61,11 @@ async function main() {
   console.log("");
   console.log(`PLexus home: ${plexusHome()}`);
 
-  const config = openPharoLauncher().describeConfig();
-  console.log(`launcher found through: ${config.discovery.source}`);
-  ok = report("launcher directory", config.launcherDir.exists, config.launcherDir.path) && ok;
-  ok = report("launcher vm", config.launcherVm.exists, config.launcherVm.path) && ok;
-  ok = report(
-    "launcher image",
-    config.installationLauncherImage.exists,
-    config.installationLauncherImage.path,
-  ) && ok;
+  const health = launcherHealth();
+  ok = report("pharo launcher", health.ok) && ok;
+  if (!health.ok) {
+    console.log(health.report);
+  }
 
   console.log("");
   console.log(ok ? "Environment looks usable." : "Something above is missing.");

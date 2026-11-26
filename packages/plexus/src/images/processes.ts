@@ -21,7 +21,7 @@ export async function hostProcesses(context: ImagesContext): Promise<LauncherPro
       launcherFailureMessage("listProcesses", result),
     );
   }
-  return result.data ?? [];
+  return result.data?.processes ?? [];
 }
 
 /**
@@ -81,18 +81,7 @@ export function killFailureLines(failures: readonly KillFailure[]): string[] {
 // A relative path names a file only from the VM's working directory, which
 // the process list does not say.
 function imagePathOf(process: LauncherProcess): string | undefined {
-  const candidate = process.imagePath ?? imageArgument(process.commandLine);
-  return candidate !== undefined && path.isAbsolute(candidate) ? candidate : undefined;
-}
-
-function imageArgument(commandLine: string): string | undefined {
-  const quoted = [...commandLine.matchAll(/"([^"]+)"|'([^']+)'/g)]
-    .map((match) => match[1] ?? match[2])
-    .find((value) => value.toLowerCase().endsWith(".image"));
-  return (
-    quoted ??
-    commandLine.split(/\s+/).find((token) => token.toLowerCase().endsWith(".image"))
-  );
+  return path.isAbsolute(process.imagePath) ? process.imagePath : undefined;
 }
 
 function realPath(file: string): string {

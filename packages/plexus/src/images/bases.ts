@@ -13,7 +13,7 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { repairCopiedImageMetadataInDirectory } from "@evref-bl/pharo-launcher-mcp/launcher";
+import { repairCopiedImageMetadataInDirectory } from "@evref-bl/pharo-launcher-mcp";
 import * as texts from "../answers/texts.js";
 import { PlexusError } from "../errors.js";
 import { basesRoot, storeRoot, tmpRoot } from "../home.js";
@@ -372,5 +372,5 @@ export function renameImage(dir: string, from: string, to: string): void {
       fs.renameSync(source, path.join(dir, `${to}${extension}`));
     }
   }
-  repairCopiedImageMetadataInDirectory(dir, from, to);
+  repairCopiedImageMetadataInDirectory({ directory: dir, image: from, newImage: to });
 }

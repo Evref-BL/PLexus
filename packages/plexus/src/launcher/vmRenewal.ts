@@ -10,7 +10,7 @@
  * error from another cause would remove a VM that running images use.
  */
 
-import type { LauncherLaunchReport } from "@evref-bl/pharo-launcher-mcp/launcher";
+import type { LauncherLaunchReport } from "@evref-bl/pharo-launcher-mcp";
 
 // The Pharo VM's own report of a fatal error, printed before it exits, so
 // before any image code could have run.

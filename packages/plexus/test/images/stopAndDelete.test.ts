@@ -513,14 +513,14 @@ describe("stop with save", () => {
 describe("delete", () => {
   it("removes the image's directory, then the launcher's logs of its starts", async () => {
     const { home, launcher, dir, context } = setup();
-    launcher.deleteLaunchLogs = (input) => {
+    launcher.deleteLaunchLogs = async (input) => {
       launcher.calls.push({ method: "deleteLaunchLogs", input });
       expect(fs.existsSync(dir)).toBe(false);
     };
     expect(await deleteImage(context, "dev")).toEqual({ name: "dev" });
     expect(fs.readdirSync(storeRoot(home))).toEqual([]);
     expect(fs.readdirSync(tmpRoot(home))).toEqual([]);
-    expect(launcher.called("deleteLaunchLogs")).toEqual([{ imageName: "dev" }]);
+    expect(launcher.called("deleteLaunchLogs")).toEqual([{ image: "dev" }]);
   });
 
   it("names the logs by the image's name on disk, which holds its scope", async () => {
@@ -530,7 +530,7 @@ describe("delete", () => {
     const context = testContext(home, launcher, { scope: "shop" });
 
     await deleteImage(context, "dev");
-    expect(launcher.called("deleteLaunchLogs")).toEqual([{ imageName: "shop-dev" }]);
+    expect(launcher.called("deleteLaunchLogs")).toEqual([{ image: "shop-dev" }]);
   });
 
   it("is done when the launcher cannot delete the logs", async () => {

@@ -56,7 +56,7 @@ describe("start", () => {
     expect(pinged).toEqual([started.endpoint]);
     expect(launcher.called("startImage")).toEqual([
       {
-        imageName: "Scope-dev",
+        image: "Scope-dev",
         detached: true,
         displayMode: "headless",
         script: path.join(plexus, "start.st"),
@@ -89,8 +89,8 @@ describe("start", () => {
         fs.writeFileSync(path.join(plexus, "created.properties"), created);
       }
       launcher.launchAnswer = (input) => {
-        const vm = launcher.run(path.join(launcher.imageDir(input.imageName), `${input.imageName}.image`), { script: input.script! });
-        writeEndpoint(launcher.imageDir(input.imageName), { port: 7001, pid: vm.pid, more });
+        const vm = launcher.run(path.join(launcher.imageDir(input.image), `${input.image}.image`), { script: input.script! });
+        writeEndpoint(launcher.imageDir(input.image), { port: 7001, pid: vm.pid, more });
         return launched(vm.pid, launcher.home);
       };
 

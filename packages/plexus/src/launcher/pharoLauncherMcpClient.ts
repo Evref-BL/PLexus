@@ -7,14 +7,14 @@ import {
   openPharoLauncher,
   type LauncherLaunchReport,
   type PharoLauncher,
-} from "@evref-bl/pharo-launcher-mcp/launcher";
-import { homeProfileEnvironment } from "./pharoLauncherProfile.js";
+} from "@evref-bl/pharo-launcher-mcp";
+import { homeProfile } from "./pharoLauncherProfile.js";
 import { vmRenewalHint } from "./vmRenewal.js";
 
 export type {
   LauncherCommandResult,
   LauncherProcess,
-} from "@evref-bl/pharo-launcher-mcp/launcher";
+} from "@evref-bl/pharo-launcher-mcp";
 
 /** What PLexus asks of the launcher. Tests give a fake one. */
 export type LauncherPort = Pick<
@@ -34,23 +34,23 @@ export type LauncherPort = Pick<
 export const longCommandTimeoutMs = 60 * 60_000;
 
 export function openLauncherPort(home: string): LauncherPort {
-  const env = homeProfileEnvironment(home);
+  const profile = homeProfile(home);
   let quick: PharoLauncher | undefined;
   let long: PharoLauncher | undefined;
-  const quickLauncher = (): PharoLauncher => (quick ??= openPharoLauncher({ env }));
+  const quickLauncher = (): PharoLauncher => (quick ??= openPharoLauncher({ profile }));
   const longLauncher = (): PharoLauncher =>
-    (long ??= openPharoLauncher({ env, timeoutMs: longCommandTimeoutMs }));
+    (long ??= openPharoLauncher({ profile, timeoutMs: longCommandTimeoutMs }));
 
   return {
     createImage: (input) => longLauncher().createImage(input),
     startImage: (input) =>
       (input.detached ? quickLauncher() : longLauncher()).startImage(input),
     deleteLaunchLogs: (input) => quickLauncher().deleteLaunchLogs(input),
-    listProcesses: (input) => quickLauncher().listProcesses(input),
+    listProcesses: () => quickLauncher().listProcesses(),
     killProcess: (input) => quickLauncher().killProcess(input),
-    listTemplateCategories: (input) => quickLauncher().listTemplateCategories(input),
+    listTemplateCategories: () => quickLauncher().listTemplateCategories(),
     listTemplates: (input) => quickLauncher().listTemplates(input),
-    updateTemplates: (input) => quickLauncher().updateTemplates(input),
+    updateTemplates: () => quickLauncher().updateTemplates(),
   };
 }
 
