@@ -142,8 +142,8 @@ them through its OpenTelemetry backend, is kept with it: a create writes it in
 `endpoint.properties`. Create, start and list carry it as `telemetry`,
 `{"on":true}` or `{"on":false,"reason":...}`, for a running image what its
 start said and otherwise what its create gave it, with a `detail` where there
-is one. The reason is `not-asked` (made by a PLexus that did not enroll
-images), `base-failed` (the base with the `Telemetry` group failed to build,
+is one. The reason is `not-asked` (made, or last started, by a PLexus that
+did not enroll images), `base-failed` (the base with the `Telemetry` group failed to build,
 and `detail` says what failed), `no-backend` (its MCP has no OpenTelemetry
 backend), or `switch-failed` (its server failed to switch, and `detail` says
 why). Enrolled, `plexus mcp` says it too: `image_list` marks an image that
@@ -152,5 +152,5 @@ naming an image say that it records them, or why not and what makes it.
 Recording is not sending: what an image sends, and where, its `OTEL_*`
 settings decide. When the settings of `plexus mcp` send traces to no OTLP
 endpoint, as it reads them for its own SDK (no endpoint, `OTEL_SDK_DISABLED`
-true, or another `OTEL_TRACES_EXPORTER`), its answers say that what an image
-records is sent nowhere, instead of `on`.
+true, another `OTEL_TRACES_EXPORTER`, or a protocol other than HTTP), its
+answers say that what an image records is sent nowhere, instead of `on`.

@@ -57,7 +57,7 @@ export function scopeOfProject(directory: string): string {
 export function diskName(name: unknown, scope: string | undefined): string {
   const checked = check(name, "Image name");
   const disk = scope === undefined ? checked : `${scope}-${checked}`;
-  if (disk.startsWith(buildPrefix)) {
+  if (startsWithIgnoringCase(disk, buildPrefix)) {
     throw new PlexusError(
       "invalid-name",
       `Image name ${JSON.stringify(checked)} is not valid: ${buildPrefix} names the bases PLexus builds.`,
@@ -68,17 +68,23 @@ export function diskName(name: unknown, scope: string | undefined): string {
 
 /**
  * The name a directory of the store answers to in this scope, or nothing
- * when it is out of scope or is not an image's.
+ * when it is out of scope or is not an image's. Case is ignored, as macOS
+ * and Windows ignore it in a path: there, `Shop-dev` is the directory
+ * `shop-dev` is, so scopes `Shop` and `shop` are one scope on every system.
  */
 export function nameOfDisk(disk: string, scope: string | undefined): string | undefined {
-  if (disk.startsWith(buildPrefix)) {
+  if (startsWithIgnoringCase(disk, buildPrefix)) {
     return undefined;
   }
   if (scope === undefined) {
     return disk;
   }
   const prefix = `${scope}-`;
-  return disk.startsWith(prefix) && disk.length > prefix.length
+  return startsWithIgnoringCase(disk, prefix) && disk.length > prefix.length
     ? disk.slice(prefix.length)
     : undefined;
+}
+
+function startsWithIgnoringCase(text: string, prefix: string): boolean {
+  return text.slice(0, prefix.length).toLowerCase() === prefix.toLowerCase();
 }

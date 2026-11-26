@@ -92,6 +92,18 @@ describe("plexus", () => {
     expect(cli.printed().slice(0, 3).map((text) => JSON.parse(text))).toEqual([[], [], []]);
   });
 
+  it("takes where Pharo Launcher is from PHARO_LAUNCHER_DIR", async () => {
+    const cli = harness({ PHARO_LAUNCHER_DIR: "/opt/pharo-launcher" });
+    await cli.run("image", "list");
+    expect(cli.opened).toEqual([{ launcherDir: "/opt/pharo-launcher" }]);
+  });
+
+  it("says its version", async () => {
+    const cli = harness();
+    expect(await cli.run("--version")).toBe(0);
+    expect(cli.stdout()).toMatch(/^\d+\.\d+\.\d+\S*\n$/);
+  });
+
   it("takes the home and the scope from options, else from the environment", async () => {
     const cli = harness({ PLEXUS_HOME: "/env/home", PLEXUS_SCOPE: "EnvScope" });
     await cli.run("image", "list");
@@ -180,6 +192,11 @@ describe("plexus", () => {
       [["image_stop", "dev"], "image_stop is plexus image stop here."],
       [["image_templates"], "image_templates is plexus image templates here."],
       [["mcp", "pharo-launcher"], "Unexpected argument pharo-launcher"],
+      [["image", "toString"], "Unknown image command toString"],
+      [["image", "__proto__"], "Unknown image command __proto__"],
+      [["image", "list", "-x"], "Unknown option -x"],
+      [["image", "list", "--home", ""], "--home needs a directory"],
+      [["image", "create", "dev", "--every-start"], "--every-start needs --script"],
     ];
     for (const [argv, message] of cases) {
       const cli = harness();

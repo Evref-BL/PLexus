@@ -123,28 +123,24 @@ export function evaluationTool(tools: ReadonlyArray<{ name: string }>): string |
  * carries the active trace context in its `_meta`.
  */
 export async function ping(endpoint: Endpoint, timeoutMs = 1_000): Promise<boolean> {
+  // The answer's body as well as its headers within the time.
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const answer = await fetchWithin(timeoutMs, endpoint.url, {
+    const answer = await fetch(endpoint.url, {
       method: "POST",
       headers: {
         accept: "application/json, text/event-stream",
         "content-type": "application/json",
       },
       body: JSON.stringify(jsonRpcMessage("ping", undefined, "plexus-ping")),
+      signal: controller.signal,
     });
     const payload: unknown = await answer.json().catch(() => undefined);
     return isRecord(payload) && payload.jsonrpc === "2.0" && ("result" in payload || "error" in payload);
   } catch {
     // Not listening yet.
     return false;
-  }
-}
-
-async function fetchWithin(timeoutMs: number, url: string, init: RequestInit = {}): Promise<Response> {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    return await fetch(url, { ...init, signal: controller.signal });
   } finally {
     clearTimeout(timeout);
   }

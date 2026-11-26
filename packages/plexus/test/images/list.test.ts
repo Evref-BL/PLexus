@@ -68,6 +68,32 @@ describe("list", () => {
     expect(everything.map((image) => image.name)).toEqual(["Other-dev", "Scope-dev", "Scope-mcp-eval"]);
   });
 
+  it("takes scopes and names that differ only in case for one, as macOS and Windows do", async () => {
+    const { home, launcher } = store(["shop-Dev", "Other-dev"]);
+    const context = testContext(home, launcher, { scope: "Shop" });
+
+    expect((await list(context)).map((image) => [image.name, image.path])).toEqual([
+      ["Dev", imagePath(launcher, "shop-Dev")],
+    ]);
+    expect((await list(context, "dev"))[0]).toMatchObject({ name: "Dev", path: imagePath(launcher, "shop-Dev") });
+  });
+
+  it("says an image whose create ended before it was done is unfinished, not being created", async () => {
+    const { home, launcher } = store(["half", "making"]);
+    const context = testContext(home, launcher);
+    const marker = (name: string) => path.join(launcher.imageDir(name), "plexus", "building");
+    for (const name of ["half", "making"]) {
+      fs.mkdirSync(path.dirname(marker(name)), { recursive: true });
+    }
+    fs.writeFileSync(marker("half"), JSON.stringify({ pid: 2_147_483_646, at: new Date(context.now()).toISOString() }));
+    fs.writeFileSync(marker("making"), JSON.stringify({ pid: process.pid, at: new Date(context.now()).toISOString() }));
+
+    expect((await list(context)).map((image) => [image.name, image.state])).toEqual([
+      ["half", "unfinished"],
+      ["making", "creating"],
+    ]);
+  });
+
   it("asks the host once, and not at all for an empty store", async () => {
     const { home, launcher } = store(["a", "b", "c"]);
     await list(testContext(home, launcher));

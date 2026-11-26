@@ -35,17 +35,23 @@ export function noSuchImage(name: string): string {
   return `There is no image ${name}. image_list names the images there are; image_create makes one.`;
 }
 
+/** Several names of one call that name no image, said once. */
+export function noSuchImages(names: readonly string[]): string {
+  return `There are no images ${andList(names)}. image_list names the images there are; image_create makes one.`;
+}
+
+/** Said, not ordered: the image may be another session's. */
 export function imageExists(name: string): string {
-  return `Image ${name} already exists: choose another name, or delete it with image_delete first to create it again.`;
+  return `Image ${name} already exists: choose another name, or image_start it if it is yours.`;
 }
 
 export function deleteRunning(name: string, pids: readonly number[]): string {
   return `Image ${name} is running as ${pidsText(pids)}. Stop it with image_stop before deleting it.`;
 }
 
-/** The refusal of image_delete, which can stop the image itself. */
+/** The refusal of image_delete, which can stop the image itself: said, not ordered, since it may be another session's. */
 export function deleteRunningUnlessStopped(name: string, pids: readonly number[]): string {
-  return `Image ${name} is running${pids.length === 0 ? "" : ` as ${pidsText(pids)}`}. image_delete with stop: true stops it without saving, then deletes it.`;
+  return `Image ${name} is running${pids.length === 0 ? "" : ` as ${pidsText(pids)}`}, maybe for another session. Once its work is done, image_delete with stop: true stops it without saving, then deletes it.`;
 }
 
 /** A start of an image whose MCP server already answers. */
@@ -53,8 +59,18 @@ export function alreadyRunning(name: string, interactive: boolean): string {
   return `Image ${name} was already running${interactive ? ", with its window open" : ""}.`;
 }
 
+/** Said of an image already running that this server neither created nor started. */
+export function notStartedHere(): string {
+  return "This session did not start it, so it may be another session's.";
+}
+
 export function beingStarted(name: string, holder?: number): string {
-  return `Image ${name} is being started${holder === undefined ? "" : ` by process ${holder}`}. Its tools take calls once image_list shows it running.`;
+  return `Image ${name} is being started${holder === undefined ? "" : ` by process ${holder}`}: image_list shows when it runs.`;
+}
+
+/** Another start held the image all the time this one had. */
+export function startOutwaited(name: string, holder?: number): string {
+  return `Image ${name} is being started${holder === undefined ? "" : ` by process ${holder}`}, which took longer than this start may. image_list shows when it runs.`;
 }
 
 export function stillBuilding(name: string, holder?: number): string {
@@ -63,6 +79,13 @@ export function stillBuilding(name: string, holder?: number): string {
 
 export function neverFinished(name: string): string {
   return `Image ${name} was never finished: the create that made it ended before it was done. Delete it with image_delete and create it again with image_create.`;
+}
+
+/** Images whose create ended before it was done, in an image_list. */
+export function unfinished(names: readonly string[]): string {
+  return names.length === 1
+    ? `Image ${names[0]} was never finished: image_delete removes it, and image_create makes it again.`
+    : `Images ${andList(names)} were never finished: image_delete removes them, and image_create makes them again.`;
 }
 
 export function unknownTemplate(template: string): string {
@@ -105,8 +128,13 @@ export function noneTakesCalls(names: readonly string[]): string {
   return `Images ${andList(names)} are running, but none takes calls: image_list says why.`;
 }
 
-export function noImageRunning(tool: string): string {
-  return `No image is running to take ${tool}. Start one with image_start; it starts as it was last saved.`;
+/** No image runs; `stopped` names those image_start can start. */
+export function noImageRunning(tool: string, stopped: readonly string[]): string {
+  if (stopped.length === 0) {
+    return `No image is running to take ${tool}, and there is none: image_create makes one.`;
+  }
+  const which = stopped.length <= 5 ? orList(stopped) : `one of the ${stopped.length} image_list names`;
+  return `No image is running to take ${tool}. image_start starts ${which}; image_create makes another.`;
 }
 
 // What a forwarded call that failed did to the image.
@@ -210,7 +238,7 @@ export function recordsNothing(
 ): string {
   const recreate = "Recreating it gives it MCP's Telemetry group.";
   const reasons: Record<string, string> = {
-    "not-asked": "it was made without MCP's Telemetry group, by a PLexus that did not enroll images in OpenTelemetry. Recreating it adds the group.",
+    "not-asked": "the PLexus that made it, or last started it, did not enroll images in OpenTelemetry.",
     "base-failed": `the base with MCP's Telemetry group failed to build${why.detail ? ` (${why.detail})` : ""}, so it was copied from the base without it. A create tries that base again a day after it failed.`,
     "no-backend": `its MCP has no OpenTelemetry backend. ${pinned ? recreate : "Its script must load MCP's Telemetry group."}`,
     "switch-failed": `its MCP server failed to switch to OpenTelemetry${why.detail ? `: ${why.detail.replace(/\.$/, "")}` : ""}.`,
@@ -242,7 +270,7 @@ export function created(
 
 /** A create that made its image, whose start then failed for `reason`. */
 export function createdNotStarted(name: string, reason: string): string {
-  return `Created image ${name}, but it did not start: ${reason}`;
+  return `Created image ${name}, but it did not start (image_start tries again): ${reason}`;
 }
 
 export function started(name: string, how: { interactive?: boolean; everyStart?: string }): string {

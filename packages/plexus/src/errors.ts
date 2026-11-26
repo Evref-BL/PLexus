@@ -1,4 +1,11 @@
+/**
+ * Why PLexus refused. A minor release may add a code, so a program that
+ * switches on them keeps a default branch.
+ */
 export type PlexusErrorCode =
+  // An option or argument a call cannot run with, such as everyStart without
+  // a script.
+  | "invalid-arguments"
   | "invalid-name"
   | "no-such-image"
   | "image-exists"
@@ -23,18 +30,28 @@ export type PlexusErrorCode =
   | "stopped-unsaved"
   | "launcher-failed";
 
+/** What a refusal adds for a program, when it has it. */
+export interface PlexusErrorDetails {
+  /** The VMs running the image, of a refusal because it runs, starts or takes no calls. */
+  pids?: number[];
+  /** The process of this host making or starting the image, of `building` and `being-started`. */
+  pid?: number;
+  /** The categories that hold the template's name, of `ambiguous-template`. */
+  categories?: string[];
+}
+
 /**
  * Every refusal PLexus makes. The code is what a caller branches on; the
  * message is what it shows, and says what to do where there is something.
  */
 export class PlexusError extends Error {
   readonly code: PlexusErrorCode;
-  readonly details?: Record<string, unknown>;
+  readonly details?: PlexusErrorDetails;
 
   constructor(
     code: PlexusErrorCode,
     message: string,
-    details?: Record<string, unknown>,
+    details?: PlexusErrorDetails,
   ) {
     super(message);
     this.name = "PlexusError";

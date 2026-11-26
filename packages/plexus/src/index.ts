@@ -4,24 +4,28 @@
  * decision written down there.
  */
 export { defaultPharoMcpVersion } from "./config/pharoMcpVersion.js";
-export { PlexusError, type PlexusErrorCode } from "./errors.js";
-export { callTool, listTools } from "./forward/index.js";
+export { PlexusError, type PlexusErrorCode, type PlexusErrorDetails } from "./errors.js";
+export { callTool, listTools, type CallToolOptions } from "./forward/index.js";
 export type { ForwardError } from "./forward/jsonRpc.js";
 export { plexusHome } from "./home.js";
 export { Images } from "./images/index.js";
-export type { CreateResult } from "./images/create.js";
-export type { StartResult } from "./images/start.js";
-export type { StopResult } from "./images/stop.js";
 export type {
   CreateOptions,
+  CreateResult,
+  DeleteResult,
   Display,
   Endpoint,
   ImageInfo,
+  ImageMcp,
   ImageState,
   ImagesOptions,
+  ImageTelemetry,
   ImageTool,
   ImageToolResult,
   StartOptions,
+  StartResult,
   StopOptions,
+  StopResult,
+  TelemetryOffReason,
   Template,
 } from "./types.js";

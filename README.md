@@ -10,7 +10,10 @@ and every call looks at both when it is made.
 
 - Node.js 22.15 or later.
 - [Pharo Launcher](https://pharo-project.github.io/pharo-launcher/), which is
-  where templates and VMs come from.
+  where templates and VMs come from, in its usual place for the platform or
+  where `PHARO_LAUNCHER_DIR` says.
+- Network access to create an image: the template list, the templates and MCP
+  are downloaded.
 
 ## Install
 
@@ -29,22 +32,12 @@ project directory, whose name scopes the images it sees:
 
 It offers `image_templates`, `image_create`, `image_start`, `image_stop`,
 `image_delete` and `image_list`, followed by the tools of every running image
-in its scope. Each of those takes an `image` argument naming the image to
-call, which may be left out while one image runs.
+in its scope, each of which takes an `image` argument naming the image to
+call.
 
-The same work is a command, whose results are JSON:
-
-```sh
-plexus image templates
-plexus image create <name> [--template <t> [--category <c>]] [--script <file> [--every-start]]
-plexus image start <name> [--display interactive] [--timeout <seconds>]
-plexus image stop <name> [--save]
-plexus image delete <name>
-plexus image list [<name>]
-plexus mcp
-```
-
-And a library:
+The same work is a command, `plexus image templates`, `create`, `start`,
+`stop`, `delete` and `list`, whose results are JSON; `plexus --help` says what
+each takes. And a library:
 
 ```ts
 import { Images, listTools } from "@evref-bl/plexus";

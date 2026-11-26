@@ -28,6 +28,7 @@ type Reply =
   | "never"
   | "hang up"
   | "half an answer"
+  | "trickle"
   | undefined;
 
 /**
@@ -62,6 +63,13 @@ async function fakeMcpServer(
       }
       if (reply === "hang up") {
         request.socket.destroy();
+        return;
+      }
+      if (reply === "trickle") {
+        // Headers at once, then a byte now and then, never the end.
+        response.writeHead(200, { "content-type": "application/json" });
+        const drip = setInterval(() => response.write(" "), 50);
+        response.on("close", () => clearInterval(drip));
         return;
       }
       if (reply === "half an answer") {
@@ -159,6 +167,13 @@ describe("forwarding", () => {
     });
   });
 
+  it("pings within its time, however slowly an answer trickles in", async () => {
+    const { url } = await fakeMcpServer(() => "trickle");
+    const startedAt = Date.now();
+    expect(await ping({ url }, 200)).toBe(false);
+    expect(Date.now() - startedAt).toBeLessThan(2_000);
+  });
+
   it("pings: any JSON-RPC answer counts, and nothing listening does not", async () => {
     const answering = await fakeMcpServer((request) =>
       request.method === "ping" ? { error: { code: -32601, message: "Method not found" } } : undefined,
@@ -208,6 +223,18 @@ describe("a forwarded call", () => {
       message: "MCP request timed out after 100ms",
       kind: "timeout",
       waitedMs: 100,
+    });
+  });
+
+  it("ends at its time, however slowly an answer trickles in", async () => {
+    const { url } = await fakeMcpServer((request) =>
+      request.method === "tools/call" ? "trickle" : standardAnswers(request),
+    );
+
+    expect(await failureOf(callTool({ url }, "class_search", {}, { minimumMs: 200 }))).toEqual({
+      message: "MCP request timed out after 200ms",
+      kind: "timeout",
+      waitedMs: 200,
     });
   });
 

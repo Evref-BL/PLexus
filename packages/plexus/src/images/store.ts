@@ -10,7 +10,7 @@ import { PlexusError } from "../errors.js";
 import { storeRoot, tmpRoot } from "../home.js";
 import type { ImageInfo, ImageTelemetry, TelemetryOffReason } from "../types.js";
 import type { ImagesContext } from "./context.js";
-import { diskName } from "./names.js";
+import { diskName, nameOfDisk } from "./names.js";
 
 export interface ImageFiles {
   name: string;
@@ -29,9 +29,30 @@ export interface ImageFiles {
   prepareStatus: string;
 }
 
+/**
+ * The files of the image a caller names: of the directory whose name differs
+ * from its disk name only in case when the store holds no exact one, as
+ * macOS and Windows find it, so every system finds the same image. Named as
+ * the store spells it.
+ */
 export function imageFiles(context: ImagesContext, name: string): ImageFiles {
-  const disk = diskName(name, context.scope);
-  return filesOfDirectory(path.join(storeRoot(context.home), disk), name);
+  const store = storeRoot(context.home);
+  const disk = storedSpelling(store, diskName(name, context.scope));
+  return filesOfDirectory(path.join(store, disk), nameOfDisk(disk, context.scope) ?? name);
+}
+
+function storedSpelling(store: string, disk: string): string {
+  let entries: string[];
+  try {
+    entries = fs.readdirSync(store);
+  } catch {
+    return disk;
+  }
+  if (entries.includes(disk)) {
+    return disk;
+  }
+  const lower = disk.toLowerCase();
+  return entries.find((entry) => entry.toLowerCase() === lower) ?? disk;
 }
 
 export function filesOfDirectory(

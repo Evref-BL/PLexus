@@ -8,6 +8,7 @@ import {
 import { storeRoot } from "../home.js";
 import type { LauncherProcess } from "../launcher/pharoLauncherMcpClient.js";
 import type { Endpoint, ImageInfo, ImageState, ImageTelemetry } from "../types.js";
+import { buildingState, type ClaimState } from "./claims.js";
 import type { ImagesContext } from "./context.js";
 import { parseEndpointHandoff, type EndpointHandoff } from "../forward/endpointHandoffFormat.js";
 import { endpointUrl, observeEndpoint, type EndpointObservation } from "./endpoint.js";
@@ -36,7 +37,7 @@ export async function list(context: ImagesContext, name?: string): Promise<Image
     return [];
   }
   const processes = await hostProcesses(context);
-  return images.map((files) => describe(files, processes));
+  return images.map((files) => describe(context, files, processes));
 }
 
 /** Where a forwarded call goes: the image and its endpoint. */
@@ -124,7 +125,7 @@ function imagesInScope(context: ImagesContext): ImageFiles[] {
     .sort((left, right) => left.name.localeCompare(right.name));
 }
 
-export function describe(files: ImageFiles, processes: readonly LauncherProcess[]): ImageInfo {
+export function describe(context: ImagesContext, files: ImageFiles, processes: readonly LauncherProcess[]): ImageInfo {
   const vms = vmsOn(files.imagePath, processes);
   const created = readProperties(files.created);
   const recorded = launcherRecord(files);
@@ -139,7 +140,7 @@ export function describe(files: ImageFiles, processes: readonly LauncherProcess[
   return {
     name: files.name,
     path: files.imagePath,
-    state: stateOf(fs.existsSync(files.building), observed),
+    state: stateOf(buildingState(context, files).state, observed),
     running: vms.length > 0,
     pids: vms.map((vm) => vm.pid),
     ...(vms.length > 0 ? { display: displayOf(vms[0]) } : {}),
@@ -199,9 +200,9 @@ export function imageTelemetry(
  * A create still making the image wins whatever VM runs it: a script
  * create's own VM runs the image it prepares.
  */
-function stateOf(building: boolean, observed: EndpointObservation | undefined): ImageState {
-  if (building) {
-    return "creating";
+function stateOf(building: ClaimState["state"], observed: EndpointObservation | undefined): ImageState {
+  if (building !== "free") {
+    return building === "held" ? "creating" : "unfinished";
   }
   if (observed === undefined) {
     return "stopped";

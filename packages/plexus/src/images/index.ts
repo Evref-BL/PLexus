@@ -2,20 +2,24 @@ import { SpanKind } from "@opentelemetry/api";
 import { inSpan } from "../telemetry/trace.js";
 import type {
   CreateOptions,
+  CreateResult,
+  DeleteResult,
   Endpoint,
   ImageInfo,
   ImagesOptions,
   StartOptions,
+  StartResult,
   StopOptions,
+  StopResult,
   Template,
 } from "../types.js";
 import { imagesContext, type ImagesContext } from "./context.js";
-import { create, type CreateResult } from "./create.js";
+import { create } from "./create.js";
 import { deleteImage } from "./delete.js";
 import { endpointOf } from "./endpoint.js";
-import { answeringFromEndpoints, list, type Answering } from "./list.js";
-import { start, type StartResult } from "./start.js";
-import { stop, type StopResult } from "./stop.js";
+import { answeringFromEndpoints, list } from "./list.js";
+import { start } from "./start.js";
+import { stop } from "./stop.js";
 import { templates } from "./templates.js";
 
 /**
@@ -23,9 +27,7 @@ import { templates } from "./templates.js";
  *
  * An image exists when its directory holds its image file; it runs when a VM
  * runs that file. Every call looks at the store and the host when it is made,
- * so, like `ps`, its answer is as old as the call that gave it. Only
- * `answering` keeps something between calls: the VM each look saw answering
- * for an image, which it trusts while that process runs.
+ * so, like `ps`, its answer is as old as the call that gave it.
  *
  * Making, starting, stopping and deleting are each an INTERNAL span,
  * `plexus.image.create`, `.start`, `.stop` and `.delete`, that says how it
@@ -61,12 +63,14 @@ export class Images {
    * Where a forwarded call goes, when an earlier look saw the VM that
    * answers for it and that VM still runs: the image named, or, naming
    * none, the only image that answers. Undefined when only `list` can say.
+   *
+   * @internal `plexus mcp`'s routing, left out of the published types.
    */
-  answering(name?: string): Answering | undefined {
+  answering(name?: string): { name: string; endpoint: Endpoint } | undefined {
     return answeringFromEndpoints(this.context, this.seen, name);
   }
 
-  create(name: string, options: CreateOptions): Promise<CreateResult> {
+  create(name: string, options: CreateOptions = {}): Promise<CreateResult> {
     return inSpan("plexus.image.create", SpanKind.INTERNAL, {}, async (span) => {
       const { fromBase, ...created } = await create(this.context, name, options);
       span.setAttribute("plexus.image.from_base", fromBase);
@@ -85,7 +89,7 @@ export class Images {
     );
   }
 
-  delete(name: string): Promise<{ name: string }> {
+  delete(name: string): Promise<DeleteResult> {
     return inSpan("plexus.image.delete", SpanKind.INTERNAL, {}, () => deleteImage(this.context, name));
   }
 

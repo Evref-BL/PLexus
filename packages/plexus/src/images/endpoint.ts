@@ -75,6 +75,8 @@ export function endpointOf(row: ImageInfo): Endpoint {
   switch (row.state) {
     case "creating":
       throw new PlexusError("building", texts.stillBuilding(row.name));
+    case "unfinished":
+      throw new PlexusError("building", texts.neverFinished(row.name));
     case "stopped":
       throw new PlexusError("not-running", texts.notRunning(row.name));
     case "starting":

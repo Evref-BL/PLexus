@@ -10,7 +10,11 @@ export interface Endpoint {
 export interface Template {
   name: string;
   category: string;
-  /** The name is in more than one category, so a create must say which. */
+  /**
+   * The name is in more than one category: a create takes the one in
+   * `Official distributions`, else in `Deprecated distributions`, and
+   * otherwise needs the category.
+   */
   ambiguous?: true;
 }
 
@@ -18,6 +22,8 @@ export interface Template {
  * What an image is doing, as observed when asked:
  *
  * - `creating`: a create is still preparing it, whatever VM runs it.
+ * - `unfinished`: the create that made it ended before it was done; only
+ *   `delete` takes it.
  * - `stopped`: no VM runs it.
  * - `starting`: a start of this PLexus launched it, and its MCP server has
  *   not said where it answers yet.
@@ -25,7 +31,7 @@ export interface Template {
  * - `unreachable`: a VM runs it and it takes no calls through PLexus;
  *   `endpointProblem` says why.
  */
-export type ImageState = "creating" | "stopped" | "starting" | "running" | "unreachable";
+export type ImageState = "creating" | "unfinished" | "stopped" | "starting" | "running" | "unreachable";
 
 /**
  * Why an image records no calls through OpenTelemetry:
@@ -42,6 +48,12 @@ export type TelemetryOffReason = "not-asked" | "base-failed" | "no-backend" | "s
 
 /** Whether an image records its calls through OpenTelemetry; when not, why, and the failure's own words for one that failed. */
 export type ImageTelemetry = { on: true } | { on: false; reason?: TelemetryOffReason; detail?: string };
+
+/**
+ * How MCP got into an image: the pinned release, or a script, which every
+ * start files in again when `everyStart` says so.
+ */
+export type ImageMcp = { source: "pin"; version: string } | { source: "script"; script: string; everyStart?: true };
 
 /** One image, as observed when asked. */
 export interface ImageInfo {
@@ -61,11 +73,7 @@ export interface ImageInfo {
   template?: string;
   /** As Pharo says it: `14.0`. */
   pharoVersion?: string;
-  /**
-   * How MCP got into it: the pinned release, or a script, which every start
-   * files in again when `everyStart` says so.
-   */
-  mcp?: { source: "pin"; version: string } | { source: "script"; script: string; everyStart?: true };
+  mcp?: ImageMcp;
   /**
    * Whether it records its calls through OpenTelemetry: for a running image,
    * what its start did; otherwise what its create gave it, whether a start
@@ -79,6 +87,35 @@ export interface ImageInfo {
   lastUsed?: string;
   /** The size of its image file, in bytes. */
   imageBytes?: number;
+}
+
+/** The image a create made, as `list` would show it, and how long the create took. */
+export type CreateResult = ImageInfo & { seconds: number };
+
+export interface StartResult {
+  name: string;
+  pids: number[];
+  endpoint: Endpoint;
+  display: Display;
+  seconds: number;
+  /** Whether its server records its calls through OpenTelemetry, and why not: see `ImageInfo.telemetry`. */
+  telemetry?: ImageTelemetry;
+  /** The image was already running and answering, and was left as it was. */
+  alreadyRunning?: true;
+}
+
+export interface StopResult {
+  name: string;
+  /** The VMs killed: those left after the image quit or saved, or every one that ran it when it did neither. */
+  killed: number[];
+  /** The image quit without saving when asked. */
+  quit?: true;
+  /** The image saved itself and quit. */
+  saved?: true;
+}
+
+export interface DeleteResult {
+  name: string;
 }
 
 export interface CreateOptions {
@@ -114,6 +151,11 @@ export interface StopOptions {
 export interface ImagesOptions {
   /** `~/.plexus` unless given; `plexusHome()` is where the `plexus` command keeps them. */
   home?: string;
+  /**
+   * Where Pharo Launcher is installed, when not in its usual place for the
+   * platform. The `plexus` command takes it from `PHARO_LAUNCHER_DIR`.
+   */
+  launcherDir?: string;
   /**
    * A name prefix, without dashes: image `dev` is the directory `<scope>-dev`.
    * Without one, an image is named by its directory, so `shop-dev` is image

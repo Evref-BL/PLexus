@@ -33,13 +33,13 @@ export type LauncherPort = Pick<
 // waits while an image loads MCP and saves, takes minutes.
 export const longCommandTimeoutMs = 60 * 60_000;
 
-export function openLauncherPort(home: string): LauncherPort {
-  const profile = homeProfile(home);
+export function openLauncherPort(home: string, launcherDir?: string): LauncherPort {
+  const installation = { profile: homeProfile(home), ...(launcherDir === undefined ? {} : { launcherDir }) };
   let quick: PharoLauncher | undefined;
   let long: PharoLauncher | undefined;
-  const quickLauncher = (): PharoLauncher => (quick ??= openPharoLauncher({ profile }));
+  const quickLauncher = (): PharoLauncher => (quick ??= openPharoLauncher(installation));
   const longLauncher = (): PharoLauncher =>
-    (long ??= openPharoLauncher({ profile, timeoutMs: longCommandTimeoutMs }));
+    (long ??= openPharoLauncher({ ...installation, timeoutMs: longCommandTimeoutMs }));
 
   return {
     createImage: (input) => longLauncher().createImage(input),

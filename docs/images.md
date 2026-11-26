@@ -7,12 +7,13 @@
   defaulting to `~/.plexus`. It exists when that file does. Nothing declares
   it first and nothing remembers it after.
 - **A running image is a process**: a VM whose command line names that image
-  file, compared on the real path. Every call asks the host's process list
-  once, the way `ps` does, so an answer is as old as the call that gave it.
+  file, compared on the real path. Every call asks the host's process list,
+  the way `ps` does, so an answer is as old as the call that gave it.
   Nothing tells PLexus that a VM stopped, so nothing records that one started.
   The one exception is a call `plexus mcp` forwards: it goes without asking
   while the VM an earlier look of the same server saw answering for the image
-  still runs, and the endpoint files name no other image that answers.
+  still runs, and, for a call naming no image, the endpoint files name no
+  other image that answers.
 - **A scope is a name prefix.** With scope `Proj`, image `dev` is the directory
   `Proj-dev`, and only `Proj-` directories are listed, without the prefix.
   A scope holds no dash, so the first dash of a directory name ends its scope:
@@ -20,22 +21,23 @@
   scope: the caller passes one, and without one an image is named by its
   directory, so `shop-dev` is image `dev` of `shop`, and every image is
   listed.
+- **Case does not count**, in a scope or a name, as macOS and Windows do not
+  count it in a path: scopes `Shop` and `shop` are one, and `Dev` finds
+  `dev`, on every system.
+- **A project's scope is its directory's name**, with each run of characters
+  a scope cannot hold made one `_`, cut to 64 characters, and `default` when
+  nothing is left. Projects whose directory names differ only there, or in
+  case, share a scope.
 
 An image keeps what PLexus knows about it in `<image>/plexus/`, which goes
-with it:
-
-| File | Written | Read |
-| --- | --- | --- |
-| `created.properties` | by create: template, category, how MCP got in, PLexus version, whether it records its calls | by list |
-| `on-start` | by create with `--every-start`: the script to file in | by every start, before MCP starts |
-| `endpoint.properties` | by the running VM: the port it bound, its pid, whether it records its calls | by list and forwarding, while that pid runs the image |
-| `start.st`, `start-status.properties`, `launch.lock` | during a start | by that start |
-| `building` | by a create with a script, naming its process, until the image is ready | by list, start and delete |
+with it: how it was made, the script every start files in when it has one,
+where its running VM answers, and the claim a create or a start holds on it
+while at work.
 
 A create with a script builds the image under a name of its own and renames it
-in with `building`, which start refuses. While that create runs, delete
-refuses the image too; once its process is gone, delete is how the unfinished
-image goes. What a PLexus that was killed left elsewhere, a base it was
+in with its claim. While that create runs, start, stop and delete refuse the
+image and list shows it `creating`; once its process is gone, the image is
+`unfinished`, and delete is how it goes. What a PLexus that was killed left elsewhere, a base it was
 building or a directory it was copying or removing, is named after its
 process, and the next create removes it.
 
@@ -45,7 +47,8 @@ A create names its template, or takes the current stable Pharo: the mainline
 Pharo template the launcher's list labels `stable`, else the newest one
 labelled neither development, latest nor next.
 
-A template is found by its exact name, else by that name in another case.
+A template is found by its exact name, else by that name in another case or
+spacing, a `-` or `_` read as a space.
 Only then is it read more loosely, and only for mainline Pharo and Moose,
 the templates the launcher names `Pharo <major>.<minor>[ - 64bit][ (<label>)]`
 and `Moose Suite <major>[.<minor>][ (<label>)]`:
@@ -62,10 +65,11 @@ and `Moose Suite <major>[.<minor>][ (<label>)]`:
 
 A 32-bit template, a variant such as `Moose Suite 13 (stable) - Pharo 14`,
 and every other template are found by their name only. When several fit,
-Pharo comes before Moose and Moose before the others; a name in several
+Pharo comes before Moose and Moose before the others. A name in several
 categories is taken from the category given, else from `Official
-distributions`, then `Deprecated distributions`, and is refused as ambiguous
-otherwise. A template given with its category is taken as it is, without
+distributions`, then `Deprecated distributions`; otherwise a name given whole
+is refused as ambiguous, and a version or a label takes the first category
+listing it. A template given with its category is taken as it is, without
 asking the launcher's list, so a create from a base already built needs no
 network.
 
@@ -82,11 +86,11 @@ copied it, written before the copy.
 
 Releases with other pins share the bases, as when an agent host runs an older
 PLexus beside a newer one, so a base is never removed for its pin. A create
-removes the bases no create has used for 30 days and, while the bases hold
-more than 5 GiB, the least recently used first, but never one used within the
-last day. PLexus 0.16 to 0.20 keep their bases directly in `$PLEXUS_HOME/bases`
-and remove those of other pins there, which never reaches `shared`. The
-bases there are neither copied nor removed.
+without a script removes the bases no create has used for 30 days and, while
+the bases hold more than 5 GiB, the least recently used first, but never one
+used within the last day. Bases directly in `$PLEXUS_HOME/bases`, where older
+releases kept them, are neither copied nor removed; they can be deleted by
+hand once no such release runs.
 
 A base forgets the Iceberg repositories its load cloned into the image's directory and
 deletes their clones, so that a project loading MCP under another repository

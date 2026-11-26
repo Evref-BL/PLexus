@@ -235,7 +235,7 @@ describe("create without a script", () => {
     fs.mkdirSync(path.join(storeRoot(home), "dev"), { recursive: true });
     await expect(create(context, "dev", { ...options })).rejects.toMatchObject({
       code: "image-exists",
-      message: "Image dev already exists: choose another name, or delete it with image_delete first to create it again.",
+      message: "Image dev already exists: choose another name, or image_start it if it is yours.",
     });
   });
 
@@ -672,7 +672,7 @@ describe("create with a script", () => {
 
     await expect(create(context, "mcp", { ...options, script: script(home) })).rejects.toMatchObject({
       code: "image-exists",
-      message: "Image mcp already exists: choose another name, or delete it with image_delete first to create it again.",
+      message: "Image mcp already exists: choose another name, or image_start it if it is yours.",
     });
     expect(listing(storeRoot(home))).toEqual(["mcp"]);
     expect(fs.readFileSync(path.join(storeRoot(home), "mcp", "mcp.image"), "utf8")).toBe("theirs");
@@ -726,7 +726,7 @@ describe("create with a script", () => {
       create(context, "mcp", { ...options, script: path.join(home, "missing.st") }),
     ).rejects.toMatchObject({ code: "script-not-found" });
     await expect(create(context, "mcp", { ...options, everyStart: true })).rejects.toMatchObject({
-      code: "script-not-found",
+      code: "invalid-arguments",
       message: "everyStart needs a script.",
     });
   });

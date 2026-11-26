@@ -37,7 +37,7 @@ describe("the published surface", () => {
     expect(manifest.main).toBe("./dist/index.js");
     expect(manifest.types).toBe("./dist/index.d.ts");
     expect(manifest.exports).toEqual({
-      ".": { types: "./dist/index.d.ts", import: "./dist/index.js" },
+      ".": { types: "./dist/index.d.ts", default: "./dist/index.js" },
       "./package.json": "./package.json",
     });
     expect(manifest.bin).toEqual({ plexus: "dist/cli.js" });

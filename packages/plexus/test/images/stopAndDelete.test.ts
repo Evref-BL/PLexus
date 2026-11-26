@@ -435,7 +435,7 @@ describe("stop with save", () => {
     const vm = launcher.run(imagePath);
 
     await expect(stop(context, "dev", { save: true })).rejects.toMatchObject({
-      code: "save-failed",
+      code: "no-endpoint",
       message: `Image dev runs as pid ${vm.pid} but takes no calls: not started by this PLexus, so it cannot save itself. image_stop without save kills that VM; image_start then starts it as it was last saved.`,
       details: { pids: [vm.pid] },
     });
@@ -568,6 +568,19 @@ describe("delete", () => {
     expect(fs.existsSync(dir)).toBe(true);
   });
 
+  it("leaves the VM of an image a create is still making to that create", async () => {
+    const { launcher, imagePath, dir, context } = setup();
+    launcher.run(imagePath);
+    fs.mkdirSync(path.join(dir, "plexus"), { recursive: true });
+    fs.writeFileSync(
+      path.join(dir, "plexus", "building"),
+      JSON.stringify({ pid: process.pid, at: new Date(context.now()).toISOString() }),
+    );
+
+    await expect(stop(context, "dev")).rejects.toMatchObject({ code: "building", details: { pid: process.pid } });
+    expect(launcher.called("killProcess")).toEqual([]);
+  });
+
   it("refuses an image whose create has not written its claim yet", async () => {
     const { dir, context } = setup();
     fs.mkdirSync(path.join(dir, "plexus"), { recursive: true });
@@ -607,7 +620,7 @@ describe("delete", () => {
 
     await expect(deleteImage(context, "dev")).rejects.toMatchObject({
       code: "being-started",
-      message: `Image dev is being started by process ${process.pid}. Its tools take calls once image_list shows it running.`,
+      message: `Image dev is being started by process ${process.pid}: image_list shows when it runs.`,
     });
     expect(fs.existsSync(dir)).toBe(true);
   });
