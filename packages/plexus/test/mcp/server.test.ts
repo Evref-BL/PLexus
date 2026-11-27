@@ -129,7 +129,7 @@ class FakeImages implements ImagesApi {
   }
 
   /** Where a call goes without a look, as `Images` knows it from an earlier one: by default, never. */
-  known?: { name: string; endpoint: Endpoint };
+  known?: { name: string; endpoint: Endpoint; telemetry?: ImageInfo["telemetry"] };
 
   answering(name?: string) {
     this.calls.push(["answering", name]);
@@ -711,6 +711,37 @@ describe("plexus mcp", () => {
       trace.disable();
       propagation.disable();
       context.disable();
+    }
+  });
+
+  it("says on the span of a forwarded call whether the image records its calls, as its listing says, and nothing when it does not say", async () => {
+    const recording = recordSpans();
+    try {
+      const images = new FakeImages([
+        row("recording", { port: 7001, fields: { telemetry: { on: true } } }),
+        row("bare", { port: 7002, fields: { telemetry: { on: false, reason: "no-backend" } } }),
+        row("unsaid", { port: 7003, fields: { telemetry: { on: false } } }),
+        row("older", { port: 7004 }),
+      ]);
+      const listing = [tool("class_get", { name: { type: "string" } })];
+      const { client } = await connect(images, {
+        "http://127.0.0.1:7001/": listing,
+        "http://127.0.0.1:7002/": listing,
+        "http://127.0.0.1:7003/": listing,
+        "http://127.0.0.1:7004/": listing,
+        "http://127.0.0.1:7005/": listing,
+      });
+      for (const image of ["recording", "bare", "unsaid", "older"]) {
+        await client.callTool({ name: "class_get", arguments: { name: "Object", image } });
+      }
+      images.known = { name: "fast", endpoint: { url: "http://127.0.0.1:7005/", pid: 101 }, telemetry: { on: true } };
+      await client.callTool({ name: "class_get", arguments: { name: "Object", image: "fast" } });
+      await client.callTool({ name: "image_list", arguments: {} });
+
+      const served = recording.exporter.getFinishedSpans().filter((span) => span.kind === SpanKind.SERVER);
+      expect(served.map((span) => span.attributes["plexus.image.telemetry"])).toEqual(["on", "no-backend", "off", undefined, "on", undefined]);
+    } finally {
+      recording.end();
     }
   });
 

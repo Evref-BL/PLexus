@@ -19,6 +19,7 @@ import {
   filesOfDirectory,
   isImage,
   mcpSourceOf,
+  parseProperties,
   readFirstLine,
   readProperties,
   telemetryOf,
@@ -40,10 +41,11 @@ export async function list(context: ImagesContext, name?: string): Promise<Image
   return images.map((files) => describe(context, files, processes));
 }
 
-/** Where a forwarded call goes: the image and its endpoint. */
+/** Where a forwarded call goes: the image, its endpoint, and whether it records its calls, as `list` says it. */
 export interface Answering {
   name: string;
   endpoint: Endpoint;
+  telemetry?: ImageTelemetry;
 }
 
 /**
@@ -66,7 +68,7 @@ export function answeringFromEndpoints(
   } catch {
     return undefined;
   }
-  const live: Array<{ files: ImageFiles; url: string; pid: number }> = [];
+  const live: Array<{ files: ImageFiles; url: string; pid: number; telemetry?: ImageTelemetry }> = [];
   for (const files of images) {
     if (fs.existsSync(files.building)) {
       if (name !== undefined) {
@@ -90,13 +92,24 @@ export function answeringFromEndpoints(
       return undefined;
     }
     if (isAlive(handoff.pid)) {
-      live.push({ files, url: endpointUrl(handoff), pid: handoff.pid });
+      const url = endpointUrl(handoff);
+      const said = telemetryOf(parseProperties(text));
+      const telemetry = imageTelemetry(
+        { endpoint: { url, pid: handoff.pid }, ...(said === undefined ? {} : { telemetry: said }) },
+        telemetryOf(readProperties(files.created)),
+      );
+      live.push({ files, url, pid: handoff.pid, ...(telemetry === undefined ? {} : { telemetry }) });
     }
   }
   if (live.length !== 1 || seen.get(live[0].files.name) !== live[0].pid) {
     return undefined;
   }
-  return { name: live[0].files.name, endpoint: { url: live[0].url, pid: live[0].pid } };
+  const [only] = live;
+  return {
+    name: only.files.name,
+    endpoint: { url: only.url, pid: only.pid },
+    ...(only.telemetry === undefined ? {} : { telemetry: only.telemetry }),
+  };
 }
 
 function isAlive(pid: number): boolean {

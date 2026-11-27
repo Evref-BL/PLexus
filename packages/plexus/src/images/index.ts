@@ -17,7 +17,7 @@ import { imagesContext, type ImagesContext } from "./context.js";
 import { create } from "./create.js";
 import { deleteImage } from "./delete.js";
 import { endpointOf } from "./endpoint.js";
-import { answeringFromEndpoints, list } from "./list.js";
+import { answeringFromEndpoints, list, type Answering } from "./list.js";
 import { start } from "./start.js";
 import { stop } from "./stop.js";
 import { templates } from "./templates.js";
@@ -66,7 +66,7 @@ export class Images {
    *
    * @internal `plexus mcp`'s routing, left out of the published types.
    */
-  answering(name?: string): { name: string; endpoint: Endpoint } | undefined {
+  answering(name?: string): Answering | undefined {
     return answeringFromEndpoints(this.context, this.seen, name);
   }
 
