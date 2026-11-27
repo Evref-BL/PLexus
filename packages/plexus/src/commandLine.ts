@@ -183,7 +183,9 @@ function imagesOptions(parsed: Parsed, env: NodeJS.ProcessEnv, usage: string): I
   const launcherDir = env.PHARO_LAUNCHER_DIR;
   const project = parsed.values.get("project");
   const scope =
-    parsed.values.get("scope") ?? env.PLEXUS_SCOPE ?? (project === undefined ? undefined : scopeOfProject(project));
+    parsed.values.get("scope") ??
+    env.PLEXUS_SCOPE ??
+    (project === undefined ? undefined : scopeOfProject(projectDirectory(project, usage)));
   return {
     ...(home ? { home } : {}),
     ...(launcherDir ? { launcherDir } : {}),
@@ -192,6 +194,22 @@ function imagesOptions(parsed: Parsed, env: NodeJS.ProcessEnv, usage: string): I
     ...(scope === undefined ? {} : { scope }),
     ...(parsed.flags.has("telemetry") || plexusTelemetry(env) ? { telemetry: true } : {}),
   };
+}
+
+/**
+ * The project directory a scope is taken from. A host that does not expand a
+ * variable in a server's arguments passes it as written, and an empty value
+ * would mean the working directory: either would give every project one
+ * scope.
+ */
+function projectDirectory(project: string, usage: string): string {
+  if (project.trim() === "") {
+    throw new UsageError("--project needs a directory", usage);
+  }
+  if (/\$\{[^}]*\}/.test(project)) {
+    throw new UsageError(`--project ${project} is a variable the host did not expand: pass the project's directory`, usage);
+  }
+  return project;
 }
 
 function startOptions(parsed: Parsed, usage: string): StartOptions {

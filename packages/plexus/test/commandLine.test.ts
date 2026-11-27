@@ -196,6 +196,11 @@ describe("plexus", () => {
       [["image", "__proto__"], "Unknown image command __proto__"],
       [["image", "list", "-x"], "Unknown option -x"],
       [["image", "list", "--home", ""], "--home needs a directory"],
+      [["mcp", "--project", ""], "--project needs a directory"],
+      [
+        ["mcp", "--project", "${CLAUDE_PROJECT_DIR}"],
+        "--project ${CLAUDE_PROJECT_DIR} is a variable the host did not expand: pass the project's directory",
+      ],
       [["image", "create", "dev", "--every-start"], "--every-start needs --script"],
     ];
     for (const [argv, message] of cases) {
@@ -239,6 +244,8 @@ describe("plexus", () => {
     await cli.run("image", "list");
     const env = harness({ PLEXUS_SCOPE: "EnvScope" });
     await env.run("mcp", "--project", "/work/Pharo4Agents");
+    // The project is not read when the scope is given another way.
+    await env.run("mcp", "--project", "${PROJECT_DIR}");
     expect(cli.opened).toEqual([
       { scope: "Pharo4Agents" },
       { scope: "my_app_2" },
@@ -246,7 +253,7 @@ describe("plexus", () => {
       { scope: "Other" },
       {},
     ]);
-    expect(env.opened).toEqual([{ scope: "EnvScope" }]);
+    expect(env.opened).toEqual([{ scope: "EnvScope" }, { scope: "EnvScope" }]);
   });
 
   it("serves MCP in the scope given at launch, saying whether it enrolls the images in telemetry", async () => {
