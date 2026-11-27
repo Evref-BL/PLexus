@@ -4,16 +4,8 @@
  * trace context its `_meta` carries, so what it forwards continues the host's
  * trace.
  */
-import { Server } from "@modelcontextprotocol/sdk/server/index.js";
-import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
-import {
-  CallToolRequestSchema,
-  ListToolsRequestSchema,
-  type CallToolResult,
-  type JSONRPCMessage,
-  type Tool,
-} from "@modelcontextprotocol/sdk/types.js";
+import { CLIENT_INFO_META_KEY, Server, type CallToolResult, type ServerContext, type Tool } from "@modelcontextprotocol/server";
+import { serveStdio } from "@modelcontextprotocol/server/stdio";
 import { randomUUID } from "node:crypto";
 import { context, SpanKind } from "@opentelemetry/api";
 import * as answers from "../answers/index.js";
@@ -117,7 +109,9 @@ function schema(
   properties: Record<string, object>,
   required: string[] = [],
 ): Tool["inputSchema"] {
-  return { type: "object", properties, required, additionalProperties: false };
+  // The property literals are JSON, which their `as const` types do not say.
+  const json = properties as NonNullable<Tool["inputSchema"]["properties"]>;
+  return { type: "object", properties: json, required, additionalProperties: false };
 }
 
 export const imageTools: Tool[] = [
@@ -269,27 +263,12 @@ async function settledWithin(work: Promise<unknown>, boundMs: number): Promise<v
 export const sessionIdleMs = 30 * 60_000;
 
 /**
- * The SDK's server, keeping the protocol version it agreed with the host at
- * initialize, as its answer said it: the SDK keeps the host's name and
- * capabilities from that handshake, and not the version.
+ * The client a request names: in the 2026-07-28 revision, the `clientInfo`
+ * of its own `_meta`; before it, the one the host named at initialize.
  */
-class PlexusServer extends Server {
-  protocolVersion: string | undefined;
-
-  override async connect(transport: Transport): Promise<void> {
-    const send = transport.send.bind(transport);
-    transport.send = (message, options) => {
-      this.protocolVersion = agreedVersion(message) ?? this.protocolVersion;
-      return send(message, options);
-    };
-    await super.connect(transport);
-  }
-}
-
-/** The protocol version an answer to initialize agrees on; nothing for any other message. */
-function agreedVersion(message: JSONRPCMessage): string | undefined {
-  const result = "result" in message && isRecord(message.result) ? message.result : undefined;
-  return typeof result?.protocolVersion === "string" && isRecord(result.serverInfo) ? result.protocolVersion : undefined;
+function requestClient(server: Server, ctx: ServerContext): unknown {
+  const envelope = ctx.mcpReq.envelope as Record<string, unknown> | undefined;
+  return envelope?.[CLIENT_INFO_META_KEY] ?? server.getClientVersion();
 }
 
 export function createPlexusMcpServer(options: PlexusMcpServerOptions): Server {
@@ -345,7 +324,7 @@ export function createPlexusMcpServer(options: PlexusMcpServerOptions): Server {
     return fetching;
   }
 
-  const server = new PlexusServer(
+  const server = new Server(
     { name: "plexus", version: plexusVersion },
     { capabilities: { tools: { listChanged: true } }, instructions: serverInstructions },
   );
@@ -387,14 +366,14 @@ export function createPlexusMcpServer(options: PlexusMcpServerOptions): Server {
 
   // A listing is no call: it takes the session as it is, and leaves its
   // calls and its idle time as they were.
-  server.setRequestHandler(ListToolsRequestSchema, (request) =>
+  server.setRequestHandler("tools/list", (request) =>
     context.with(contextFromMeta(request.params?._meta), () =>
       context.with(withSession(context.active(), currentSession().id), () => listAll()),
     ),
   );
-  server.setRequestHandler(CallToolRequestSchema, (request, extra) =>
+  server.setRequestHandler("tools/call", (request, ctx) =>
     context.with(contextFromMeta(request.params._meta), () =>
-      served(request.params, extra.requestId, () => call(request.params, extra.signal)),
+      served(request.params, ctx, () => call(request.params, ctx.mcpReq.signal)),
     ),
   );
 
@@ -419,10 +398,10 @@ export function createPlexusMcpServer(options: PlexusMcpServerOptions): Server {
 
   /**
    * A call this server answers, as a SERVER span after the MCP conventions:
-   * the request's id, the tool, the protocol version agreed at initialize,
+   * the request's id, the tool, the protocol version of the connection,
    * the names of its arguments the tool declares and of the others, the
    * session and the call's place in it, whether the tool is an image's, and
-   * the host as its initialize request named itself; the arguments and the
+   * the host as the request names it; the arguments and the
    * result only when content is turned on. An answer
    * that is an error fails the span as `tool_error`, and a refusal of this
    * server's own says its code. A call that throws, which the host gets as a
@@ -434,10 +413,11 @@ export function createPlexusMcpServer(options: PlexusMcpServerOptions): Server {
    */
   function served(
     params: { name: string; arguments?: Record<string, unknown> },
-    requestId: string | number,
+    ctx: ServerContext,
     run: () => Promise<Answered>,
   ): Promise<CallToolResult> {
     const tool = identifierOrOther(params.name);
+    const protocolVersion = server.getNegotiatedProtocolVersion();
     const args = (params.arguments ?? {}) as Record<string, unknown>;
     const call = callStarted();
     return context
@@ -447,14 +427,14 @@ export function createPlexusMcpServer(options: PlexusMcpServerOptions): Server {
           SpanKind.SERVER,
           {
             "mcp.method.name": "tools/call",
-            "jsonrpc.request.id": String(requestId),
+            "jsonrpc.request.id": String(ctx.mcpReq.id),
             "gen_ai.operation.name": "execute_tool",
             "gen_ai.tool.name": tool,
-            ...(server.protocolVersion === undefined ? {} : { "mcp.protocol.version": server.protocolVersion }),
+            ...(protocolVersion === undefined ? {} : { "mcp.protocol.version": protocolVersion }),
             "network.transport": "pipe",
             "plexus.call.index": call.index,
             "plexus.call.forwarded": !imageToolNames.has(params.name),
-            ...clientAttributes(server.getClientVersion()),
+            ...clientAttributes(requestClient(server, ctx) as { name?: unknown; version?: unknown } | undefined),
             ...contentAttributes(params.arguments),
           },
           async (span) => {
@@ -579,13 +559,14 @@ export function createPlexusMcpServer(options: PlexusMcpServerOptions): Server {
   return server;
 }
 
-/** Serves over stdio, and returns once the host closes its input. */
+/** Serves over stdio, in either era, and returns once the host closes its input. */
 export async function runPlexusMcpServer(options: PlexusMcpServerOptions): Promise<void> {
   const closed = new Promise<void>((resolve) => {
     process.stdin.once("end", resolve);
     process.stdin.once("close", resolve);
   });
-  await createPlexusMcpServer(options).connect(new StdioServerTransport());
+  // The opening message pins the connection to its era, and to one server.
+  serveStdio(() => createPlexusMcpServer(options));
   await closed;
 }
 

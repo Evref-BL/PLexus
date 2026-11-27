@@ -26,17 +26,21 @@ until the program running PLexus installs an SDK:
   `plexus.image.create`, `.start`, `.stop` and `.delete`;
 - each tool call `plexus mcp` serves is a SERVER span, `tools/call <tool>`,
   child of the trace context its `_meta` carries, with `jsonrpc.request.id`,
-  the protocol version agreed with the host at initialize
-  (`mcp.protocol.version`), `session.id`,
+  the protocol version the host's connection is in (`mcp.protocol.version`):
+  the 2026-07-28 revision when its first request asks for it, else the one
+  agreed at initialize, `session.id`,
   `plexus.call.index`, `plexus.call.forwarded`, the host's `clientInfo` as
-  `plexus.client.name` and `.version`, and the names of the arguments given
+  `plexus.client.name` and `.version`, from the request's `_meta` in the
+  2026-07-28 revision and from initialize before it, and the names of the arguments given
   that the tool declares (`plexus.argument.names`) and of the others
   (`plexus.argument.unknown_names`), an image's tool declaring the arguments
   its image lists and `image`. A call to an image whose tools the host has not
   listed fetches that listing beside it and, once answered, waits half a
   second at most for it; without it, only `image` is named. An error answer
   fails the span as `tool_error`. The `notifications/tools/list_changed` a
-  call sends the host carries the call's trace context in its `_meta`:
+  call sends the host carries the call's trace context in its `_meta`; in the
+  2026-07-28 revision it goes only on a `subscriptions/listen` stream the
+  host opened:
   - `session.id` is random, kept by the server process, and renewed when a
     call comes after 30 minutes in which no call ran. Every span the call
     makes carries it, as does every span of a listing of the tools; every

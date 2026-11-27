@@ -1,12 +1,11 @@
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import { Client } from "@modelcontextprotocol/client";
 import {
+  InMemoryTransport,
   LATEST_PROTOCOL_VERSION,
-  ToolListChangedNotificationSchema,
   type CallToolResult,
   type JSONRPCMessage,
   type Tool,
-} from "@modelcontextprotocol/sdk/types.js";
+} from "@modelcontextprotocol/server";
 import { context, propagation, SpanKind, SpanStatusCode, trace } from "@opentelemetry/api";
 import { AsyncLocalStorageContextManager } from "@opentelemetry/context-async-hooks";
 import { CompositePropagator, W3CBaggagePropagator, W3CTraceContextPropagator } from "@opentelemetry/core";
@@ -138,7 +137,8 @@ class FakeImages implements ImagesApi {
 }
 
 function tool(name: string, properties: Record<string, object> = {}, required: string[] = []): Tool {
-  return { name, description: `${name} in the image`, inputSchema: { type: "object", properties, required } };
+  const json = properties as NonNullable<Tool["inputSchema"]["properties"]>;
+  return { name, description: `${name} in the image`, inputSchema: { type: "object", properties: json, required } };
 }
 
 type Forwarded = { endpoint: Endpoint; name: string; args: Record<string, unknown>; options: ForwardOptions };
@@ -170,7 +170,7 @@ async function connect(
   const client = new Client({ name: "test", version: "1.0.0" });
   let listChanged = 0;
   const changes: unknown[] = [];
-  client.setNotificationHandler(ToolListChangedNotificationSchema, (notification) => {
+  client.setNotificationHandler("notifications/tools/list_changed", (notification) => {
     listChanged += 1;
     changes.push(notification.params);
   });
@@ -1071,7 +1071,7 @@ describe("plexus mcp", () => {
     });
 
     const controller = new AbortController();
-    const call = client.callTool({ name: "image_evaluate", arguments: {} }, undefined, { signal: controller.signal });
+    const call = client.callTool({ name: "image_evaluate", arguments: {} }, { signal: controller.signal });
     while (signal === undefined) {
       await new Promise((resolve) => setImmediate(resolve));
     }
