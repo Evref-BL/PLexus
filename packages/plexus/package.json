@@ -41,7 +41,7 @@
     "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\""
   },
   "dependencies": {
-    "@evref-bl/pharo-launcher-mcp": "1.0.0",
+    "@evref-bl/pharo-launcher-mcp": "1.1.0",
     "@modelcontextprotocol/server": "^2.4.0",
     "@opentelemetry/api": "1.10.0"
   },
