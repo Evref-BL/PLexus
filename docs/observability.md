@@ -40,11 +40,24 @@ until the program running PLexus installs an SDK:
   - `plexus.call.index` is the call's place in its session, from 1;
   - `plexus.call.forwarded` is true for a call to an image's tool, false for
     one of the image tools;
+  - `plexus.image.telemetry`, on a call PLexus forwards, says whether the
+    image it went to records its calls, as `image list` says it: `on`, or
+    why not (`not-asked`, `base-failed`, `no-backend`, `switch-failed`), or
+    `off` when the image did not say why. It is absent when neither the
+    image's start nor its create said;
   - `plexus.error.code` says why `plexus mcp` answered an error of its own,
     before any image saw the call: `invalid-arguments`, `no-image-running`,
     `several-images` (the call must name one), `none-takes-calls`, the
     `code` an image tool's refusal carries, as the command's do, or
     `_OTHER`.
+
+A call PLexus forwards to an image makes, in the image, a SERVER span under
+PLexus's CLIENT span. When there is none, the call's SERVER span says why, or
+narrows it down: `plexus.error.code` when PLexus answered before any image
+saw the call; `plexus.image.telemetry` other than `on` when the image does
+not record its calls; `on` when the image's recording failed (MCP drops an
+error in its own recording, so that the call goes on) or its span was lost
+on its way to the collector.
 
 A span records names, outcomes and an error's kind (`error.type`); a span a
 JSON-RPC error failed has its message as the status description. A JSON-RPC

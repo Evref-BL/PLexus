@@ -280,6 +280,17 @@ describe("list", () => {
       expect(launcher.called("listProcesses")).toHaveLength(0);
     });
 
+    it("says whether the image records its calls, as its start wrote, else as its create did", () => {
+      const { launcher, context } = answeringDev();
+      const seen = new Map([["dev", process.pid]]);
+      writeEndpoint(launcher.imageDir("dev"), { port: 7001, pid: process.pid, more: ["telemetry=off", "telemetry.reason=switch-failed"] });
+      expect(answeringFromEndpoints(context, seen, "dev")).toEqual({ ...dev, telemetry: { on: false, reason: "switch-failed" } });
+
+      writeEndpoint(launcher.imageDir("dev"), { port: 7001, pid: process.pid });
+      fs.writeFileSync(path.join(launcher.imageDir("dev"), "plexus", "created.properties"), "telemetry=on\r");
+      expect(answeringFromEndpoints(context, seen, "dev")).toEqual({ ...dev, telemetry: { on: true } });
+    });
+
     it("is left to a full look for a VM no look saw, a VM gone, another image answering, or an image being made", () => {
       const { launcher, context } = answeringDev(["dev", "other"]);
       expect(answeringFromEndpoints(context, new Map(), "dev")).toBeUndefined();

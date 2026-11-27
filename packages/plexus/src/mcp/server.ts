@@ -34,7 +34,7 @@ import {
   withSession,
   withTraceContext,
 } from "../telemetry/trace.js";
-import type { Display, Endpoint, ImageInfo } from "../types.js";
+import type { Display, Endpoint, ImageInfo, ImageTelemetry } from "../types.js";
 import { plexusVersion } from "../version.js";
 
 export type ImagesApi = Pick<
@@ -240,6 +240,16 @@ interface Answered {
   result: CallToolResult;
   refusal?: RefusalCode;
   image?: string;
+  /** Whether the image the call went to records its calls, when PLexus knows. */
+  imageTelemetry?: ImageTelemetry;
+}
+
+/**
+ * `plexus.image.telemetry`: `on`, or why the image does not record its calls,
+ * or `off` when it does not say why.
+ */
+export function imageTelemetryValue(telemetry: ImageTelemetry): string {
+  return telemetry.on ? "on" : (telemetry.reason ?? "off");
 }
 
 /** How long the first call to an image whose tools the host has not listed waits, once answered, for their listing. */
@@ -454,6 +464,9 @@ export function createPlexusMcpServer(options: PlexusMcpServerOptions): Server {
               image = answered.image;
               if (answered.refusal !== undefined) {
                 span.setAttribute("plexus.error.code", answered.refusal);
+              }
+              if (answered.imageTelemetry !== undefined) {
+                span.setAttribute("plexus.image.telemetry", imageTelemetryValue(answered.imageTelemetry));
               }
               if (answered.result.isError) {
                 failed(span, "tool_error");
@@ -722,13 +735,19 @@ async function eachImage(
 interface Reachable {
   name: string;
   endpoint: Endpoint;
+  telemetry?: ImageTelemetry;
+}
+
+/** A row as a call reaches it: its name, its endpoint, and whether it records, when it says. */
+function reachable(row: ImageInfo): Reachable {
+  return { name: row.name, endpoint: endpointOf(row), ...(row.telemetry === undefined ? {} : { telemetry: row.telemetry }) };
 }
 
 /** The images a call can reach now: those `endpointOf` answers for. */
 function answering(rows: readonly ImageInfo[]): Reachable[] {
   return rows.flatMap((row) => {
     try {
-      return [{ name: row.name, endpoint: endpointOf(row) }];
+      return [reachable(row)];
     } catch {
       return [];
     }
@@ -792,8 +811,9 @@ async function forward(
     }
     return refused(error);
   }
+  const recording = target.telemetry === undefined ? {} : { imageTelemetry: target.telemetry };
   try {
-    return { result: await callOn(target.endpoint, target.name, rest), image: target.name };
+    return { result: await callOn(target.endpoint, target.name, rest), image: target.name, ...recording };
   } catch (error) {
     const answer = await answers.callFailed(
       target.name,
@@ -803,14 +823,14 @@ async function forward(
       listToolsAt,
     );
     // A cancelled call is answered nothing: the host gave up on it.
-    return { result: answer === undefined ? failure(error) : text(answers.render(answer), true), image: target.name };
+    return { result: answer === undefined ? failure(error) : text(answers.render(answer), true), image: target.name, ...recording };
   }
 }
 
 /** The image named, or the library's refusal of a missing or invalid name, or why it takes no call. */
 async function named(images: ImagesApi, image: string): Promise<Reachable> {
   const [row] = await images.list(image);
-  return { name: row.name, endpoint: endpointOf(row) };
+  return reachable(row);
 }
 
 /**
