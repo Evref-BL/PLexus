@@ -30,8 +30,23 @@ async function receiver(): Promise<{ endpoint: string; bodies: string[] }> {
   return { endpoint: `http://127.0.0.1:${(server.address() as AddressInfo).port}`, bodies };
 }
 
-/** `plexus mcp` sending to `endpoint`, with the host's handshake done and one tools/call answered. */
-async function servingOneCall(endpoint: string, delayMs: number): Promise<ChildProcess> {
+/** The `_meta` a 2026-07-28 request carries in place of a handshake. */
+const modernMeta = {
+  "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+  "io.modelcontextprotocol/clientInfo": { name: "claude-code", version: "2.1.330" },
+  "io.modelcontextprotocol/clientCapabilities": {},
+};
+
+/**
+ * `plexus mcp` sending to `endpoint`, with one tools/call answered: after the
+ * host's handshake in the legacy era, or as the opening request in the modern
+ * one. The answers it wrote are kept in `answers`.
+ */
+async function servingOneCall(
+  endpoint: string,
+  delayMs: number,
+  era: "legacy" | "modern" = "legacy",
+): Promise<ChildProcess & { answers: Record<string, unknown>[] }> {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "plexus-mcp-home-"));
   directories.push(home);
   const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith("OTEL_") && key !== "PLEXUS_TELEMETRY"));
@@ -47,6 +62,7 @@ async function servingOneCall(endpoint: string, delayMs: number): Promise<ChildP
     stdio: ["pipe", "pipe", "ignore"],
   });
   let buffer = "";
+  const answers: Record<string, unknown>[] = [];
   const answered = new Map<number, () => void>();
   child.stdout!.setEncoding("utf8").on("data", (chunk: string) => {
     buffer += chunk;
@@ -54,6 +70,7 @@ async function servingOneCall(endpoint: string, delayMs: number): Promise<ChildP
     while ((end = buffer.indexOf("\n")) >= 0) {
       const message = JSON.parse(buffer.slice(0, end)) as { id?: number };
       buffer = buffer.slice(end + 1);
+      answers.push(message);
       if (message.id !== undefined) answered.get(message.id)?.();
     }
   });
@@ -62,10 +79,14 @@ async function servingOneCall(endpoint: string, delayMs: number): Promise<ChildP
       answered.set(id, resolve);
       child.stdin!.write(`${JSON.stringify({ jsonrpc: "2.0", id, method, params })}\n`);
     });
-  await send(1, "initialize", { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "claude-code", version: "2.1.330" } });
-  child.stdin!.write(`${JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" })}\n`);
-  await send(2, "tools/call", { name: "image_list", arguments: {} });
-  return child;
+  if (era === "legacy") {
+    await send(1, "initialize", { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "claude-code", version: "2.1.330" } });
+    child.stdin!.write(`${JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" })}\n`);
+    await send(2, "tools/call", { name: "image_list", arguments: {} });
+  } else {
+    await send(2, "tools/call", { name: "image_list", arguments: {}, _meta: modernMeta });
+  }
+  return Object.assign(child, { answers });
 }
 
 const ended = (child: ChildProcess) => new Promise<number | null>((resolve) => child.on("close", (code) => resolve(code)));
@@ -83,6 +104,21 @@ describe("plexus mcp's telemetry", () => {
     expect(sent).toContain("tools/call image_list");
     expect(sent).toContain("plexus.client.name");
     expect(sent).toContain("session.id");
+  }, 30_000);
+
+  it.skipIf(process.platform === "win32")("serves a host that speaks 2026-07-28 without a handshake, and records the revision and the client the request names", async () => {
+    const { endpoint, bodies } = await receiver();
+    const child = await servingOneCall(endpoint, 60_000, "modern");
+    expect(child.answers).toEqual([
+      expect.objectContaining({ id: 2, result: expect.objectContaining({ content: expect.any(Array) }) }),
+    ]);
+    const exit = ended(child);
+    child.kill("SIGTERM");
+    expect(await exit).toBe(143);
+    const sent = bodies.join("\n");
+    expect(sent).toContain("tools/call image_list");
+    expect(sent).toMatch(/"mcp\.protocol\.version","value":\{"stringValue":"2026-07-28"\}/);
+    expect(sent).toMatch(/"plexus\.client\.name","value":\{"stringValue":"claude-code"\}/);
   }, 30_000);
 
   it("exits once its input closes, while an export still waits on a collector that never finishes answering", async () => {
