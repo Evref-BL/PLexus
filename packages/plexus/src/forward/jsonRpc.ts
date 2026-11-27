@@ -2,13 +2,28 @@ import http from "node:http";
 import { SpanKind, type Attributes } from "@opentelemetry/api";
 import { contentAttributes, errorType, failed, identifierOrOther, inSpan, withTraceContext } from "../telemetry/trace.js";
 import { plexusVersion } from "../version.js";
+import { headerValue } from "./headers.js";
 
-const protocolVersion = "2025-06-18";
+/** The modern revision PLexus asks for first. */
+export const modernProtocolVersion = "2026-07-28";
 
-export interface Session {
+/** The legacy revision it asks for when a server takes only the handshake. */
+export const legacyProtocolVersion = "2025-11-25";
+
+/** What a legacy handshake agreed, and so what the requests after it carry. */
+interface Session {
   protocolVersion?: string;
   sessionId?: string;
 }
+
+/** How a request was answered: statelessly in the modern revision, or in a legacy session. */
+type Era = { modern: true } | ({ modern: false } & Session);
+
+/** The JSON-RPC errors only a modern server answers: header mismatch, missing client capability, unsupported version. */
+const modernErrors = new Set([-32020, -32021, -32022]);
+
+/** Method not found, which a modern server answers to a method it does not have, with a 404. */
+const methodNotFound = -32601;
 
 /**
  * How a forwarded request failed, beside its message: whether the image
@@ -34,7 +49,14 @@ type ForwardErrorKind =
 
 interface HttpAnswer {
   payload: unknown;
+  status: number;
   sessionId?: string;
+}
+
+/** What waits for a legacy server's handshake, and whether its timing out fails the request. */
+export interface Handshake {
+  timeoutMs: number;
+  failOnTimeout?: boolean;
 }
 
 /**
@@ -42,6 +64,14 @@ interface HttpAnswer {
  * thrown with the server's `error.data` in the message, whatever the HTTP
  * status it came with: an image answers a request it refuses with 400 and a
  * JSON-RPC error saying why.
+ *
+ * The request goes in the modern revision first: one POST whose `_meta`
+ * names the revision, PLexus and the capabilities it offers, none, and whose
+ * headers mirror its method and name, beside the `headers` given. A `4xx`
+ * whose body is no error only a modern server answers says the server is
+ * legacy: the request then goes again in a session the `handshake` opens.
+ * Only a refusal is sent again, never a request that timed out or whose
+ * connection closed, which the server may have run.
  *
  * The request is a CLIENT span, `<method>` or `tools/call <tool>`, and
  * carries the active trace context in its `params._meta`: see
@@ -53,7 +83,13 @@ export async function request(
   url: string,
   method: string,
   params: Record<string, unknown> | undefined,
-  options: { timeoutMs: number; session?: Session; signal?: AbortSignal; endsImage?: boolean },
+  options: {
+    timeoutMs: number;
+    handshake?: Handshake;
+    headers?: Record<string, string>;
+    signal?: AbortSignal;
+    endsImage?: boolean;
+  },
 ): Promise<Record<string, unknown>> {
   const id = `plexus-${method}-${Date.now()}`;
   const tool = method === "tools/call" && typeof params?.name === "string" ? identifierOrOther(params.name) : undefined;
@@ -61,11 +97,29 @@ export async function request(
     tool === undefined ? method : `${method} ${tool}`,
     SpanKind.CLIENT,
     {
-      ...requestAttributes(method, tool, id, url, options.session),
+      ...requestAttributes(method, tool, id, url),
       ...(tool === undefined ? {} : contentAttributes(params?.arguments)),
     },
     async (span) => {
-      const answer = await post(url, jsonRpcMessage(method, params, id), options.timeoutMs, options.session, options.signal);
+      let era: Era = { modern: true };
+      let answer = await post(
+        url,
+        jsonRpcMessage(method, withProtocolMeta(params), id),
+        options.timeoutMs,
+        { ...modernHeaders(method, params), ...options.headers },
+        options.signal,
+      ).catch((error: unknown) => {
+        if (isLegacyRefusal(error)) {
+          return undefined;
+        }
+        throw error;
+      });
+      if (answer === undefined || isLegacyRefusal(answer)) {
+        const session = await initialize(url, options.handshake ?? { timeoutMs: options.timeoutMs }, options.signal);
+        era = { modern: false, ...session };
+        answer = await post(url, jsonRpcMessage(method, params, id), options.timeoutMs, sessionHeaders(session), options.signal);
+      }
+      span.setAttributes(eraAttributes(era));
       const payload = answer.payload;
       if (!isRecord(payload)) {
         throw forwardError(new Error("MCP response was not a JSON object"), { kind: "other" });
@@ -98,6 +152,79 @@ export async function request(
   );
 }
 
+/**
+ * The params with the per-request fields of the modern revision in their
+ * `_meta`, beside what it already carries.
+ */
+function withProtocolMeta(params: Record<string, unknown> | undefined): Record<string, unknown> {
+  const meta = isRecord(params?._meta) ? params._meta : {};
+  return {
+    ...params,
+    _meta: {
+      ...meta,
+      "io.modelcontextprotocol/protocolVersion": modernProtocolVersion,
+      "io.modelcontextprotocol/clientInfo": { name: "plexus", version: plexusVersion },
+      "io.modelcontextprotocol/clientCapabilities": {},
+    },
+  };
+}
+
+/** The headers a modern request mirrors from its body: the revision, the method, and the name or URI it is about. */
+function modernHeaders(method: string, params: Record<string, unknown> | undefined): Record<string, string> {
+  const named = method === "resources/read" ? params?.uri : method === "tools/call" || method === "prompts/get" ? params?.name : undefined;
+  return {
+    "MCP-Protocol-Version": modernProtocolVersion,
+    "Mcp-Method": method,
+    ...(typeof named === "string" ? { "Mcp-Name": headerValue(named) } : {}),
+  };
+}
+
+function sessionHeaders(session: Session): Record<string, string> {
+  return {
+    ...(session.protocolVersion ? { "MCP-Protocol-Version": session.protocolVersion } : {}),
+    ...(session.sessionId ? { "Mcp-Session-Id": session.sessionId } : {}),
+  };
+}
+
+/**
+ * Whether a modern request was refused as only a legacy server refuses it: a
+ * `4xx` whose body is empty, no JSON-RPC error, or one a modern server does
+ * not answer. An unsupported version whose `supported` list names a legacy
+ * revision is answered by a dual-era server that does not speak this modern
+ * one, and falls back too.
+ */
+function isLegacyRefusal(answer: unknown): boolean {
+  if (answer instanceof Error) {
+    const failure = answer as Partial<ForwardError> & { httpStatus?: number };
+    return failure.kind === "other" && isClientError(failure.httpStatus);
+  }
+  const { payload, status } = answer as HttpAnswer;
+  if (!isClientError(status) || !isRecord(payload) || !isRecord(payload.error)) {
+    return false;
+  }
+  const code = payload.error.code;
+  if (code === -32022) {
+    const supported = isRecord(payload.error.data) ? payload.error.data.supported : undefined;
+    return Array.isArray(supported) && supported.some((version) => typeof version === "string" && version <= legacyProtocolVersion);
+  }
+  return typeof code !== "number" || !(modernErrors.has(code) || code === methodNotFound);
+}
+
+function isClientError(status: number | undefined): boolean {
+  return status !== undefined && status >= 400 && status < 500;
+}
+
+/** The revision a request was answered in, and the session it went in, when there was one. */
+function eraAttributes(era: Era): Attributes {
+  if (era.modern) {
+    return { "mcp.protocol.version": modernProtocolVersion };
+  }
+  return {
+    ...(era.protocolVersion === undefined ? {} : { "mcp.protocol.version": era.protocolVersion }),
+    ...(era.sessionId === undefined ? {} : { "mcp.session.id": era.sessionId }),
+  };
+}
+
 /** Whether a request failed as one that ends the image may: its connection closed, or no answer came in time. */
 function endedImage(error: unknown): boolean {
   const kind = (error as Partial<ForwardError> | undefined)?.kind;
@@ -107,11 +234,11 @@ function endedImage(error: unknown): boolean {
 /**
  * What a forwarded request's span records, after the OpenTelemetry MCP
  * conventions: the method, its id, the tool and its operation, the image's
- * address and port, the protocol version and the session where the
- * handshake agreed them, and HTTP/1.1, the only version Node's `http`
- * client speaks.
+ * address and port, and HTTP/1.1, the only version Node's `http` client
+ * speaks. The protocol version, and the session when there is one, are
+ * added once the server has answered: see `eraAttributes`.
  */
-function requestAttributes(method: string, tool: string | undefined, id: string, url: string, session: Session = {}): Attributes {
+function requestAttributes(method: string, tool: string | undefined, id: string, url: string): Attributes {
   const server = new URL(url);
   return {
     "mcp.method.name": method,
@@ -119,8 +246,6 @@ function requestAttributes(method: string, tool: string | undefined, id: string,
     "server.address": bareHost(server),
     "server.port": Number(server.port || (server.protocol === "https:" ? 443 : 80)),
     ...(tool === undefined ? {} : { "gen_ai.tool.name": tool, "gen_ai.operation.name": "execute_tool" }),
-    ...(session.protocolVersion === undefined ? {} : { "mcp.protocol.version": session.protocolVersion }),
-    ...(session.sessionId === undefined ? {} : { "mcp.session.id": session.sessionId }),
     "network.transport": "tcp",
     "network.protocol.name": "http",
     "network.protocol.version": "1.1",
@@ -176,40 +301,38 @@ function requestErrorType(error: unknown): string {
 }
 
 /**
- * The handshake a stateful MCP server needs before a call. A server that does
- * not take it still answers calls, so a failed handshake leaves the call to
- * go without a session rather than failing it, except when it was cancelled,
- * or timed out and `failOnTimeout` asks: a server that does not answer the
- * handshake will not answer the call either, and failing here says the call
- * was never sent.
+ * The handshake a legacy MCP server needs before a request, asking for the
+ * newest legacy revision. A server that does not take it still answers
+ * requests, so a failed handshake leaves the request to go without a session
+ * rather than failing it, except when it was cancelled, or timed out and
+ * `failOnTimeout` asks: a server that does not answer the handshake will not
+ * answer the request either, and failing here says the request was never
+ * run.
  *
  * Neither the request nor the notification that follows it is a span of its
  * own; each carries the active trace context in its `_meta`.
  */
-export async function initialize(
-  url: string,
-  timeoutMs: number,
-  options: { failOnTimeout?: boolean; signal?: AbortSignal } = {},
-): Promise<Session> {
+async function initialize(url: string, handshake: Handshake, signal?: AbortSignal): Promise<Session> {
+  const timeoutMs = handshake.timeoutMs;
   let answer: HttpAnswer;
   try {
     answer = await post(
       url,
       jsonRpcMessage(
         "initialize",
-        { protocolVersion, capabilities: {}, clientInfo: { name: "plexus", version: plexusVersion } },
+        { protocolVersion: legacyProtocolVersion, capabilities: {}, clientInfo: { name: "plexus", version: plexusVersion } },
         `plexus-initialize-${Date.now()}`,
       ),
       timeoutMs,
       {},
-      options.signal,
+      signal,
     );
   } catch (error) {
     const kind = (error as Partial<ForwardError>).kind;
     if (kind === "cancelled") {
       throw error;
     }
-    if (kind === "timeout" && options.failOnTimeout) {
+    if (kind === "timeout" && handshake.failOnTimeout) {
       throw forwardError(new Error(`MCP initialize timed out after ${timeoutMs}ms`), {
         kind: "no-handshake",
         waitedMs: timeoutMs,
@@ -229,7 +352,7 @@ export async function initialize(
     ...(answer.sessionId ? { sessionId: answer.sessionId } : {}),
   };
   // A stateless server does not implement the notification.
-  await post(url, jsonRpcMessage("notifications/initialized", undefined), timeoutMs, session, options.signal).catch(
+  await post(url, jsonRpcMessage("notifications/initialized", undefined), timeoutMs, sessionHeaders(session), signal).catch(
     () => undefined,
   );
   return session;
@@ -284,7 +407,7 @@ function post(
   url: string,
   payload: Record<string, unknown>,
   timeoutMs: number,
-  session: Session = {},
+  headers: Record<string, string>,
   signal?: AbortSignal,
 ): Promise<HttpAnswer> {
   const target = new URL(url);
@@ -320,10 +443,7 @@ function post(
           "content-type": "application/json",
           "content-length": Buffer.byteLength(body),
           connection: "close",
-          ...(session.protocolVersion
-            ? { "MCP-Protocol-Version": session.protocolVersion }
-            : {}),
-          ...(session.sessionId ? { "Mcp-Session-Id": session.sessionId } : {}),
+          ...headers,
         },
         ...(signal === undefined ? {} : { signal }),
       },
@@ -339,8 +459,8 @@ function post(
           const text = Buffer.concat(chunks).toString("utf8");
           if (status === undefined || status < 200 || status >= 300) {
             const refusal = jsonRpcError(text);
-            if (refusal !== undefined) {
-              resolve({ payload: refusal });
+            if (refusal !== undefined && status !== undefined) {
+              resolve({ payload: refusal, status });
               return;
             }
             reject(
@@ -354,7 +474,7 @@ function post(
 
           if (!text.trim()) {
             // A notification is answered with an empty 202.
-            resolve({ payload: undefined });
+            resolve({ payload: undefined, status });
             return;
           }
           let data: unknown;
@@ -376,6 +496,7 @@ function post(
           const sessionId = response.headers["mcp-session-id"];
           resolve({
             payload: data,
+            status,
             ...(typeof sessionId === "string" ? { sessionId } : {}),
           });
         });

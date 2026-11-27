@@ -3,7 +3,8 @@
  * is cached, so nothing can name an image that has since stopped.
  */
 import type { Endpoint, ImageTool, ImageToolResult } from "../types.js";
-import { initialize, jsonRpcMessage, request } from "./jsonRpc.js";
+import { annotationProblem, parameterHeaders } from "./headers.js";
+import { jsonRpcMessage, request } from "./jsonRpc.js";
 
 const defaultTimeoutMs = 60_000;
 
@@ -13,27 +14,39 @@ const beyondLimitMs = 30_000;
 /** The longest wait Node's timers keep, about 24.8 days: a longer one is cut to it with a warning, and an infinite one throws. */
 const longestWaitMs = 2 ** 31 - 1;
 
+/** The code of the error a modern server answers when a request's headers do not match its body. */
+const headerMismatch = -32020;
+
+/**
+ * The image's tools, but for one whose `x-mcp-header` annotations break the
+ * rules, which is left out with a warning, as the Streamable HTTP binding
+ * asks.
+ */
 export async function listTools(
   endpoint: Endpoint,
   options: { timeoutMs?: number } = {},
 ): Promise<ImageTool[]> {
   const timeoutMs = options.timeoutMs ?? defaultTimeoutMs;
-  const session = await initialize(endpoint.url, timeoutMs);
-  const response = await request(endpoint.url, "tools/list", undefined, {
-    timeoutMs,
-    session,
-  });
+  const response = await request(endpoint.url, "tools/list", undefined, { timeoutMs });
   const result = response.result;
   if (!isRecord(result) || !Array.isArray(result.tools)) {
     throw new Error("MCP tools/list response did not include result.tools");
   }
-  return result.tools.map((tool, index) => checkedTool(tool, index));
+  return result.tools
+    .map((tool, index) => checkedTool(tool, index))
+    .filter((tool) => {
+      const problem = annotationProblem(tool.inputSchema);
+      if (problem !== undefined) {
+        process.emitWarning(`Left out tool ${tool.name}, whose x-mcp-header annotations break the rules: ${problem}`);
+      }
+      return problem === undefined;
+    });
 }
 
 export interface CallToolOptions {
   /** The schema the image listed for the tool: its `timeoutSeconds` gives the call's limit and the most it may be. */
   inputSchema?: ImageTool["inputSchema"];
-  /** What the handshake waits, and the least the call waits: 60000 unless given. */
+  /** What a legacy server's handshake waits, and the least the call waits: 60000 unless given. */
   minimumMs?: number;
   /** Aborting it destroys the request in flight, and the call rejects as cancelled. */
   signal?: AbortSignal;
@@ -48,8 +61,13 @@ export interface CallToolOptions {
 /**
  * One call, answered by the tool's result as the image sent it. The call
  * waits longer than any limit the image keeps itself, so that its own answer
- * to a call it stopped arrives first: see `callWaitMs`. A handshake the image
- * does not answer fails the call before it is sent.
+ * to a call it stopped arrives first: see `callWaitMs`. A handshake a legacy
+ * image does not answer fails the call before it is sent.
+ *
+ * The parameters the listed schema annotates with `x-mcp-header` go in
+ * headers too. Without that schema, a call the image refuses for headers it
+ * lacks lists the image's tools and goes again with them, once: the refusal
+ * came before the call ran.
  *
  * It rejects with a `ForwardError`, whose `kind` says whether the image
  * answered, never got the call, or got it and gave no answer.
@@ -61,21 +79,32 @@ export async function callTool(
   options: CallToolOptions = {},
 ): Promise<ImageToolResult> {
   const handshakeMs = Math.min(options.minimumMs ?? defaultTimeoutMs, longestWaitMs);
-  const session = await initialize(endpoint.url, handshakeMs, {
-    failOnTimeout: true,
-    ...(options.signal === undefined ? {} : { signal: options.signal }),
-  });
-  const response = await request(
-    endpoint.url,
-    "tools/call",
-    { name, arguments: args },
-    {
-      timeoutMs: callWaitMs(args, options),
-      session,
-      ...(options.signal === undefined ? {} : { signal: options.signal }),
-      ...(options.endsImage ? { endsImage: true } : {}),
-    },
-  );
+  const send = (inputSchema: unknown) =>
+    request(
+      endpoint.url,
+      "tools/call",
+      { name, arguments: args },
+      {
+        timeoutMs: callWaitMs(args, options),
+        handshake: { timeoutMs: handshakeMs, failOnTimeout: true },
+        headers: parameterHeaders(inputSchema, args),
+        ...(options.signal === undefined ? {} : { signal: options.signal }),
+        ...(options.endsImage ? { endsImage: true } : {}),
+      },
+    );
+  let response: Record<string, unknown>;
+  try {
+    response = await send(options.inputSchema);
+  } catch (error) {
+    if (options.inputSchema !== undefined || (error as { rpcCode?: number }).rpcCode !== headerMismatch) {
+      throw error;
+    }
+    const listed = (await listTools(endpoint, { timeoutMs: handshakeMs })).find((tool) => tool.name === name);
+    if (listed === undefined || Object.keys(parameterHeaders(listed.inputSchema, args)).length === 0) {
+      throw error;
+    }
+    response = await send(listed.inputSchema);
+  }
   return response.result as ImageToolResult;
 }
 

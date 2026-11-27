@@ -42,9 +42,21 @@ afterEach(async () => {
 
 type Reply = { result?: unknown; error?: unknown; status?: number } | "never";
 
-/** An MCP server over HTTP that keeps the params of every request it gets. */
+/** The per-request fields a modern request carries in its `_meta`. */
+const modernMeta = {
+  "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+  "io.modelcontextprotocol/clientInfo": { name: "plexus", version: expect.any(String) },
+  "io.modelcontextprotocol/clientCapabilities": {},
+};
+
+/**
+ * An MCP server over HTTP that keeps the params of every request it gets. A
+ * legacy one refuses a modern request with a bare 400, as MCP did before it
+ * spoke 2026-07-28.
+ */
 async function fakeMcpServer(
   answer: (method: string) => Reply | undefined = standardAnswer,
+  options: { legacy?: boolean } = {},
 ): Promise<{ url: string; port: number; received: Array<{ method: string; params?: Record<string, unknown> }> }> {
   const received: Array<{ method: string; params?: Record<string, unknown> }> = [];
   const server = http.createServer((incoming, response) => {
@@ -55,6 +67,10 @@ async function fakeMcpServer(
     incoming.on("end", () => {
       const message = JSON.parse(body) as { id?: string; method: string; params?: Record<string, unknown> };
       received.push({ method: message.method, ...(message.params === undefined ? {} : { params: message.params }) });
+      if (options.legacy && incoming.headers["mcp-protocol-version"] === "2026-07-28") {
+        response.writeHead(400).end();
+        return;
+      }
       const reply = answer(message.method);
       if (reply === "never") {
         return;
@@ -119,10 +135,19 @@ describe("a forwarded request without an SDK", () => {
     await request(server.url, "tools/call", { name: "class_get", _meta: { progressToken: 7 } }, { timeoutMs: 1_000 });
 
     const calls = server.received.filter((each) => each.method === "tools/call");
-    expect(calls[0].params).toEqual({ name: "class_get", arguments: { name: "SecretClass" } });
-    expect(calls[1].params).toEqual({ name: "class_get", _meta: { progressToken: 7 } });
-    expect(server.received.find((each) => each.method === "initialize")?.params).not.toHaveProperty("_meta");
-    expect(server.received.find((each) => each.method === "notifications/initialized")).not.toHaveProperty("params");
+    expect(calls[0].params).toEqual({ name: "class_get", arguments: { name: "SecretClass" }, _meta: modernMeta });
+    expect(calls[1].params).toEqual({ name: "class_get", _meta: { progressToken: 7, ...modernMeta } });
+  });
+
+  it("carries nothing in the handshake's _meta, nor in the legacy request it opens", async () => {
+    const server = await fakeMcpServer(standardAnswer, { legacy: true });
+
+    await callTool({ url: server.url }, "class_get", { name: "SecretClass" });
+
+    expect(server.received.map((each) => each.method)).toEqual(["tools/call", "initialize", "notifications/initialized", "tools/call"]);
+    expect(server.received[1].params).not.toHaveProperty("_meta");
+    expect(server.received[2]).not.toHaveProperty("params");
+    expect(server.received[3].params).toEqual({ name: "class_get", arguments: { name: "SecretClass" } });
   });
 });
 
@@ -149,8 +174,7 @@ describe("a forwarded request with an SDK", () => {
       "server.port": server.port,
       "gen_ai.tool.name": "class_get",
       "gen_ai.operation.name": "execute_tool",
-      "mcp.protocol.version": "2025-06-18",
-      "mcp.session.id": "session-1",
+      "mcp.protocol.version": "2026-07-28",
       "network.transport": "tcp",
       "network.protocol.name": "http",
       "network.protocol.version": "1.1",
@@ -161,9 +185,21 @@ describe("a forwarded request with an SDK", () => {
     expect(call.params).toEqual({
       name: "class_get",
       arguments: { name: "SecretClass" },
-      _meta: { traceparent: `00-${span.spanContext().traceId}-${span.spanContext().spanId}-01` },
+      _meta: { ...modernMeta, traceparent: `00-${span.spanContext().traceId}-${span.spanContext().spanId}-01` },
     });
     expectNoValues("SecretClass");
+  });
+
+  it("records the session and the revision a legacy image agreed, in one span with the refused request", async () => {
+    registerSdk();
+    const server = await fakeMcpServer(standardAnswer, { legacy: true });
+
+    await callTool({ url: server.url }, "class_get", {});
+
+    expect(exporter.getFinishedSpans().map((span) => span.name)).toEqual(["tools/call class_get"]);
+    const span = spanNamed("tools/call class_get");
+    expect(span.status.code).not.toBe(SpanStatusCode.ERROR);
+    expect(span.attributes).toMatchObject({ "mcp.protocol.version": "2025-06-18", "mcp.session.id": "session-1" });
   });
 
   it("adds the trace context to the _meta the request carries, with the baggage", async () => {
@@ -180,15 +216,16 @@ describe("a forwarded request with an SDK", () => {
 
     const [call] = server.received;
     expect(call.params?._meta).toEqual({
+      ...modernMeta,
       progressToken: 7,
       traceparent: expect.stringMatching(/^00-[0-9a-f]{32}-[0-9a-f]{16}-01$/),
       baggage: "run=r1",
     });
   });
 
-  it("passes the trace context in the handshake and a ping too, which are no spans of their own", async () => {
+  it("passes the call's trace context in a legacy handshake, and the caller's in a ping, which are no spans of their own", async () => {
     registerSdk();
-    const server = await fakeMcpServer();
+    const server = await fakeMcpServer(standardAnswer, { legacy: true });
 
     await trace.getTracer("test").startActiveSpan("caller", async (caller) => {
       await callTool({ url: server.url }, "class_get", {});
@@ -196,17 +233,19 @@ describe("a forwarded request with an SDK", () => {
       caller.end();
     });
 
-    const caller = spanNamed("caller").spanContext();
-    const callers = { traceparent: `00-${caller.traceId}-${caller.spanId}-01` };
+    const parent = (name: string) => {
+      const span = spanNamed(name).spanContext();
+      return { traceparent: `00-${span.traceId}-${span.spanId}-01` };
+    };
     const sent = (method: string) => server.received.find((each) => each.method === method)?.params;
     expect(sent("initialize")).toEqual({
-      protocolVersion: "2025-06-18",
+      protocolVersion: "2025-11-25",
       capabilities: {},
       clientInfo: { name: "plexus", version: expect.any(String) },
-      _meta: callers,
+      _meta: parent("tools/call class_get"),
     });
-    expect(sent("notifications/initialized")).toEqual({ _meta: callers });
-    expect(sent("ping")).toEqual({ _meta: callers });
+    expect(sent("notifications/initialized")).toEqual({ _meta: parent("tools/call class_get") });
+    expect(sent("ping")).toEqual({ _meta: parent("caller") });
     expect(exporter.getFinishedSpans().map((span) => span.name)).toEqual(["tools/call class_get", "caller"]);
   });
 
@@ -229,6 +268,7 @@ describe("a forwarded request with an SDK", () => {
     expect(span.attributes).not.toHaveProperty("gen_ai.tool.name");
     expect(span.attributes).not.toHaveProperty("gen_ai.operation.name");
     expect(server.received.find((each) => each.method === "tools/list")?.params?._meta).toEqual({
+      ...modernMeta,
       traceparent: expect.any(String),
     });
   });

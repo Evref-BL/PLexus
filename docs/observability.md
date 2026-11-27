@@ -10,9 +10,13 @@ until the program running PLexus installs an SDK:
   its trace context to the image in the request's
   `params._meta` (`traceparent`, `tracestate`, `baggage`); a request a call
   of `plexus mcp` forwards carries that call's `session.id` in its baggage.
-  The handshake before it (`initialize`, `notifications/initialized`) and the
-  `ping` that waits for a starting image are no spans of their own, and carry
-  the trace context they are sent in the same way. A JSON-RPC error is the
+  The span records the protocol version the image answered in
+  (`mcp.protocol.version`), and the session a legacy image opened
+  (`mcp.session.id`). A request goes in the 2026-07-28 revision first; the
+  handshake a legacy image needs (`initialize`, `notifications/initialized`)
+  is part of the request's span, and the `ping` that waits for a starting
+  image is no span of its own: both carry the trace context they are sent in
+  the same way. A JSON-RPC error is the
   image's answer whatever HTTP status comes with it: an image answers a
   request it refuses with 400 and a JSON-RPC error saying why. The request
   asking an image to quit, for a stop or a stop that saves, does
