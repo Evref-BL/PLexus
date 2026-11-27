@@ -19,9 +19,11 @@ An `Images` reaches the images of its scope in its home, as
 it is made. A refusal is a `PlexusError`: its `code` says which, its message
 what to do, and its `details` the pids, the pid or the categories it is about.
 
-`callTool` and `listTools` call an image's endpoint, and reject with a
-`ForwardError`, whose `kind` says what became of the call: the image answered
-it with an error (`answered`), never got it (`no-handshake`, `refused`), got it
+`callTool` and `listTools` call an image's endpoint in the newest MCP
+revision PLexus speaks, and in a session when the image refuses it as only a
+legacy server does. They reject with a `ForwardError`, whose `kind` says what
+became of the call: the image answered it with an error (`answered`), never
+got it (`no-handshake`, a legacy image's handshake unanswered, or `refused`), got it
 and gave no answer in time (`timeout`) or closed the connection (`closed`),
 its signal cancelled it (`cancelled`), or something else went wrong (`other`).
 

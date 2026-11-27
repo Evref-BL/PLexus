@@ -4,12 +4,15 @@ import { afterEach, describe, expect, it } from "vitest";
 import { parseEndpointHandoff } from "../../src/forward/endpointHandoffFormat.js";
 import { callTool, callWaitMs, listTools, ping } from "../../src/forward/index.js";
 import type { ForwardError } from "../../src/forward/jsonRpc.js";
+import type { ImageTool } from "../../src/types.js";
 
 interface Received {
   method: string;
   params?: unknown;
   sessionId?: string;
   protocolVersion?: string;
+  /** The `mcp-method`, `mcp-name` and `mcp-param-*` headers it came with. */
+  mirrored?: Record<string, string>;
 }
 
 const servers: http.Server[] = [];
@@ -34,9 +37,12 @@ type Reply =
 /**
  * An MCP server over HTTP, as far as forwarding needs one: canned answers,
  * given at once or after `afterMs`, never, or a connection closed unanswered.
+ * A legacy one refuses a modern request with a bare 400, as MCP did before
+ * it spoke 2026-07-28.
  */
 async function fakeMcpServer(
   answer: (request: Received) => Reply,
+  options: { legacy?: boolean } = {},
 ): Promise<{ url: string; received: Received[] }> {
   const received: Received[] = [];
   const server = http.createServer((request, response) => {
@@ -46,6 +52,12 @@ async function fakeMcpServer(
     });
     request.on("end", () => {
       const message = JSON.parse(body) as { id?: string; method: string; params?: unknown };
+      const mirrored = Object.fromEntries(
+        Object.entries(request.headers).filter(
+          (entry): entry is [string, string] =>
+            /^mcp-(method|name|param-.*)$/.test(entry[0]) && typeof entry[1] === "string",
+        ),
+      );
       const seen: Received = {
         method: message.method,
         ...(message.params === undefined ? {} : { params: message.params }),
@@ -55,8 +67,13 @@ async function fakeMcpServer(
         ...(typeof request.headers["mcp-protocol-version"] === "string"
           ? { protocolVersion: request.headers["mcp-protocol-version"] }
           : {}),
+        ...(Object.keys(mirrored).length === 0 ? {} : { mirrored }),
       };
       received.push(seen);
+      if (options.legacy && seen.protocolVersion === "2026-07-28") {
+        response.writeHead(400).end();
+        return;
+      }
       const reply = answer(seen);
       if (reply === "never") {
         return;
@@ -96,7 +113,7 @@ async function fakeMcpServer(
   return { url: `http://127.0.0.1:${(server.address() as AddressInfo).port}/`, received };
 }
 
-const classSearch = {
+const classSearch: ImageTool = {
   name: "class_search",
   description: "Find classes.",
   inputSchema: { type: "object", properties: { name: { type: "string" } } },
@@ -118,16 +135,82 @@ function standardAnswers(request: Received) {
 }
 
 describe("forwarding", () => {
-  it("lists the image's tools in the session its server opened", async () => {
+  it("lists the image's tools in one modern request, which names the revision, PLexus and no capability", async () => {
     const { url, received } = await fakeMcpServer(standardAnswers);
 
     expect(await listTools({ url })).toEqual([classSearch]);
+    expect(received).toEqual([
+      {
+        method: "tools/list",
+        params: {
+          _meta: {
+            "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+            "io.modelcontextprotocol/clientInfo": { name: "plexus", version: expect.any(String) },
+            "io.modelcontextprotocol/clientCapabilities": {},
+          },
+        },
+        protocolVersion: "2026-07-28",
+        mirrored: { "mcp-method": "tools/list" },
+      },
+    ]);
+  });
+
+  it("lists a legacy image's tools in the session it opens once the modern request is refused", async () => {
+    const { url, received } = await fakeMcpServer(standardAnswers, { legacy: true });
+
+    expect(await listTools({ url })).toEqual([classSearch]);
     expect(received.map((request) => request.method)).toEqual([
+      "tools/list",
       "initialize",
       "notifications/initialized",
       "tools/list",
     ]);
-    expect(received[2]).toMatchObject({ sessionId: "session-1", protocolVersion: "2025-06-18" });
+    expect(received[1].params).toMatchObject({ protocolVersion: "2025-11-25" });
+    expect(received[3]).toMatchObject({ sessionId: "session-1", protocolVersion: "2025-06-18" });
+    expect(received[3]).not.toHaveProperty("params");
+    expect(received[3]).not.toHaveProperty("mirrored");
+  });
+
+  it("falls back when a refusal says the image speaks only legacy revisions, and not when it names only modern ones", async () => {
+    const unsupported = (supported: string[]) => (request: Received) =>
+      request.protocolVersion === "2026-07-28"
+        ? { status: 400, error: { code: -32022, message: "Unsupported protocol version", data: { supported, requested: "2026-07-28" } } }
+        : standardAnswers(request);
+
+    const legacy = await fakeMcpServer(unsupported(["2025-11-25", "2025-06-18"]));
+    expect(await listTools({ url: legacy.url })).toEqual([classSearch]);
+    expect(legacy.received.map((request) => request.method)).toEqual(["tools/list", "initialize", "notifications/initialized", "tools/list"]);
+
+    const newer = await fakeMcpServer(unsupported(["2027-01-01"]));
+    expect(await failureOf(listTools({ url: newer.url }))).toMatchObject({ kind: "answered", rpcCode: -32022 });
+    expect(newer.received.map((request) => request.method)).toEqual(["tools/list"]);
+  });
+
+  it("does not fall back on an error only a modern server answers", async () => {
+    for (const code of [-32020, -32021, -32601]) {
+      const { url, received } = await fakeMcpServer((request) =>
+        request.method === "tools/call" ? { status: code === -32601 ? 404 : 400, error: { code, message: "no" } } : standardAnswers(request),
+      );
+      expect(await failureOf(callTool({ url }, "class_search", {}, { inputSchema: classSearch.inputSchema }))).toMatchObject({
+        kind: "answered",
+        rpcCode: code,
+      });
+      expect(received.map((request) => request.method)).toEqual(["tools/call"]);
+    }
+  });
+
+  it("mirrors the call's tool name, in the Base64 sentinel when it is no plain ASCII", async () => {
+    const { url, received } = await fakeMcpServer(standardAnswers);
+
+    await callTool({ url }, "class_search", {});
+    await callTool({ url }, "cherche_\u00e9l\u00e8ve", {});
+    await callTool({ url }, "=?base64?abc?=", {});
+
+    expect(received.map((request) => request.mirrored)).toEqual([
+      { "mcp-method": "tools/call", "mcp-name": "class_search" },
+      { "mcp-method": "tools/call", "mcp-name": `=?base64?${Buffer.from("cherche_\u00e9l\u00e8ve").toString("base64")}?=` },
+      { "mcp-method": "tools/call", "mcp-name": `=?base64?${Buffer.from("=?base64?abc?=").toString("base64")}?=` },
+    ]);
   });
 
   it("calls a tool and answers its result as the server sent it", async () => {
@@ -142,15 +225,19 @@ describe("forwarding", () => {
     });
   });
 
-  it("goes without a session when the server takes no handshake", async () => {
-    const { url, received } = await fakeMcpServer((request) =>
-      request.method === "initialize"
-        ? { error: { code: -32601, message: "Method not found" } }
-        : standardAnswers(request),
+  it("goes without a session when a legacy server takes no handshake", async () => {
+    const { url, received } = await fakeMcpServer(
+      (request) =>
+        request.method === "initialize"
+          ? { error: { code: -32601, message: "Method not found" } }
+          : standardAnswers(request),
+      { legacy: true },
     );
 
     expect(await listTools({ url })).toHaveLength(1);
+    expect(received.map((request) => request.method)).toEqual(["tools/list", "initialize", "tools/list"]);
     expect(received.at(-1)?.sessionId).toBeUndefined();
+    expect(received.at(-1)?.protocolVersion).toBeUndefined();
   });
 
   it("puts what the server said about a refused call in the error, as answered with its code", async () => {
@@ -214,8 +301,8 @@ const testRun = {
 } as const;
 
 describe("a forwarded call", () => {
-  it("says it was sent and not answered, in today's words", async () => {
-    const { url } = await fakeMcpServer((request) =>
+  it("says it was sent and not answered, in today's words, and is not sent again", async () => {
+    const { url, received } = await fakeMcpServer((request) =>
       request.method === "tools/call" ? "never" : standardAnswers(request),
     );
 
@@ -224,6 +311,7 @@ describe("a forwarded call", () => {
       kind: "timeout",
       waitedMs: 100,
     });
+    expect(received.map((request) => request.method)).toEqual(["tools/call"]);
   });
 
   it("ends at its time, however slowly an answer trickles in", async () => {
@@ -238,9 +326,10 @@ describe("a forwarded call", () => {
     });
   });
 
-  it("is not sent when the image does not answer the handshake", async () => {
-    const { url, received } = await fakeMcpServer((request) =>
-      request.method === "initialize" ? "never" : standardAnswers(request),
+  it("is not sent again when a legacy image does not answer the handshake", async () => {
+    const { url, received } = await fakeMcpServer(
+      (request) => (request.method === "initialize" ? "never" : standardAnswers(request)),
+      { legacy: true },
     );
 
     expect(await failureOf(callTool({ url }, "class_search", {}, { minimumMs: 100 }))).toEqual({
@@ -248,7 +337,7 @@ describe("a forwarded call", () => {
       kind: "no-handshake",
       waitedMs: 100,
     });
-    expect(received.map((request) => request.method)).toEqual(["initialize"]);
+    expect(received.map((request) => request.method)).toEqual(["tools/call", "initialize"]);
   });
 
   it("says nothing was sent to a port nobody listens on", async () => {
@@ -302,16 +391,19 @@ describe("a forwarded call", () => {
     expect(await failureOf(callTool({ url }, "class_search"))).toEqual({ message: "HTTP 400 Bad Request", kind: "other" });
   });
 
-  it("sends the call without a session when the image refuses the handshake", async () => {
-    const { url, received } = await fakeMcpServer((request) =>
-      request.method === "initialize"
+  it("sends the call without a session when a server refuses both the modern request and the handshake", async () => {
+    const { url, received } = await fakeMcpServer((request) => {
+      if (request.protocolVersion === "2026-07-28") {
+        return { status: 400, error: { code: -32600, message: "Bad Request: no session" } };
+      }
+      return request.method === "initialize"
         ? { status: 400, error: { code: -32602, message: "Unsupported protocol version" } }
-        : standardAnswers(request),
-    );
+        : standardAnswers(request);
+    });
 
     expect(await callTool({ url }, "class_search")).toEqual({ content: [{ type: "text", text: "class=MCPToolRegistry" }] });
-    expect(received.map((request) => request.method)).toEqual(["initialize", "tools/call"]);
-    expect(received[1]).not.toHaveProperty("sessionId");
+    expect(received.map((request) => request.method)).toEqual(["tools/call", "initialize", "tools/call"]);
+    expect(received[2]).not.toHaveProperty("sessionId");
   });
 
   it("says what else went wrong as other", async () => {
@@ -397,6 +489,76 @@ describe("a forwarded call", () => {
     expect(callWaitMs({ timeoutSeconds: 1e10 }, { inputSchema: testRun })).toBe(2 ** 31 - 1);
     expect(callWaitMs({ timeoutSeconds: 1e308 })).toBe(2 ** 31 - 1);
     expect(callWaitMs({}, { minimumMs: 1e12 })).toBe(2 ** 31 - 1);
+  });
+});
+
+const sqlTool: ImageTool = {
+  name: "execute_sql",
+  inputSchema: {
+    type: "object",
+    properties: {
+      region: { type: "string", "x-mcp-header": "Region" },
+      options: { type: "object", properties: { dryRun: { type: "boolean", "x-mcp-header": "Dry-Run" } } },
+      query: { type: "string" },
+    },
+  },
+};
+
+describe("x-mcp-header", () => {
+  it("mirrors the annotated parameters a call gives", async () => {
+    const { url, received } = await fakeMcpServer(standardAnswers);
+
+    await callTool({ url }, "execute_sql", { region: "us-west1", options: { dryRun: true }, query: "SELECT 1" }, { inputSchema: sqlTool.inputSchema });
+    await callTool({ url }, "execute_sql", { query: "SELECT 1" }, { inputSchema: sqlTool.inputSchema });
+
+    expect(received.map((request) => request.mirrored)).toEqual([
+      { "mcp-method": "tools/call", "mcp-name": "execute_sql", "mcp-param-region": "us-west1", "mcp-param-dry-run": "true" },
+      { "mcp-method": "tools/call", "mcp-name": "execute_sql" },
+    ]);
+  });
+
+  it("lists the image's tools and calls again with the headers when a call made without its schema is refused for them", async () => {
+    const { url, received } = await fakeMcpServer((request) => {
+      if (request.method === "tools/list") {
+        return { result: { tools: [classSearch, sqlTool] } };
+      }
+      if (request.method === "tools/call" && request.mirrored?.["mcp-param-region"] === undefined) {
+        return { status: 400, error: { code: -32020, message: "Header mismatch: Mcp-Param-Region is missing" } };
+      }
+      return standardAnswers(request);
+    });
+
+    expect(await callTool({ url }, "execute_sql", { region: "eu", query: "SELECT 1" })).toEqual({
+      content: [{ type: "text", text: "class=MCPToolRegistry" }],
+    });
+    expect(received.map((request) => request.method)).toEqual(["tools/call", "tools/list", "tools/call"]);
+    expect(received[2].mirrored).toMatchObject({ "mcp-param-region": "eu" });
+  });
+
+  it("does not call again when the listed schema asks for no header the call lacked", async () => {
+    const { url, received } = await fakeMcpServer((request) =>
+      request.method === "tools/call" ? { status: 400, error: { code: -32020, message: "Header mismatch" } } : standardAnswers(request),
+    );
+
+    expect(await failureOf(callTool({ url }, "class_search", { name: "X" }))).toMatchObject({ kind: "answered", rpcCode: -32020 });
+    expect(received.map((request) => request.method)).toEqual(["tools/call", "tools/list"]);
+  });
+
+  it("leaves out a listed tool whose annotations break the rules, with a warning", async () => {
+    const broken = { name: "broken", inputSchema: { type: "object", properties: { at: { type: "number", "x-mcp-header": "At" } } } };
+    const { url } = await fakeMcpServer((request) =>
+      request.method === "tools/list" ? { result: { tools: [classSearch, broken, sqlTool] } } : standardAnswers(request),
+    );
+    const warnings: string[] = [];
+    const onWarning = (warning: Error) => warnings.push(warning.message);
+    process.on("warning", onWarning);
+    try {
+      expect((await listTools({ url })).map((tool) => tool.name)).toEqual(["class_search", "execute_sql"]);
+      await new Promise((resolve) => setImmediate(resolve));
+    } finally {
+      process.off("warning", onWarning);
+    }
+    expect(warnings).toEqual([expect.stringContaining("Left out tool broken")]);
   });
 });
 
